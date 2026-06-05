@@ -508,7 +508,7 @@
                             </div>
                             
                             <div class="flex items-center justify-between">
-                                <span class="text-xs text-slate-400"><i class="fa-solid fa-wand-magic-sparkles text-brand-500"></i> 极速调用 DeepSeek 专属数学推理大模型，自动获取超清推导。</span>
+                                <span class="text-xs text-slate-400"><i class="fa-solid fa-wand-magic-sparkles text-brand-500"></i> 极速调用首选智能大模型，自动获取超清推导。</span>
                                 <button type="button" onclick="triggerAISolve()" id="aiSolveBtn" class="px-5 py-2.5 rounded-xl font-medium text-xs flex items-center space-x-1.5 bg-brand-600/80 hover:bg-brand-600 text-white backdrop-blur-sm border border-brand-500/20 shadow-sm transition-all">
                                     <i class="fa-solid fa-wand-magic-sparkles"></i>
                                     <span>一键生成深度解析</span>
@@ -522,7 +522,7 @@
                                     <div class="h-2.5 w-2.5 rounded-full bg-indigo-500 animate-bounce [animation-delay:0.2s]"></div>
                                     <div class="h-2.5 w-2.5 rounded-full bg-violet-500 animate-bounce [animation-delay:0.4s]"></div>
                                 </div>
-                                <p id="aiLoadingText" class="text-xs text-slate-500 font-medium">DeepSeek 正在拼命思索、组织 LaTeX 精细步骤... (可能需要10-25秒，请稍后)</p>
+                                <p id="aiLoadingText" class="text-xs text-slate-500 font-medium">AI 大模型正在拼命思索、组织 LaTeX 精细步骤... (可能需要10-25秒，请稍后)</p>
                                 <div class="w-full bg-slate-200 h-1 rounded-full overflow-hidden">
                                     <div class="bg-brand-500 h-1 w-1/3 animate-[pulse_1s_infinite] rounded-full"></div>
                                 </div>
@@ -812,13 +812,13 @@
 
             <div class="space-y-4">
                 <p class="text-xs text-slate-500 leading-relaxed">
-                    您当前未选择 <strong>学段</strong> 或 <strong>所属章节</strong>。本题库默认使用【人教版A】教材体系。是否需要开启 DeepSeek 智能进行章节分类匹配？
+                    您当前未选择 <strong>学段</strong> 或 <strong>所属章节</strong>。本题库默认使用【人教版A】教材体系。是否需要开启 AI 智能进行章节分类匹配？
                 </p>
 
                 <!-- Loading State -->
                 <div id="classifyLoading" class="hidden glass-card rounded-xl p-6 text-center space-y-3">
                     <i class="fa-solid fa-spinner animate-spin text-brand-500 text-2xl"></i>
-                    <p class="text-xs text-slate-500 font-medium">DeepSeek 正在研读题干以匹配人教版A大纲...</p>
+                    <p class="text-xs text-slate-500 font-medium">AI 正在研读题干以匹配人教版A大纲...</p>
                 </div>
 
                 <!-- Recommendation Result -->
@@ -1190,7 +1190,7 @@
                     <!-- Step 1: Title -->
                     <div class="space-y-1.5 shrink-0">
                         <label class="block text-xs font-bold text-slate-500">第一步：试卷标题（作为题目来源，可空）</label>
-                        <input type="text" id="importPaperTitle" placeholder="请输入试卷标题，例如：诸暨中学2025-2026高一期中" 
+                        <input type="text" id="importPaperTitle" placeholder="请输入试卷标题，例如：XX中学2025-2026高一期中" 
                                class="w-full px-3.5 py-2 border border-slate-200 rounded-xl outline-none focus:border-brand-500 focus:ring-1 focus:ring-brand-500 transition-all text-xs">
                     </div>
 
@@ -1248,7 +1248,7 @@
                         <div>
                             <h4 class="font-bold text-slate-700 text-sm">等待拆解...</h4>
                             <p class="text-xs text-slate-500 max-w-sm mt-1.5 leading-relaxed">
-                                请在左侧输入试卷标题、拖入或粘贴 LaTeX 源码与配套插图文件，然后点击“一键 AI 智能拆解”按钮。DeepSeek 将为智能分析分割题目并绑定插图！
+                                请在左侧输入试卷标题、拖入或粘贴 LaTeX 源码与配套插图文件，然后点击“一键 AI 智能拆解”按钮。AI 将为您智能分析分割题目并绑定插图！
                             </p>
                         </div>
                     </div>
@@ -1259,7 +1259,7 @@
                         <div class="space-y-1.5">
                             <h4 class="font-bold text-slate-700 text-sm" id="importLoadingText">正在整理插图映射并预备上传...</h4>
                             <p class="text-xs text-slate-500 max-w-xs leading-relaxed">
-                                DeepSeek V4 Flash 正在极速分析、拆解试卷（大文本分析仅需 5 到 15 秒），请耐心等待。
+                                AI 正在极速分析、拆解试卷（大文本分析仅需 5 到 15 秒），请耐心等待。
                             </p>
                         </div>
                         <!-- Beautiful interactive logs console -->
