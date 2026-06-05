@@ -1,0 +1,38 @@
+# ==========================================
+# 本地数学题库管理系统 - Git 忽略配置
+# ==========================================
+
+# 1. 忽略本地环境变量文件（内含敏感 API Keys 和 Tokens，绝对不能公开）
+.env
+
+# 2. 忽略本地 SQLite 数据库文件及各种连接日志文件
+*.db
+*.db-journal
+*.db-shm
+*.db-wal
+
+# 3. 忽略本地备份目录下的所有数据备份
+# 但通过排除 .gitkeep，使得 data_backup 目录结构可以被提交到 GitHub 上
+data_backup/*
+!data_backup/.gitkeep
+
+# 4. 忽略用户上传的插图资源
+# 但通过排除 .gitkeep，使得 static/uploads 目录结构可以被提交到 GitHub 上
+static/uploads/*
+!static/uploads/.gitkeep
+
+# 5. 忽略 Python 缓存、测试缓存及运行产生的日志
+.system_generated/server.log
+__pycache__/
+*.pyc
+.pytest_cache/
+.pytest/
+
+# 6. 忽略操作系统临时文件与 IDE 配置文件
+.DS_Store
+.vscode/
+.idea/
+*.suo
+*.ntvs*
+*.njsproj
+*.sln

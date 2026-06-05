@@ -1,0 +1,1335 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>判桃MATH</title>
+    <link rel="icon" type="image/svg+xml" href="/static/favicon.svg?v=2">
+    <link rel="icon" type="image/png" href="/static/favicon.png?v=2">
+    <link rel="apple-touch-icon" sizes="180x180" href="/static/apple-touch-icon.png?v=2">
+    
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        brand: {
+                            50: '#f5f3ff',
+                            100: '#ede9fe',
+                            200: '#ddd6fe',
+                            500: '#8b5cf6',
+                            600: '#7c3aed',
+                            700: '#6d28d9',
+                            900: '#4c1d95',
+                        }
+                    },
+                    fontFamily: {
+                        sans: ['Inter', 'Outfit', 'system-ui', 'sans-serif'],
+                    }
+                }
+            }
+        }
+    </script>
+    
+    <!-- Google Fonts -->
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Outfit:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    
+    <!-- FontAwesome Icons -->
+    <link rel="stylesheet" href="https://cdn.bootcdn.net/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    
+    <!-- KaTeX CSS & JS -->
+    <link rel="stylesheet" href="https://cdn.bootcdn.net/ajax/libs/KaTeX/0.16.8/katex.min.css">
+    <script src="https://cdn.bootcdn.net/ajax/libs/KaTeX/0.16.8/katex.min.js"></script>
+    <script src="https://cdn.bootcdn.net/ajax/libs/KaTeX/0.16.8/contrib/auto-render.min.js"></script>
+    
+    <!-- Marked.js for Markdown -->
+    <script src="https://cdn.bootcdn.net/ajax/libs/marked/4.3.0/marked.min.js"></script>
+    <!-- DOMPurify for XSS Protection -->
+    <script src="https://cdn.bootcdn.net/ajax/libs/dompurify/3.0.5/purify.min.js"></script>
+
+    <link rel="stylesheet" href="/static/css/app.css">
+</head>
+<body class="h-screen overflow-hidden text-slate-800 font-sans antialiased flex flex-col">
+
+    <!-- Header / Navbar - Apple Glass Style -->
+    <header class="glass-panel sticky top-0 z-40 w-full h-16 flex items-center justify-between px-6">
+        <div class="flex items-center space-x-3">
+            <div class="h-10 w-10 rounded-xl bg-gradient-to-tr from-brand-600 to-indigo-500 flex items-center justify-center text-white shadow-md shadow-brand-500/20">
+                <i class="fa-solid fa-square-root-variable text-xl"></i>
+            </div>
+            <div>
+                <span class="font-semibold text-lg tracking-tight bg-gradient-to-r from-brand-700 to-indigo-600 bg-clip-text text-transparent font-['Outfit']">MathBank</span>
+                <span class="text-xs text-slate-500 block -mt-1">本地化数学题库研讨系统</span>
+            </div>
+        </div>
+
+        <div class="flex items-center space-x-4">
+            <!-- Connection Status -->
+            <div id="apiStatusIndicator" class="flex items-center space-x-1.5 px-3 py-1.5 rounded-full text-xs font-medium bg-slate-100 text-slate-600">
+                <span class="h-2 w-2 rounded-full bg-slate-400"></span>
+                <span>检测配置...</span>
+            </div>
+
+
+            <!-- Statistics Button - Apple Glass Style -->
+            <button onclick="openStatsModal()" class="glass-btn flex items-center space-x-2 px-4 py-2 rounded-xl text-xs font-semibold text-brand-600">
+                <i class="fa-solid fa-chart-pie text-brand-500"></i>
+                <span>数据统计</span>
+            </button>
+
+            <!-- Settings Button - Apple Glass Style -->
+            <button onclick="openSettingsModal()" class="glass-btn flex items-center space-x-2 px-4 py-2 rounded-xl text-xs font-medium text-slate-600">
+                <i class="fa-solid fa-sliders text-slate-500"></i>
+                <span>API</span>
+            </button>
+
+            <!-- Shutdown Button - Apple Glass Danger Style -->
+            <button onclick="confirmShutdown()" class="glass-btn-danger flex items-center space-x-2 px-4 py-2 rounded-xl text-xs font-semibold" title="安全关闭本地题库后端服务">
+                <i class="fa-solid fa-power-off"></i>
+                <span>关闭题库</span>
+            </button>
+        </div>
+    </header>
+
+    <!-- Main Content Container -->
+    <main class="flex-1 flex overflow-hidden h-[calc(100vh-4rem)]">
+        
+        <!-- Left Panel: Sidebar & Questions List - Apple Glass Style -->
+        <section id="sidebarSection" class="glass-sidebar flex flex-col h-full shrink-0 overflow-hidden" style="width: 320px; min-width: 0px;">
+            <!-- Sidebar Top Panel: Search, Buttons, Tabs -->
+            <div id="sidebarTopPanel" class="flex flex-col shrink-0 overflow-y-auto overflow-x-hidden custom-scrollbar">
+                <!-- Search & Filters -->
+                <div class="p-3 border-b border-slate-100 space-y-2">
+                    <div class="relative mx-2">
+                        <span class="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+                            <i class="fa-solid fa-magnifying-glass text-slate-400 text-xs"></i>
+                        </span>
+                        <input type="text" id="searchInput" placeholder="搜索题目内容..."
+                               class="glass-input w-full pl-8 pr-4 py-1.5 text-xs rounded-xl">
+                    </div>
+
+                    <div class="grid grid-cols-2 gap-2">
+                        <select id="filterType" class="glass-select text-xs px-2.5 py-2.5 rounded-xl">
+                            <option value="">所有题型</option>
+                            <option value="single_choice">单选题</option>
+                            <option value="multi_choice">多选题</option>
+                            <option value="fill_in_blank">填空题</option>
+                            <option value="detailed_answer">解答题</option>
+                        </select>
+                        <select id="filterDifficulty" class="glass-select text-xs px-2.5 py-2.5 rounded-xl">
+                            <option value="">所有级别</option>
+                            <option value="easy_error">易错题</option>
+                            <option value="challenge">挑战题</option>
+                            <option value="qiangji">强基题</option>
+                        </select>
+                    </div>
+
+                    <!-- Custom Cascading Filter - Apple Glass Style -->
+                    <div class="space-y-1.5">
+                        <select id="filterCompulsory" class="glass-select w-full text-xs px-2.5 py-2.5 rounded-xl">
+                            <option value="">所有学段</option>
+                        </select>
+                        <select id="filterChapter" class="glass-select w-full text-xs px-2.5 py-2.5 rounded-xl hidden">
+                            <option value="">所有章节</option>
+                        </select>
+                    </div>
+
+                    <!-- Searchable Source Filter - Apple Glass Style -->
+                    <div class="flex items-center space-x-2 relative" id="filterSourceContainer">
+                        <span class="text-slate-400 text-[10px] font-bold shrink-0 flex items-center space-x-1">
+                            <i class="fa-solid fa-file-lines text-[9px] text-brand-500"></i>
+                            <span>来源</span>
+                        </span>
+                        <div class="relative flex-1">
+                            <input type="text" id="filterSource" placeholder="输入题目来源..."
+                                   class="glass-input w-full pl-3 pr-7 py-1.5 text-xs rounded-xl bg-white/40"
+                                   autocomplete="off">
+                            <span class="absolute inset-y-0 right-0 pr-2.5 flex items-center cursor-pointer text-slate-400 hover:text-slate-600" id="toggleFilterSourceBtn">
+                                <i class="fa-solid fa-chevron-down text-[9px] transition-transform duration-200" id="chevronFilterSourceIcon"></i>
+                            </span>
+                            <span class="absolute inset-y-0 right-6 pr-1 flex items-center cursor-pointer text-slate-400 hover:text-slate-600 hidden" id="clearFilterSourceBtn">
+                                <i class="fa-solid fa-circle-xmark text-[10px]"></i>
+                            </span>
+                            <!-- Custom Suggestions Dropdown - Apple Glass Style -->
+                            <div id="filterSourceSuggestions" class="glass-dropdown absolute left-0 right-0 mt-1 max-h-48 overflow-y-auto z-30 hidden custom-scrollbar">
+                                <!-- Options will be injected here -->
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Time Sorting Dropdown - Apple Glass Style -->
+                    <div class="flex items-center space-x-2 pt-1 border-t border-slate-100/50">
+                        <span class="text-slate-400 text-[10px] font-bold shrink-0 flex items-center space-x-1">
+                            <i class="fa-solid fa-arrow-down-up-wide text-[9px] text-brand-500"></i>
+                            <span>排序</span>
+                        </span>
+                        <select id="filterSort" class="glass-select flex-1 text-xs px-2.5 py-1.5 rounded-xl bg-white/40">
+                            <option value="desc" selected>时间倒序 (最新优先)</option>
+                            <option value="asc">时间正序 (最早优先)</option>
+                        </select>
+                    </div>
+                </div>
+
+                <!-- Create New Buttons Group - Apple Glass Style -->
+                <div class="px-4 py-2 grid grid-cols-2 gap-2 shrink-0">
+                    <button onclick="checkAndSwitch(() => startNewQuestion())" class="glass-btn-primary flex items-center justify-center space-x-1.5 py-2.5 rounded-xl font-medium text-xs">
+                        <i class="fa-solid fa-plus text-[10px]"></i>
+                        <span>录入单题</span>
+                    </button>
+                    <button onclick="openImportModal()" class="glass-btn flex items-center justify-center space-x-1.5 py-2.5 rounded-xl font-medium text-xs text-slate-600">
+                        <i class="fa-solid fa-file-import text-[10px]"></i>
+                        <span>导入试卷</span>
+                    </button>
+                </div>
+
+                <!-- Sidebar Navigation Tabs - Apple Glass Style -->
+                <div class="px-4 pt-1.5 pb-0 shrink-0">
+                    <div class="glass-tab flex space-x-1">
+                        <button onclick="switchSidebarTab('bank')" id="sidebarTab-bank" class="glass-tab-item active flex-1 py-2.5 rounded-lg text-[11px] font-semibold text-center flex items-center justify-center space-x-1.5">
+                            <i class="fa-solid fa-database text-[10px]"></i>
+                            <span>本地题库</span>
+                        </button>
+                        <button onclick="switchSidebarTab('drafts')" id="sidebarTab-drafts" class="glass-tab-item flex-1 py-2.5 rounded-lg text-[11px] font-semibold text-center flex items-center justify-center space-x-1.5">
+                            <i class="fa-solid fa-box-archive text-[10px]"></i>
+                            <span>草稿箱 (<span id="draftCount">0</span>)</span>
+                        </button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Vertical Resizer inside Sidebar -->
+            <div id="sidebar-resizer-v" class="h-[3px] hover:h-[5px] bg-slate-200/80 hover:bg-brand-500 cursor-row-resize w-full transition-all duration-150 shrink-0 z-20"></div>
+
+            <!-- Questions List Scroll -->
+            <div class="flex-1 overflow-y-auto px-2 pb-6 space-y-2" id="questionsList">
+                <!-- Question Cards injection -->
+                <div class="p-6 text-center text-slate-400 text-sm">
+                    <i class="fa-solid fa-circle-notch animate-spin mb-2 text-brand-500"></i>
+                    <p>正在获取题库...</p>
+                </div>
+            </div>
+
+            <!-- Sidebar Pagination Controls -->
+            <div id="sidebarPagination" class="shrink-0 border-t border-slate-100 bg-white/40 backdrop-blur-md px-3 py-1.5 flex flex-col space-y-1 select-none">
+                <!-- Injected dynamically -->
+            </div>
+        </section>
+
+        <!-- Resizer Left -->
+        <div id="resizer-1" class="w-[3px] hover:w-[5px] bg-slate-200/80 hover:bg-brand-500 cursor-col-resize h-full transition-all duration-150 shrink-0 z-20"></div>
+
+        <!-- Center Panel: Question Editor & Workflow - Apple Glass Style -->
+        <section class="flex flex-col h-full overflow-y-auto" style="flex: 1 1 0%; min-width: 0px; background: var(--apple-bg);" id="editorSection">
+            <!-- Sticky Title bar - Apple Glass Style -->
+            <div class="sticky top-0 glass-panel px-6 py-4 flex items-center justify-between z-10">
+                <h2 class="font-semibold text-lg text-slate-800 flex items-center space-x-2">
+                    <i class="fa-solid fa-pen-nib text-brand-500 text-sm"></i>
+                    <span id="editorTitle">录入新数学题</span>
+                </h2>
+                <div class="flex items-center space-x-3">
+                    <button onclick="clearEditor()" class="text-xs text-slate-400 hover:text-red-500 transition-colors px-2 py-1 rounded-lg hover:bg-red-50">
+                        清空草稿
+                    </button>
+                    <button onclick="saveQuestion()" class="glass-btn-primary px-5 py-2 rounded-xl font-medium text-sm flex items-center space-x-1.5">
+                        <i class="fa-solid fa-floppy-disk"></i>
+                        <span>保存</span>
+                    </button>
+                </div>
+            </div>
+
+            <div class="p-6 space-y-6 max-w-4xl mx-auto w-full">
+
+                <!-- 1. Metadata / Classification Info - Compact Layout -->
+                <div class="glass-panel p-4 rounded-2xl space-y-3">
+                    <h3 class="text-sm font-semibold text-slate-500 flex items-center space-x-2">
+                        <i class="fa-solid fa-tags text-slate-400"></i>
+                        <span>分类信息</span>
+                    </h3>
+
+                    <!-- Row 1: Type + Difficulty + Source -->
+                    <div class="grid grid-cols-3 gap-3">
+                        <div>
+                            <label class="block text-[11px] font-medium text-slate-500 mb-1">题型</label>
+                            <select id="editQType" class="w-full px-2.5 py-2 rounded-lg text-xs border border-slate-200 focus:border-brand-500 focus:ring-1 focus:ring-brand-100 transition-all bg-white">
+                                <option value="single_choice">单选题</option>
+                                <option value="multi_choice">多选题</option>
+                                <option value="fill_in_blank">填空题</option>
+                                <option value="detailed_answer">解答题</option>
+                            </select>
+                        </div>
+                        <div>
+                            <label class="block text-[11px] font-medium text-slate-500 mb-1">难度</label>
+                            <select id="editDifficulty" class="w-full px-2.5 py-2 rounded-lg text-xs border border-slate-200 focus:border-brand-500 focus:ring-1 focus:ring-brand-100 transition-all bg-white">
+                                <option value="easy_error">易错题</option>
+                                <option value="challenge">挑战题</option>
+                                <option value="qiangji">强基题</option>
+                            </select>
+                        </div>
+                        <div>
+                            <label class="block text-[11px] font-medium text-slate-500 mb-1">来源</label>
+                            <input type="text" id="editSource" placeholder="如：2025全国甲卷"
+                                   class="w-full px-2.5 py-2 rounded-lg text-xs border border-slate-200 focus:border-brand-500 focus:ring-1 focus:ring-brand-100 transition-all">
+                        </div>
+                    </div>
+
+                    <!-- Row 2: Cascade Selection -->
+                    <div class="grid grid-cols-3 gap-3">
+                        <div>
+                            <label class="block text-[11px] font-medium text-slate-500 mb-1">学段</label>
+                            <select id="editCompulsory" class="w-full px-2.5 py-2 rounded-lg text-xs border border-slate-200 focus:border-brand-500 focus:ring-1 focus:ring-brand-100 transition-all bg-white">
+                                <option value="">选择学段</option>
+                            </select>
+                        </div>
+                        <div>
+                            <label class="block text-[11px] font-medium text-slate-500 mb-1">章节</label>
+                            <select id="editChapter" class="w-full px-2.5 py-2 rounded-lg text-xs border border-slate-200 focus:border-brand-500 focus:ring-1 focus:ring-brand-100 transition-all bg-white" disabled>
+                                <option value="">先选学段</option>
+                            </select>
+                        </div>
+                        <div>
+                            <label class="block text-[11px] font-medium text-slate-500 mb-1">小节</label>
+                            <select id="editKnowledge" class="w-full px-2.5 py-2 rounded-lg text-xs border border-slate-200 focus:border-brand-500 focus:ring-1 focus:ring-brand-100 transition-all bg-white" disabled>
+                                <option value="">先选章节</option>
+                            </select>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 2. Question Content Editor & Drag Illustration Upload - Apple Glass Style -->
+                <div class="glass-panel p-5 rounded-2xl space-y-4">
+                    <div class="flex justify-between items-center">
+                        <h3 class="text-sm font-semibold text-slate-500 flex items-center space-x-2">
+                            <i class="fa-solid fa-file-signature text-slate-400"></i>
+                            <span>题干内容录入</span>
+                        </h3>
+                        <span class="text-xs text-slate-400 flex items-center space-x-1">
+                            <i class="fa-solid fa-info-circle"></i>
+                            <span>支持混合公式与 Markdown 排版</span>
+                        </span>
+                    </div>
+
+                    <!-- Horizontal tabs for Question Content - Apple Glass Style -->
+                    <div class="glass-tab flex gap-1 text-sm p-1">
+                        <button type="button" onclick="switchContentTab('ocr')" id="contentTabBtn-ocr" class="glass-tab-item active flex-1 py-2 px-3 rounded-lg font-medium text-xs flex items-center justify-center space-x-1.5 text-brand-600">
+                            <i class="fa-solid fa-camera text-brand-500"></i>
+                            <span>OCR 图像识别</span>
+                        </button>
+                        <button type="button" onclick="switchContentTab('manual')" id="contentTabBtn-manual" class="glass-tab-item flex-1 py-2 px-3 rounded-lg font-medium text-xs flex items-center justify-center space-x-1.5 text-slate-600">
+                            <i class="fa-solid fa-keyboard"></i>
+                            <span>手动输入</span>
+                        </button>
+                    </div>
+
+                    <!-- Tabs content region -->
+                    <div class="bg-white/50 rounded-xl border border-slate-100 p-4 min-h-[140px]">
+                        
+                        <!-- TAB 1: Content OCR -->
+                        <div id="contentTabContent-ocr" class="space-y-4">
+                            <div class="flex items-center justify-between">
+                                <p class="text-xs text-slate-500 flex items-center space-x-1.5 font-medium">
+                                    <i class="fa-solid fa-camera text-brand-500"></i>
+                                    <span>拖拽或上传题目截图</span>
+                                </p>
+                                <div class="flex items-center space-x-1.5">
+                                    <span class="text-[10px] text-slate-400">临时识图引擎:</span>
+                                    <select id="contentOcrEngine" onchange="updateOcrPlaceholder('content')" class="glass-select text-[10px] px-2 py-1 rounded-lg">
+                                        <option value="default">默认配置</option>
+                                        <option value="siliconflow">SiliconFlow 硅基流动云端 (⚡更精准)</option>
+                                        <option value="ali_bailian">阿里百炼 (⚡Qwen3-VL 极速响应)</option>
+                                        <option value="simpletex">SimpleTex 云端 (数学公式强力)</option>
+                                    </select>
+                                </div>
+                            </div>
+                            
+                            <!-- Content OCR Dropzone -->
+                            <div id="contentOcrDropZone" tabindex="0" class="border-2 border-dashed border-slate-200 hover:border-brand-400 focus:outline-none focus:ring-2 focus:ring-brand-500/20 focus:border-brand-500 bg-white rounded-xl p-5 text-center cursor-pointer transition-all duration-300 relative overflow-hidden flex flex-col items-center justify-center min-h-[120px]">
+                                <input type="file" id="contentOcrFileInput" accept="image/*" class="hidden">
+                                <!-- Placeholder view -->
+                                <div id="contentOcrPlaceholder" class="space-y-1.5 flex flex-col items-center">
+                                    <i class="fa-solid fa-crop-simple text-slate-300 text-3xl mb-0.5 animate-pulse"></i>
+                                    <p class="text-xs text-slate-500 font-medium">将题目截图拖拽到此，或点击上传 (支持截图粘贴)</p>
+                                    <p id="contentOcrPlaceholderSub" class="text-[10px] text-slate-400 mt-1">调用 SiliconFlow 硅基流动云端多模态引擎</p>
+                                </div>
+                                <!-- Preview view -->
+                                <div id="contentOcrPreviewContainer" class="hidden w-full flex flex-col items-center space-y-2 py-1">
+                                    <img id="contentOcrPreviewImg" src="" alt="OCR Preview" class="max-h-[140px] rounded-lg border border-slate-200 object-contain shadow-sm bg-slate-50 cursor-zoom-in" onclick="event.stopPropagation(); if (!contentOcrAbortController) zoomImage(this.src);">
+                                    <span id="contentOcrStatusBadge" class="text-[10px] text-brand-600 bg-brand-50 px-2.5 py-0.5 rounded-full font-bold">已加载截图预览 (点击可更换图片)</span>
+                                    <div id="contentOcrStatusLoadingText" class="hidden text-xs text-slate-500 font-medium flex items-center justify-center space-x-1.5 mt-1">
+                                        <i class="fa-solid fa-spinner animate-spin text-brand-500"></i>
+                                        <span>正在解析......</span>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <!-- Content OCR Loading -->
+                            <div id="contentOcrLoadingIndicator" class="hidden glass-card rounded-xl p-4 text-center space-y-2">
+                                <i class="fa-solid fa-spinner animate-spin text-brand-500 text-xl"></i>
+                                <p class="text-xs text-slate-500 font-medium">正在解析图片中的复杂公式与混排文字... 请稍候</p>
+                            </div>
+
+                            <!-- Content OCR Result Code box -->
+                            <div id="contentOcrOutputBox" class="hidden space-y-3">
+                                <div class="flex justify-between items-center">
+                                    <span class="text-xs font-semibold text-slate-500"><i class="fa-solid fa-square-check text-green-500 mr-1"></i>题干 OCR 识别结果：</span>
+                                    <span id="contentOcrConfBadge" class="text-[10px] bg-slate-100 px-2 py-0.5 rounded text-slate-500 font-mono">置信度: --</span>
+                                </div>
+                                <pre id="contentOcrResultText" class="p-3 bg-slate-900 text-slate-100 rounded-xl overflow-x-auto text-xs font-mono whitespace-pre-wrap select-text"></pre>
+                            </div>
+                        </div>
+
+                        <!-- TAB 2: Content Manual -->
+                        <div id="contentTabContent-manual" class="space-y-3 hidden">
+                            <p class="text-xs text-slate-400"><i class="fa-solid fa-circle-info"></i> 您可以直接在下方的题干编辑框中直接手写 LaTeX/Markdown 混合内容。配图可以直接上传插图进行定位。</p>
+                            <div class="flex flex-wrap gap-1.5">
+                                <span class="text-[10px] bg-slate-100 text-slate-650 px-2.5 py-1 rounded-md cursor-pointer hover:bg-slate-200 font-mono" onclick="insertContentHelper('$x^2$')">$x^2$ (行内公式)</span>
+                                <span class="text-[10px] bg-slate-100 text-slate-650 px-2.5 py-1 rounded-md cursor-pointer hover:bg-slate-200 font-mono" onclick="insertContentHelper('\\frac{a}{b}')">$\frac{a}{b}$ (分数)</span>
+                                <span class="text-[10px] bg-slate-100 text-slate-650 px-2.5 py-1 rounded-md cursor-pointer hover:bg-slate-200 font-mono" onclick="insertContentHelper('\\sqrt{x}')">$\sqrt{x}$ (开根)</span>
+                                <span class="text-[10px] bg-slate-100 text-slate-650 px-2.5 py-1 rounded-md cursor-pointer hover:bg-slate-200 font-mono" onclick="insertContentHelper('\\int_{a}^{b} f(x)dx')">$\int_a^b$ (积分)</span>
+                                <span class="text-[10px] bg-slate-100 text-slate-650 px-2.5 py-1 rounded-md cursor-pointer hover:bg-slate-200 font-mono" onclick="insertContentHelper('\\vec{a}')">$\vec{a}$ (向量)</span>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Persistent Textarea & Preview -->
+                    <div class="border-t border-slate-100 pt-5 space-y-3">
+                        <div class="flex justify-between items-center">
+                            <label class="block text-xs font-bold text-slate-600 uppercase tracking-wider flex items-center space-x-1.5">
+                                <span class="bg-brand-50 text-brand-700 border border-brand-200 rounded-md px-2 py-0.5 text-[11px] font-medium">终审题干</span>
+                                <span>题干编辑框 (核准录入)</span>
+                            </label>
+                            <span class="text-[10px] text-amber-500 bg-amber-50 px-2.5 py-0.5 rounded-full font-medium"><i class="fa-solid fa-triangle-exclamation mr-1"></i>修改或识别后，右侧试卷将即时渲染排版</span>
+                        </div>
+
+                        <div class="grid grid-cols-1 md:grid-cols-2 gap-4 items-stretch">
+                            <!-- Left: Text Area Input & Illustration upload -->
+                            <div class="space-y-3 flex flex-col">
+                                <textarea id="editContent" rows="8" placeholder="在此输入题干内容...&#10;行内公式使用 $...$，行间公式使用 $$...$$&#10;例如：已知集合 $A = \{x | x^2 - 3x + 2 = 0\}$..."
+                                          class="glass-input w-full p-4 rounded-xl outline-none focus:border-brand-500 focus:ring-1 focus:ring-brand-500 font-mono text-sm leading-relaxed resize-y flex-1 min-h-[200px]"></textarea>
+
+                                <!-- Illustration Drag Zone -->
+                                <div class="space-y-2">
+                                    <label class="block text-xs font-semibold text-slate-400 flex items-center space-x-1">
+                                        <i class="fa-solid fa-image"></i>
+                                        <span>题目配图 / 插图</span>
+                                    </label>
+                                    <div id="illustrationDropZone" tabindex="0" class="border-2 border-dashed border-slate-200 hover:border-brand-400 focus:outline-none focus:ring-2 focus:ring-brand-500/20 focus:border-brand-500 bg-white rounded-xl p-4 text-center cursor-pointer transition-all duration-300">
+                                        <input type="file" id="illustrationFileInput" accept="image/*" class="hidden">
+                                        <i class="fa-solid fa-cloud-arrow-up text-slate-300 text-2xl mb-1"></i>
+                                        <p class="text-xs text-slate-500 font-medium">拖拽插图到此，或点击上传 (支持粘贴剪贴板截图)</p>
+                                        <p class="text-[10px] text-slate-400 mt-0.5">上传后将自动生成插图标签</p>
+                                    </div>
+
+                                    <!-- Thumbnails list -->
+                                    <div id="illustrationsList" class="flex flex-wrap gap-2 pt-1">
+                                        <!-- Dynamic injected uploaded illustration badges -->
+                                    </div>
+                                </div>
+                            </div>
+
+                            <!-- Right: Live Realtime Preview (KaTeX) -->
+                            <div class="flex flex-col border border-slate-200 rounded-xl bg-white overflow-hidden">
+                                <div class="px-3.5 py-2 bg-slate-50 border-b flex justify-between items-center text-xs font-medium text-slate-500">
+                                    <span><i class="fa-solid fa-eye text-slate-400 mr-1"></i>实时排版预览</span>
+                                    <span class="text-[10px] text-brand-500 bg-brand-50 px-2 py-0.5 rounded-full">KaTeX 驱动</span>
+                                </div>
+                                <div id="contentPreview" class="flex-1 p-4 overflow-y-auto text-sm leading-relaxed min-h-[200px] preview-box select-text">
+                                    <p class="text-slate-400 italic">在左侧框中输入，此处将实时展示最终排版效果...</p>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 3. Answer & Solution -->
+                <div class="bg-white border border-slate-200 p-5 rounded-2xl space-y-4">
+                    <h3 class="text-sm font-semibold text-slate-500 flex items-center space-x-2">
+                        <i class="fa-solid fa-list-check text-slate-400"></i>
+                        <span>解析录入</span>
+                    </h3>
+
+                    <!-- Tab Buttons Header -->
+                    <div class="flex gap-1 text-sm p-1 bg-slate-100 rounded-lg">
+                        <button type="button" onclick="switchWorkflowTab('ai')" id="tabBtn-ai" class="flex-1 py-2 px-3 rounded-lg font-medium text-xs flex items-center justify-center space-x-1.5 bg-white text-brand-600 shadow-sm border border-slate-200">
+                            <i class="fa-solid fa-wand-magic-sparkles text-brand-500"></i>
+                            <span>AI 智能生成</span>
+                        </button>
+                        <button type="button" onclick="switchWorkflowTab('ocr')" id="tabBtn-ocr" class="flex-1 py-2 px-3 rounded-lg font-medium text-xs flex items-center justify-center space-x-1.5 text-slate-600 hover:text-slate-800 hover:bg-white/50 transition-all">
+                            <i class="fa-solid fa-camera text-slate-400"></i>
+                            <span>OCR 图像识别</span>
+                        </button>
+                        <button type="button" onclick="switchWorkflowTab('image')" id="tabBtn-image" class="flex-1 py-2 px-3 rounded-lg font-medium text-xs flex items-center justify-center space-x-1.5 text-slate-600 hover:text-slate-800 hover:bg-white/50 transition-all">
+                            <i class="fa-solid fa-images text-slate-400"></i>
+                            <span>图片答案</span>
+                        </button>
+                    </div>
+
+                    <!-- Tab Content Panel -->
+                    <div class="bg-white border border-slate-200 rounded-xl p-4 min-h-[160px]">
+
+                        <!-- TAB 1: AI Autogen -->
+                        <div id="tabContent-ai" class="space-y-4">
+                            <div class="space-y-2">
+                                <label class="block text-xs font-medium text-slate-500">补充引导指令 (可选)</label>
+                                <input type="text" id="aiCustomPrompt" placeholder="可输入提示词，例如：'提供两种解答方法'，'用解析几何建系解答'..."
+                                       class="w-full px-3 py-2.5 rounded-xl text-xs border border-slate-200 focus:border-brand-500 focus:ring-2 focus:ring-brand-100 transition-all">
+                            </div>
+
+                            <!-- AI Config Controls -->
+                            <div class="bg-slate-50 border border-slate-200 grid grid-cols-1 md:grid-cols-2 gap-3 p-3 rounded-xl">
+                                <div class="space-y-1.5">
+                                    <label class="block text-[11px] font-semibold text-slate-500 flex items-center space-x-1">
+                                        <i class="fa-solid fa-cube text-slate-400"></i>
+                                        <span>大模型选型</span>
+                                    </label>
+                                    <select id="aiModelSelect" class="w-full h-9 px-2.5 bg-white rounded-xl text-xs border border-slate-200 focus:border-brand-500 focus:ring-2 focus:ring-brand-100 transition-all">
+                                        <option value="deepseek-v4-pro" selected>DeepSeek-V4-Pro (智能教研满血版)</option>
+                                        <option value="deepseek-v4-flash">DeepSeek-V4-Flash (极速预览版)</option>
+                                        <option value="qwen3.7-max">Ali Bailian qwen3.7-max (阿里旗舰大模型)</option>
+                                    </select>
+                                </div>
+                                <div class="space-y-1.5">
+                                    <label class="block text-[11px] font-semibold text-slate-500 flex items-center space-x-1">
+                                        <i class="fa-solid fa-brain text-slate-400"></i>
+                                        <span>推理模式控制</span>
+                                    </label>
+                                    <div class="flex items-center justify-between h-9 px-2.5 bg-white border border-slate-200 rounded-xl">
+                                        <span class="text-[11px] font-medium text-slate-600 flex items-center space-x-1">
+                                            <i id="thinkingIcon" class="fa-solid fa-brain text-brand-500 animate-pulse"></i>
+                                            <span id="thinkingLabel">深度思考</span>
+                                        </span>
+                                        <label class="relative inline-flex items-center cursor-pointer select-none">
+                                            <input type="checkbox" id="aiThinkingToggle" checked onchange="toggleThinkingStyle()" class="sr-only peer">
+                                            <div class="w-9 h-5 bg-slate-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full rtl:peer-checked:after:-translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:start-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-brand-500"></div>
+                                        </label>
+                                    </div>
+                                </div>
+                            </div>
+                            
+                            <div class="flex items-center justify-between">
+                                <span class="text-xs text-slate-400"><i class="fa-solid fa-wand-magic-sparkles text-brand-500"></i> 极速调用 DeepSeek 专属数学推理大模型，自动获取超清推导。</span>
+                                <button type="button" onclick="triggerAISolve()" id="aiSolveBtn" class="px-5 py-2.5 rounded-xl font-medium text-xs flex items-center space-x-1.5 bg-brand-600/80 hover:bg-brand-600 text-white backdrop-blur-sm border border-brand-500/20 shadow-sm transition-all">
+                                    <i class="fa-solid fa-wand-magic-sparkles"></i>
+                                    <span>一键生成深度解析</span>
+                                </button>
+                            </div>
+                            
+                            <!-- Loading indicator -->
+                            <div id="aiLoadingIndicator" class="hidden bg-slate-50 border border-slate-200 rounded-xl p-6 text-center space-y-3">
+                                <div class="flex items-center justify-center space-x-1">
+                                    <div class="h-2.5 w-2.5 rounded-full bg-brand-500 animate-bounce"></div>
+                                    <div class="h-2.5 w-2.5 rounded-full bg-indigo-500 animate-bounce [animation-delay:0.2s]"></div>
+                                    <div class="h-2.5 w-2.5 rounded-full bg-violet-500 animate-bounce [animation-delay:0.4s]"></div>
+                                </div>
+                                <p id="aiLoadingText" class="text-xs text-slate-500 font-medium">DeepSeek 正在拼命思索、组织 LaTeX 精细步骤... (可能需要10-25秒，请稍后)</p>
+                                <div class="w-full bg-slate-200 h-1 rounded-full overflow-hidden">
+                                    <div class="bg-brand-500 h-1 w-1/3 animate-[pulse_1s_infinite] rounded-full"></div>
+                                </div>
+                            </div>
+
+                            <!-- AI Output box -->
+                            <div id="aiOutputBox" class="hidden space-y-3">
+                                <label class="block text-xs font-semibold text-brand-600 flex items-center space-x-1">
+                                    <i class="fa-solid fa-robot"></i>
+                                    <span>AI 解析生成结果：</span>
+                                </label>
+                                <pre id="aiResultText" class="p-4 bg-slate-900 text-slate-100 rounded-xl overflow-x-auto text-xs font-mono max-h-[300px] whitespace-pre-wrap select-text"></pre>
+                                <!-- AI auto-fill active, manual button removed -->
+                            </div>
+                        </div>
+
+                        <!-- TAB 2: OCR Recognition -->
+                        <div id="tabContent-ocr" class="space-y-4 hidden">
+                            <div class="flex items-center justify-between">
+                                <p class="text-xs text-slate-500 flex items-center space-x-1.5 font-medium">
+                                    <i class="fa-solid fa-camera text-brand-500"></i>
+                                    <span>拖拽或上传答案截图</span>
+                                </p>
+                                <div class="flex items-center space-x-1.5">
+                                    <span class="text-[10px] text-slate-400">临时识图引擎:</span>
+                                    <select id="answerOcrEngine" onchange="updateOcrPlaceholder('answer')" class="glass-select text-[10px] px-2 py-1 rounded-lg">
+                                        <option value="default">默认配置</option>
+                                        <option value="siliconflow">SiliconFlow 硅基流动云端 (⚡更精准)</option>
+                                        <option value="ali_bailian">阿里百炼 (⚡Qwen3-VL 极速响应)</option>
+                                        <option value="simpletex">SimpleTex 云端 (数学公式强力)</option>
+                                    </select>
+                                </div>
+                            </div>
+                            
+                            <!-- OCR Drag Upload Area -->
+                            <div id="ocrDropZone" tabindex="0" class="border-2 border-dashed border-slate-200 hover:border-brand-400 focus:outline-none focus:ring-2 focus:ring-brand-500/20 focus:border-brand-500 bg-white rounded-xl p-5 text-center cursor-pointer transition-all duration-300 relative overflow-hidden flex flex-col items-center justify-center min-h-[120px]">
+                                <input type="file" id="ocrFileInput" accept="image/*" class="hidden">
+                                <!-- Placeholder view -->
+                                <div id="ocrPlaceholder" class="space-y-1.5 flex flex-col items-center">
+                                    <i class="fa-solid fa-crop-simple text-slate-300 text-3xl mb-1.5 animate-pulse"></i>
+                                    <p class="text-xs text-slate-500 font-medium">将答案或题目截图拖拽到此，或点击上传 (支持粘贴)</p>
+                                    <p id="answerOcrPlaceholderSub" class="text-[10px] text-slate-400 mt-1">遵循系统 API 设置中的默认引擎</p>
+                                </div>
+                                <!-- Preview view -->
+                                <div id="ocrPreviewContainer" class="hidden w-full flex flex-col items-center space-y-2 py-1">
+                                    <img id="ocrPreviewImg" src="" alt="OCR Preview" class="max-h-[140px] rounded-lg border border-slate-200 object-contain shadow-sm bg-slate-50 cursor-zoom-in" onclick="event.stopPropagation(); if (!answerOcrAbortController) zoomImage(this.src);">
+                                    <span id="ocrStatusBadge" class="text-[10px] text-brand-600 bg-brand-50 px-2.5 py-0.5 rounded-full font-bold">已加载截图预览 (点击可更换图片)</span>
+                                    <div id="ocrStatusLoadingText" class="hidden text-xs text-slate-500 font-medium flex items-center justify-center space-x-1.5 mt-1">
+                                        <i class="fa-solid fa-spinner animate-spin text-brand-500"></i>
+                                        <span>正在解析......</span>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <!-- OCR Loading -->
+                            <div id="ocrLoadingIndicator" class="hidden bg-slate-50 border border-slate-200 rounded-xl p-4 text-center space-y-2">
+                                <i class="fa-solid fa-cog animate-spin text-brand-500 text-xl"></i>
+                                <p class="text-xs text-slate-500">正在与服务器端智能识图引擎通信，解析公式与文本... 请稍候</p>
+                            </div>
+
+                            <!-- OCR Result Box -->
+                            <div id="ocrOutputBox" class="hidden space-y-3">
+                                <div class="flex justify-between items-center">
+                                    <span class="text-xs font-semibold text-slate-500"><i class="fa-solid fa-square-check text-green-500 mr-1"></i>OCR 识别结果：</span>
+                                    <span id="ocrConfBadge" class="text-[10px] bg-slate-100 px-2 py-0.5 rounded text-slate-500 font-mono">置信度: --</span>
+                                </div>
+                                <pre id="ocrResultText" class="p-3 bg-slate-900 text-slate-100 rounded-xl overflow-x-auto text-xs font-mono whitespace-pre-wrap select-text"></pre>
+                                <!-- OCR auto-fill active, manual button removed -->
+                            </div>
+                        </div>
+
+                        <!-- TAB 3: Image Answer -->
+                        <div id="tabContent-image" class="space-y-4 hidden">
+                            <p class="text-xs text-slate-400 flex items-center space-x-1">
+                                <i class="fa-solid fa-images text-brand-500 mr-1"></i>
+                                <span>上传或粘贴多张图片，不进行 OCR 识别，直接作为本题解答的图片内容。</span>
+                            </p>
+                            
+                            <!-- Image Answer Drag Upload Area -->
+                            <div id="imageAnswerDropZone" tabindex="0" class="border-2 border-dashed border-slate-200 hover:border-brand-400 focus:outline-none focus:ring-2 focus:ring-brand-500/20 focus:border-brand-500 bg-white rounded-xl p-5 text-center cursor-pointer transition-all duration-300">
+                                <input type="file" id="imageAnswerFileInput" accept="image/*" multiple class="hidden">
+                                <i class="fa-solid fa-images text-slate-300 text-3xl mb-1.5 animate-pulse"></i>
+                                <p class="text-xs text-slate-500 font-medium">将答案截图拖拽到此，或点击上传 (支持多选与直接粘贴)</p>
+                                <p class="text-[10px] text-slate-400 mt-1">直接以图片形式保存为答案</p>
+                            </div>
+
+                            <!-- Uploaded Answer Images list -->
+                            <div class="space-y-2">
+                                <label class="block text-xs font-semibold text-slate-500">已上传的图片解答 (在终审框中编辑/移除时，以下列表将自动同步)：</label>
+                                <div id="imageAnswersList" class="flex flex-wrap gap-2 pt-1 min-h-[42px] p-2 bg-slate-50 border border-slate-200 rounded-xl">
+                                    <!-- Dynamic injected uploaded answer image badges -->
+                                    <p id="noImageAnswerPlaceholder" class="text-xs text-slate-400 italic w-full text-center py-2">暂无已上传的图片解答</p>
+                                </div>
+                            </div>
+                        </div>
+
+                    </div>
+
+                    <!-- 4. Persistent Final Review Editor - Apple Glass Style -->
+                    <div class="apple-divider my-5"></div>
+                    <div class="space-y-3">
+                        <div class="flex justify-between items-center">
+                            <label class="block text-xs font-bold text-slate-600 uppercase tracking-wider flex items-center space-x-1">
+                                <span class="bg-brand-50 text-brand-700 border border-brand-200 rounded-md px-2 py-0.5 text-[11px] mr-1.5 font-medium">最终结果</span>
+                                <span>终审编辑框 (入库前核准)</span>
+                            </label>
+                            <span class="text-[10px] text-amber-500 bg-amber-50 px-2.5 py-0.5 rounded-full font-medium"><i class="fa-solid fa-triangle-exclamation mr-1"></i>以上三种来源均可汇总并在此核改</span>
+                        </div>
+
+                        <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                            <!-- Left: Final Text Area -->
+                            <textarea id="editAnswerMarkdown" rows="10" placeholder="在此处精细排版或合并您的答案与详细解析过程... 支持 MathJax / KaTeX 公式、TikZ 绘图块、Markdown 段落..."
+                                      class="w-full p-4 rounded-xl font-mono text-sm leading-relaxed resize-y border border-slate-200 focus:border-brand-500 focus:ring-2 focus:ring-brand-100 transition-all"></textarea>
+                            
+                            <!-- Right: Final Preview -->
+                            <div class="flex flex-col border border-slate-200 rounded-xl bg-white overflow-hidden">
+                                <div class="px-3.5 py-2 bg-indigo-50/60 border-b flex justify-between items-center text-xs font-medium text-slate-500">
+                                    <span><i class="fa-solid fa-spell-check text-slate-400 mr-1"></i>解析最终排版预览</span>
+                                    <span class="text-[10px] text-indigo-500 bg-indigo-50 px-2 py-0.5 rounded-full">实时同步</span>
+                                </div>
+                                <div id="answerPreview" class="flex-1 p-4 overflow-y-auto text-sm leading-relaxed max-h-[360px] min-h-[220px] preview-box select-text">
+                                    <p class="text-slate-400 italic">在左侧输入解析内容，此处将实时展示极其精美的 LaTeX 排版...</p>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- 5. Review & Question Association - Apple Glass Style -->
+                    <div class="apple-divider my-5"></div>
+                    <div class="space-y-3">
+                        <div class="flex justify-between items-center">
+                            <label class="block text-xs font-bold text-slate-600 uppercase tracking-wider flex items-center space-x-1">
+                                <span class="bg-indigo-50 text-indigo-700 border border-indigo-200 rounded-md px-2 py-0.5 text-[11px] mr-1.5 font-medium">附加信息</span>
+                                <span>评述与关联题目 (可选填)</span>
+                            </label>
+                        </div>
+
+                        <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                            <!-- Left: Review Input - Apple Glass Style -->
+                            <div class="space-y-1.5">
+                                <label class="block text-[11px] font-semibold text-slate-500 flex items-center space-x-1">
+                                    <i class="fa-solid fa-comment-dots text-indigo-500 mr-1"></i>判桃批注
+                                </label>
+                                <textarea id="editReview" rows="3" placeholder="在此输入本题教学思考、解析评注（允许空白，将实时在预览区展示）..."
+                                          class="w-full p-3.5 rounded-xl text-xs leading-relaxed resize-y font-mono border border-slate-200 focus:border-brand-500 focus:ring-2 focus:ring-brand-100 transition-all"></textarea>
+                            </div>
+                            
+                            <!-- Right: Association Selector - Apple Glass Style -->
+                            <div class="space-y-1.5 max-w-sm">
+                                <label class="block text-[11px] font-semibold text-slate-500 flex items-center space-x-1">
+                                    <i class="fa-solid fa-link text-brand-500 mr-1"></i>关联题库中的其他题目
+                                </label>
+                                <div class="flex space-x-2 items-center">
+                                    <input type="number" id="editRelatedQuestionNum" placeholder="编号" class="w-16 h-10 px-2 rounded-xl text-xs text-center border border-slate-200 focus:border-brand-500 focus:ring-2 focus:ring-brand-100 transition-all" min="1" title="输入要关联题目的显示编号数字">
+                                    <select id="editRelatedQuestion" class="flex-1 min-w-0 h-10 px-2.5 rounded-xl text-xs truncate border border-slate-200 focus:border-brand-500 focus:ring-2 focus:ring-brand-100 transition-all">
+                                        <option value="">-- 选择要关联的题目 (可选) --</option>
+                                    </select>
+                                    <button type="button" onclick="clearRelatedQuestion()" class="h-10 px-2.5 rounded-xl text-xs flex items-center justify-center shrink-0 text-red-400 hover:text-red-600 hover:bg-red-50 border border-red-200 transition-all" title="清除关联">
+                                        <i class="fa-solid fa-link-slash"></i>
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                </div>
+
+            </div>
+        </section>
+
+        <!-- Resizer Right -->
+        <div id="resizer-2" class="w-[3px] hover:w-[5px] bg-slate-200/80 hover:bg-brand-500 cursor-col-resize h-full transition-all duration-150 shrink-0 z-20"></div>
+
+        <!-- Right Panel: Full Premium Live Preview (Paper View) - Apple Glass Style -->
+        <section class="glass-sidebar flex flex-col h-full shrink-0 overflow-y-auto" style="width: 450px; min-width: 0px;" id="previewSection">
+            <!-- Title Bar - Apple Glass Style -->
+            <div class="sticky top-0 glass-panel px-5 py-4 flex justify-between items-center z-10">
+                <span class="font-bold text-sm tracking-wide text-slate-600 flex items-center space-x-1.5 uppercase">
+                    <i class="fa-solid fa-file-invoice text-indigo-500"></i>
+                    <span>题目预览</span>
+                </span>
+                <span class="glass-badge text-[10px] text-indigo-600 px-2.5 py-1 rounded-full font-bold">LIVE PREVIEW</span>
+            </div>
+
+            <!-- Beautiful Paper View Card -->
+            <div class="p-6">
+                <div class="border border-slate-300 rounded-2xl shadow-lg bg-white overflow-hidden border-t-8 border-t-brand-600 min-h-[500px] flex flex-col select-text">
+                    <!-- School Paper Header -->
+                    <div class="p-6 text-center border-b border-dashed border-slate-200 bg-slate-50/50">
+                        <h4 class="font-extrabold text-base tracking-wide text-slate-800" id="paperHeaderTitle">本地教研系统</h4>
+                        <p class="text-[10px] text-slate-400 mt-1 uppercase font-semibold tracking-widest font-['Outfit']">Mathematics Question Document</p>
+                    </div>
+
+                    <!-- Question Body inside Document -->
+                    <div class="p-6 flex-1 space-y-6">
+                        <!-- Badges -->
+                        <div class="flex flex-wrap gap-1.5" id="paperBadges">
+                            <span class="text-[10px] font-bold px-2 py-0.5 rounded-full bg-slate-100 text-slate-500">题型：未定</span>
+                            <span class="text-[10px] font-bold px-2 py-0.5 rounded-full bg-slate-100 text-slate-500">难度：未定</span>
+                        </div>
+
+                        <!-- Content Render Box Container -->
+                        <div class="relative group/copy">
+                            <div class="text-sm leading-relaxed text-slate-800 space-y-4 preview-box pb-6" id="paperContent">
+                                <!-- Injected by JS -->
+                                <p class="text-slate-400 italic text-center py-10">输入题干内容后，此处将自动展示为极致精美的数学试卷排版格式。</p>
+                            </div>
+                            <!-- Copy Button -->
+                            <button type="button" id="copyContentBtn" onclick="copyPaperContent()" class="absolute bottom-1 right-1 opacity-40 group-hover/copy:opacity-100 hover:scale-105 active:scale-95 bg-white hover:bg-slate-50 border border-slate-200 text-slate-500 hover:text-brand-600 p-1.5 rounded-lg shadow-sm transition-all duration-200 text-xs flex items-center space-x-1" title="复制 LaTeX 题干">
+                                <i class="fa-regular fa-copy"></i>
+                                <span class="text-[9px] font-bold">复制题干</span>
+                            </button>
+                        </div>
+
+                        <!-- Analysis Panel (Smooth reveal collapsible) -->
+                        <div class="border-t border-dashed border-slate-200 pt-4 space-y-3" id="paperAnalysisWrapper">
+                            <div class="flex justify-between items-center">
+                                <h5 class="text-xs font-extrabold tracking-wider text-slate-400 uppercase flex items-center space-x-1.5">
+                                    <i class="fa-solid fa-signature text-brand-500"></i>
+                                    <span>参考答案与详细解析</span>
+                                </h5>
+                                <button type="button" onclick="togglePaperAnalysis()" id="toggleAnalysisBtn" class="flex items-center space-x-1 px-3 py-1 bg-brand-50 hover:bg-brand-100 text-brand-700 rounded-lg text-xs font-bold transition-all border border-brand-100">
+                                    <i class="fa-solid fa-eye-slash" id="analysisIcon"></i>
+                                    <span id="analysisText">隐藏解析</span>
+                                </button>
+                            </div>
+
+                            <div class="relative group/copy">
+                                <div class="p-4 rounded-xl bg-slate-50 border border-slate-150 transition-all duration-300 leading-relaxed text-sm preview-box pb-7" id="paperAnalysisContent">
+                                    <!-- Injected by JS -->
+                                    <p class="text-slate-400 italic">暂无解析内容。</p>
+                                </div>
+                                <!-- Copy Button -->
+                                <button type="button" id="copyAnalysisBtn" onclick="copyPaperAnalysis()" class="absolute bottom-1.5 right-1.5 opacity-40 group-hover/copy:opacity-100 hover:scale-105 active:scale-95 bg-white hover:bg-slate-50 border border-slate-200 text-slate-500 hover:text-brand-600 p-1.5 rounded-lg shadow-sm transition-all duration-200 text-xs flex items-center space-x-1" title="复制 LaTeX 解析">
+                                    <i class="fa-regular fa-copy"></i>
+                                    <span class="text-[9px] font-bold">复制解析</span>
+                                </button>
+                            </div>
+                        </div>
+                        
+                        <!-- Review Panel (Only shown if review is not empty) -->
+                        <div class="border-t border-dashed border-slate-200 pt-4 space-y-2 hidden" id="paperReviewWrapper">
+                            <h5 class="text-xs font-extrabold tracking-wider text-indigo-500 uppercase flex items-center space-x-1.5">
+                                <i class="fa-solid fa-comment-dots text-indigo-500 text-xs"></i>
+                                <span>名师评述与教学思考</span>
+                            </h5>
+                            <div class="p-4 rounded-xl bg-indigo-50/30 border border-indigo-100/50 leading-relaxed text-xs text-indigo-950 preview-box select-text" id="paperReviewContent">
+                                <!-- Injected by JS -->
+                            </div>
+                        </div>
+                        
+                        <!-- Associated Questions Panel (Only shown if there are associated questions) -->
+                        <div class="border-t border-dashed border-slate-200 pt-4 space-y-2.5 hidden" id="paperAssociatedWrapper">
+                            <h5 class="text-xs font-extrabold tracking-wider text-teal-600 uppercase flex items-center space-x-1.5">
+                                <i class="fa-solid fa-circle-nodes text-teal-500 text-xs"></i>
+                                <span>关联题目群组</span>
+                            </h5>
+                            <div class="space-y-2 text-xs max-h-48 overflow-y-auto custom-scrollbar" id="paperAssociatedList">
+                                <!-- Injected by JS -->
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Footer of Paper -->
+                    <div class="p-4 border-t bg-slate-50 flex items-center justify-between text-[10px] text-slate-400">
+                        <span id="paperFooterSource">来源: 未分类</span>
+                        <span>教研工作台 @ MathBank</span>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+    </main>
+
+    <!-- AI CLASSIFICATION MODAL - Apple Glass Style -->
+    <div id="aiClassifyModal" class="fixed inset-0 glass-modal-overlay z-50 flex items-center justify-center hidden opacity-0 transition-opacity duration-300">
+        <div class="glass-modal rounded-2xl w-full max-w-md p-6 transform scale-95 transition-transform duration-300 space-y-5">
+            <div class="flex justify-between items-center border-b border-slate-200/50 pb-3">
+                <h3 class="font-bold text-base text-slate-800 flex items-center space-x-2">
+                    <i class="fa-solid fa-wand-magic-sparkles text-brand-600"></i>
+                    <span>教材分类智能分析</span>
+                </h3>
+                <button onclick="closeClassifyModal()" class="glass-btn w-9 h-9 flex items-center justify-center rounded-xl text-slate-400 hover:text-slate-600 transition-all">
+                    <i class="fa-solid fa-xmark text-lg"></i>
+                </button>
+            </div>
+
+            <div class="space-y-4">
+                <p class="text-xs text-slate-500 leading-relaxed">
+                    您当前未选择 <strong>学段</strong> 或 <strong>所属章节</strong>。本题库默认使用【人教版A】教材体系。是否需要开启 DeepSeek 智能进行章节分类匹配？
+                </p>
+
+                <!-- Loading State -->
+                <div id="classifyLoading" class="hidden glass-card rounded-xl p-6 text-center space-y-3">
+                    <i class="fa-solid fa-spinner animate-spin text-brand-500 text-2xl"></i>
+                    <p class="text-xs text-slate-500 font-medium">DeepSeek 正在研读题干以匹配人教版A大纲...</p>
+                </div>
+
+                <!-- Recommendation Result -->
+                <div id="classifyResult" class="hidden space-y-3">
+                    <div class="p-4 rounded-xl bg-brand-50 border border-brand-100 space-y-2">
+                        <span class="text-[10px] uppercase font-bold text-brand-600 tracking-wider flex items-center"><i class="fa-solid fa-robot mr-1.5 animate-bounce"></i>AI 推荐教材定位：</span>
+                        <div class="flex items-center space-x-2 font-semibold text-slate-800 text-xs flex-wrap gap-y-1.5">
+                            <span id="recCompulsory" class="bg-brand-100 text-brand-800 px-2.5 py-0.5 rounded-lg text-[10px] font-bold">选择性必修二</span>
+                            <i class="fa-solid fa-chevron-right text-[10px] text-slate-450"></i>
+                            <span id="recChapter" class="text-slate-800 font-bold">5. 一元函数的导数及其应用</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="flex justify-end space-x-2 pt-3 border-t border-slate-200/50">
+                <button type="button" onclick="closeClassifyModal()" class="glass-btn px-4 py-2 rounded-xl text-xs font-medium text-slate-500">手动选择</button>
+                <button type="button" id="classifyAIButton" onclick="runAIClassify()" class="glass-btn-primary px-5 py-2 rounded-xl font-medium text-xs flex items-center space-x-1.5">
+                    <i class="fa-solid fa-wand-magic-sparkles"></i>
+                    <span>一键 AI 分析</span>
+                </button>
+                <button type="button" id="classifyApplyButton" onclick="applyClassifyRecommendation()" class="hidden glass-btn-primary px-5 py-2 rounded-xl font-medium text-xs">
+                    采纳并保存题目
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- SETTINGS MODAL (API Configuration) - Apple Glass Style -->
+    <div id="settingsModal" class="fixed inset-0 glass-modal-overlay z-50 flex items-center justify-center hidden opacity-0 transition-opacity duration-300">
+        <div class="glass-modal rounded-2xl w-full max-w-4xl p-6 transform scale-95 transition-transform duration-300 space-y-5">
+            <div class="flex justify-between items-center border-b border-slate-200/50 pb-3">
+                <h3 class="font-bold text-base text-slate-800 flex items-center space-x-2">
+                    <i class="fa-solid fa-sliders text-brand-600"></i>
+                    <span>外部与本地 API 接口参数设置</span>
+                </h3>
+                <button onclick="closeSettingsModal()" class="glass-btn w-9 h-9 flex items-center justify-center rounded-xl text-slate-400 hover:text-slate-600 transition-all aspect-square">
+                    <i class="fa-solid fa-xmark text-lg"></i>
+                </button>
+            </div>
+
+            <form id="settingsForm" class="space-y-5" onsubmit="saveSettings(event)">
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+                    <!-- Column 1: API Keys -->
+                    <div class="space-y-4">
+                        <div class="border-b border-slate-200/60 pb-2">
+                            <h4 class="text-xs font-bold text-slate-700 uppercase tracking-wider flex items-center space-x-2">
+                                <i class="fa-solid fa-key text-brand-500"></i>
+                                <span>API 接口密钥配置</span>
+                            </h4>
+                        </div>
+                        
+                        <!-- DeepSeek Key -->
+                        <div class="space-y-1">
+                            <label class="block text-xs font-semibold text-slate-500 flex items-center justify-between">
+                                <span>DeepSeek API Key (AI 解题与推理)</span>
+                                <a href="https://platform.deepseek.com/" target="_blank" class="text-brand-500 hover:underline text-[10px]">获取 API Key</a>
+                            </label>
+                            <input type="password" id="settingsDeepseekKey" placeholder="输入您的 DEEPSEEK_API_KEY"
+                                   class="glass-input w-full px-3.5 py-2.5 rounded-xl text-xs font-mono">
+                        </div>
+
+                        <!-- SiliconFlow Key -->
+                        <div class="space-y-1">
+                            <label class="block text-xs font-semibold text-slate-500 flex items-center justify-between">
+                                <span>SiliconFlow API Key (硅基流动云端)</span>
+                                <a href="https://cloud.siliconflow.cn/" target="_blank" class="text-brand-500 hover:underline text-[10px]">获取 API Key</a>
+                            </label>
+                            <input type="password" id="settingsSiliconflowKey" placeholder="输入您的 SILICONFLOW_API_KEY"
+                                   class="glass-input w-full px-3.5 py-2.5 rounded-xl text-xs font-mono">
+                        </div>
+
+                        <!-- Alibaba Bailian Key -->
+                        <div class="space-y-1">
+                            <label class="block text-xs font-semibold text-slate-500 flex items-center justify-between">
+                                <span>Alibaba Bailian API Key (阿里百炼)</span>
+                                <a href="https://bailian.console.aliyun.com/" target="_blank" class="text-brand-500 hover:underline text-[10px]">获取 API Key</a>
+                            </label>
+                            <input type="password" id="settingsAliBailianKey" placeholder="输入您的 ALI_BAILIAN_API_KEY"
+                                   class="glass-input w-full px-3.5 py-2.5 rounded-xl text-xs font-mono">
+                        </div>
+                    </div>
+
+                    <!-- Column 2: Preferred Models & OCR -->
+                    <div class="space-y-4">
+                        <div class="border-b border-slate-200/60 pb-2">
+                            <h4 class="text-xs font-bold text-slate-700 uppercase tracking-wider flex items-center space-x-2">
+                                <i class="fa-solid fa-robot text-brand-500"></i>
+                                <span>首选模型与识别设置</span>
+                            </h4>
+                        </div>
+
+                        <!-- Preferred Solve Model -->
+                        <div class="space-y-1">
+                            <label class="block text-xs font-semibold text-slate-500">
+                                <span>AI 智能解题首选模型 (PREFER_SOLVE_MODEL)</span>
+                            </label>
+                            <select id="settingsPreferSolveModel" class="glass-select w-full px-3.5 py-2.5 rounded-xl text-xs">
+                                <option value="deepseek-v4-pro">DeepSeek-V4-Pro (智能教研满血版)</option>
+                                <option value="deepseek-v4-flash">DeepSeek-V4-Flash (极速预览版)</option>
+                                <option value="qwen3.7-max">Ali Bailian qwen3.7-max (阿里旗舰大模型)</option>
+                            </select>
+                        </div>
+
+                        <!-- Preferred Parse Model -->
+                        <div class="space-y-1">
+                            <label class="block text-xs font-semibold text-slate-500">
+                                <span>试卷智能拆解与分类首选模型 (PREFER_PARSE_MODEL)</span>
+                            </label>
+                            <select id="settingsPreferParseModel" class="glass-select w-full px-3.5 py-2.5 rounded-xl text-xs">
+                                <option value="deepseek-v4-flash">DeepSeek-V4-Flash (推荐 - 极速分步拆解)</option>
+                                <option value="deepseek-v4-pro">DeepSeek-V4-Pro (高精度推理拆解)</option>
+                                <option value="qwen3.7-max">Ali Bailian qwen3.7-max (阿里旗舰大模型)</option>
+                            </select>
+                        </div>
+
+                        <!-- Preferred OCR Engine -->
+                        <div class="space-y-1">
+                            <label class="block text-xs font-semibold text-slate-500">
+                                <span>默认公式识图首选引擎</span>
+                            </label>
+                            <select id="settingsPreferEngine" class="glass-select w-full px-3.5 py-2.5 rounded-xl text-xs">
+                                <option value="siliconflow">SiliconFlow 硅基流动云端 (多模态 Qwen 强力识图)</option>
+                                <option value="ali_bailian">Alibaba Bailian 阿里百炼 (qwen3-vl-flash 极速强力识图)</option>
+                                <option value="simpletex">SimpleTex 官方云端 (专注数学公式/手写 OCR 引擎)</option>
+                            </select>
+                        </div>
+
+                        <!-- OCR Model Down-selections -->
+                        <div class="grid grid-cols-1 md:grid-cols-2 gap-3 pt-1">
+                            <div class="space-y-1">
+                                <label class="block text-[10px] font-semibold text-slate-500 leading-tight">
+                                    <span>SiliconFlow OCR 模型</span>
+                                </label>
+                                <select id="settingsSiliconflowModel" class="glass-select w-full px-2.5 py-2 rounded-lg text-[11px]">
+                                    <option value="Qwen/Qwen3.5-4B">Qwen/Qwen3.5-4B (高精度推荐)</option>
+                                    <option value="Qwen/Qwen3-VL-8B-Instruct">Qwen/Qwen3-VL-8B-Instruct (极速秒级响应)</option>
+                                    <option value="Qwen/Qwen3-VL-8B-Thinking">Qwen/Qwen3-VL-8B-Thinking (带视觉推理)</option>
+                                    <option value="Qwen/Qwen3-VL-32B-Instruct">Qwen/Qwen3-VL-32B-Instruct (高阶大尺寸精准)</option>
+                                </select>
+                            </div>
+                            <div class="space-y-1">
+                                <label class="block text-[10px] font-semibold text-slate-500 leading-tight">
+                                    <span>阿里百炼 OCR 模型</span>
+                                </label>
+                                <select id="settingsAliBailianModel" class="glass-select w-full px-2.5 py-2 rounded-lg text-[11px]">
+                                    <option value="qwen3-vl-flash" selected>qwen3-vl-flash (推荐首选 - 极速响应)</option>
+                                </select>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="p-3 bg-amber-50 text-[10px] text-amber-700 rounded-lg flex items-start space-x-2 leading-relaxed">
+                    <i class="fa-solid fa-circle-exclamation mt-0.5"></i>
+                    <span>
+                        <strong>多模态与安全说明：</strong>
+                        所有 API 配置信息均直接持久化保存在您的本地根目录 <code>.env</code> 文件中。通过 硅基流动(SiliconFlow) 或 阿里百炼(Alibaba Bailian) 调用 Qwen 多模态视觉模型，能够实现极其高精准度的行内公式与混排题干识别。如果识别不满意，仍可自由选择或自动无缝兜底降级至 SimpleTex 引擎。
+                    </span>
+                </div>
+
+                <div class="flex justify-end space-x-2 pt-2 border-t border-slate-200/50">
+                    <button type="button" onclick="closeSettingsModal()" class="glass-btn px-4 py-2 rounded-xl text-xs font-medium text-slate-500">取消</button>
+                    <button type="submit" class="glass-btn-primary px-5 py-2 rounded-xl font-medium text-xs">保存配置</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- DB STATISTICS DASHBOARD MODAL - Apple Glass Style -->
+    <div id="statsModal" class="fixed inset-0 glass-modal-overlay z-50 flex items-center justify-center hidden opacity-0 transition-opacity duration-300">
+        <div class="glass-modal rounded-2xl w-full max-w-4xl p-6 transform scale-95 transition-transform duration-300 flex flex-col max-h-[90vh] overflow-hidden">
+            <!-- Modal Header -->
+            <div class="flex justify-between items-center border-b border-slate-200/50 pb-3 shrink-0">
+                <h3 class="font-bold text-base text-slate-800 flex items-center space-x-2">
+                    <i class="fa-solid fa-chart-line text-brand-600"></i>
+                    <span>题库数据统计</span>
+                </h3>
+                <button onclick="closeStatsModal()" class="glass-btn w-9 h-9 flex items-center justify-center rounded-xl text-slate-400 hover:text-slate-600 transition-all">
+                    <i class="fa-solid fa-xmark text-lg"></i>
+                </button>
+            </div>
+
+            <!-- Modal Content (Scrollable) -->
+            <div class="overflow-y-auto flex-1 py-4 space-y-5 pr-1">
+                <!-- 1. Stats Counter Cards -->
+                <div class="grid grid-cols-4 gap-4">
+                    <!-- Total Count Card -->
+                    <div class="bg-gradient-to-br from-brand-50 to-brand-100/40 border border-brand-200/50 rounded-xl p-4 flex items-center justify-between shadow-sm relative overflow-hidden group">
+                        <div class="space-y-1 z-10">
+                            <span class="text-[10px] font-bold text-brand-700 uppercase tracking-wider">题库总试题量</span>
+                            <h2 class="text-2xl font-black text-brand-900 font-mono" id="statsTotalCount">0</h2>
+                        </div>
+                        <i class="fa-solid fa-database text-3xl text-brand-500/15 absolute right-4 group-hover:scale-110 transition-transform duration-300 z-0"></i>
+                    </div>
+
+                    <!-- Easy Error Count Card -->
+                    <div class="bg-gradient-to-br from-amber-50 to-amber-100/40 border border-amber-200/50 rounded-xl p-4 flex items-center justify-between shadow-sm relative overflow-hidden group">
+                        <div class="space-y-1 z-10">
+                            <span class="text-[10px] font-bold text-amber-700 uppercase tracking-wider">易错题数量</span>
+                            <h2 class="text-2xl font-black text-amber-900 font-mono" id="statsEasyErrorCount">0</h2>
+                        </div>
+                        <i class="fa-solid fa-triangle-exclamation text-3xl text-amber-500/15 absolute right-4 group-hover:scale-110 transition-transform duration-300 z-0"></i>
+                    </div>
+
+                    <!-- Challenge Count Card -->
+                    <div class="bg-gradient-to-br from-red-50 to-red-100/40 border border-red-200/50 rounded-xl p-4 flex items-center justify-between shadow-sm relative overflow-hidden group">
+                        <div class="space-y-1 z-10">
+                            <span class="text-[10px] font-bold text-red-700 uppercase tracking-wider">挑战题数量</span>
+                            <h2 class="text-2xl font-black text-red-900 font-mono" id="statsChallengeCount">0</h2>
+                        </div>
+                        <i class="fa-solid fa-fire text-3xl text-red-500/15 absolute right-4 group-hover:scale-110 transition-transform duration-300 z-0"></i>
+                    </div>
+
+                    <!-- Qiangji Count Card -->
+                    <div class="bg-gradient-to-br from-purple-50 to-purple-100/40 border border-purple-200/50 rounded-xl p-4 flex items-center justify-between shadow-sm relative overflow-hidden group">
+                        <div class="space-y-1 z-10">
+                            <span class="text-[10px] font-bold text-purple-700 uppercase tracking-wider">强基题数量</span>
+                            <h2 class="text-2xl font-black text-purple-900 font-mono" id="statsQiangjiCount">0</h2>
+                        </div>
+                        <i class="fa-solid fa-medal text-3xl text-purple-500/15 absolute right-4 group-hover:scale-110 transition-transform duration-300 z-0"></i>
+                    </div>
+                </div>
+
+                <!-- 2. Main Analytics Panels Split -->
+                <div class="grid grid-cols-1 md:grid-cols-12 gap-5">
+                    <!-- Left: Cascaded Stage & Chapter query -->
+                    <div class="md:col-span-5 bg-white border border-slate-200/60 rounded-xl p-4 shadow-sm flex flex-col space-y-4">
+                        <h4 class="text-xs font-bold text-slate-700 flex items-center space-x-1 border-b pb-2">
+                            <i class="fa-solid fa-magnifying-glass-chart text-slate-400"></i>
+                            <span>分学段与章节定位查询</span>
+                        </h4>
+
+                        <div class="space-y-3 text-xs text-slate-700">
+                            <div class="space-y-1">
+                                <label class="block text-[10px] font-semibold text-slate-500">选择教材学段</label>
+                                <select id="statsQueryCompulsory" onchange="onStatsQueryCompulsoryChange()" 
+                                        class="w-full px-2.5 py-1.5 border border-slate-200 rounded-lg outline-none focus:border-brand-500 bg-slate-50 transition-all text-slate-750">
+                                    <option value="">-- 选择学段 --</option>
+                                </select>
+                            </div>
+
+                            <div class="space-y-1">
+                                <label class="block text-[10px] font-semibold text-slate-500">选择具体章节</label>
+                                <select id="statsQueryChapter" onchange="onStatsQueryChapterChange()" 
+                                        class="w-full px-2.5 py-1.5 border border-slate-200 rounded-lg outline-none focus:border-brand-500 bg-slate-50 transition-all text-slate-750" disabled>
+                                    <option value="">-- 先选择学段 --</option>
+                                </select>
+                            </div>
+                        </div>
+
+                        <!-- Result Display Panel -->
+                        <div class="bg-slate-50 border border-slate-100 rounded-xl p-3.5 flex-1 flex flex-col justify-center items-center text-center space-y-2 min-h-[120px]">
+                            <div id="statsQueryResultEmpty" class="space-y-1">
+                                <i class="fa-solid fa-chart-bar text-slate-350 text-xl"></i>
+                                <p class="text-[10px] text-slate-500">选择学段章节查看具体统计数据</p>
+                            </div>
+                            <div id="statsQueryResultData" class="hidden w-full text-left space-y-2.5">
+                                <div class="flex items-center justify-between border-b pb-1.5">
+                                    <span class="text-[11px] font-bold text-slate-700">章节题目总数:</span>
+                                    <span class="text-sm font-black text-brand-650 font-mono" id="statsQueryCount">0</span>
+                                </div>
+                                <div class="space-y-1.5">
+                                    <span class="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">所含小节/知识点分布</span>
+                                    <div class="max-h-[140px] overflow-y-auto space-y-1 pr-1" id="statsQueryKnowledgeList">
+                                        <!-- Dynamic knowledge stats items -->
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Right: Daily additions calendar -->
+                    <div class="md:col-span-7 bg-white border border-slate-200/60 rounded-xl p-4 shadow-sm flex flex-col space-y-3">
+                        <!-- Calendar Header Toolbar -->
+                        <div class="flex justify-between items-center border-b pb-2">
+                            <h4 class="text-xs font-bold text-slate-700 flex items-center space-x-1">
+                                <i class="fa-solid fa-calendar-days text-slate-400"></i>
+                                <span>入库日历</span>
+                            </h4>
+                            
+                            <!-- Year / Month Selectors -->
+                            <div class="flex items-center space-x-1.5">
+                                <select id="statsYearSelect" onchange="renderStatsCalendar()" 
+                                        class="px-2 py-1 border border-slate-200 rounded-md text-[11px] font-semibold bg-slate-50 outline-none focus:border-brand-500 text-slate-750">
+                                    <option value="2025">2025 年</option>
+                                    <option value="2026">2026 年</option>
+                                    <option value="2027">2027 年</option>
+                                </select>
+                                <select id="statsMonthSelect" onchange="renderStatsCalendar()" 
+                                        class="px-2 py-1 border border-slate-200 rounded-md text-[11px] font-semibold bg-slate-50 outline-none focus:border-brand-500 text-slate-750">
+                                    <option value="1">1 月</option>
+                                    <option value="2">2 月</option>
+                                    <option value="3">3 月</option>
+                                    <option value="4">4 月</option>
+                                    <option value="5">5 月</option>
+                                    <option value="6">6 月</option>
+                                    <option value="7">7 月</option>
+                                    <option value="8">8 月</option>
+                                    <option value="9">9 月</option>
+                                    <option value="10">10 月</option>
+                                    <option value="11">11 月</option>
+                                    <option value="12">12 月</option>
+                                </select>
+                            </div>
+                        </div>
+
+                        <!-- Calendar Grid -->
+                        <div class="flex-1 flex flex-col space-y-1 font-sans">
+                            <!-- Weekday headers -->
+                            <div class="grid grid-cols-7 text-center text-[10px] font-bold text-slate-400 py-1 bg-slate-50/50 rounded-lg">
+                                <div class="text-red-500">日</div>
+                                <div>一</div>
+                                <div>二</div>
+                                <div>三</div>
+                                <div>四</div>
+                                <div>五</div>
+                                <div class="text-indigo-500">六</div>
+                            </div>
+
+                            <!-- Daily Cells container -->
+                            <div id="statsCalendarGrid" class="grid grid-cols-7 gap-1 flex-1 min-h-[220px]">
+                                <!-- Dynamic daily cells injected here -->
+                            </div>
+                        </div>
+                        
+                        <!-- Color explanations -->
+                        <div class="flex items-center justify-end space-x-2 text-[9px] text-slate-400 pt-1">
+                            <span class="flex items-center space-x-1">
+                                <span class="h-2 w-2 rounded bg-slate-50 border border-slate-200 inline-block"></span>
+                                <span>无新增</span>
+                            </span>
+                            <span class="flex items-center space-x-1">
+                                <span class="h-2.5 w-2.5 rounded bg-red-50 border border-red-200 inline-block"></span>
+                                <span>入库</span>
+                            </span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Modal Footer - Apple Glass Style -->
+            <div class="flex justify-end pt-3 border-t border-slate-200/50 shrink-0">
+                <button type="button" onclick="closeStatsModal()" class="glass-btn px-5 py-2 rounded-xl text-xs font-semibold text-slate-600">
+                    关闭统计大屏
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- LATEX BATCH IMPORT MODAL - Apple Glass Style -->
+    <div id="latexImportModal" class="fixed inset-0 glass-modal-overlay z-50 flex items-center justify-center hidden opacity-0 transition-opacity duration-300">
+        <div class="glass-modal rounded-2xl w-full max-w-6xl h-[90vh] flex flex-col transform scale-95 transition-transform duration-300 overflow-hidden">
+            <!-- Modal Header -->
+            <div class="flex justify-between items-center border-b border-slate-200/50 px-6 py-4 shrink-0">
+                <h3 class="font-bold text-lg text-slate-800 flex items-center space-x-2">
+                    <i class="fa-solid fa-file-import text-brand-600"></i>
+                    <span>LaTeX 试卷智能拆解导入与配图自动关联</span>
+                </h3>
+                <button onclick="closeImportModal()" class="glass-btn w-9 h-9 flex items-center justify-center rounded-xl text-slate-400 hover:text-slate-600 transition-all">
+                    <i class="fa-solid fa-xmark text-lg"></i>
+                </button>
+            </div>
+
+            <!-- Modal Content (Split Pane) -->
+            <div class="flex-1 flex overflow-hidden">
+                <!-- Left Pane: Inputs (LaTeX and Images) -->
+                <div class="w-5/12 border-r border-slate-200 p-6 overflow-y-auto space-y-4 bg-white/50 flex flex-col">
+                    <!-- Step 1: Title -->
+                    <div class="space-y-1.5 shrink-0">
+                        <label class="block text-xs font-bold text-slate-500">第一步：试卷标题（作为题目来源，可空）</label>
+                        <input type="text" id="importPaperTitle" placeholder="请输入试卷标题，例如：诸暨中学2025-2026高一期中" 
+                               class="w-full px-3.5 py-2 border border-slate-200 rounded-xl outline-none focus:border-brand-500 focus:ring-1 focus:ring-brand-500 transition-all text-xs">
+                    </div>
+
+                    <!-- Step 2: LaTeX code drag & drop / text area -->
+                    <div class="space-y-1.5 flex-1 flex flex-col min-h-[220px]">
+                        <label class="block text-xs font-bold text-slate-500 shrink-0">第二步：试卷 LaTeX 源码</label>
+                        <div id="texDropzone" class="border-2 border-dashed border-slate-200 hover:border-brand-500/80 rounded-xl p-3.5 text-center cursor-pointer transition-all duration-200 bg-white hover:bg-brand-50/20 flex flex-col justify-center items-center shrink-0 mb-2">
+                            <i class="fa-solid fa-file-code text-slate-400 text-xl mb-1.5" id="texFileIcon"></i>
+                            <span class="text-xs text-slate-600 font-medium" id="texFileName">点击或拖放拖入 .tex 格式试卷文件</span>
+                            <span class="text-[10px] text-slate-400 mt-0.5">支持直接拖拽 .tex 格式文本文件</span>
+                            <input type="file" id="texFileInput" accept=".tex" class="hidden">
+                        </div>
+                        <textarea id="importLatexContent" placeholder="在此粘贴试卷的 LaTeX 源代码..." 
+                                  class="w-full flex-1 p-3.5 border border-slate-200 rounded-xl outline-none focus:border-brand-500 focus:ring-1 focus:ring-brand-500 font-mono text-xs bg-slate-50/50 resize-none"></textarea>
+                    </div>
+
+                    <!-- Step 3: Upload batch images -->
+                    <div class="space-y-1.5 shrink-0">
+                        <label class="block text-xs font-bold text-slate-500">第三步：上传试卷插图 / 配图（可选）</label>
+                        <div id="imagesDropzone" class="border-2 border-dashed border-slate-200 hover:border-brand-500/80 rounded-xl p-3.5 text-center cursor-pointer transition-all duration-200 bg-white hover:bg-brand-50/20 flex flex-col justify-center items-center">
+                            <i class="fa-solid fa-images text-slate-400 text-xl mb-1.5" id="imagesFileIcon"></i>
+                            <span class="text-xs text-slate-600 font-medium" id="imagesCountName">点击或多选拖入试卷引用的所有图片</span>
+                            <span class="text-[10px] text-slate-400 mt-0.5">支持 png, jpg, jpeg 格式</span>
+                            <input type="file" id="imagesFileInput" multiple accept="image/*" class="hidden">
+                        </div>
+                        <!-- File Checklist / Previews -->
+                        <div id="importImagesList" class="flex flex-wrap gap-1.5 max-h-24 overflow-y-auto p-1.5 bg-slate-100 border border-slate-200 rounded-xl hidden">
+                            <!-- Thumbnails injected here -->
+                        </div>
+                    </div>
+
+                    <!-- Toggle answer generation if paper source has no answers -->
+                    <div class="flex items-start space-x-3 p-3 bg-slate-50/80 border border-slate-200/60 rounded-xl shrink-0">
+                        <input type="checkbox" id="importGenerateAnswers" class="w-4 h-4 text-brand-600 border-slate-300 rounded focus:ring-brand-500 cursor-pointer mt-0.5">
+                        <div class="flex-1">
+                            <label for="importGenerateAnswers" class="block text-xs font-bold text-slate-700 cursor-pointer">自动生成 AI 解答与详细解析</label>
+                            <span class="text-[10px] text-slate-400 block leading-normal mt-0.5">若开启，当试卷源码只有题干没有参考答案时，AI 会在后台自动解答并推理；若关闭，则答案内容保持留空。</span>
+                        </div>
+                    </div>
+
+                    <!-- Step 4: Run AI Parse button - Apple Glass Style -->
+                    <button onclick="runAIPaperParse()" id="runParseBtn" class="w-full shrink-0 glass-btn-primary flex items-center justify-center space-x-2 py-3 rounded-xl font-bold text-sm">
+                        <i class="fa-solid fa-wand-magic-sparkles"></i>
+                        <span>一键 AI 智能拆解并关联</span>
+                    </button>
+                </div>
+
+                <!-- Right Pane: AI Review Lists -->
+                <div class="w-7/12 p-6 overflow-y-auto space-y-4 flex flex-col bg-slate-100/50 relative" id="importReviewPane">
+                    <!-- Default state / Placeholder -->
+                    <div id="importPlaceholder" class="flex-1 flex flex-col items-center justify-center text-center space-y-3 p-12">
+                        <div class="h-16 w-16 bg-white border border-slate-200 rounded-2xl shadow-sm flex items-center justify-center text-brand-600 text-2xl">
+                            <i class="fa-solid fa-robot animate-bounce"></i>
+                        </div>
+                        <div>
+                            <h4 class="font-bold text-slate-700 text-sm">等待拆解...</h4>
+                            <p class="text-xs text-slate-500 max-w-sm mt-1.5 leading-relaxed">
+                                请在左侧输入试卷标题、拖入或粘贴 LaTeX 源码与配套插图文件，然后点击“一键 AI 智能拆解”按钮。DeepSeek 将为智能分析分割题目并绑定插图！
+                            </p>
+                        </div>
+                    </div>
+
+                    <!-- Loading / Skeleton state -->
+                    <div id="importLoadingState" class="flex-1 flex flex-col items-center justify-center text-center space-y-4 hidden p-12">
+                        <i class="fa-solid fa-spinner animate-spin text-brand-600 text-3xl"></i>
+                        <div class="space-y-1.5">
+                            <h4 class="font-bold text-slate-700 text-sm" id="importLoadingText">正在整理插图映射并预备上传...</h4>
+                            <p class="text-xs text-slate-500 max-w-xs leading-relaxed">
+                                DeepSeek V4 Flash 正在极速分析、拆解试卷（大文本分析仅需 5 到 15 秒），请耐心等待。
+                            </p>
+                        </div>
+                        <!-- Beautiful interactive logs console -->
+                        <div class="w-full max-w-md bg-slate-50 rounded-xl p-3 text-left font-mono text-[10px] text-slate-600 overflow-y-auto h-24 select-none shadow-inner border border-slate-200" id="importLogsConsole">
+                            <div>[SYSTEM] 准备就绪，等待上传图片...</div>
+                        </div>
+                    </div>
+
+                    <!-- Parsed Questions List Container -->
+                    <div id="parsedQuestionsWrapper" class="flex-1 flex flex-col space-y-4 hidden">
+                        <!-- Top actions bar -->
+                        <div class="flex flex-wrap items-center justify-between gap-3 shrink-0 bg-white/70 backdrop-blur-sm p-3.5 border border-white/50 rounded-xl shadow-sm">
+                            <div class="flex items-center space-x-3.5">
+                                <div class="flex items-center space-x-2">
+                                    <span class="text-xs font-bold text-slate-700">拆解结果审查</span>
+                                    <span class="text-[10px] font-bold px-2 py-0.5 rounded bg-brand-50 text-brand-600 border border-brand-100" id="parsedCountBadge">共 0 题</span>
+                                </div>
+                                <div class="flex items-center space-x-3 border-l pl-3.5 border-slate-200" id="batchSelectActions">
+                                    <label class="flex items-center space-x-1.5 cursor-pointer text-2xs font-semibold text-slate-500 hover:text-brand-600 transition-colors select-none">
+                                        <input type="checkbox" id="selectAllCheckbox" class="h-3.5 w-3.5 rounded border-slate-300 text-brand-600 focus:ring-brand-500 transition-colors" checked onchange="toggleSelectAllParsed(this.checked)">
+                                        <span>全选</span>
+                                    </label>
+                                    <button onclick="invertSelectParsed()" class="text-2xs font-semibold text-slate-500 hover:text-brand-600 transition-colors flex items-center space-x-1 select-none">
+                                        <i class="fa-solid fa-arrows-rotate text-[9px]"></i>
+                                        <span>反选</span>
+                                    </button>
+                                    <span class="text-[10px] font-bold text-slate-400 bg-slate-100/80 px-1.5 py-0.5 rounded border border-slate-150" id="selectedCountBadge">已选 0 / 0 题</span>
+                                </div>
+                            </div>
+                            <div class="flex items-center space-x-2.5">
+                                <button onclick="clearAllParsedSources()" class="flex items-center space-x-1.5 px-4 py-2 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-600 font-bold text-xs border border-slate-200 shadow-sm transition-all active:scale-95">
+                                    <i class="fa-solid fa-eraser text-[10px]"></i>
+                                    <span>一键清除标题</span>
+                                </button>
+                                <button onclick="saveAllParsedQuestions()" id="saveAllParsedBtn" class="flex items-center space-x-1.5 px-4 py-2 rounded-xl bg-brand-600/80 hover:bg-brand-600 text-white font-bold text-xs backdrop-blur-sm border border-brand-500/20 shadow-sm transition-all">
+                                    <i class="fa-solid fa-cloud-arrow-up"></i>
+                                    <span id="saveAllParsedBtnText">导入选中题目</span>
+                                </button>
+                            </div>
+                        </div>
+
+                        <!-- Card scroll list -->
+                        <div class="flex-1 overflow-y-auto space-y-4 pr-1.5 custom-scrollbar pb-6" id="parsedCardsContainer">
+                            <!-- Injected Card details -->
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- TOAST POPUP (Notification) - Apple Glass Style -->
+    <div id="toast" class="fixed bottom-6 right-6 z-50 transform translate-y-12 opacity-0 transition-all duration-300 pointer-events-none">
+        <div class="glass-modal flex items-center space-x-3 px-5 py-3 rounded-2xl max-w-sm">
+            <span id="toastIconContainer" class="h-6 w-6 rounded-full flex items-center justify-center text-xs">
+                <!-- Injected dynamically -->
+            </span>
+            <p id="toastMessage" class="text-xs font-medium text-slate-700"></p>
+        </div>
+    </div>
+
+    <!-- MAIN APP JAVASCRIPT -->
+    <script src="/static/js/api.js?v=1.0.1"></script>
+    <script src="/static/js/editor.js?v=1.0.1"></script>
+    <script src="/static/js/ocr.js?v=1.0.1"></script>
+    <script src="/static/js/import.js?v=1.0.1"></script>
+    
+    <!-- Image Lightbox Overlay -->
+    <div id="imageLightbox" class="fixed inset-0 bg-slate-950/85 backdrop-blur-md z-[100] flex items-center justify-center hidden opacity-0 transition-opacity duration-300 cursor-zoom-out select-none" onclick="closeLightbox()">
+        <img id="lightboxImg" src="" alt="Enlarged View" class="max-w-[95vw] max-h-[95vh] rounded-xl shadow-2xl border border-white/10 transition-transform duration-300 transform scale-95 object-contain">
+    </div>
+</body>
+</html>

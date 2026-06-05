@@ -1,0 +1,162 @@
+import os
+import json
+import pytest
+from main import LOCAL_TOKEN
+from database import Question
+
+def test_api_forbidden_without_token(client):
+    # Any POST/PUT/DELETE request without X-Local-Token must return 403 Forbidden
+    response = client.post("/api/settings/save", data={"deepseek_key": "test_key"})
+    assert response.status_code == 403
+    assert response.json()["status"] == "error"
+    assert "Forbidden" in response.json()["message"]
+
+
+def test_api_settings_get(client):
+    # GET settings should always be allowed (does not require token)
+    response = client.get("/api/settings")
+    assert response.status_code == 200
+    data = response.json()
+    assert "prefer_engine" in data
+    assert "prefer_solve_model" in data
+
+
+def test_api_questions_crud(client):
+    # 1. Get initial empty question list
+    response = client.get("/api/questions")
+    assert response.status_code == 200
+    assert isinstance(response.json(), list)
+    assert len(response.json()) == 0
+
+    # 2. Create a new question with valid X-Local-Token
+    headers = {"X-Local-Token": LOCAL_TOKEN}
+    payload = {
+        "content": "测试API题目干 $a^2+b^2=c^2$",
+        "question_type": "single_choice",
+        "category_compulsory": "必修一",
+        "category_chapter": "第一章",
+        "category_knowledge": "勾股定理",
+        "difficulty": "medium",
+        "source": "单元测试",
+        "answer_markdown": "答案解析内容",
+        "review": "评述内容",
+        "related_question_id": "",
+        "image_paths": "[]"
+    }
+    
+    response = client.post("/api/questions", data=payload, headers=headers)
+    assert response.status_code == 200
+    res_data = response.json()
+    assert res_data["status"] == "success"
+    created_q = res_data["question"]
+    assert created_q["id"] is not None
+    assert created_q["content"] == payload["content"]
+    assert created_q["question_type"] == "single_choice"
+    assert created_q["category_compulsory"] == "必修一"
+    
+    question_id = created_q["id"]
+
+    # 3. Read the specific question (single question API)
+    response = client.get(f"/api/questions/{question_id}")
+    assert response.status_code == 200
+    fetched_q = response.json()
+    assert fetched_q["id"] == question_id
+    assert fetched_q["answer_markdown"] == "答案解析内容"
+    assert fetched_q["review"] == "评述内容"
+
+    # 4. Filter list of questions
+    response = client.get("/api/questions?compulsory=必修一&difficulty=medium")
+    assert response.status_code == 200
+    assert len(response.json()) == 1
+    assert response.json()[0]["id"] == question_id
+
+    # Filter with mismatching criteria
+    response = client.get("/api/questions?compulsory=必修一&difficulty=hard")
+    assert response.status_code == 200
+    assert len(response.json()) == 0
+
+    # 5. Update the question
+    update_payload = payload.copy()
+    update_payload["content"] = "更新后的API题目干"
+    update_payload["difficulty"] = "challenge"
+    
+    response = client.put(f"/api/questions/{question_id}", data=update_payload, headers=headers)
+    assert response.status_code == 200
+    res_data_update = response.json()
+    assert res_data_update["status"] == "success"
+    updated_q = res_data_update["question"]
+    assert updated_q["id"] == question_id
+    assert updated_q["content"] == "更新后的API题目干"
+    assert updated_q["difficulty"] == "challenge"
+
+    # 6. Delete the question
+    response = client.delete(f"/api/questions/{question_id}", headers=headers)
+    assert response.status_code == 200
+    assert response.json()["status"] == "success"
+
+    # 7. Check list is empty again
+    response = client.get("/api/questions")
+    assert len(response.json()) == 0
+
+
+def test_api_categories(client):
+    # GET categories should return category options
+    response = client.get("/api/categories")
+    assert response.status_code == 200
+    assert isinstance(response.json(), dict)
+
+
+def test_api_stats(client):
+    # GET stats should return correct question counts
+    response = client.get("/api/stats")
+    assert response.status_code == 200
+    stats = response.json()
+    assert stats["status"] == "success"
+    assert "total_count" in stats
+    assert "easy_error_count" in stats
+    assert "challenge_count" in stats
+    assert "qiangji_count" in stats
+    assert stats["total_count"] == 0
+
+
+def test_api_search_by_review(client):
+    headers = {"X-Local-Token": LOCAL_TOKEN}
+    payload = {
+        "content": "这是一道特殊的代数题",
+        "question_type": "single_choice",
+        "category_compulsory": "必修一",
+        "category_chapter": "第一章",
+        "category_knowledge": "勾股定理",
+        "difficulty": "medium",
+        "source": "单元测试",
+        "answer_markdown": "答案解析内容",
+        "review": "这是名师特别推荐的精品评析",
+        "related_question_id": "",
+        "image_paths": "[]"
+    }
+    # Create question
+    response = client.post("/api/questions", data=payload, headers=headers)
+    assert response.status_code == 200
+    q_id = response.json()["question"]["id"]
+
+    try:
+        # Search for something in content
+        response = client.get("/api/questions?q=特殊的代数")
+        assert response.status_code == 200
+        assert len(response.json()) == 1
+        assert response.json()[0]["id"] == q_id
+
+        # Search for something in review
+        response = client.get("/api/questions?q=精品评析")
+        assert response.status_code == 200
+        assert len(response.json()) == 1
+        assert response.json()[0]["id"] == q_id
+
+        # Search for non-existent text
+        response = client.get("/api/questions?q=不存在的关键字")
+        assert response.status_code == 200
+        assert len(response.json()) == 0
+    finally:
+        # Clean up
+        client.delete(f"/api/questions/{q_id}", headers=headers)
+
