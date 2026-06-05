@@ -1426,11 +1426,8 @@ const PAGE_LIMIT = 20;
         function preprocessFormulaForKaTeX(text) {
             if (!text) return "";
             
-            // Strip HTML tags
-            let clean = text.replace(/<[^>]*>/g, '');
-            
             // Clean up illegal nesting like \underline{\quad $\mathbf{14}$ \quad} in KaTeX
-            clean = clean.replace(/(\\underline\s*\{[^}]*?)\$([^$]+?)\$([^}]*?\})/g, function(match, p1, p2, p3) {
+            let clean = text.replace(/(\\underline\s*\{[^}]*?)\$([^$]+?)\$([^}]*?\})/g, function(match, p1, p2, p3) {
                 return '$' + p1 + p2 + p3 + '$';
             });
             
@@ -1461,6 +1458,9 @@ const PAGE_LIMIT = 20;
                                .replace(/\\\(([\s\S]*?)\\\)/g, savePlaceholder)
                                .replace(/\$([^\$]+?)\$/g, savePlaceholder);
             
+            // Strip HTML tags from non-math parts
+            tempText = tempText.replace(/<[^>]*>/g, '');
+            
             // Process LaTeX lists & environments outside math blocks
             tempText = tempText.replace(/\\\\\s*\\begin\{/g, '\\begin{')
                                .replace(/\\begin\{([^}]+?)\}\s*\\\\/g, '\\begin{$1}')
@@ -1489,9 +1489,15 @@ const PAGE_LIMIT = 20;
             // Replace LaTeX line breaks with HTML br tags outside math environments
             tempText = tempText.replace(/\\\\/g, '<br>');
                                
-            // Restore math blocks literally
+            // Restore math blocks with HTML escaping
+            function escapeHtml(str) {
+                return str.replace(/&/g, '&amp;')
+                          .replace(/</g, '&lt;')
+                          .replace(/>/g, '&gt;');
+            }
+
             placeholders.forEach(({ placeholder, original }) => {
-                tempText = tempText.replace(placeholder, () => original);
+                tempText = tempText.replace(placeholder, () => escapeHtml(original));
             });
             
             return tempText;
@@ -1575,9 +1581,15 @@ const PAGE_LIMIT = 20;
             // 5. Parse markdown with marked and sanitize with DOMPurify for XSS Protection
             let html = DOMPurify.sanitize(marked.parse(tempText));
             
-            // 6. Restore all math blocks literally without $ substitution issues
+            // 6. Restore all math blocks literally with HTML escaping
+            function escapeHtml(str) {
+                return str.replace(/&/g, '&amp;')
+                          .replace(/</g, '&lt;')
+                          .replace(/>/g, '&gt;');
+            }
+
             placeholders.forEach(({ placeholder, original }) => {
-                html = html.replace(placeholder, () => original);
+                html = html.replace(placeholder, () => escapeHtml(original));
             });
             
             return html;
