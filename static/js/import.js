@@ -393,10 +393,22 @@
                     chapSelect.onchange();
                     knowSelect.value = fullItem.category_knowledge || '';
                     
-                    // Dispatch input previews
-                    document.getElementById('editContent').dispatchEvent(new Event('input'));
-                    document.getElementById('editAnswerMarkdown').dispatchEvent(new Event('input'));
-                    document.getElementById('editReview').dispatchEvent(new Event('input'));
+                    // Dispatch input previews or update synchronously
+                    if (typeof window.updateContentPreview === 'function') {
+                        window.updateContentPreview();
+                    } else {
+                        document.getElementById('editContent').dispatchEvent(new Event('input'));
+                    }
+                    if (typeof window.updateAnswerPreview === 'function') {
+                        window.updateAnswerPreview();
+                    } else {
+                        document.getElementById('editAnswerMarkdown').dispatchEvent(new Event('input'));
+                    }
+                    if (typeof window.updateReviewPreview === 'function') {
+                        window.updateReviewPreview();
+                    } else {
+                        document.getElementById('editReview').dispatchEvent(new Event('input'));
+                    }
                     
                     // Load selected styled preview in paper panel
                     const badges = document.getElementById('paperBadges');
