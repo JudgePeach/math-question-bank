@@ -449,9 +449,21 @@ const PAGE_LIMIT = 20;
             renderIllustrationBadges();
             
             // Update preview and side panels
-            document.getElementById('editContent').dispatchEvent(new Event('input'));
-            document.getElementById('editAnswerMarkdown').dispatchEvent(new Event('input'));
-            document.getElementById('editReview').dispatchEvent(new Event('input'));
+            if (typeof window.updateContentPreview === 'function') {
+                window.updateContentPreview();
+            } else {
+                document.getElementById('editContent').dispatchEvent(new Event('input'));
+            }
+            if (typeof window.updateAnswerPreview === 'function') {
+                window.updateAnswerPreview();
+            } else {
+                document.getElementById('editAnswerMarkdown').dispatchEvent(new Event('input'));
+            }
+            if (typeof window.updateReviewPreview === 'function') {
+                window.updateReviewPreview();
+            } else {
+                document.getElementById('editReview').dispatchEvent(new Event('input'));
+            }
             
             document.getElementById('editorTitle').textContent = `编辑草稿 - 暂存中`;
             
@@ -1373,6 +1385,11 @@ const PAGE_LIMIT = 20;
                 }
             };
             editReview.addEventListener('input', debounce(updateReviewPreview, 250));
+            
+            // Expose update preview functions to global scope to allow synchronous direct updates when loading questions/drafts
+            window.updateContentPreview = updateContentPreview;
+            window.updateAnswerPreview = updateAnswerPreview;
+            window.updateReviewPreview = updateReviewPreview;
             
             // Sync side headings dynamically
             const editQType = document.getElementById('editQType');
