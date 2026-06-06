@@ -2,29 +2,6 @@
 # 自动定位到当前脚本所在文件夹
 cd "$(dirname "$0")"
 
-# Check if we are running in iTerm2
-if [ "$TERM_PROGRAM" != "iTerm.app" ]; then
-    # Check if iTerm2 is installed
-    if osascript -e 'id of application "iTerm"' &>/dev/null; then
-        echo "检测到已安装 iTerm2，正在转换至 iTerm2 运行..."
-        osascript -e "tell application \"iTerm\"
-            activate
-            if not (exists window 1) then
-                create window with default profile
-            else
-                tell current window to create tab with default profile
-            end if
-            tell current session of current window
-                write text \"cd \\\"$(pwd)\\\" && ./启动题库系统.command\"
-            end tell
-        end tell"
-
-        # Close the Terminal.app window that just double-clicked this file
-        (sleep 0.5 && osascript -e 'tell application "Terminal" to close first window') &
-        exit 0
-    fi
-fi
-
 # 保存当前会话的 tty，用于后续精确关闭自己所在的窗口
 CURRENT_TTY=$(tty)
 
@@ -33,11 +10,25 @@ PORT_PID=$(lsof -t -i:8000)
 if [ ! -z "$PORT_PID" ]; then
     echo "检测到端口 8000 被上一次未完全释放的残余进程 ($PORT_PID) 占用。"
     echo "正在为您安全释放端口并清理运行环境..."
-    kill -9 $PORT_PID &>/dev/null
+    for pid in $PORT_PID; do
+        # 尝试获取并清理父进程（例如在 reload 模式下的 Uvicorn 监听主进程）
+        PPID_VAL=$(ps -o ppid= -p $pid 2>/dev/null | tr -d ' ')
+        if [ ! -z "$PPID_VAL" ] && [ "$PPID_VAL" -ne 1 ]; then
+            kill -9 $PPID_VAL &>/dev/null
+        fi
+        kill -9 $pid &>/dev/null
+    done
     sleep 0.5
 fi
 
-# We are running either in iTerm2 or in Terminal (if iTerm2 is not installed)
+# 双重保险：清理任何带有 uvicorn main:app 标识的残留 python 进程
+REDUNDANT_PIDS=$(ps aux | grep -i 'uvicorn main:app' | grep -v grep | awk '{print $2}')
+if [ ! -z "$REDUNDANT_PIDS" ]; then
+    kill -9 $REDUNDANT_PIDS &>/dev/null
+    sleep 0.5
+fi
+
+# We are running either in iTerm2 or in Terminal
 echo "================================================="
 echo "     本地数学题库教研系统 (MathBank) 启动器"
 echo "================================================="
@@ -52,6 +43,7 @@ rm -f .system_generated/server.log
 
 # 🟢 使用 nohup 将 uvicorn 服务发送到后台静默运行，并输出重定向到 server.log，防阻塞
 nohup python3 -m uvicorn main:app --reload --host 127.0.0.1 >.system_generated/server.log 2>&1 &
+disown $! 2>/dev/null
 
 # 🔄 自适应端口健康检查，最大等待 10 秒（每 0.5 秒检测一次）
 echo "正在探测后台服务启动状态，等待就绪..."
