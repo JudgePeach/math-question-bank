@@ -40,6 +40,14 @@
 
 ## 🛠️ 快速开始
 
+> [!TIP]
+> **📦 便携包推荐（非技术/懒人用户首选）**
+> 如果您不熟悉 Git、Python 或命令行操作，可以直接前往 [**Releases 页面**](https://github.com/JudgePeach/math-question-bank/releases) 下载我们打包好的双平台便携包，解压即用：
+> * **💻 Windows 用户**：下载 `MathBank-Windows-x64.zip`，解压后双击 **`启动题库系统.bat`** 即可运行（包内已完整内置便携式 Python 运行环境）。
+> * **🍏 macOS 用户**：下载 `MathBank-macOS.zip`，解压后双击 **`启动题库系统.command`** 即可运行（首次启动时会自动在本地创建虚拟环境并初始化依赖）。
+>
+> *如果您需要进行二次开发或习惯使用终端，请参照以下常规步骤运行源码：*
+
 ### 1. 克隆/下载项目到本地
 ```bash
 git clone https://github.com/JudgePeach/math-question-bank.git
