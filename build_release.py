@@ -160,10 +160,51 @@ exit
         f.write(launcher_content)
 
 def zip_release():
-    print("🤐 Zipping release package...")
+    print("🤐 Zipping Windows release package...")
     zip_filename = os.path.join(DIST_DIR, "MathBank-Windows-x64")
     shutil.make_archive(zip_filename, 'zip', BUILD_DIR)
-    print(f"🎉 Zip file created: {zip_filename}.zip")
+    print(f"🎉 Windows Zip file created: {zip_filename}.zip")
+
+def zip_macos_release():
+    print("🤐 Zipping macOS release package...")
+    macos_build_dir = os.path.join(DIST_DIR, "mathbank-macos")
+    os.makedirs(macos_build_dir, exist_ok=True)
+    
+    # Copy source files
+    files_to_copy = [
+        "main.py",
+        "database.py",
+        "sync_helper.py",
+        "search_questions.py",
+        ".env.example",
+        "requirements.txt",
+        "启动题库系统.command"
+    ]
+    for f in files_to_copy:
+        src = os.path.join(BASE_DIR, f)
+        dst = os.path.join(macos_build_dir, f)
+        if os.path.exists(src):
+            shutil.copy2(src, dst)
+            
+    # Copy static folder
+    shutil.copytree(
+        os.path.join(BASE_DIR, "static"),
+        os.path.join(macos_build_dir, "static"),
+        dirs_exist_ok=True
+    )
+    
+    # Make sure launcher is executable in build directory
+    launcher_path = os.path.join(macos_build_dir, "启动题库系统.command")
+    if os.path.exists(launcher_path):
+        os.chmod(launcher_path, 0o755)
+
+    # Zip macOS folder
+    zip_filename = os.path.join(DIST_DIR, "MathBank-macOS")
+    shutil.make_archive(zip_filename, 'zip', macos_build_dir)
+    print(f"🎉 macOS Zip file created: {zip_filename}.zip")
+    
+    # Cleanup temp macos folder
+    shutil.rmtree(macos_build_dir, ignore_errors=True)
 
 def cleanup_temp():
     print("🧹 Cleaning up temporary files...")
@@ -181,8 +222,9 @@ def main():
         copy_app_files()
         create_launcher()
         zip_release()
+        zip_macos_release()
         cleanup_temp()
-        print("🚀 Windows Portable Release Package Built Successfully!")
+        print("🚀 Windows & macOS Release Packages Built Successfully!")
     except Exception as e:
         print(f"❌ Error during packaging: {e}")
 
