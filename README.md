@@ -67,10 +67,16 @@ pip install -r requirements.txt
 http://127.0.0.1:8000
 ```
 
-#### 💻 命令行启动
-在终端中运行：
+#### 💻 Windows 用户（一键启动）
+双击项目根目录下的 **`启动题库系统.bat`** 批处理文件，系统将自动检测 Python 环境、清理端口冲突，并在后台（最小化窗口）拉起服务，且自动为您在默认浏览器中打开：
+```text
+http://127.0.0.1:8000
+```
+
+#### ⌨️ 命令行启动（通用）
+在终端/命令提示符中运行：
 ```bash
-python3 -m uvicorn main:app --reload
+python -m uvicorn main:app --reload
 ```
 打开浏览器访问 `http://127.0.0.1:8000`。
 
