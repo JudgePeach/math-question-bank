@@ -5,6 +5,50 @@ cd "$(dirname "$0")"
 # 保存当前会话的 tty，用于后续精确关闭自己所在的窗口
 CURRENT_TTY=$(tty)
 
+echo "================================================="
+echo "     本地数学题库教研系统 (MathBank) Mac 启动器"
+echo "================================================="
+
+# 检测并创建虚拟环境
+if [ ! -d "venv" ]; then
+    echo "检测到首次运行，正在为您初始化本地运行环境..."
+    
+    # 检查 python3 是否安装
+    if ! command -v python3 &>/dev/null; then
+        echo "❌ 未检测到系统安装了 python3！"
+        echo "请先在 macOS 中安装 Python 3 (推荐 3.8+)。"
+        echo "提示：您可以从 App Store 安装 Xcode Command Line Tools，或者直接访问 python.org 下载安装。"
+        echo "================================================="
+        read -n 1 -r -p "按任意键退出..."
+        exit 1
+    fi
+    
+    echo "正在创建虚拟环境 (venv)..."
+    python3 -m venv venv
+    if [ ! -d "venv" ]; then
+        echo "❌ 创建虚拟环境失败，请检查目录读写权限或 Python 3 安装是否完整。"
+        echo "================================================="
+        read -n 1 -r -p "按任意键退出..."
+        exit 1
+    fi
+    
+    echo "正在升级 pip 并安装项目依赖，首次启动可能需要数十秒，请稍候..."
+    ./venv/bin/pip install --upgrade pip
+    ./venv/bin/pip install -r requirements.txt
+    
+    if [ $? -ne 0 ]; then
+        echo "❌ 依赖包安装失败，请检查网络连接或代理设置后重试。"
+        echo "================================================="
+        # 清除不完整的 venv 目录以允许下次重试
+        rm -rf venv
+        read -n 1 -r -p "按任意键退出..."
+        exit 1
+    fi
+    echo "🎉 环境依赖初始化成功！"
+    echo "================================================="
+    echo ""
+fi
+
 # 自动检测并强力清理霸占 8000 端口的残余 Python/Uvicorn 僵尸进程，确保 100% 启动成功
 PORT_PID=$(lsof -t -i:8000)
 if [ ! -z "$PORT_PID" ]; then
@@ -28,10 +72,6 @@ if [ ! -z "$REDUNDANT_PIDS" ]; then
     sleep 0.5
 fi
 
-# We are running either in iTerm2 or in Terminal
-echo "================================================="
-echo "     本地数学题库教研系统 (MathBank) 启动器"
-echo "================================================="
 echo "正在本地加载环境并为您启动服务..."
 echo "服务启动后，将在浏览器中自动打开: http://127.0.0.1:8000"
 echo "================================================="
@@ -41,8 +81,8 @@ echo ""
 mkdir -p .system_generated
 rm -f .system_generated/server.log
 
-# 🟢 使用 nohup 将 uvicorn 服务发送到后台静默运行，并输出重定向到 server.log，防阻塞
-nohup python3 -m uvicorn main:app --reload --host 127.0.0.1 >.system_generated/server.log 2>&1 &
+# 🟢 使用 venv 中的 python 将 uvicorn 服务发送到后台静默运行，并输出重定向到 server.log，防阻塞
+nohup ./venv/bin/python -m uvicorn main:app --reload --host 127.0.0.1 >.system_generated/server.log 2>&1 &
 disown $! 2>/dev/null
 
 # 🔄 自适应端口健康检查，最大等待 10 秒（每 0.5 秒检测一次）
