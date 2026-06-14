@@ -264,40 +264,61 @@
         // Cancel and abort all active OCR processes (both content and answer OCR)
         function cancelAllOcr() {
             let aborted = false;
+            
+            // Handle content OCR abort
             if (contentOcrAbortController) {
                 contentOcrAbortController.abort();
                 contentOcrAbortController = null;
                 aborted = true;
+                
+                // Hide loading text and update status badge for content OCR preview
+                const contentOcrLoadingText = document.getElementById('contentOcrStatusLoadingText');
+                const contentOcrStatusBadge = document.getElementById('contentOcrStatusBadge');
+                if (contentOcrLoadingText) contentOcrLoadingText.classList.add('hidden');
+                if (contentOcrStatusBadge) {
+                    contentOcrStatusBadge.classList.remove('hidden');
+                    contentOcrStatusBadge.textContent = '已取消识别 (点击可更换图片)';
+                }
             }
+            
+            // Handle answer OCR abort
             if (answerOcrAbortController) {
                 answerOcrAbortController.abort();
                 answerOcrAbortController = null;
                 aborted = true;
-            }
-            
-            // Clean up both OCR previews and reset output boxes
-            clearContentOcrPreview();
-            clearOcrPreview();
-            
-            // Restore loading indicator and dropzone UI states
-            const contentOcrDropZone = document.getElementById('contentOcrDropZone');
-            const contentOcrLoading = document.getElementById('contentOcrLoadingIndicator');
-            if (contentOcrDropZone && contentOcrLoading) {
-                contentOcrLoading.classList.add('hidden');
-                contentOcrDropZone.classList.remove('hidden');
-            }
-            
-            const ocrDropZone = document.getElementById('ocrDropZone');
-            const ocrLoading = document.getElementById('ocrLoadingIndicator');
-            if (ocrDropZone && ocrLoading) {
-                ocrLoading.classList.add('hidden');
-                ocrDropZone.classList.remove('hidden');
+                
+                // Hide loading text and update status badge for answer OCR preview
+                const ocrStatusLoadingText = document.getElementById('ocrStatusLoadingText');
+                const ocrStatusBadge = document.getElementById('ocrStatusBadge');
+                if (ocrStatusLoadingText) ocrStatusLoadingText.classList.add('hidden');
+                if (ocrStatusBadge) {
+                    ocrStatusBadge.classList.remove('hidden');
+                    ocrStatusBadge.textContent = '已取消识别 (点击可更换图片)';
+                }
             }
             
             if (aborted) {
-                showToast('OCR 识别服务已取消运行', 'info');
+                // Restore loading indicator and dropzone UI states (but keep image preview)
+                const contentOcrDropZone = document.getElementById('contentOcrDropZone');
+                const contentOcrLoading = document.getElementById('contentOcrLoadingIndicator');
+                if (contentOcrDropZone && contentOcrLoading) {
+                    contentOcrLoading.classList.add('hidden');
+                    contentOcrDropZone.classList.remove('hidden');
+                }
+                
+                const ocrDropZone = document.getElementById('ocrDropZone');
+                const ocrLoading = document.getElementById('ocrLoadingIndicator');
+                if (ocrDropZone && ocrLoading) {
+                    ocrLoading.classList.add('hidden');
+                    ocrDropZone.classList.remove('hidden');
+                }
+                
+                showToast('OCR 识别已取消，按 ESC 可清除图片', 'info');
             } else {
-                showToast('已清除当前识图状态', 'info');
+                // If no active OCR process is running, clear all image previews and results completely
+                clearContentOcrPreview();
+                clearOcrPreview();
+                showToast('已清除当前识图状态与图片', 'info');
             }
         }
 
