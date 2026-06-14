@@ -275,23 +275,29 @@
                 aborted = true;
             }
             
+            // Clean up both OCR previews and reset output boxes
+            clearContentOcrPreview();
+            clearOcrPreview();
+            
+            // Restore loading indicator and dropzone UI states
+            const contentOcrDropZone = document.getElementById('contentOcrDropZone');
+            const contentOcrLoading = document.getElementById('contentOcrLoadingIndicator');
+            if (contentOcrDropZone && contentOcrLoading) {
+                contentOcrLoading.classList.add('hidden');
+                contentOcrDropZone.classList.remove('hidden');
+            }
+            
+            const ocrDropZone = document.getElementById('ocrDropZone');
+            const ocrLoading = document.getElementById('ocrLoadingIndicator');
+            if (ocrDropZone && ocrLoading) {
+                ocrLoading.classList.add('hidden');
+                ocrDropZone.classList.remove('hidden');
+            }
+            
             if (aborted) {
-                // Restore loading indicator and dropzone UI states
-                const contentOcrDropZone = document.getElementById('contentOcrDropZone');
-                const contentOcrLoading = document.getElementById('contentOcrLoadingIndicator');
-                if (contentOcrDropZone && contentOcrLoading) {
-                    contentOcrLoading.classList.add('hidden');
-                    contentOcrDropZone.classList.remove('hidden');
-                }
-                
-                const ocrDropZone = document.getElementById('ocrDropZone');
-                const ocrLoading = document.getElementById('ocrLoadingIndicator');
-                if (ocrDropZone && ocrLoading) {
-                    ocrLoading.classList.add('hidden');
-                    ocrDropZone.classList.remove('hidden');
-                }
-                
                 showToast('OCR 识别服务已取消运行', 'info');
+            } else {
+                showToast('已清除当前识图状态', 'info');
             }
         }
 
