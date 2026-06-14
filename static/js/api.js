@@ -358,3 +358,150 @@
             return string.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
         }
 
+        // Global Theme Color and Dark Mode Management
+        window.changeTheme = function(themeName, save = true) {
+            const themes = ['theme-violet', 'theme-emerald', 'theme-ocean', 'theme-amber', 'theme-crimson'];
+            
+            // Remove all themes from document root and body
+            themes.forEach(t => {
+                document.documentElement.classList.remove(t);
+                document.body.classList.remove(t);
+            });
+            
+            // Apply selected theme
+            const newThemeClass = `theme-${themeName}`;
+            document.documentElement.classList.add(newThemeClass);
+            document.body.classList.add(newThemeClass);
+
+            // Update dropdown UI (Dot, Text, Checkmarks)
+            const dot = document.getElementById('currentThemeDot');
+            const nameSpan = document.getElementById('currentThemeName');
+            if (dot && nameSpan) {
+                const colorMap = {
+                    'violet': '#8b5cf6',
+                    'ocean': '#0ea5e9',
+                    'emerald': '#10b981',
+                    'amber': '#f59e0b',
+                    'crimson': '#f43f5e'
+                };
+                dot.style.backgroundColor = colorMap[themeName] || '#8b5cf6';
+                nameSpan.textContent = getThemeChineseName(themeName);
+            }
+            
+            // Update check marks
+            const themesOnly = ['violet', 'ocean', 'emerald', 'amber', 'crimson'];
+            themesOnly.forEach(t => {
+                const check = document.getElementById(`check-${t}`);
+                if (check) {
+                    if (t === themeName) {
+                        check.classList.remove('hidden');
+                    } else {
+                        check.classList.add('hidden');
+                    }
+                }
+            });
+            
+            if (save) {
+                localStorage.setItem('theme-color', themeName);
+                if (typeof showToast === 'function') {
+                    showToast(`已切换至 ${getThemeChineseName(themeName)} 配色`);
+                }
+            }
+        };
+
+        // Dropdown toggle logic
+        window.toggleThemeDropdown = function(event) {
+            event.stopPropagation();
+            const menu = document.getElementById('themeDropdownMenu');
+            const arrow = document.getElementById('themeDropdownArrow');
+            if (!menu) return;
+            
+            const isOpen = !menu.classList.contains('pointer-events-none');
+            if (isOpen) {
+                closeThemeDropdown();
+            } else {
+                menu.classList.remove('scale-90', 'opacity-0', 'pointer-events-none');
+                menu.classList.add('scale-100', 'opacity-100');
+                if (arrow) arrow.classList.add('rotate-180');
+                
+                // Add click listener to close when clicking outside
+                document.addEventListener('click', closeThemeDropdownOnce);
+            }
+        };
+        
+        function closeThemeDropdown() {
+            const menu = document.getElementById('themeDropdownMenu');
+            const arrow = document.getElementById('themeDropdownArrow');
+            if (!menu) return;
+            menu.classList.add('scale-90', 'opacity-0', 'pointer-events-none');
+            menu.classList.remove('scale-100', 'opacity-100');
+            if (arrow) arrow.classList.remove('rotate-180');
+            document.removeEventListener('click', closeThemeDropdownOnce);
+        }
+        
+        function closeThemeDropdownOnce() {
+            closeThemeDropdown();
+        }
+
+        window.selectTheme = function(themeName) {
+            window.changeTheme(themeName);
+            closeThemeDropdown();
+        };
+
+        window.toggleDarkMode = function() {
+            const isDark = document.documentElement.classList.toggle('dark');
+            document.body.classList.toggle('dark', isDark);
+            
+            localStorage.setItem('dark-mode', isDark);
+            updateDarkModeIcon(isDark);
+            
+            if (typeof showToast === 'function') {
+                showToast(isDark ? '已开启优雅夜间模式 🌙' : '已返回亮色模式 ☀️');
+            }
+        };
+
+        function getThemeChineseName(themeName) {
+            const names = {
+                'violet': '紫罗兰',
+                'emerald': '翡翠绿',
+                'ocean': '蔚蓝色',
+                'amber': '琥珀橙',
+                'crimson': '绯红色'
+            };
+            return names[themeName] || themeName;
+        }
+
+        function updateDarkModeIcon(isDark) {
+            const btn = document.getElementById('darkModeBtn');
+            if (btn) {
+                btn.innerHTML = isDark 
+                    ? '<i class="fa-solid fa-sun text-xs text-amber-500"></i>' 
+                    : '<i class="fa-solid fa-moon text-xs"></i>';
+                btn.title = isDark ? '切换亮色模式' : '切换夜间模式';
+            }
+        }
+
+        function initTheme() {
+            const savedTheme = localStorage.getItem('theme-color') || 'violet';
+            const savedDarkMode = localStorage.getItem('dark-mode') === 'true';
+            
+            // Apply saved theme color without triggering toast
+            window.changeTheme(savedTheme, false);
+            
+            // Apply saved dark mode status
+            if (savedDarkMode) {
+                document.documentElement.classList.add('dark');
+                document.body.classList.add('dark');
+                updateDarkModeIcon(true);
+            } else {
+                document.documentElement.classList.remove('dark');
+                document.body.classList.remove('dark');
+                updateDarkModeIcon(false);
+            }
+        }
+
+        // Initialize theme on DOMContentLoaded
+        document.addEventListener('DOMContentLoaded', () => {
+            initTheme();
+        });
+

@@ -382,7 +382,10 @@ const PAGE_LIMIT = 20;
                 source: source,
                 answer_markdown: answerMarkdown,
                 review: review,
-                image_paths: uploadedImages,
+                image_paths: Array.from(new Set([
+                    ...uploadedImages,
+                    ...(typeof uploadedAnswerImages !== 'undefined' ? uploadedAnswerImages : [])
+                ])),
                 isDraft: true,
                 updated_at: new Date().toISOString()
             };

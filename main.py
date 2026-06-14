@@ -240,6 +240,11 @@ def read_index():
             # Also handle plain scripts references if they exist
             html_content = html_content.replace(f'src="/static/js/{js}"', f'src="/static/js/{js}?v={mtime}"')
             
+        # Inject dynamic cache-busting version parameter for app.css
+        css_path = os.path.join("static", "css", "app.css")
+        css_mtime = int(os.path.getmtime(css_path)) if os.path.exists(css_path) else 0
+        html_content = html_content.replace('/static/css/app.css', f'/static/css/app.css?v={css_mtime}')
+            
         # Inject the token directly into index.html to bypass any cookie blocking policies
         token_script = f'<script>window.__localToken = "{LOCAL_TOKEN}";</script>'
         html_content = html_content.replace('<head>', f'<head>\n    {token_script}')

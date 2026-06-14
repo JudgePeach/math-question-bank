@@ -1,7 +1,7 @@
 /* ===== Apple-Style Glassmorphism Design System ===== */
 /* Inspired by macOS Sonoma & visionOS Spatial UI */
 
-/* Base Background - Warm Gray */
+/* Base Background - Warm Gray & Colors */
 :root {
     --apple-bg: #FAFAF8;
     --apple-bg-elevated: #FFFFFF;
@@ -17,18 +17,327 @@
     --apple-shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.06), 0 1px 2px rgba(0, 0, 0, 0.04);
     --apple-shadow-md: 0 4px 12px rgba(0, 0, 0, 0.08), 0 2px 4px rgba(0, 0, 0, 0.04);
     --apple-shadow-lg: 0 12px 40px rgba(0, 0, 0, 0.12), 0 4px 12px rgba(0, 0, 0, 0.06);
-    --apple-shadow-glow: 0 0 20px rgba(139, 92, 246, 0.15);
 
     /* Text hierarchy */
     --text-primary: #1E293B;
     --text-secondary: #64748B;
     --text-tertiary: #94A3B8;
+
+    /* Default Violet Theme */
+    --brand-50-rgb: 245, 243, 255;
+    --brand-100-rgb: 237, 233, 254;
+    --brand-200-rgb: 221, 214, 254;
+    --brand-500-rgb: 139, 92, 246;
+    --brand-600-rgb: 124, 58, 237;
+    --brand-700-rgb: 109, 40, 217;
+    --brand-900-rgb: 76, 29, 149;
+    --brand-rgb: 124, 58, 237;
+    --apple-shadow-glow: 0 0 20px rgba(var(--brand-rgb), 0.15);
+}
+
+/* Theme Classes definitions */
+.theme-violet {
+    --brand-50-rgb: 245, 243, 255;
+    --brand-100-rgb: 237, 233, 254;
+    --brand-200-rgb: 221, 214, 254;
+    --brand-500-rgb: 139, 92, 246;
+    --brand-600-rgb: 124, 58, 237;
+    --brand-700-rgb: 109, 40, 217;
+    --brand-900-rgb: 76, 29, 149;
+    --brand-rgb: 124, 58, 237;
+    --apple-shadow-glow: 0 0 20px rgba(var(--brand-rgb), 0.15);
+}
+
+.theme-emerald {
+    --brand-50-rgb: 236, 253, 245;
+    --brand-100-rgb: 209, 250, 229;
+    --brand-200-rgb: 167, 243, 208;
+    --brand-500-rgb: 16, 185, 129;
+    --brand-600-rgb: 5, 150, 105;
+    --brand-700-rgb: 4, 120, 87;
+    --brand-900-rgb: 6, 78, 59;
+    --brand-rgb: 5, 150, 105;
+    --apple-shadow-glow: 0 0 20px rgba(16, 185, 129, 0.15);
+}
+
+.theme-ocean {
+    --brand-50-rgb: 240, 249, 255;
+    --brand-100-rgb: 224, 242, 254;
+    --brand-200-rgb: 186, 230, 253;
+    --brand-500-rgb: 14, 165, 233;
+    --brand-600-rgb: 2, 132, 199;
+    --brand-700-rgb: 3, 105, 161;
+    --brand-900-rgb: 12, 74, 110;
+    --brand-rgb: 2, 132, 199;
+    --apple-shadow-glow: 0 0 20px rgba(14, 165, 233, 0.15);
+}
+
+.theme-amber {
+    --brand-50-rgb: 255, 251, 235;
+    --brand-100-rgb: 254, 243, 199;
+    --brand-200-rgb: 253, 230, 138;
+    --brand-500-rgb: 245, 158, 11;
+    --brand-600-rgb: 217, 119, 6;
+    --brand-700-rgb: 180, 83, 9;
+    --brand-900-rgb: 120, 53, 15;
+    --brand-rgb: 217, 119, 6;
+    --apple-shadow-glow: 0 0 20px rgba(245, 158, 11, 0.15);
+}
+
+.theme-crimson {
+    --brand-50-rgb: 255, 241, 242;
+    --brand-100-rgb: 255, 228, 230;
+    --brand-200-rgb: 254, 205, 211;
+    --brand-500-rgb: 244, 63, 94;
+    --brand-600-rgb: 225, 29, 72;
+    --brand-700-rgb: 190, 18, 60;
+    --brand-900-rgb: 136, 19, 55;
+    --brand-rgb: 225, 29, 72;
+    --apple-shadow-glow: 0 0 20px rgba(225, 29, 72, 0.15);
+}
+
+/* Elegant Dark Mode Definition */
+.dark {
+    --apple-bg: #0B0F19; /* Deep Space Navy */
+    --apple-bg-elevated: #161F30;
+    --apple-glass-bg: rgba(22, 31, 48, 0.72);
+    --apple-glass-bg-hover: rgba(29, 41, 64, 0.85);
+    --apple-glass-border: rgba(255, 255, 255, 0.08);
+    --apple-shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.3), 0 1px 2px rgba(0, 0, 0, 0.2);
+    --apple-shadow-md: 0 4px 12px rgba(0, 0, 0, 0.08), 0 2px 4px rgba(0, 0, 0, 0.04);
+    --apple-shadow-lg: 0 12px 40px rgba(0, 0, 0, 0.12), 0 4px 12px rgba(0, 0, 0, 0.06);
+
+    --text-primary: #F1F5F9;
+    --text-secondary: #94A3B8;
+    --text-tertiary: #64748B;
+
+    /* Night Mode - Desaturated Neutral slate-based colors (No bright theme colors in dark mode) */
+    --brand-50-rgb: 30, 41, 59;     /* slate-800 */
+    --brand-100-rgb: 51, 65, 85;    /* slate-700 */
+    --brand-200-rgb: 71, 85, 105;   /* slate-600 */
+    --brand-500-rgb: 148, 163, 184; /* slate-400 */
+    --brand-600-rgb: 100, 116, 139; /* slate-500 */
+    --brand-700-rgb: 71, 85, 105;   /* slate-600 */
+    --brand-900-rgb: 30, 41, 59;     /* slate-800 */
+    --brand-rgb: 100, 116, 139;     /* slate-500 */
+    --apple-shadow-glow: 0 0 20px rgba(255, 255, 255, 0.02);
+}
+
+/* 1. Global Forms Dark Mode Overrides */
+.dark select,
+.dark input,
+.dark textarea {
+    background-color: rgba(15, 23, 42, 0.75) !important;
+    border-color: rgba(255, 255, 255, 0.1) !important;
+    color: #F1F5F9 !important;
+}
+
+.dark select option {
+    background-color: #161F30 !important;
+    color: #F1F5F9 !important;
+}
+
+/* 2. Question Cards Dark Mode Overrides */
+.dark .question-card {
+    background: rgba(22, 31, 48, 0.65) !important;
+    border-color: rgba(255, 255, 255, 0.06) !important;
+    color: #CBD5E1 !important;
+}
+
+.dark .question-card:hover {
+    background: rgba(29, 41, 64, 0.85) !important;
+    border-color: rgba(255, 255, 255, 0.12) !important;
+}
+
+.dark .question-card.active {
+    background: linear-gradient(135deg, rgba(var(--brand-rgb), 0.15), rgba(99, 102, 241, 0.15)) !important;
+    border-color: rgba(var(--brand-rgb), 0.4) !important;
+    box-shadow: 0 0 12px rgba(var(--brand-rgb), 0.15) !important;
+}
+
+/* 3. Button and Interactive Elements Dark Mode Overrides */
+.dark button.bg-white,
+.dark a.bg-white {
+    background-color: rgba(255, 255, 255, 0.05) !important;
+    border-color: rgba(255, 255, 255, 0.08) !important;
+    color: #CBD5E1 !important;
+}
+
+.dark button.bg-white:hover,
+.dark a.bg-white:hover {
+    background-color: rgba(255, 255, 255, 0.1) !important;
+    color: #F1F5F9 !important;
+}
+
+/* 4. Glass Components Dark Mode Overrides */
+.dark .glass-tab {
+    background: rgba(0, 0, 0, 0.2) !important;
+    border-color: rgba(255, 255, 255, 0.05) !important;
+}
+
+.dark .glass-tab-item {
+    background: rgba(255, 255, 255, 0.04) !important;
+    border-color: rgba(255, 255, 255, 0.06) !important;
+    color: #94A3B8 !important;
+}
+
+.dark .glass-tab-item:hover {
+    background: rgba(255, 255, 255, 0.08) !important;
+    color: #F1F5F9 !important;
+}
+
+.dark .glass-tab-item.active {
+    background: rgba(var(--brand-rgb), 0.2) !important;
+    border-color: rgba(var(--brand-rgb), 0.35) !important;
+    color: #F1F5F9 !important;
+}
+
+.dark .glass-tab-item.active-green {
+    background: rgba(16, 185, 129, 0.15) !important;
+    border-color: rgba(16, 185, 129, 0.25) !important;
+    color: #34D399 !important;
+}
+
+.dark .glass-sidebar {
+    background: rgba(15, 23, 42, 0.65) !important;
+    border-right: 1px solid rgba(255, 255, 255, 0.08) !important;
+    border-left: 1px solid rgba(255, 255, 255, 0.08) !important;
+}
+
+.dark .glass-modal {
+    background: rgba(22, 31, 48, 0.85) !important;
+    border: 1px solid rgba(255, 255, 255, 0.08) !important;
+}
+
+/* 5. Custom Background Badges, Texts, and Header Sections Dark Mode Overrides */
+.dark .bg-brand-50,
+.dark .bg-brand-50\/20 {
+    background-color: rgba(var(--brand-rgb), 0.15) !important;
+    color: rgb(var(--brand-500-rgb)) !important;
+    border-color: rgba(var(--brand-rgb), 0.2) !important;
+}
+
+.dark .bg-indigo-50,
+.dark .bg-indigo-50\/20 {
+    background-color: rgba(99, 102, 241, 0.15) !important;
+    color: #A5B4FC !important;
+    border-color: rgba(99, 102, 241, 0.2) !important;
+}
+
+.dark .text-indigo-500,
+.dark .text-indigo-600,
+.dark .text-indigo-700 {
+    color: #94A3B8 !important; /* Desaturate indigo text color */
+}
+
+.dark .bg-slate-50\/50,
+.dark .bg-slate-50 {
+    background-color: rgba(15, 23, 42, 0.5) !important;
+}
+
+/* 6. Sidebar Pagination Dark Mode Overrides */
+.dark #sidebarPagination {
+    border-top: 1px solid rgba(255, 255, 255, 0.08) !important;
+    background: rgba(15, 23, 42, 0.75) !important;
+}
+
+.dark .pagination-btn {
+    background: rgba(255, 255, 255, 0.05) !important;
+    border: 1px solid rgba(255, 255, 255, 0.08) !important;
+    color: #94A3B8 !important;
+}
+
+.dark .pagination-btn:hover:not(:disabled) {
+    background: rgba(255, 255, 255, 0.12) !important;
+    color: #F1F5F9 !important;
+    border-color: rgba(255, 255, 255, 0.15) !important;
+}
+
+.dark .pagination-btn.active {
+    background: rgba(var(--brand-rgb), 0.25) !important;
+    border-color: rgba(var(--brand-rgb), 0.45) !important;
+    color: #F1F5F9 !important;
+}
+
+.dark .pagination-jump-input {
+    background: rgba(15, 23, 42, 0.6) !important;
+    border: 1px solid rgba(255, 255, 255, 0.08) !important;
+    color: #F1F5F9 !important;
+}
+
+.dark .pagination-jump-input:focus {
+    background: rgba(15, 23, 42, 0.8) !important;
+    border-color: rgba(var(--brand-rgb), 0.45) !important;
+}
+
+/* Dark Mode CSS Overrides */
+.dark body {
+    background-image:
+        radial-gradient(at 20% 20%, rgba(var(--brand-rgb), 0.05) 0%, transparent 50%),
+        radial-gradient(at 80% 80%, rgba(15, 23, 42, 0.35) 0%, transparent 50%) !important;
+}
+
+.dark .bg-white\/50,
+.dark .bg-white {
+    background-color: rgba(22, 31, 48, 0.6) !important;
+}
+
+.dark .bg-slate-50,
+.dark .bg-gray-50 {
+    background-color: rgba(15, 23, 42, 0.75) !important;
+}
+
+.dark .border-slate-100,
+.dark .border-slate-200,
+.dark .border-gray-200,
+.dark .border-slate-300 {
+    border-color: rgba(255, 255, 255, 0.08) !important;
+}
+
+.dark .text-slate-800 {
+    color: #F1F5F9 !important;
+}
+
+.dark .text-slate-700,
+.dark .text-slate-600 {
+    color: #CBD5E1 !important; /* slate-300 */
+}
+
+.dark .text-slate-500,
+.dark .text-slate-400 {
+    color: #94A3B8 !important; /* slate-400 */
+}
+
+.dark .preview-box,
+.dark #contentPreview,
+.dark #answerPreview {
+    background-color: rgba(15, 23, 42, 0.8) !important;
+    color: #F1F5F9 !important;
+    border-color: rgba(255, 255, 255, 0.08) !important;
+}
+
+.dark .preview-box *,
+.dark #contentPreview *,
+.dark #answerPreview * {
+    color: #F1F5F9 !important;
+}
+
+.dark .katex {
+    color: #F1F5F9 !important;
+}
+
+.dark .bg-slate-100 {
+    background-color: rgba(15, 23, 42, 0.9) !important;
+}
+
+.dark .text-slate-600 {
+    color: #94A3B8 !important;
 }
 
 body {
     background: var(--apple-bg);
     background-image:
-        radial-gradient(at 20% 20%, rgba(139, 92, 246, 0.02) 0%, transparent 50%),
+        radial-gradient(at 20% 20%, rgba(var(--brand-rgb), 0.02) 0%, transparent 50%),
         radial-gradient(at 80% 80%, rgba(99, 102, 241, 0.02) 0%, transparent 50%);
     color: var(--text-primary);
     height: 100vh;
@@ -109,25 +418,25 @@ html {
 
 /* Primary Glass Button (Brand Color) - 2D Flat Style */
 .glass-btn-primary {
-    background: rgba(124, 58, 237, 0.75);
+    background: rgba(var(--brand-rgb), 0.75);
     backdrop-filter: blur(12px) saturate(150%);
     -webkit-backdrop-filter: blur(12px) saturate(150%);
     border: 1px solid rgba(255, 255, 255, 0.18);
-    box-shadow: 0 2px 8px rgba(124, 58, 237, 0.15);
+    box-shadow: 0 2px 8px rgba(var(--brand-rgb), 0.15);
     color: white;
     transition: all 0.2s ease;
     cursor: pointer;
 }
 
 .glass-btn-primary:hover {
-    background: rgba(124, 58, 237, 0.85);
-    box-shadow: 0 4px 12px rgba(124, 58, 237, 0.2);
+    background: rgba(var(--brand-rgb), 0.85);
+    box-shadow: 0 4px 12px rgba(var(--brand-rgb), 0.2);
     transform: translateY(-1px);
 }
 
 .glass-btn-primary:active {
     transform: translateY(0);
-    box-shadow: 0 1px 4px rgba(124, 58, 237, 0.15);
+    box-shadow: 0 1px 4px rgba(var(--brand-rgb), 0.15);
 }
 
 /* Danger Glass Button - 2D Flat Style */
@@ -181,8 +490,8 @@ html {
 
 .glass-input:focus {
     background: rgba(255, 255, 255, 0.9);
-    border-color: rgba(124, 58, 237, 0.5);
-    box-shadow: 0 0 0 3px rgba(124, 58, 237, 0.1), var(--apple-shadow-sm);
+    border-color: rgba(var(--brand-rgb), 0.5);
+    box-shadow: 0 0 0 3px rgba(var(--brand-rgb), 0.1), var(--apple-shadow-sm);
 }
 
 /* Glass Select */
@@ -197,8 +506,8 @@ html {
 
 .glass-select:focus {
     background: rgba(255, 255, 255, 0.9);
-    border-color: rgba(124, 58, 237, 0.5);
-    box-shadow: 0 0 0 3px rgba(124, 58, 237, 0.1);
+    border-color: rgba(var(--brand-rgb), 0.5);
+    box-shadow: 0 0 0 3px rgba(var(--brand-rgb), 0.1);
 }
 
 /* Glass Sidebar */
@@ -252,14 +561,14 @@ html {
 }
 
 .glass-tab-item.active {
-    background: rgba(124, 58, 237, 0.12);
-    border-color: rgba(124, 58, 237, 0.25);
-    color: rgba(124, 58, 237, 0.9);
-    box-shadow: 0 1px 4px rgba(124, 58, 237, 0.1);
+    background: rgba(var(--brand-rgb), 0.12);
+    border-color: rgba(var(--brand-rgb), 0.25);
+    color: rgba(var(--brand-rgb), 0.9);
+    box-shadow: 0 1px 4px rgba(var(--brand-rgb), 0.1);
 }
 
 .glass-tab-item.active:hover {
-    background: rgba(124, 58, 237, 0.18);
+    background: rgba(var(--brand-rgb), 0.18);
 }
 
 /* Green variant for drafts tab */
@@ -290,16 +599,16 @@ html {
 }
 
 .glass-list-item.active {
-    background: rgba(124, 58, 237, 0.08);
-    border-color: rgba(124, 58, 237, 0.2);
+    background: rgba(var(--brand-rgb), 0.08);
+    border-color: rgba(var(--brand-rgb), 0.2);
 }
 
 /* Apple-Style Badge */
 .glass-badge {
-    background: rgba(124, 58, 237, 0.1);
+    background: rgba(var(--brand-rgb), 0.1);
     backdrop-filter: blur(10px);
     -webkit-backdrop-filter: blur(10px);
-    border: 1px solid rgba(124, 58, 237, 0.15);
+    border: 1px solid rgba(var(--brand-rgb), 0.15);
 }
 
 /* Apple-Style Divider */
@@ -355,7 +664,7 @@ html {
 /* Apple-Style Focus Ring */
 *:focus-visible {
     outline: none;
-    box-shadow: 0 0 0 3px rgba(124, 58, 237, 0.3);
+    box-shadow: 0 0 0 3px rgba(var(--brand-rgb), 0.3);
     border-radius: var(--apple-radius-sm);
 }
 
@@ -385,17 +694,17 @@ button, a, input, select, textarea {
 
 /* Floating Action Button - Apple Style */
 .glass-fab {
-    background: linear-gradient(135deg, rgba(124, 58, 237, 0.9), rgba(99, 102, 241, 0.9));
+    background: linear-gradient(135deg, rgba(var(--brand-rgb), 0.9), rgba(99, 102, 241, 0.9));
     backdrop-filter: blur(var(--apple-glass-blur));
     -webkit-backdrop-filter: blur(var(--apple-glass-blur));
     border: 1px solid rgba(255, 255, 255, 0.2);
-    box-shadow: 0 8px 32px rgba(124, 58, 237, 0.35), 0 2px 8px rgba(0, 0, 0, 0.1);
+    box-shadow: 0 8px 32px rgba(var(--brand-rgb), 0.35), 0 2px 8px rgba(0, 0, 0, 0.1);
     transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
 }
 
 .glass-fab:hover {
     transform: translateY(-3px) scale(1.02);
-    box-shadow: 0 12px 40px rgba(124, 58, 237, 0.45), 0 4px 12px rgba(0, 0, 0, 0.15);
+    box-shadow: 0 12px 40px rgba(var(--brand-rgb), 0.45), 0 4px 12px rgba(0, 0, 0, 0.15);
 }
 
 .glass-fab:active {
@@ -422,7 +731,7 @@ button, a, input, select, textarea {
 
 .resizer:hover {
     width: 5px;
-    background: rgba(124, 58, 237, 0.4);
+    background: rgba(var(--brand-rgb), 0.4);
 }
 
 /* Question Card - Apple Style */
@@ -443,9 +752,9 @@ button, a, input, select, textarea {
 }
 
 .question-card.active {
-    background: linear-gradient(135deg, rgba(124, 58, 237, 0.06), rgba(99, 102, 241, 0.06));
-    border-color: rgba(124, 58, 237, 0.2);
-    box-shadow: 0 0 0 1px rgba(124, 58, 237, 0.1);
+    background: linear-gradient(135deg, rgba(var(--brand-rgb), 0.06), rgba(99, 102, 241, 0.06));
+    border-color: rgba(var(--brand-rgb), 0.2);
+    box-shadow: 0 0 0 1px rgba(var(--brand-rgb), 0.1);
 }
 
 /* Status Indicator - Apple Style */
@@ -622,10 +931,10 @@ button, a, input, select, textarea {
 }
 
 .pagination-btn.active {
-    background: rgba(124, 58, 237, 0.85); /* Brand 600 */
-    border-color: rgba(124, 58, 237, 0.9);
+    background: rgba(var(--brand-rgb), 0.85); /* Brand 600 */
+    border-color: rgba(var(--brand-rgb), 0.9);
     color: white;
-    box-shadow: 0 2px 6px rgba(124, 58, 237, 0.2);
+    box-shadow: 0 2px 6px rgba(var(--brand-rgb), 0.2);
 }
 
 .pagination-btn-nav {
@@ -660,8 +969,8 @@ button, a, input, select, textarea {
 .pagination-jump-input:focus {
     outline: none;
     background: rgba(255, 255, 255, 0.95);
-    border-color: rgba(124, 58, 237, 0.4);
-    box-shadow: 0 0 0 2px rgba(124, 58, 237, 0.1);
+    border-color: rgba(var(--brand-rgb), 0.4);
+    box-shadow: 0 0 0 2px rgba(var(--brand-rgb), 0.1);
 }
 
 /* Chrome, Safari, Edge, Opera: Remove spin buttons */
@@ -674,5 +983,61 @@ button, a, input, select, textarea {
 /* Firefox: Remove spin buttons */
 .pagination-jump-input[type=number] {
     -moz-appearance: textfield;
+}
+
+/* Premium Project Logo Container */
+.project-icon-box {
+    background: linear-gradient(135deg, rgba(var(--brand-600-rgb), 0.95), #6366f1) !important;
+    box-shadow: 0 4px 12px rgba(var(--brand-500-rgb), 0.25) !important;
+    transition: all 0.25s ease;
+}
+
+.project-icon-box:hover {
+    transform: translateY(-1px) scale(1.03);
+    box-shadow: 0 6px 16px rgba(var(--brand-50-rgb), 0.3) !important;
+}
+
+/* 7. Theme Dropdown Component Dark Mode Overrides */
+.dark #themeDropdownMenu {
+    background-color: rgba(22, 31, 48, 0.9) !important;
+    border-color: rgba(255, 255, 255, 0.08) !important;
+    box-shadow: var(--apple-shadow-lg) !important;
+}
+
+.dark #themeDropdownMenu button {
+    color: #CBD5E1 !important;
+}
+
+.dark #themeDropdownMenu button:hover {
+    background-color: rgba(255, 255, 255, 0.05) !important;
+    color: #F1F5F9 !important;
+}
+
+/* Premium Paper Card subtle gradient overrides */
+.paper-card {
+    background: linear-gradient(180deg, rgba(var(--brand-50-rgb), 0.45) 0%, #ffffff 45%, #ffffff 100%) !important;
+    transition: background 0.3s ease, border-color 0.3s ease;
+}
+
+.dark .paper-card {
+    background: linear-gradient(180deg, rgba(var(--brand-50-rgb), 0.22) 0%, rgba(22, 31, 48, 0.6) 45%, rgba(22, 31, 48, 0.6) 100%) !important;
+}
+
+/* Brand Title Gradient Text Override */
+.brand-title {
+    background: linear-gradient(to right, rgb(var(--brand-700-rgb)), #6366f1) !important;
+    -webkit-background-clip: text !important;
+    -webkit-text-fill-color: transparent !important;
+    background-clip: text !important;
+    color: transparent !important;
+    display: inline-block;
+}
+
+.dark .brand-title {
+    background: linear-gradient(to right, rgb(var(--brand-500-rgb)), #818cf8) !important;
+    -webkit-background-clip: text !important;
+    -webkit-text-fill-color: transparent !important;
+    background-clip: text !important;
+    color: transparent !important;
 }
 
