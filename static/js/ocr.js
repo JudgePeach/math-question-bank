@@ -105,6 +105,40 @@
                     const isAnswerOcrVisible = answerOcrTab && !answerOcrTab.classList.contains('hidden');
                     const isAnswerImageVisible = answerImageTab && !answerImageTab.classList.contains('hidden');
                     
+                    // Check active focused element context to route precisely
+                    if (activeEl) {
+                        const inAnswerPanel = activeEl.closest('#answerExplanationPanel');
+                        const inQuestionPanel = activeEl.closest('#questionContentPanel');
+                        
+                        if (inAnswerPanel) {
+                            if (isAnswerOcrVisible) {
+                                runOcr(imageFile);
+                                e.preventDefault();
+                                return;
+                            } else if (isAnswerImageVisible) {
+                                uploadAnswerImage(imageFile);
+                                e.preventDefault();
+                                return;
+                            } else {
+                                // Default to OCR in answer area if AI or other tab is focused
+                                runOcr(imageFile);
+                                e.preventDefault();
+                                return;
+                            }
+                        } else if (inQuestionPanel) {
+                            if (isContentOcrVisible) {
+                                runContentOcr(imageFile);
+                                e.preventDefault();
+                                return;
+                            } else {
+                                uploadIllustration(imageFile);
+                                e.preventDefault();
+                                return;
+                            }
+                        }
+                    }
+                    
+                    // Default fallback routing using tab visibility if no specific container focus
                     // 1. If Answer OCR tab is visible, route to Answer OCR (SimpleTex) immediately
                     if (isAnswerOcrVisible) {
                         runOcr(imageFile);
@@ -187,6 +221,7 @@
                         const blob = item.getAsFile();
                         onFileReceived(blob);
                         e.preventDefault();
+                        e.stopPropagation();
                     }
                 }
             });
