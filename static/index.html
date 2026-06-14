@@ -11,18 +11,28 @@
     <!-- Tailwind CSS -->
     <script src="https://cdn.tailwindcss.com"></script>
     <script>
+        // Prevent theme flash
+        (function() {
+            const savedTheme = localStorage.getItem('theme-color') || 'violet';
+            const savedDarkMode = localStorage.getItem('dark-mode') === 'true';
+            document.documentElement.classList.add(`theme-${savedTheme}`);
+            if (savedDarkMode) {
+                document.documentElement.classList.add('dark');
+            }
+        })();
+
         tailwind.config = {
             theme: {
                 extend: {
                     colors: {
                         brand: {
-                            50: '#f5f3ff',
-                            100: '#ede9fe',
-                            200: '#ddd6fe',
-                            500: '#8b5cf6',
-                            600: '#7c3aed',
-                            700: '#6d28d9',
-                            900: '#4c1d95',
+                            50: 'rgb(var(--brand-50-rgb) / <alpha-value>)',
+                            100: 'rgb(var(--brand-100-rgb) / <alpha-value>)',
+                            200: 'rgb(var(--brand-200-rgb) / <alpha-value>)',
+                            500: 'rgb(var(--brand-500-rgb) / <alpha-value>)',
+                            600: 'rgb(var(--brand-600-rgb) / <alpha-value>)',
+                            700: 'rgb(var(--brand-700-rgb) / <alpha-value>)',
+                            900: 'rgb(var(--brand-900-rgb) / <alpha-value>)',
                         }
                     },
                     fontFamily: {
@@ -56,11 +66,11 @@
     <!-- Header / Navbar - Apple Glass Style -->
     <header class="glass-panel sticky top-0 z-40 w-full h-16 flex items-center justify-between px-6">
         <div class="flex items-center space-x-3">
-            <div class="h-10 w-10 rounded-xl bg-gradient-to-tr from-brand-600 to-indigo-500 flex items-center justify-center text-white shadow-md shadow-brand-500/20">
+            <div class="h-10 w-10 rounded-xl project-icon-box flex items-center justify-center text-white">
                 <i class="fa-solid fa-square-root-variable text-xl"></i>
             </div>
             <div>
-                <span class="font-semibold text-lg tracking-tight bg-gradient-to-r from-brand-700 to-indigo-600 bg-clip-text text-transparent font-['Outfit']">MathBank</span>
+                <span class="font-semibold text-lg tracking-tight font-['Outfit'] brand-title">MathBank</span>
                 <span class="text-xs text-slate-500 block -mt-1">本地化数学题库研讨系统</span>
             </div>
         </div>
@@ -70,6 +80,51 @@
             <div id="apiStatusIndicator" class="flex items-center space-x-1.5 px-3 py-1.5 rounded-full text-xs font-medium bg-slate-100 text-slate-600">
                 <span class="h-2 w-2 rounded-full bg-slate-400"></span>
                 <span>检测配置...</span>
+            </div>
+
+            <!-- Theme Toggle and Palette Controls (Dropdown Style) -->
+            <div class="flex items-center space-x-2 bg-slate-100/60 p-1.5 rounded-xl border border-slate-200/50 relative">
+                <!-- Dropdown Trigger -->
+                <div class="relative" id="themeDropdownContainer">
+                    <button onclick="toggleThemeDropdown(event)" id="themeDropdownBtn" class="flex items-center space-x-1.5 px-2.5 py-1 rounded-lg text-xs font-semibold text-slate-600 hover:bg-white/60 active:scale-95 transition-all focus:outline-none" title="切换主题配色">
+                        <span id="currentThemeDot" class="w-3.5 h-3.5 rounded-full bg-[#8b5cf6] border border-white"></span>
+                        <span id="currentThemeName">紫罗兰</span>
+                        <i class="fa-solid fa-chevron-down text-[9px] text-slate-400 transition-transform duration-200" id="themeDropdownArrow"></i>
+                    </button>
+                    <!-- Dropdown Menu -->
+                    <div id="themeDropdownMenu" class="absolute left-0 mt-2.5 w-32 py-1 rounded-xl border border-slate-200/50 bg-white/95 backdrop-blur-xl shadow-lg transition-all duration-200 scale-90 opacity-0 pointer-events-none origin-top-left z-50">
+                        <button onclick="selectTheme('violet')" class="w-full px-3 py-1.5 text-xs text-left text-slate-600 hover:bg-slate-100/80 flex items-center space-x-2 transition-colors">
+                            <span class="w-2.5 h-2.5 rounded-full bg-[#8b5cf6]"></span>
+                            <span>紫罗兰</span>
+                            <i class="fa-solid fa-check text-[9px] text-brand-600 ml-auto hidden" id="check-violet"></i>
+                        </button>
+                        <button onclick="selectTheme('ocean')" class="w-full px-3 py-1.5 text-xs text-left text-slate-600 hover:bg-slate-100/80 flex items-center space-x-2 transition-colors">
+                            <span class="w-2.5 h-2.5 rounded-full bg-[#0ea5e9]"></span>
+                            <span>蔚蓝色</span>
+                            <i class="fa-solid fa-check text-[9px] text-brand-600 ml-auto hidden" id="check-ocean"></i>
+                        </button>
+                        <button onclick="selectTheme('emerald')" class="w-full px-3 py-1.5 text-xs text-left text-slate-600 hover:bg-slate-100/80 flex items-center space-x-2 transition-colors">
+                            <span class="w-2.5 h-2.5 rounded-full bg-[#10b981]"></span>
+                            <span>翡翠绿</span>
+                            <i class="fa-solid fa-check text-[9px] text-brand-600 ml-auto hidden" id="check-emerald"></i>
+                        </button>
+                        <button onclick="selectTheme('amber')" class="w-full px-3 py-1.5 text-xs text-left text-slate-600 hover:bg-slate-100/80 flex items-center space-x-2 transition-colors">
+                            <span class="w-2.5 h-2.5 rounded-full bg-[#f59e0b]"></span>
+                            <span>琥珀橙</span>
+                            <i class="fa-solid fa-check text-[9px] text-brand-600 ml-auto hidden" id="check-amber"></i>
+                        </button>
+                        <button onclick="selectTheme('crimson')" class="w-full px-3 py-1.5 text-xs text-left text-slate-600 hover:bg-slate-100/80 flex items-center space-x-2 transition-colors">
+                            <span class="w-2.5 h-2.5 rounded-full bg-[#f43f5e]"></span>
+                            <span>绯红色</span>
+                            <i class="fa-solid fa-check text-[9px] text-brand-600 ml-auto hidden" id="check-crimson"></i>
+                        </button>
+                    </div>
+                </div>
+                <div class="h-3.5 w-[1px] bg-slate-300/60 mx-1"></div>
+                <!-- Dark Mode Toggle -->
+                <button onclick="toggleDarkMode()" id="darkModeBtn" class="p-0.5 text-slate-500 hover:text-brand-600 hover:scale-110 active:scale-95 transition-all focus:outline-none flex items-center justify-center rounded-lg" title="切换夜间模式">
+                    <i class="fa-solid fa-moon text-xs"></i>
+                </button>
             </div>
 
 
@@ -709,7 +764,9 @@
 
             <!-- Beautiful Paper View Card -->
             <div class="p-6">
-                <div class="border border-slate-300 rounded-2xl shadow-lg bg-white overflow-hidden border-t-8 border-t-brand-600 min-h-[500px] flex flex-col select-text">
+                <div class="border border-slate-300 rounded-2xl shadow-lg paper-card overflow-hidden min-h-[500px] flex flex-col select-text">
+                    <!-- Accent color bar -->
+                    <div class="h-2 bg-brand-600 w-full shrink-0"></div>
                     <!-- School Paper Header -->
                     <div class="p-6 text-center border-b border-dashed border-slate-200 bg-slate-50/50">
                         <h4 class="font-extrabold text-base tracking-wide text-slate-800" id="paperHeaderTitle">本地教研系统</h4>

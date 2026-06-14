@@ -513,7 +513,11 @@
                 formData.append('answer_markdown', answerMarkdown);
                 formData.append('review', review);
                 formData.append('related_question_id', relatedQuestionId);
-                formData.append('image_paths', JSON.stringify(uploadedImages));
+                const combinedImages = Array.from(new Set([
+                    ...uploadedImages,
+                    ...(typeof uploadedAnswerImages !== 'undefined' ? uploadedAnswerImages : [])
+                ]));
+                formData.append('image_paths', JSON.stringify(combinedImages));
                 
                 let url = '/api/questions';
                 let method = 'POST';
