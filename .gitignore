@@ -22,7 +22,7 @@ static/uploads/*
 !static/uploads/.gitkeep
 
 # 5. 忽略 Python 缓存、测试缓存及运行产生的日志
-.system_generated/server.log
+.system_generated/
 __pycache__/
 *.pyc
 .pytest_cache/
