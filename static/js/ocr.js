@@ -79,6 +79,14 @@
                 }
             });
 
+            function getDistanceFromScreenCenter(element) {
+                if (!element) return Infinity;
+                const rect = element.getBoundingClientRect();
+                const elementCenterY = rect.top + rect.height / 2;
+                const screenCenterY = window.innerHeight / 2;
+                return Math.abs(elementCenterY - screenCenterY);
+            }
+
             // Global smart clipboard paste routing for images/screenshots (Tab visibility priority)
             window.addEventListener('paste', (e) => {
                 const activeEl = document.activeElement;
@@ -105,81 +113,59 @@
                     const isAnswerOcrVisible = answerOcrTab && !answerOcrTab.classList.contains('hidden');
                     const isAnswerImageVisible = answerImageTab && !answerImageTab.classList.contains('hidden');
                     
-                    // Check active focused element context to route precisely
+                    // Determine which panel is the target of the paste action
+                    let targetPanel = null;
+                    
+                    // 1. If we have a focused input element, prioritize its container
                     if (activeEl) {
-                        const inAnswerPanel = activeEl.closest('#answerExplanationPanel');
-                        const inQuestionPanel = activeEl.closest('#questionContentPanel');
-                        
-                        if (inAnswerPanel) {
-                            if (isAnswerOcrVisible) {
-                                runOcr(imageFile);
-                                e.preventDefault();
-                                return;
-                            } else if (isAnswerImageVisible) {
-                                uploadAnswerImage(imageFile);
-                                e.preventDefault();
-                                return;
-                            } else {
-                                // Default to OCR in answer area if AI or other tab is focused
-                                runOcr(imageFile);
-                                e.preventDefault();
-                                return;
-                            }
-                        } else if (inQuestionPanel) {
-                            if (isContentOcrVisible) {
-                                runContentOcr(imageFile);
-                                e.preventDefault();
-                                return;
-                            } else {
-                                uploadIllustration(imageFile);
-                                e.preventDefault();
-                                return;
-                            }
+                        if (activeEl.closest('#answerExplanationPanel')) {
+                            targetPanel = 'answer';
+                        } else if (activeEl.closest('#questionContentPanel')) {
+                            targetPanel = 'question';
                         }
                     }
                     
-                    // Default fallback routing using tab visibility if no specific container focus
-                    // 1. If Answer OCR tab is visible, route to Answer OCR (SimpleTex) immediately
-                    if (isAnswerOcrVisible) {
-                        runOcr(imageFile);
-                        e.preventDefault();
-                        return;
+                    // 2. If no explicit container focus, determine based on which panel is closer to the screen center (visible viewport)
+                    if (!targetPanel) {
+                        const questionPanel = document.getElementById('questionContentPanel');
+                        const answerPanel = document.getElementById('answerExplanationPanel');
+                        
+                        if (questionPanel && answerPanel) {
+                            const qDist = getDistanceFromScreenCenter(questionPanel);
+                            const aDist = getDistanceFromScreenCenter(answerPanel);
+                            targetPanel = aDist < qDist ? 'answer' : 'question';
+                        }
                     }
                     
-                    // 2. If Question Content OCR tab is visible, route to Content OCR immediately
-                    if (isContentOcrVisible) {
-                        runContentOcr(imageFile);
-                        e.preventDefault();
-                        return;
-                    }
-
-                    // 3. If Image Answer tab is visible, route to Answer Image upload immediately
-                    if (isAnswerImageVisible) {
-                        uploadAnswerImage(imageFile);
-                        e.preventDefault();
-                        return;
-                    }
-                    
-                    // 4. If neither tab is active, check active focused element
-                    if (activeEl && activeEl.id === 'illustrationDropZone') {
-                        uploadIllustration(imageFile);
-                        e.preventDefault();
-                        return;
-                    } else if (activeEl && activeEl.id === 'ocrDropZone') {
-                        runOcr(imageFile);
-                        e.preventDefault();
-                        return;
-                    } else if (activeEl && activeEl.id === 'contentOcrDropZone') {
-                        runContentOcr(imageFile);
-                        e.preventDefault();
-                        return;
-                    } else if (activeEl && activeEl.id === 'imageAnswerDropZone') {
-                        uploadAnswerImage(imageFile);
-                        e.preventDefault();
-                        return;
+                    // 3. Route to the target panel intelligently
+                    if (targetPanel === 'answer') {
+                        if (isAnswerOcrVisible) {
+                            runOcr(imageFile);
+                            e.preventDefault();
+                            return;
+                        } else if (isAnswerImageVisible) {
+                            uploadAnswerImage(imageFile);
+                            e.preventDefault();
+                            return;
+                        } else {
+                            // Default to OCR in answer area if AI or other tab is focused
+                            runOcr(imageFile);
+                            e.preventDefault();
+                            return;
+                        }
+                    } else if (targetPanel === 'question') {
+                        if (isContentOcrVisible) {
+                            runContentOcr(imageFile);
+                            e.preventDefault();
+                            return;
+                        } else {
+                            uploadIllustration(imageFile);
+                            e.preventDefault();
+                            return;
+                        }
                     }
                     
-                    // 5. Default fallback: upload as an illustration
+                    // 4. Default fallback: upload as an illustration
                     uploadIllustration(imageFile);
                     e.preventDefault();
                 }
