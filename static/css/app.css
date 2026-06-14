@@ -1041,3 +1041,36 @@ button, a, input, select, textarea {
     color: transparent !important;
 }
 
+/* Glass Button Dark Mode Custom Overrides */
+.dark .glass-btn {
+    background: rgba(255, 255, 255, 0.08) !important;
+    border-color: rgba(255, 255, 255, 0.08) !important;
+    color: rgba(255, 255, 255, 0.85) !important;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
+}
+
+.dark .glass-btn:hover {
+    background: rgba(255, 255, 255, 0.15) !important;
+    color: #ffffff !important;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+}
+
+.dark .glass-btn i {
+    color: rgb(var(--brand-500-rgb)) !important;
+}
+
+.dark .glass-btn:hover i {
+    color: #ffffff !important;
+}
+
+.dark .glass-btn .text-slate-500,
+.dark .glass-btn i.text-slate-500 {
+    color: rgba(255, 255, 255, 0.6) !important;
+}
+
+.dark .glass-btn:hover .text-slate-500,
+.dark .glass-btn:hover i.text-slate-500 {
+    color: #ffffff !important;
+}
+
+
