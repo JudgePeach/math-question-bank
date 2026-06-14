@@ -724,15 +724,18 @@
             const content = document.getElementById('paperAnalysisContent');
             const icon = document.getElementById('analysisIcon');
             const text = document.getElementById('analysisText');
+            const copyBtn = document.getElementById('copyAnalysisBtn');
             
             if (content.classList.contains('hidden')) {
                 content.classList.remove('hidden');
                 icon.className = 'fa-solid fa-eye-slash';
                 text.textContent = '隐藏解析';
+                if (copyBtn) copyBtn.classList.remove('hidden');
             } else {
                 content.classList.add('hidden');
                 icon.className = 'fa-solid fa-eye';
                 text.textContent = '查看解析';
+                if (copyBtn) copyBtn.classList.add('hidden');
             }
         }
 
