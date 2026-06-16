@@ -214,7 +214,7 @@ start http://127.0.0.1:8000
 exit
 """
     launcher_path = os.path.join(BUILD_DIR, "启动题库系统.bat")
-    with open(launcher_path, "w", encoding="gbk") as f:
+    with open(launcher_path, "w", encoding="gbk", newline="\r\n") as f:
         f.write(launcher_content)
 
 def zip_release():
