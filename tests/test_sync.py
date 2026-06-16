@@ -85,11 +85,12 @@ def test_export_database_to_files(db_session, tmp_path):
 
 
 def test_clean_orphaned_images(db_session):
-    upload_dir = os.path.join("static", "uploads")
+    import main
+    upload_dir = main.UPLOAD_DIR
     os.makedirs(upload_dir, exist_ok=True)
 
     # 1. Create a question referencing one image
-    ref_image_path = "static/uploads/test_referenced_old_image.png"
+    ref_image_path = f"{main.UPLOAD_DIR_REL}/test_referenced_old_image.png"
     q = Question(
         content="测试图片引用",
         question_type="single_choice"

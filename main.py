@@ -26,6 +26,11 @@ load_dotenv()
 # Initialize DB
 init_db()
 
+import sys
+# 检测是否在单元测试环境下运行
+IS_TESTING = "pytest" in sys.modules or any("pytest" in arg for arg in sys.argv)
+UPLOAD_DIR_REL = "static/test_uploads" if IS_TESTING else "static/uploads"
+
 def robust_request_post(url, **kwargs):
     """发送 POST 请求，并在发生 Proxy/Connection 错误时自动尝试禁用代理重试"""
     # 如果目标 URL 是国内知名 API（如阿里百炼、SimpleTex、SiliconFlow 等），
@@ -171,8 +176,8 @@ def clean_orphaned_images():
                     except Exception:
                         pass
                         
-            # 2. 遍历本地 static/uploads 目录
-            upload_dir = os.path.join("static", "uploads")
+            # 2. 遍历本地图片目录
+            upload_dir = UPLOAD_DIR
             if not os.path.exists(upload_dir):
                 return
                 
@@ -185,7 +190,7 @@ def clean_orphaned_images():
                 if filename.startswith("."):
                     continue
                 
-                local_rel_path = f"static/uploads/{filename}".lower()
+                local_rel_path = f"{UPLOAD_DIR_REL}/{filename}".lower()
                 if local_rel_path not in referenced_images:
                     full_path = os.path.join(upload_dir, filename)
                     # 安全红线：仅物理清理创建/修改时间超过 1 小时的临时或残留垃圾文件
@@ -209,12 +214,13 @@ def start_startup_cleanup():
     time.sleep(2.5)
     clean_orphaned_images()
 
-# 启动静默自愈清理后台守护线程
-threading.Thread(target=start_startup_cleanup, daemon=True).start()
+# 仅在非测试环境下启动静默自愈清理后台守护线程
+if not IS_TESTING:
+    threading.Thread(target=start_startup_cleanup, daemon=True).start()
 
 
 # Ensure directories exist
-UPLOAD_DIR = os.path.join("static", "uploads")
+UPLOAD_DIR = UPLOAD_DIR_REL
 os.makedirs(UPLOAD_DIR, exist_ok=True)
 
 def get_seq_mapping(db: Session):
@@ -293,7 +299,7 @@ async def upload_image(file: UploadFile = File(...)):
         with open(filepath, "wb") as f:
             f.write(await file.read())
             
-        relative_path = f"/static/uploads/{filename}"
+        relative_path = f"/{UPLOAD_DIR_REL}/{filename}"
         return {
             "status": "success",
             "file_path": relative_path,
@@ -1068,7 +1074,7 @@ def update_question(
         removed_images = set(old_images) - set(parsed_img_paths)
         for img_path in removed_images:
             rel_path = img_path.lstrip("/")
-            if rel_path.startswith("static/uploads/") and os.path.exists(rel_path):
+            if rel_path.startswith(f"{UPLOAD_DIR_REL}/") and os.path.exists(rel_path):
                 try:
                     os.remove(rel_path)
                 except Exception:
@@ -1230,7 +1236,7 @@ def delete_question(
         for img_path in db_question.image_paths:
             # normalize and strip prefix slash
             rel_path = img_path.lstrip("/")
-            if rel_path.startswith("static/uploads/") and os.path.exists(rel_path):
+            if rel_path.startswith(f"{UPLOAD_DIR_REL}/") and os.path.exists(rel_path):
                 try:
                     os.remove(rel_path)
                 except Exception:
@@ -1592,7 +1598,7 @@ async def upload_batch_images(files: List[UploadFile] = File(...)):
             with open(filepath, "wb") as f:
                 f.write(await file.read())
                 
-            relative_path = f"/static/uploads/{filename}"
+            relative_path = f"/{UPLOAD_DIR_REL}/{filename}"
             mapping[file.filename] = relative_path
             
         return {

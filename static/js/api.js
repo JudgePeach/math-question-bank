@@ -462,11 +462,11 @@
 
         function getThemeChineseName(themeName) {
             const names = {
-                'violet': '紫罗兰',
+                'violet': '罗兰紫',
                 'emerald': '翡翠绿',
-                'ocean': '蔚蓝色',
+                'ocean': '深海蓝',
                 'amber': '琥珀橙',
-                'crimson': '绯红色'
+                'crimson': '玫瑰红'
             };
             return names[themeName] || themeName;
         }

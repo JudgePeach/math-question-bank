@@ -36,6 +36,48 @@ def download_python():
     with zipfile.ZipFile(PYTHON_ZIP_PATH, 'r') as zip_ref:
         zip_ref.extractall(PYTHON_DIR)
 
+def download_and_extract_sqlite():
+    print("📥 Downloading sqlite3 binaries from NuGet...")
+    nuget_url = "https://www.nuget.org/api/v2/package/python/3.10.11"
+    nuget_zip_path = os.path.join(DIST_DIR, "python_nuget.zip")
+    
+    try:
+        import requests
+        resp = requests.get(nuget_url, timeout=30)
+        resp.raise_for_status()
+        with open(nuget_zip_path, "wb") as f:
+            f.write(resp.content)
+    except Exception as e:
+        print(f"⚠️ requests failed, falling back to urllib: {e}")
+        ctx = ssl._create_default_https_context()
+        req = urllib.request.Request(nuget_url, headers={'User-Agent': 'Mozilla/5.0'})
+        with urllib.request.urlopen(req, context=ctx) as response:
+            with open(nuget_zip_path, "wb") as f:
+                f.write(response.read())
+                
+    print("📦 Extracting sqlite3 binaries...")
+    with zipfile.ZipFile(nuget_zip_path, 'r') as zip_ref:
+        for member in zip_ref.namelist():
+            if member == "tools/DLLs/_sqlite3.pyd":
+                target_path = os.path.join(PYTHON_DIR, "_sqlite3.pyd")
+                with zip_ref.open(member) as source, open(target_path, "wb") as target:
+                    shutil.copyfileobj(source, target)
+            elif member == "tools/DLLs/sqlite3.dll":
+                target_path = os.path.join(PYTHON_DIR, "sqlite3.dll")
+                with zip_ref.open(member) as source, open(target_path, "wb") as target:
+                    shutil.copyfileobj(source, target)
+            elif member.startswith("tools/Lib/sqlite3/"):
+                rel_path = os.path.relpath(member, "tools/Lib")
+                target_path = os.path.join(SITE_PACKAGES, rel_path)
+                os.makedirs(os.path.dirname(target_path), exist_ok=True)
+                if not member.endswith("/"):
+                    with zip_ref.open(member) as source, open(target_path, "wb") as target:
+                        shutil.copyfileobj(source, target)
+                        
+    if os.path.exists(nuget_zip_path):
+        os.remove(nuget_zip_path)
+    print("✅ sqlite3 binaries injected successfully!")
+
 def configure_python_path():
     print("⚙️ Configuring python310._pth...")
     pth_file = os.path.join(PYTHON_DIR, "python310._pth")
@@ -217,6 +259,7 @@ def main():
     try:
         clean_directories()
         download_python()
+        download_and_extract_sqlite()
         configure_python_path()
         download_and_extract_wheels()
         copy_app_files()
