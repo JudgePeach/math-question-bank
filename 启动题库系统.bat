@@ -8,7 +8,7 @@ echo 正在检测运行环境并释放端口...
 
 :: 1. 自动检测并强力清理霸占 8000 端口的残余 Uvicorn/Python 进程，确保 100% 启动成功
 for /f "tokens=5" %%a in ('netstat -aon ^| findstr LISTENING ^| findstr :8000') do (
-    echo 检测到端口 8000 被上一次未完全释放的残余进程 (PID: %%a) 占用。
+    echo 检测到端口 8000 被上一次未完全释放的残余进程 [PID: %%a] 占用。
     echo 正在为您安全释放端口并清理运行环境...
     taskkill /f /pid %%a >nul 2>&1
 )
