@@ -31,7 +31,16 @@ def clean_directories():
 
 def download_python():
     print(f"📥 Downloading portable Windows Python from {PYTHON_ZIP_URL}...")
-    urllib.request.urlretrieve(PYTHON_ZIP_URL, PYTHON_ZIP_PATH)
+    try:
+        import requests
+        resp = requests.get(PYTHON_ZIP_URL, timeout=30)
+        resp.raise_for_status()
+        with open(PYTHON_ZIP_PATH, "wb") as f:
+            f.write(resp.content)
+    except Exception as e:
+        print(f"⚠️ requests failed, falling back to urllib: {e}")
+        urllib.request.urlretrieve(PYTHON_ZIP_URL, PYTHON_ZIP_PATH)
+        
     print("📦 Extracting Python...")
     with zipfile.ZipFile(PYTHON_ZIP_PATH, 'r') as zip_ref:
         zip_ref.extractall(PYTHON_DIR)
@@ -55,7 +64,7 @@ def download_and_extract_sqlite():
             with open(nuget_zip_path, "wb") as f:
                 f.write(response.read())
                 
-    print("📦 Extracting sqlite3 binaries...")
+    print("📦 Extracting sqlite3 binaries and VC runtime DLLs...")
     with zipfile.ZipFile(nuget_zip_path, 'r') as zip_ref:
         for member in zip_ref.namelist():
             if member == "tools/DLLs/_sqlite3.pyd":
@@ -64,6 +73,14 @@ def download_and_extract_sqlite():
                     shutil.copyfileobj(source, target)
             elif member == "tools/DLLs/sqlite3.dll":
                 target_path = os.path.join(PYTHON_DIR, "sqlite3.dll")
+                with zip_ref.open(member) as source, open(target_path, "wb") as target:
+                    shutil.copyfileobj(source, target)
+            elif member == "tools/vcruntime140.dll":
+                target_path = os.path.join(PYTHON_DIR, "vcruntime140.dll")
+                with zip_ref.open(member) as source, open(target_path, "wb") as target:
+                    shutil.copyfileobj(source, target)
+            elif member == "tools/vcruntime140_1.dll":
+                target_path = os.path.join(PYTHON_DIR, "vcruntime140_1.dll")
                 with zip_ref.open(member) as source, open(target_path, "wb") as target:
                     shutil.copyfileobj(source, target)
             elif member.startswith("tools/Lib/sqlite3/"):
@@ -76,7 +93,7 @@ def download_and_extract_sqlite():
                         
     if os.path.exists(nuget_zip_path):
         os.remove(nuget_zip_path)
-    print("✅ sqlite3 binaries injected successfully!")
+    print("✅ sqlite3 binaries and VC runtime DLLs injected successfully!")
 
 def configure_python_path():
     print("⚙️ Configuring python310._pth...")
@@ -168,7 +185,7 @@ echo 正在启动后台服务...
 :: 使用内置的便携式 Python 运行服务，输出重定向到日志文件
 if not exist .system_generated mkdir .system_generated
 del /f /q .system_generated\\server.log >nul 2>&1
-start /min "MathBank Server" cmd /c "python\\python.exe -m uvicorn main:app --host 127.0.0.1 >.system_generated\\server.log 2>&1"
+start /min "MathBank Server" cmd /c "cd /d "%~dp0" && python\\python.exe -m uvicorn main:app --host 127.0.0.1 >.system_generated\\server.log 2>&1"
 
 echo 正在探测服务启动状态...
 set TIMEOUT=10
