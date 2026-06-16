@@ -48,7 +48,7 @@ if not exist .system_generated mkdir .system_generated
 del /f /q .system_generated\server.log >nul 2>&1
 
 :: 4. 启动 uvicorn 服务，将其输出重定向到 server.log，并运行在最小化 cmd 窗口以防阻塞
-start /min "MathBank Server" cmd /c "%PYTHON_CMD% -m uvicorn main:app --reload --host 127.0.0.1 >.system_generated\server.log 2>&1"
+start /min "MathBank Server" /d "%~dp0" cmd /c "%PYTHON_CMD% -m uvicorn main:app --reload --host 127.0.0.1 >.system_generated\server.log 2>&1"
 
 :: 5. 自适应端口健康检查，最大等待 10 秒（使用 ping 延迟 1 秒，循环 10 次）
 echo 正在探测后台服务启动状态，等待就绪...
@@ -86,7 +86,17 @@ goto loop
 
 :end_loop
 if %SERVICE_READY%==0 (
-    echo [提示] 探测服务启动超时 (已等待 10 秒)，尝试直接拉起浏览器...
+    echo [错误] 探测服务启动超时 (已等待 10 秒)，后台服务启动失败！
+    echo -------------------------------------------------
+    if exist .system_generated\server.log (
+        type .system_generated\server.log
+    ) else (
+        echo 未找到日志文件 .system_generated\server.log
+    )
+    echo -------------------------------------------------
+    echo 请检查上述错误信息，或按任意键退出...
+    pause
+    exit
 )
 
 :start_browser

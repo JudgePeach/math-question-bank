@@ -184,7 +184,7 @@ echo 正在启动后台服务...
 :: 使用内置的便携式 Python 运行服务，输出重定向到日志文件
 if not exist .system_generated mkdir .system_generated
 del /f /q .system_generated\\server.log >nul 2>&1
-start /min "MathBank Server" cmd /c "cd /d "%~dp0" && python\\python.exe -m uvicorn main:app --host 127.0.0.1 >.system_generated\\server.log 2>&1"
+start /min "MathBank Server" /d "%~dp0" cmd /c "python\\python.exe -m uvicorn main:app --host 127.0.0.1 >.system_generated\\server.log 2>&1"
 
 echo 正在探测服务启动状态...
 set TIMEOUT=10
@@ -207,7 +207,17 @@ goto loop
 
 :end_loop
 if %SERVICE_READY%==0 (
-    echo [提示] 服务启动超时，尝试直接拉起浏览器...
+    echo [错误] 服务启动超时，后台服务启动失败！
+    echo -------------------------------------------------
+    if exist .system_generated\\server.log (
+        type .system_generated\\server.log
+    ) else (
+        echo 未找到日志文件 .system_generated\\server.log
+    )
+    echo -------------------------------------------------
+    echo 请检查上述错误信息，或按任意键退出...
+    pause
+    exit
 )
 
 start http://127.0.0.1:8000
