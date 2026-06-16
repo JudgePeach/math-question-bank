@@ -31,8 +31,8 @@ if not errorlevel 1 (
 )
 
 if "%PYTHON_CMD%"=="" (
-    echo [错误] 未检测到系统安装了 Python 环境，或者未将 Python 添加至环境变量 (PATH) 中！
-    echo 请先安装 Python (3.8+) 并勾选 "Add Python to PATH" 选项。
+    echo [错误] 未检测到系统安装了 Python 环境，或者未将 Python 添加至环境变量 [PATH] 中！
+    echo 请先安装 Python [3.8+] 并勾选 "Add Python to PATH" 选项。
     pause
     exit /b 1
 )
@@ -86,7 +86,7 @@ goto loop
 
 :end_loop
 if %SERVICE_READY%==0 (
-    echo [错误] 探测服务启动超时 (已等待 10 秒)，后台服务启动失败！
+    echo [错误] 探测服务启动超时 [已等待 10 秒]，后台服务启动失败！
     echo -------------------------------------------------
     if exist .system_generated\server.log (
         type .system_generated\server.log
