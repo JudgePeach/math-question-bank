@@ -168,7 +168,6 @@ def copy_app_files():
 def create_launcher():
     print("📝 Creating launcher batch file...")
     launcher_content = """@echo off
-chcp 65001 >nul
 cd /d "%~dp0"
 
 echo =================================================
@@ -197,7 +196,7 @@ if %COUNTER% geq %TIMEOUT% goto end_loop
 
 python\\python.exe -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/questions')" >nul 2>&1
 if not errorlevel 1 (
-    echo 🎉 服务已成功启动！
+    echo [成功] 服务已成功启动！
     set SERVICE_READY=1
     goto end_loop
 )
@@ -208,14 +207,14 @@ goto loop
 
 :end_loop
 if %SERVICE_READY%==0 (
-    echo ⚠️ 服务启动超时，尝试直接拉起浏览器...
+    echo [提示] 服务启动超时，尝试直接拉起浏览器...
 )
 
 start http://127.0.0.1:8000
 exit
 """
     launcher_path = os.path.join(BUILD_DIR, "启动题库系统.bat")
-    with open(launcher_path, "w", encoding="utf-8") as f:
+    with open(launcher_path, "w", encoding="gbk") as f:
         f.write(launcher_content)
 
 def zip_release():
