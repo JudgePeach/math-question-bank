@@ -61,7 +61,7 @@
   - 所有对题库和配置进行修改的接口（POST / PUT / DELETE）均需要鉴权令牌（本地 `LOCAL_TOKEN`）。
   - 前端由 `api.js` 全局劫持 `fetch`，自动附加 `X-Local-Token` 头部信息。所有 AI 代理在进行接口修改或直接发送 API 请求时必须严格遵守这一安全鉴权规范。
 - **OCR 接口（多通道高可用设计）**：
-  - **首选引擎 (SiliconFlow)**：默认首选调用 SiliconFlow 运行 Qwen 视觉语言模型（如 `Qwen/Qwen3.5-4B` 等），实现高精度的数学图文 OCR 识别。Token 变量名为 `SILICONFLOW_API_KEY`，模型变量名为 `SILICONFLOW_OCR_MODEL`。
+  - **首选引擎 (SiliconFlow)**：默认首选调用 SiliconFlow 运行 Qwen 视觉语言模型（推荐使用 `Qwen/Qwen3-VL-8B-Instruct`，正常够用了；亦可选择 `Qwen/Qwen3-VL-32B-Instruct`，双倍价格但效果更好），实现高精度的数学图文 OCR 识别。Token 变量名为 `SILICONFLOW_API_KEY`，模型变量名为 `SILICONFLOW_OCR_MODEL`。
   - **兜底/备选引擎 (SimpleTex)**：支持切换或在首选引擎失败时作为兜底，必须调用其“标准公式识别模型” (Standard Formula Recognition)，以确保复杂数学公式与图文混排的极高准确率。Token 变量名为 `SIMPLETEX_TOKEN`。
 - **大模型推理接口 (DeepSeek)**：
   - 负责数学逻辑推理与步骤生成。
