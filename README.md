@@ -21,12 +21,12 @@
 如果您有不同的教材版本（如**人教B版**、北师大版、苏教版）或希望自定义难度梯度（例如增加“基础题”或“压轴题”），可以直接按以下指引在本地进行极简改造：
 
 1. **修改/增加教材目录结构**：
-   - 打开 [**`main.py`**](./main.py#L1258)，找到其中的 `RENJIAO_A_CURRICULUM` 字典。您可以按相同的 Python 嵌套字典格式，自由修改学段、章节以及小节知识点名称，保存后大纲树级联将自动在前端生效。
+   - 打开 [**`main.py`**](./main.py)，找到其中的 `RENJIAO_A_CURRICULUM` 字典。您可以按相同的 Python 嵌套字典格式，自由修改学段、章节以及小节知识点名称，保存后大纲树级联将自动在前端生效。
    - 💡 **提示**：为避免修改代码中的多处引用，请直接在 `RENJIAO_A_CURRICULUM` 变量内部修改大纲内容，**不要修改该变量名本身**。
 2. **自定义难度梯度**：
-   - **前端下拉菜单修改**：打开 [**`static/index.html`**](./static/index.html#L123)，在 `id="filterDifficulty"`（左侧过滤选项）和 `id="editDifficulty"`（编辑表单选项）中，增加或修改您的新难度标签（例如 `<option value="basic">基础题</option>`）。
-   - **前端样式与翻译**：打开 [**`static/js/api.js`**](./static/js/api.js#L334)，在 `getDifficultyBadge`（小药丸徽章样式）与 `getDifficultyText`（翻译显示文本）这两个函数中，参照已有格式增加对您新难度 Key 的解析映射。
-   - **后端大屏统计对接**：打开 [**`main.py`**](./main.py#L1371)，在 `/api/stats` 统计接口中，增加对您新加难度的 SQLAlchemy 查询计数，以确保项目首页的数据大屏能正常展示新增难度的题目数。
+   - **前端下拉菜单修改**：打开 [**`static/index.html`**](./static/index.html)，在 `id="filterDifficulty"`（左侧过滤选项）和 `id="editDifficulty"`（编辑表单选项）中，增加或修改您的新难度标签（例如 `<option value="basic">基础题</option>`）。
+   - **前端样式与翻译**：打开 [**`static/js/api.js`**](./static/js/api.js)，在 `getDifficultyBadge`（小药丸徽章样式）与 `getDifficultyText`（翻译显示文本）这两个函数中，参照已有格式增加对您新难度 Key 的解析映射。
+   - **后端大屏统计对接**：打开 [**`main.py`**](./main.py)，在 `/api/stats` 统计接口中，增加对您新加难度的 SQLAlchemy 查询计数，以确保项目首页的数据大屏能正常展示新增难度的题目数。
 
 ---
 
