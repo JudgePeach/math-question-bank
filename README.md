@@ -51,7 +51,7 @@
 > ⚠️ **关于 API 密钥的获取与配置**：
 > 无论是使用源码还是便携包，AI 智能解析与 OCR 公式识别均依赖外部 API。请先前往以下平台注册并申请相应的 API 密钥，在启动项目后，点击网页右上角的 **设置（齿轮）按钮** 即可一键填入并保存：
 > * **🤖 AI 推理大模型**：请注册并获取密钥于 [DeepSeek 开放平台](https://platform.deepseek.com/)
-> * **📷 OCR 公式识别（首选通道）**：请注册并获取密钥于 [硅基流动 (SiliconFlow)](https://cloud.siliconflow.cn/) (推荐使用 Qwen 视觉大模型)
+> * **📷 OCR 公式识别（首选通道）**：请通过专属 [硅基流动 (SiliconFlow) 邀请链接](https://cloud.siliconflow.cn/i/hkgjSWrg) 注册并获取密钥 (推荐使用 Qwen 视觉大模型)
 > * **📷 OCR 公式识别（备选通道）**：请注册并获取 Token 于 [SimpleTex 开放平台](https://simpletex.cn/) (专注复杂数学公式识别)
 >
 > *如果您需要进行二次开发或习惯使用终端，请参照以下常规步骤运行源码：*
