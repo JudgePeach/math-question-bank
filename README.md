@@ -53,7 +53,7 @@
 > 无论是使用源码还是便携包，AI 智能解析与 OCR 公式识别均依赖外部 API。请先前往以下平台注册并申请相应的 API 密钥，在启动项目后，点击网页右上角的 **设置（齿轮）按钮** 即可一键填入并保存：
 > * **🤖 AI 推理大模型**：请注册并获取密钥于 [DeepSeek 开放平台](https://platform.deepseek.com/)
 > * **📷 OCR 公式识别（首选通道）**：请通过专属 [硅基流动 (SiliconFlow) 邀请链接](https://cloud.siliconflow.cn/i/hkgjSWrg) 注册并获取密钥 (模型推荐使用 `Qwen/Qwen3-VL-8B-Instruct`，正常够用了；也可以选择 `Qwen/Qwen3-VL-32B-Instruct`，双倍价格但效果更好)
-> * **📷 OCR 公式识别（备选通道）**：请注册并获取 Token 于 [SimpleTex 开放平台](https://simpletex.cn/) (专注复杂数学公式识别)
+> * **📷 OCR 公式识别（备选通道）**：请注册并获取 Token 于 [SimpleTex 开放平台](https://simpletex.cn/) (专注复杂数学公式识别)，价格比较高，不太推荐，我自己也没有用。
 > * 关于中转站：下面两个都是我自用的，各有优势，谨慎使用。
 > * **🔗 推荐多模态中转站 A (适合 GPT 模型)**：通过专属 [RightCodes 注册链接](https://www.right.codes/register?aff=f7656b31) 获取 API Key。该中转站提供价格实惠且性能优越的 gpt-5.5 (gpt-4o) 系列模型，极其适合进行 codex 编译和高等智能解析推理。
 > * **🔗 推荐多模态中转站 B (适合 Claude 模型)**：通过专属 [PackyAPI 注册链接](https://www.packyapi.com/register?aff=5yyF) 获取 API Key。该中转站对 Anthropic 的 `claude-3-5-sonnet`、`claude-opus-4-8` 等高端模型提供非常优厚的折算，且内置了极其方便的阿里系大模型优惠。
