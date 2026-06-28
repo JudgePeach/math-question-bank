@@ -170,8 +170,8 @@
             siliconflow: [
                 "Qwen/Qwen3-VL-32B-Instruct",
                 "Qwen/Qwen3-VL-8B-Instruct",
-                "deepseek-ai/DeepSeek-R1",
-                "deepseek-ai/DeepSeek-V3",
+                "deepseek-ai/DeepSeek-V4-Pro",
+                "deepseek-ai/DeepSeek-V4-Flash",
                 "Qwen/Qwen3.5-4B"
             ],
             bailian: [
@@ -360,7 +360,7 @@
             let defVal = "";
             if (provider === 'deepseek') defVal = "deepseek-v4-flash";
             else if (provider === 'siliconflow') {
-                defVal = typeKey === 'ocr' ? "Qwen/Qwen3-VL-8B-Instruct" : "deepseek-ai/DeepSeek-V3";
+                defVal = typeKey === 'ocr' ? "Qwen/Qwen3-VL-8B-Instruct" : "deepseek-ai/DeepSeek-V4-Flash";
             } else if (provider === 'bailian') {
                 defVal = typeKey === 'ocr' ? "qwen3-vl-flash" : "qwen-max";
             } else if (provider === 'zhongzhan_gpt') {
@@ -428,7 +428,12 @@
                     document.getElementById('parseModelProvider').value = parseCfg.provider;
                     renderModelSelector('parse', parseCfg.provider, parseCfg.model);
                     
-                    // 3. 默认公式识图模型
+                    // 3. 题目智能分类模型
+                    const classifyCfg = parseModelConfig(settings.prefer_classify_model, 'deepseek', 'deepseek-v4-flash');
+                    document.getElementById('classifyModelProvider').value = classifyCfg.provider;
+                    renderModelSelector('classify', classifyCfg.provider, classifyCfg.model);
+                    
+                    // 4. 默认公式识图模型
                     let ocrProvider = settings.prefer_engine || 'siliconflow';
                     if (ocrProvider === 'ali_bailian') ocrProvider = 'bailian'; // 前后端对齐
                     if (ocrProvider === 'zhongzhan') ocrProvider = 'zhongzhan_gpt'; // 兼容老数据
@@ -557,7 +562,12 @@
             const parseModel = getSelectedModelValue('parse', parseProvider);
             const preferParseModel = `${parseProvider.toUpperCase()}/${parseModel}`;
             
-            // 3. 默认公式识图模型 (后端以 prefer_engine + siliconflow_model/ali_bailian_model/zhongzhan_gpt_ocr_model/zhongzhan_claude_ocr_model 区分)
+            // 3. 题目智能分类模型
+            const classifyProvider = document.getElementById('classifyModelProvider').value;
+            const classifyModel = getSelectedModelValue('classify', classifyProvider);
+            const preferClassifyModel = `${classifyProvider.toUpperCase()}/${classifyModel}`;
+            
+            // 4. 默认公式识图模型 (后端以 prefer_engine + siliconflow_model/ali_bailian_model/zhongzhan_gpt_ocr_model/zhongzhan_claude_ocr_model 区分)
             const ocrProvider = document.getElementById('ocrModelProvider').value;
             const ocrModel = getSelectedModelValue('ocr', ocrProvider);
             let preferEngine = ocrProvider;
@@ -573,7 +583,7 @@
             else if (ocrProvider === 'zhongzhan_gpt') zhongzhanGptOcrModel = ocrModel;
             else if (ocrProvider === 'zhongzhan_claude') zhongzhanClaudeOcrModel = ocrModel;
             
-            // 4. 高级 TikZ 绘图模型
+            // 5. 高级 TikZ 绘图模型
             const drawProvider = document.getElementById('drawModelProvider').value;
             const drawModel = getSelectedModelValue('draw', drawProvider);
             const preferDrawModel = `${drawProvider.toUpperCase()}/${drawModel}`;
@@ -595,6 +605,7 @@
             formData.append('ali_bailian_model', aliBailianModel);
             formData.append('prefer_solve_model', preferSolveModel);
             formData.append('prefer_parse_model', preferParseModel);
+            formData.append('prefer_classify_model', preferClassifyModel);
             formData.append('prefer_draw_model', preferDrawModel);
             
             fetch('/api/settings/save', {

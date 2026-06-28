@@ -1063,6 +1063,7 @@ def get_settings():
     ali_model = os.getenv("ALI_BAILIAN_OCR_MODEL", "qwen3-vl-flash")
     prefer_solve_model = os.getenv("PREFER_SOLVE_MODEL", "deepseek-v4-pro")
     prefer_parse_model = os.getenv("PREFER_PARSE_MODEL", "deepseek-v4-flash")
+    prefer_classify_model = os.getenv("PREFER_CLASSIFY_MODEL") or os.getenv("DEEPSEEK_CLASSIFY_MODEL", "deepseek-v4-flash")
     prefer_draw_model = os.getenv("PREFER_DRAW_MODEL", "Qwen/Qwen3-VL-32B-Instruct")
     
     masked_ds = ""
@@ -1100,6 +1101,7 @@ def get_settings():
         "ali_bailian_model": ali_model,
         "prefer_solve_model": prefer_solve_model,
         "prefer_parse_model": prefer_parse_model,
+        "prefer_classify_model": prefer_classify_model,
         "prefer_draw_model": prefer_draw_model
     }
 
@@ -1119,6 +1121,7 @@ async def save_settings(
     ali_bailian_model: str = Form("qwen3-vl-flash"),
     prefer_solve_model: str = Form("deepseek-v4-pro"),
     prefer_parse_model: str = Form("deepseek-v4-flash"),
+    prefer_classify_model: str = Form("deepseek-v4-flash"),
     prefer_draw_model: str = Form("Qwen/Qwen3-VL-32B-Instruct")
 ):
     try:
@@ -1155,6 +1158,7 @@ async def save_settings(
             "ALI_BAILIAN_OCR_MODEL": False,
             "PREFER_SOLVE_MODEL": False,
             "PREFER_PARSE_MODEL": False,
+            "PREFER_CLASSIFY_MODEL": False,
             "PREFER_DRAW_MODEL": False
         }
         new_lines = []
@@ -1207,6 +1211,9 @@ async def save_settings(
             elif line_strip.startswith("PREFER_PARSE_MODEL="):
                 new_lines.append(f"PREFER_PARSE_MODEL={prefer_parse_model}\n")
                 keys_replaced["PREFER_PARSE_MODEL"] = True
+            elif line_strip.startswith("PREFER_CLASSIFY_MODEL=") or line_strip.startswith("DEEPSEEK_CLASSIFY_MODEL="):
+                new_lines.append(f"PREFER_CLASSIFY_MODEL={prefer_classify_model}\n")
+                keys_replaced["PREFER_CLASSIFY_MODEL"] = True
             elif line_strip.startswith("PREFER_DRAW_MODEL="):
                 new_lines.append(f"PREFER_DRAW_MODEL={prefer_draw_model}\n")
                 keys_replaced["PREFER_DRAW_MODEL"] = True
@@ -1242,6 +1249,8 @@ async def save_settings(
             new_lines.append(f"PREFER_SOLVE_MODEL={prefer_solve_model}\n")
         if not keys_replaced["PREFER_PARSE_MODEL"]:
             new_lines.append(f"PREFER_PARSE_MODEL={prefer_parse_model}\n")
+        if not keys_replaced["PREFER_CLASSIFY_MODEL"]:
+            new_lines.append(f"PREFER_CLASSIFY_MODEL={prefer_classify_model}\n")
         if not keys_replaced["PREFER_DRAW_MODEL"]:
             new_lines.append(f"PREFER_DRAW_MODEL={prefer_draw_model}\n")
             
@@ -1267,6 +1276,7 @@ async def save_settings(
         os.environ["ALI_BAILIAN_OCR_MODEL"] = ali_bailian_model
         os.environ["PREFER_SOLVE_MODEL"] = prefer_solve_model
         os.environ["PREFER_PARSE_MODEL"] = prefer_parse_model
+        os.environ["PREFER_CLASSIFY_MODEL"] = prefer_classify_model
         os.environ["PREFER_DRAW_MODEL"] = prefer_draw_model
         
         return {"status": "success", "message": "API 与首选大模型配置已成功保存并即时生效！"}
@@ -2145,34 +2155,66 @@ def list_categories(db: Session = Depends(get_db)):
 
 @app.post("/api/ai/classify")
 async def ai_classify(content: str = Form(...)):
-    classify_model = os.getenv("PREFER_PARSE_MODEL") or os.getenv("DEEPSEEK_CLASSIFY_MODEL", "deepseek-v4-flash")
-    model_lower = classify_model.lower()
-    is_qwen = "qwen" in model_lower
+    classify_model = (
+        os.getenv("PREFER_CLASSIFY_MODEL") 
+        or os.getenv("DEEPSEEK_CLASSIFY_MODEL") 
+        or os.getenv("PREFER_PARSE_MODEL") 
+        or "deepseek-v4-flash"
+    )
     
-    if is_qwen:
-        api_key = os.getenv("ALI_BAILIAN_API_KEY")
-        if not api_key:
-            return JSONResponse(
-                content={
-                    "status": "error", 
-                    "message": "阿里百炼 API Key (ALI_BAILIAN_API_KEY) 未配置，无法自动智能分类！请在工作台右上角进行配置后重试。"
-                },
-                status_code=400
-            )
-        api_base = os.getenv("ALI_BAILIAN_API_BASE", "https://dashscope.aliyuncs.com/compatible-mode/v1")
-        if classify_model == "qwen3.7-max":
-            classify_model = "qwen-max"
+    api_key = None
+    api_base = None
+    model_name = classify_model
+    
+    if "/" in classify_model:
+        parts = classify_model.split("/", 1)
+        prefix = parts[0].upper()
+        model_name = parts[1]
+        
+        if prefix == "SILICONFLOW":
+            api_key = os.getenv("SILICONFLOW_API_KEY")
+            api_base = "https://api.siliconflow.cn/v1"
+        elif prefix == "BAILIAN":
+            api_key = os.getenv("ALI_BAILIAN_API_KEY")
+            api_base = os.getenv("ALI_BAILIAN_API_BASE", "https://dashscope.aliyuncs.com/compatible-mode/v1")
+            if model_name == "qwen3.7-max":
+                model_name = "qwen-max"
+        elif prefix == "DEEPSEEK":
+            api_key = os.getenv("DEEPSEEK_API_KEY")
+            api_base = os.getenv("DEEPSEEK_API_BASE", "https://api.deepseek.com")
+        elif prefix == "ZHONGZHAN_GPT":
+            api_key = os.getenv("ZHONGZHAN_GPT_API_KEY")
+            api_base = os.getenv("ZHONGZHAN_GPT_BASE_URL", "https://api.openai.com/v1")
+        elif prefix == "ZHONGZHAN_CLAUDE":
+            api_key = os.getenv("ZHONGZHAN_CLAUDE_API_KEY")
+            api_base = os.getenv("ZHONGZHAN_CLAUDE_BASE_URL", "https://api.openai.com/v1")
     else:
-        api_key = os.getenv("DEEPSEEK_API_KEY")
-        if not api_key:
-            return JSONResponse(
-                content={
-                    "status": "error", 
-                    "message": "DeepSeek API Key (DEEPSEEK_API_KEY) 未配置，无法自动智能分类！请在工作台右上角或根目录进行配置后重试。"
-                },
-                status_code=400
-            )
-        api_base = os.getenv("DEEPSEEK_API_BASE", "https://api.deepseek.com")
+        model_lower = classify_model.lower()
+        if "qwen" in model_lower:
+            api_key = os.getenv("ALI_BAILIAN_API_KEY")
+            api_base = os.getenv("ALI_BAILIAN_API_BASE", "https://dashscope.aliyuncs.com/compatible-mode/v1")
+            if classify_model == "qwen3.7-max":
+                model_name = "qwen-max"
+        else:
+            api_key = os.getenv("DEEPSEEK_API_KEY")
+            api_base = os.getenv("DEEPSEEK_API_BASE", "https://api.deepseek.com")
+
+    if not api_key:
+        provider_name = "DeepSeek"
+        if "/" in classify_model:
+            prefix = classify_model.split("/", 1)[0].upper()
+            if prefix == "SILICONFLOW": provider_name = "硅基流动 (SILICONFLOW_API_KEY)"
+            elif prefix == "BAILIAN": provider_name = "阿里百炼 (ALI_BAILIAN_API_KEY)"
+            elif prefix == "DEEPSEEK": provider_name = "DeepSeek (DEEPSEEK_API_KEY)"
+            elif prefix == "ZHONGZHAN_GPT": provider_name = "中转站 A (ZHONGZHAN_GPT_API_KEY)"
+            elif prefix == "ZHONGZHAN_CLAUDE": provider_name = "中转站 B (ZHONGZHAN_CLAUDE_API_KEY)"
+        return JSONResponse(
+            content={
+                "status": "error", 
+                "message": f"未配置对应的 API Key ({provider_name})，无法自动智能分类！请在工作台右上角设置面板进行配置。"
+            },
+            status_code=400
+        )
         
     try:
         url = f"{api_base.rstrip('/')}/chat/completions"
@@ -2202,7 +2244,7 @@ async def ai_classify(content: str = Form(...)):
             "不要包含 ```json ``` 标记，只输出最干净的 JSON。"
         )
         data = {
-            "model": classify_model,
+            "model": model_name,
             "messages": [
                 {"role": "system", "content": system_instructions},
                 {"role": "user", "content": f"题目内容:\n{content}"}
@@ -2215,7 +2257,7 @@ async def ai_classify(content: str = Form(...)):
         }
         
         # Only add thinking if using a DeepSeek model or DeepSeek base URL
-        is_deepseek = "deepseek" in classify_model.lower() or "deepseek" in api_base.lower()
+        is_deepseek = "deepseek" in model_name.lower() or "deepseek" in api_base.lower()
         if is_deepseek:
             data["thinking"] = {
                 "type": "disabled"
