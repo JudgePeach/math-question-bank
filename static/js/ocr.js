@@ -220,7 +220,10 @@
             // 1. Strip LaTeX thin space \!, \, and literal ! / ！
             let cleaned = text.replace(/\\!/g, '');
             cleaned = cleaned.replace(/\\,/g, ''); // Remove all \, thin spaces
-            cleaned = cleaned.replace(/[!！]/g, '');
+             // Protect markdown image starting indicator ![, replace other exclamation marks, and restore
+             cleaned = cleaned.replace(/!\[/g, '___MARKDOWN_IMG_START___');
+             cleaned = cleaned.replace(/[!！]/g, '');
+             cleaned = cleaned.replace(/___MARKDOWN_IMG_START___/g, '![');
             
             // 2. Strip leading question numbers recursively (e.g., "一、 1. " -> "1. " -> "")
             let prev = '';
@@ -375,6 +378,7 @@
 
         function renderIllustrationBadges() {
             const listContainer = document.getElementById('illustrationsList');
+            if (!listContainer) return;
             listContainer.innerHTML = '';
             
             uploadedImages.forEach((path, idx) => {
@@ -389,6 +393,18 @@
                     </div>
                 `;
             });
+            
+            // Toggle Content TikZ Panel visibility based on original illustrations or existing code
+            const contentTikzContainer = document.getElementById('contentTikzContainer');
+            if (contentTikzContainer) {
+                const hasOriginalImage = uploadedImages.some(path => !path.includes('/tikz_'));
+                const hasTikzCode = document.getElementById('editContentTikzCode') && document.getElementById('editContentTikzCode').value.trim();
+                if (hasOriginalImage || hasTikzCode) {
+                    contentTikzContainer.classList.remove('hidden');
+                } else {
+                    contentTikzContainer.classList.add('hidden');
+                }
+            }
         }
 
         function deleteUploadedIllustration(idx) {
@@ -610,6 +626,39 @@
                     ocrResult.textContent = cleanMathOcrText(data.latex);
                     ocrConf.textContent = `置信度: ${(data.confidence * 100).toFixed(1)}%`;
                     
+                    if (data.image_path) {
+                        window.lastOcrOriginalImagePath = data.image_path;
+                    }
+                    
+                    if (data.tikz_code) {
+                        const tikzTextarea = document.getElementById('editAnswerTikzCode');
+                        if (tikzTextarea) {
+                            tikzTextarea.value = data.tikz_code;
+                        }
+                        
+                        const container = document.getElementById('answerTikzContainer');
+                        if (container) {
+                            container.classList.remove('hidden');
+                        }
+                        
+                        if (data.tikz_image_path) {
+                            window.answerLastCompiledTikzPath = data.tikz_image_path;
+                            
+                            // Set preview image source immediately
+                            const previewImg = document.getElementById('answerTikzPreviewImage');
+                            const placeholder = document.getElementById('answerTikzPreviewPlaceholder');
+                            if (previewImg && placeholder) {
+                                placeholder.classList.add('hidden');
+                                previewImg.src = data.tikz_image_path + '?t=' + new Date().getTime();
+                                previewImg.classList.remove('hidden');
+                            }
+                            const statusText = document.getElementById('answerTikzStatusText');
+                            if (statusText) {
+                                statusText.textContent = '编译成功';
+                            }
+                        }
+                    }
+                    
                     // Automatically load OCR results into final review editor silently
                     loadToFinalReview('ocr');
                 } else {
@@ -707,6 +756,47 @@
                     contentOcrResult.textContent = cleanLatex;
                     contentOcrConf.textContent = `置信度: ${(data.confidence * 100).toFixed(1)}%`;
                     
+                    if (data.image_path) {
+                        window.lastOcrOriginalImagePath = data.image_path;
+                    }
+                    
+                    if (data.tikz_code) {
+                        const tikzTextarea = document.getElementById('editContentTikzCode');
+                        if (tikzTextarea) {
+                            tikzTextarea.value = data.tikz_code;
+                        }
+                        
+                        const container = document.getElementById('contentTikzContainer');
+                        if (container) {
+                            container.classList.remove('hidden');
+                        }
+                        
+                        if (data.tikz_image_path) {
+                            if (typeof uploadedImages !== 'undefined' && !uploadedImages.includes(data.tikz_image_path)) {
+                                uploadedImages.push(data.tikz_image_path);
+                            }
+                            if (typeof renderIllustrationBadges === 'function') {
+                                renderIllustrationBadges();
+                            }
+                            window.contentLastCompiledTikzPath = data.tikz_image_path;
+                            
+                            // Set preview image source immediately
+                            const previewImg = document.getElementById('contentTikzPreviewImage');
+                            const placeholder = document.getElementById('contentTikzPreviewPlaceholder');
+                            if (previewImg && placeholder) {
+                                placeholder.classList.add('hidden');
+                                previewImg.src = data.tikz_image_path + '?t=' + new Date().getTime();
+                                previewImg.classList.remove('hidden');
+                            }
+                            const statusText = document.getElementById('contentTikzStatusText');
+                            if (statusText) {
+                                statusText.textContent = '编译成功';
+                            }
+                        }
+                    }
+                    
+
+                    
                     // 2. Automatically load results into the persistent content editor
                     loadToContentEditor('ocr');
                 } else {
@@ -799,6 +889,9 @@
             // Refresh previews
             textarea.dispatchEvent(new Event('input'));
             showToast('已载入至题干编辑框！');
+            if (typeof window.extractTikzCodeFromTextarea === 'function') {
+                window.extractTikzCodeFromTextarea('editContent');
+            }
         }
 
         // Clear OCR image preview and OCR result box
@@ -1006,6 +1099,9 @@
             // Refresh preview
             finalEdit.dispatchEvent(new Event('input'));
             showToast('已成功载入至终审编辑框！');
+            if (typeof window.extractTikzCodeFromTextarea === 'function') {
+                window.extractTikzCodeFromTextarea('editAnswerMarkdown');
+            }
         }
 
         // Clear Draft

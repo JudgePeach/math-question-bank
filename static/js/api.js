@@ -161,9 +161,233 @@
                 });
         }
 
+        // 默认预设模型列表
+        const MODEL_PRESETS = {
+            deepseek: [
+                "deepseek-v4-flash",
+                "deepseek-v4-pro"
+            ],
+            siliconflow: [
+                "Qwen/Qwen3-VL-32B-Instruct",
+                "Qwen/Qwen3-VL-8B-Instruct",
+                "deepseek-ai/DeepSeek-R1",
+                "deepseek-ai/DeepSeek-V3",
+                "Qwen/Qwen3.5-4B"
+            ],
+            bailian: [
+                "qwen3-vl-flash",
+                "qwen-vl-plus",
+                "qwen-vl-max",
+                "qwen-max",
+                "qwen-plus"
+            ],
+            simpletex: [
+                "simpletex"
+            ],
+            zhongzhan_gpt: [],
+            zhongzhan_claude: []
+        };
+
+        // 从 localStorage 恢复自定义模型，或者初始化
+        function getModelListForProvider(provider) {
+            const presets = MODEL_PRESETS[provider] || [];
+            const customStr = localStorage.getItem(`custom_models_${provider}`);
+            const customs = customStr ? JSON.parse(customStr) : [];
+            return Array.from(new Set([...presets, ...customs]));
+        }
+
+        function addCustomModelName(provider, typeKey) {
+            const newName = prompt(`请输入要为 [${provider}] 新增的模型名称 (如 qwen-max):`);
+            if (!newName || !newName.trim()) return;
+            
+            const trimmed = newName.trim();
+            const customStr = localStorage.getItem(`custom_models_${provider}`);
+            const customs = customStr ? JSON.parse(customStr) : [];
+            
+            if (MODEL_PRESETS[provider] && MODEL_PRESETS[provider].includes(trimmed)) {
+                alert("该预设模型已存在于列表中！");
+                return;
+            }
+            if (customs.includes(trimmed)) {
+                alert("该自定义模型已存在于列表中！");
+                return;
+            }
+            
+            customs.push(trimmed);
+            localStorage.setItem(`custom_models_${provider}`, JSON.stringify(customs));
+            
+            // 重新渲染选择器并选中新值
+            renderModelSelector(typeKey, provider, trimmed);
+        }
+
+        function removeCustomModelName(provider, typeKey, modelValue) {
+            if (MODEL_PRESETS[provider] && MODEL_PRESETS[provider].includes(modelValue)) {
+                alert("预设的核心模型不支持删除，只能删除自定义追加的模型。");
+                return;
+            }
+            if (!confirm(`确认要从列表中删除自定义模型 "${modelValue}" 吗？`)) return;
+            
+            const customStr = localStorage.getItem(`custom_models_${provider}`);
+            if (!customStr) return;
+            
+            let customs = JSON.parse(customStr);
+            customs = customs.filter(m => m !== modelValue);
+            localStorage.setItem(`custom_models_${provider}`, JSON.stringify(customs));
+            
+            // 重新渲染选择器，默认选中第一个
+            renderModelSelector(typeKey, provider);
+        }
+
+        // 中转站独享：记忆保存当前输入的模型
+        function saveCustomZhongzhanModel(provider, typeKey) {
+            const inputEl = document.getElementById(`settings_${typeKey}_model_input`);
+            if (!inputEl) return;
+            const newName = inputEl.value.trim();
+            if (!newName) {
+                alert("请先在输入框中填写您想记录的中转站模型名称！");
+                return;
+            }
+            
+            const customStr = localStorage.getItem(`custom_models_${provider}`);
+            const customs = customStr ? JSON.parse(customStr) : [];
+            
+            if (!customs.includes(newName)) {
+                customs.push(newName);
+                localStorage.setItem(`custom_models_${provider}`, JSON.stringify(customs));
+                showToast(`已将模型 "${newName}" 记录至下拉历史列表`, "success");
+            } else {
+                showToast("该模型已存在于下拉历史中", "info");
+            }
+            
+            // 刷新渲染
+            renderModelSelector(typeKey, provider, newName);
+        }
+
+        // 中转站独享：从 localStorage 中删除该选项
+        function deleteCustomZhongzhanModel(provider, typeKey) {
+            const inputEl = document.getElementById(`settings_${typeKey}_model_input`);
+            if (!inputEl) return;
+            const newName = inputEl.value.trim();
+            if (!newName) return;
+            
+            const customStr = localStorage.getItem(`custom_models_${provider}`);
+            if (!customStr) return;
+            
+            let customs = JSON.parse(customStr);
+            if (!customs.includes(newName)) {
+                alert(`未在下拉历史中找到模型 "${newName}"`);
+                return;
+            }
+            
+            if (!confirm(`确认要将模型 "${newName}" 从下拉历史列表中移除吗？`)) return;
+            
+            customs = customs.filter(m => m !== newName);
+            localStorage.setItem(`custom_models_${provider}`, JSON.stringify(customs));
+            showToast(`已从下拉历史中移除模型 "${newName}"`, "success");
+            
+            // 刷新并清空
+            renderModelSelector(typeKey, provider, "");
+        }
+
+        // 动态装载模型选择/手写输入区域
+        function renderModelSelector(typeKey, provider, selectedValue = "") {
+            const container = document.getElementById(`${typeKey}ModelValueContainer`);
+            if (!container) return;
+            
+            const isZhongzhan = provider === 'zhongzhan' || provider === 'zhongzhan_gpt' || provider === 'zhongzhan_claude';
+            
+            if (isZhongzhan) {
+                // 中转站模式：采用 input + datalist 实现“可写、可点选历史记录”的高效设计
+                const datalistId = `datalist_${typeKey}_${provider}`;
+                const models = getModelListForProvider(provider);
+                let optionsHtml = models.map(m => `<option value="${m}">`).join('');
+                
+                container.innerHTML = `
+                    <input type="text" id="settings_${typeKey}_model_input" list="${datalistId}" 
+                           placeholder="手写输入模型名称，或点击右侧 [+] 按钮记录"
+                           value="${selectedValue}" class="glass-input flex-1 px-2.5 py-1.5 rounded-lg text-xs font-mono">
+                    <datalist id="${datalistId}">
+                        ${optionsHtml}
+                    </datalist>
+                    <button type="button" onclick="saveCustomZhongzhanModel('${provider}', '${typeKey}')" 
+                            class="h-7 w-7 rounded-lg border border-slate-200 hover:border-brand-500 hover:text-brand-600 flex items-center justify-center text-xs transition-colors shrink-0 bg-white" title="记录当前输入的模型名称">
+                        <i class="fa-solid fa-plus"></i>
+                    </button>
+                    <button type="button" onclick="deleteCustomZhongzhanModel('${provider}', '${typeKey}')" 
+                            class="h-7 w-7 rounded-lg border border-slate-200 hover:border-red-500 hover:text-red-600 flex items-center justify-center text-xs transition-colors shrink-0 bg-white" title="清除历史记录的模型">
+                        <i class="fa-solid fa-trash-can"></i>
+                    </button>
+                `;
+            } else if (provider === 'simpletex') {
+                // SimpleTex 专属 (只读)
+                container.innerHTML = `
+                    <input type="text" readonly value="SimpleTex 官方接口"
+                           class="glass-input flex-1 px-2.5 py-1.5 rounded-lg text-xs bg-slate-100 text-slate-500 cursor-not-allowed">
+                `;
+            } else {
+                // 下拉菜单列表模式
+                const models = getModelListForProvider(provider);
+                const selectId = `settings_${typeKey}_model_select`;
+                
+                let optionsHtml = models.map(m => {
+                    const isSel = m === selectedValue ? 'selected' : '';
+                    return `<option value="${m}" ${isSel}>${m}</option>`;
+                }).join('');
+                
+                container.innerHTML = `
+                    <select id="${selectId}" class="glass-select flex-1 px-2.5 py-1.5 rounded-lg text-xs min-w-0">
+                        ${optionsHtml}
+                    </select>
+                    <button type="button" onclick="addCustomModelName('${provider}', '${typeKey}')" 
+                            class="h-7 w-7 rounded-lg border border-slate-200 hover:border-brand-500 hover:text-brand-600 flex items-center justify-center text-xs transition-colors shrink-0 bg-white" title="新增自定义模型">
+                        <i class="fa-solid fa-plus"></i>
+                    </button>
+                    <button type="button" onclick="const val = document.getElementById('${selectId}').value; removeCustomModelName('${provider}', '${typeKey}', val)" 
+                            class="h-7 w-7 rounded-lg border border-slate-200 hover:border-red-500 hover:text-red-600 flex items-center justify-center text-xs transition-colors shrink-0 bg-white" title="删除当前选中的自定义模型">
+                        <i class="fa-solid fa-trash-can"></i>
+                    </button>
+                `;
+            }
+        }
+
+        // 全局挂载联动 onchange
+        window.onModelProviderChange = function(typeKey) {
+            const providerSelect = document.getElementById(`${typeKey}ModelProvider`);
+            if (!providerSelect) return;
+            const provider = providerSelect.value;
+            
+            // 默认取个常用模型初始化
+            let defVal = "";
+            if (provider === 'deepseek') defVal = "deepseek-v4-flash";
+            else if (provider === 'siliconflow') {
+                defVal = typeKey === 'ocr' ? "Qwen/Qwen3-VL-8B-Instruct" : "deepseek-ai/DeepSeek-V3";
+            } else if (provider === 'bailian') {
+                defVal = typeKey === 'ocr' ? "qwen3-vl-flash" : "qwen-max";
+            } else if (provider === 'zhongzhan_gpt') {
+                defVal = ""; // 默认空白，供用户填写
+            } else if (provider === 'zhongzhan_claude') {
+                defVal = ""; // 默认空白，供用户填写
+            }
+            
+            renderModelSelector(typeKey, provider, defVal);
+        };
+        
+        // 挂载辅助方法到全局
+        window.addCustomModelName = addCustomModelName;
+        window.removeCustomModelName = removeCustomModelName;
+        window.saveCustomZhongzhanModel = saveCustomZhongzhanModel;
+        window.deleteCustomZhongzhanModel = deleteCustomZhongzhanModel;
+
         // Settings Modal Controls
         function openSettingsModal() {
             const modal = document.getElementById('settingsModal');
+            document.body.classList.add('modal-active');
+            
+            // 暂时移除状态灯的呼吸闪烁，防止在半透明模糊遮罩后面晃眼闪烁
+            const indicatorDot = document.querySelector('#apiStatusIndicator span');
+            if (indicatorDot) {
+                indicatorDot.classList.remove('animate-pulse');
+            }
             
             // Prefill inputs with current active settings from backend
             fetch('/api/settings')
@@ -172,11 +396,56 @@
                     document.getElementById('settingsDeepseekKey').value = settings.deepseek_key || '';
                     document.getElementById('settingsSiliconflowKey').value = settings.siliconflow_key || '';
                     document.getElementById('settingsAliBailianKey').value = settings.ali_bailian_key || '';
-                    document.getElementById('settingsPreferEngine').value = settings.prefer_engine || 'siliconflow';
-                    document.getElementById('settingsSiliconflowModel').value = settings.siliconflow_model || 'Qwen/Qwen3.5-4B';
-                    document.getElementById('settingsAliBailianModel').value = settings.ali_bailian_model || 'qwen3-vl-flash';
-                    document.getElementById('settingsPreferSolveModel').value = settings.prefer_solve_model || 'deepseek-v4-pro';
-                    document.getElementById('settingsPreferParseModel').value = settings.prefer_parse_model || 'deepseek-v4-flash';
+                    
+                    document.getElementById('settingsZhongzhanGptKey').value = settings.zhongzhan_gpt_key || '';
+                    document.getElementById('settingsZhongzhanGptBaseUrl').value = settings.zhongzhan_gpt_base_url || 'https://api.openai.com/v1';
+                    document.getElementById('settingsZhongzhanClaudeKey').value = settings.zhongzhan_claude_key || '';
+                    document.getElementById('settingsZhongzhanClaudeBaseUrl').value = settings.zhongzhan_claude_base_url || 'https://api.openai.com/v1';
+                    
+                    // 辅助解析解析 "PROVIDER/model" 前缀
+                    function parseModelConfig(val, defaultProvider, defaultModel) {
+                        if (val && val.includes("/")) {
+                            const idx = val.indexOf("/");
+                            const prov = val.substring(0, idx).toLowerCase();
+                            const name = val.substring(idx + 1);
+                            // 校验前缀合理性
+                            if (['deepseek', 'siliconflow', 'bailian', 'zhongzhan', 'zhongzhan_gpt', 'zhongzhan_claude'].includes(prov)) {
+                                let targetProv = prov;
+                                if (targetProv === 'zhongzhan') targetProv = 'zhongzhan_gpt'; // 兼容老数据
+                                return { provider: targetProv, model: name };
+                            }
+                        }
+                        return { provider: defaultProvider, model: val || defaultModel };
+                    }
+                    
+                    // 1. AI 智能解题模型
+                    const solveCfg = parseModelConfig(settings.prefer_solve_model, 'deepseek', 'deepseek-v4-flash');
+                    document.getElementById('solveModelProvider').value = solveCfg.provider;
+                    renderModelSelector('solve', solveCfg.provider, solveCfg.model);
+                    
+                    // 2. 试卷智能拆解模型
+                    const parseCfg = parseModelConfig(settings.prefer_parse_model, 'deepseek', 'deepseek-v4-flash');
+                    document.getElementById('parseModelProvider').value = parseCfg.provider;
+                    renderModelSelector('parse', parseCfg.provider, parseCfg.model);
+                    
+                    // 3. 默认公式识图模型
+                    let ocrProvider = settings.prefer_engine || 'siliconflow';
+                    if (ocrProvider === 'ali_bailian') ocrProvider = 'bailian'; // 前后端对齐
+                    if (ocrProvider === 'zhongzhan') ocrProvider = 'zhongzhan_gpt'; // 兼容老数据
+                    
+                    let ocrModel = "";
+                    if (ocrProvider === 'siliconflow') ocrModel = settings.siliconflow_model || 'Qwen/Qwen3.5-4B';
+                    else if (ocrProvider === 'bailian') ocrModel = settings.ali_bailian_model || 'qwen3-vl-flash';
+                    else if (ocrProvider === 'zhongzhan_gpt') ocrModel = settings.zhongzhan_gpt_ocr_model || 'gpt-4o';
+                    else if (ocrProvider === 'zhongzhan_claude') ocrModel = settings.zhongzhan_claude_ocr_model || 'claude-3-5-sonnet';
+                    
+                    document.getElementById('ocrModelProvider').value = ocrProvider;
+                    renderModelSelector('ocr', ocrProvider, ocrModel);
+                    
+                    // 4. 高级 TikZ 绘图模型
+                    const drawCfg = parseModelConfig(settings.prefer_draw_model, 'siliconflow', 'Qwen/Qwen3-VL-32B-Instruct');
+                    document.getElementById('drawModelProvider').value = drawCfg.provider;
+                    renderModelSelector('draw', drawCfg.provider, drawCfg.model);
                 })
                 .catch(err => {
                     console.error('获取系统配置失败:', err);
@@ -192,11 +461,18 @@
 
         function closeSettingsModal() {
             const modal = document.getElementById('settingsModal');
+            document.body.classList.remove('modal-active');
+            
             modal.classList.add('opacity-0');
             modal.querySelector('div').classList.remove('scale-100');
             modal.querySelector('div').classList.add('scale-95');
             setTimeout(() => {
                 modal.classList.add('hidden');
+                // 弹窗关闭后，如果状态灯是绿色的，恢复呼吸闪烁
+                const indicatorDot = document.querySelector('#apiStatusIndicator span.bg-green-500');
+                if (indicatorDot) {
+                    indicatorDot.classList.add('animate-pulse');
+                }
             }, 300);
         }
 
@@ -252,21 +528,74 @@
             const key = document.getElementById('settingsDeepseekKey').value;
             const siliconflowKey = document.getElementById('settingsSiliconflowKey').value;
             const aliBailianKey = document.getElementById('settingsAliBailianKey').value;
-            const preferEngine = document.getElementById('settingsPreferEngine').value;
-            const siliconflowModel = document.getElementById('settingsSiliconflowModel').value;
-            const aliBailianModel = document.getElementById('settingsAliBailianModel').value;
-            const preferSolveModel = document.getElementById('settingsPreferSolveModel').value;
-            const preferParseModel = document.getElementById('settingsPreferParseModel').value;
+            
+            const zhongzhanGptKey = document.getElementById('settingsZhongzhanGptKey').value;
+            const zhongzhanGptBaseUrl = document.getElementById('settingsZhongzhanGptBaseUrl').value;
+            const zhongzhanClaudeKey = document.getElementById('settingsZhongzhanClaudeKey').value;
+            const zhongzhanClaudeBaseUrl = document.getElementById('settingsZhongzhanClaudeBaseUrl').value;
+            
+            // 辅助获取二级选择结果
+            function getSelectedModelValue(typeKey, provider) {
+                if (provider === 'zhongzhan' || provider === 'zhongzhan_gpt' || provider === 'zhongzhan_claude') {
+                    const input = document.getElementById(`settings_${typeKey}_model_input`);
+                    return input ? input.value.trim() : '';
+                } else if (provider === 'simpletex') {
+                    return 'simpletex';
+                } else {
+                    const select = document.getElementById(`settings_${typeKey}_model_select`);
+                    return select ? select.value : '';
+                }
+            }
+            
+            // 1. AI 智能解题模型
+            const solveProvider = document.getElementById('solveModelProvider').value;
+            const solveModel = getSelectedModelValue('solve', solveProvider);
+            const preferSolveModel = `${solveProvider.toUpperCase()}/${solveModel}`;
+            
+            // 2. 试卷智能拆解模型
+            const parseProvider = document.getElementById('parseModelProvider').value;
+            const parseModel = getSelectedModelValue('parse', parseProvider);
+            const preferParseModel = `${parseProvider.toUpperCase()}/${parseModel}`;
+            
+            // 3. 默认公式识图模型 (后端以 prefer_engine + siliconflow_model/ali_bailian_model/zhongzhan_gpt_ocr_model/zhongzhan_claude_ocr_model 区分)
+            const ocrProvider = document.getElementById('ocrModelProvider').value;
+            const ocrModel = getSelectedModelValue('ocr', ocrProvider);
+            let preferEngine = ocrProvider;
+            if (preferEngine === 'bailian') preferEngine = 'ali_bailian'; // 与后端对齐
+            
+            let siliconflowModel = "";
+            let aliBailianModel = "";
+            let zhongzhanGptOcrModel = "";
+            let zhongzhanClaudeOcrModel = "";
+            
+            if (ocrProvider === 'siliconflow') siliconflowModel = ocrModel;
+            else if (ocrProvider === 'bailian') aliBailianModel = ocrModel;
+            else if (ocrProvider === 'zhongzhan_gpt') zhongzhanGptOcrModel = ocrModel;
+            else if (ocrProvider === 'zhongzhan_claude') zhongzhanClaudeOcrModel = ocrModel;
+            
+            // 4. 高级 TikZ 绘图模型
+            const drawProvider = document.getElementById('drawModelProvider').value;
+            const drawModel = getSelectedModelValue('draw', drawProvider);
+            const preferDrawModel = `${drawProvider.toUpperCase()}/${drawModel}`;
             
             const formData = new FormData();
             formData.append('deepseek_key', key);
             formData.append('siliconflow_key', siliconflowKey);
             formData.append('ali_bailian_key', aliBailianKey);
+            
+            formData.append('zhongzhan_gpt_key', zhongzhanGptKey);
+            formData.append('zhongzhan_gpt_base_url', zhongzhanGptBaseUrl);
+            formData.append('zhongzhan_gpt_ocr_model', zhongzhanGptOcrModel);
+            formData.append('zhongzhan_claude_key', zhongzhanClaudeKey);
+            formData.append('zhongzhan_claude_base_url', zhongzhanClaudeBaseUrl);
+            formData.append('zhongzhan_claude_ocr_model', zhongzhanClaudeOcrModel);
+            
             formData.append('prefer_engine', preferEngine);
             formData.append('siliconflow_model', siliconflowModel);
             formData.append('ali_bailian_model', aliBailianModel);
             formData.append('prefer_solve_model', preferSolveModel);
             formData.append('prefer_parse_model', preferParseModel);
+            formData.append('prefer_draw_model', preferDrawModel);
             
             fetch('/api/settings/save', {
                 method: 'POST',

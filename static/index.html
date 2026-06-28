@@ -480,6 +480,41 @@
                                     <div id="illustrationsList" class="flex flex-wrap gap-2 pt-1">
                                         <!-- Dynamic injected uploaded illustration badges -->
                                     </div>
+                                    
+                                    <!-- Content TikZ Geometry Panel -->
+                                    <div id="contentTikzContainer" class="hidden border border-slate-100 bg-slate-50/50 rounded-xl p-3.5 space-y-3 mt-3">
+                                        <div class="flex justify-between items-center pb-1">
+                                            <span class="text-xs font-bold text-slate-600 flex items-center space-x-1">
+                                                <i class="fa-solid fa-compass-drafting text-brand-500"></i>
+                                                <span>题干几何绘图 (TikZ)</span>
+                                            </span>
+                                            <button type="button" onclick="clearContentTikzCode()" class="px-2 py-0.5 rounded bg-red-50 text-red-650 hover:bg-red-100 text-[10px] font-medium transition-all">清空代码</button>
+                                        </div>
+                                        <textarea id="editContentTikzCode" rows="6" placeholder="在此输入题干 \begin{tikzpicture} ... \end{tikzpicture} 代码..."
+                                                  class="w-full p-3 rounded-lg font-mono text-xs leading-relaxed resize-y border border-slate-200 focus:border-brand-500 focus:ring-2 focus:ring-brand-100 bg-white transition-all"></textarea>
+                                        <div class="flex items-center space-x-2">
+                                            <input type="text" id="contentTikzUserPrompt" placeholder="输入人工指导意见，如：'把点 C 移到右侧' (选填)..."
+                                                   class="flex-1 px-3 py-1.5 rounded-lg border border-slate-200 text-[11px] focus:border-brand-500 focus:ring-1 focus:ring-brand-500 bg-white/85 transition-all">
+                                        </div>
+                                        <div class="flex space-x-2">
+                                            <button type="button" id="btnRenderContentTikz" onclick="renderContentTikzToImage()" class="flex-1 py-1.5 rounded-lg text-xs bg-indigo-600 hover:bg-indigo-700 text-white font-bold transition-all flex justify-center items-center space-x-1 shadow-sm active:scale-[0.98]">
+                                                <i class="fa-solid fa-play"></i>
+                                                <span>编译并插入题干</span>
+                                            </button>
+                                            <button type="button" id="btnCorrectContentTikz" onclick="correctContentTikzWithAI()" class="py-1.5 px-3 rounded-lg text-xs bg-amber-50 text-amber-700 font-bold hover:bg-amber-100 border border-amber-200 active:scale-[0.98] transition-all flex items-center space-x-1">
+                                                <i class="fa-solid fa-wand-magic-sparkles animate-pulse"></i>
+                                                <span>AI 纠错</span>
+                                            </button>
+                                        </div>
+                                        <div class="border border-slate-200 rounded-lg bg-white overflow-hidden p-2 flex items-center justify-center min-h-[140px] relative">
+                                            <span id="contentTikzStatusText" class="absolute top-2 right-2 text-[9px] text-slate-400 bg-slate-100 px-1.5 py-0.5 rounded">未编译</span>
+                                            <div id="contentTikzPreviewPlaceholder" class="text-center text-slate-400 text-2xs py-8">
+                                                <i class="fa-solid fa-image text-2xl text-slate-200 mb-1"></i>
+                                                <p>编译后在此展示插图预览</p>
+                                            </div>
+                                            <img id="contentTikzPreviewImage" class="max-h-[160px] max-w-full hidden object-contain rounded" src="" alt="Content TikZ Preview">
+                                        </div>
+                                    </div>
                                 </div>
                             </div>
 
@@ -688,9 +723,46 @@
                         </div>
 
                         <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
-                            <!-- Left: Final Text Area -->
-                            <textarea id="editAnswerMarkdown" rows="10" placeholder="在此处精细排版或合并您的答案与详细解析过程... 支持 MathJax / KaTeX 公式、TikZ 绘图块、Markdown 段落..."
-                                      class="w-full p-4 rounded-xl font-mono text-sm leading-relaxed resize-y border border-slate-200 focus:border-brand-500 focus:ring-2 focus:ring-brand-100 transition-all"></textarea>
+                            <!-- Left: Final Text Area & Answer TikZ Geometry Panel -->
+                            <div class="flex flex-col">
+                                <textarea id="editAnswerMarkdown" rows="10" placeholder="在此处精细排版或合并您的答案与详细解析过程... 支持 MathJax / KaTeX 公式、TikZ 绘图块、Markdown 段落..."
+                                          class="w-full p-4 rounded-xl font-mono text-sm leading-relaxed resize-y border border-slate-200 focus:border-brand-500 focus:ring-2 focus:ring-brand-100 transition-all flex-1 min-h-[200px]"></textarea>
+                                
+                                <!-- Answer TikZ Geometry Panel -->
+                                <div id="answerTikzContainer" class="hidden border border-slate-100 bg-slate-50/50 rounded-xl p-3.5 space-y-3 mt-3">
+                                    <div class="flex justify-between items-center pb-1">
+                                        <span class="text-xs font-bold text-slate-600 flex items-center space-x-1">
+                                            <i class="fa-solid fa-compass-drafting text-brand-500"></i>
+                                            <span>解答几何绘图 (TikZ)</span>
+                                        </span>
+                                        <button type="button" onclick="clearAnswerTikzCode()" class="px-2 py-0.5 rounded bg-red-50 text-red-650 hover:bg-red-100 text-[10px] font-medium transition-all">清空代码</button>
+                                    </div>
+                                    <textarea id="editAnswerTikzCode" rows="6" placeholder="在此输入解答 \begin{tikzpicture} ... \end{tikzpicture} 代码..."
+                                              class="w-full p-3 rounded-lg font-mono text-xs leading-relaxed resize-y border border-slate-200 focus:border-brand-500 focus:ring-2 focus:ring-brand-100 bg-white transition-all"></textarea>
+                                    <div class="flex items-center space-x-2">
+                                        <input type="text" id="answerTikzUserPrompt" placeholder="输入人工指导意见，如：'把点 C 移到右侧' (选填)..."
+                                               class="flex-1 px-3 py-1.5 rounded-lg border border-slate-200 text-[11px] focus:border-brand-500 focus:ring-1 focus:ring-brand-500 bg-white/85 transition-all">
+                                    </div>
+                                    <div class="flex space-x-2">
+                                        <button type="button" id="btnRenderAnswerTikz" onclick="renderAnswerTikzToImage()" class="flex-1 py-1.5 rounded-lg text-xs bg-indigo-600 hover:bg-indigo-700 text-white font-bold transition-all flex justify-center items-center space-x-1 shadow-sm active:scale-[0.98]">
+                                            <i class="fa-solid fa-play"></i>
+                                            <span>编译并插入解答</span>
+                                        </button>
+                                        <button type="button" id="btnCorrectAnswerTikz" onclick="correctAnswerTikzWithAI()" class="py-1.5 px-3 rounded-lg text-xs bg-amber-50 text-amber-700 font-bold hover:bg-amber-100 border border-amber-200 active:scale-[0.98] transition-all flex items-center space-x-1">
+                                            <i class="fa-solid fa-wand-magic-sparkles animate-pulse"></i>
+                                            <span>AI 纠错</span>
+                                        </button>
+                                    </div>
+                                    <div class="border border-slate-200 rounded-lg bg-white overflow-hidden p-2 flex items-center justify-center min-h-[140px] relative">
+                                        <span id="answerTikzStatusText" class="absolute top-2 right-2 text-[9px] text-slate-400 bg-slate-100 px-1.5 py-0.5 rounded">未编译</span>
+                                        <div id="answerTikzPreviewPlaceholder" class="text-center text-slate-400 text-2xs py-8">
+                                            <i class="fa-solid fa-image text-2xl text-slate-200 mb-1"></i>
+                                            <p>编译后在此展示插图预览</p>
+                                        </div>
+                                        <img id="answerTikzPreviewImage" class="max-h-[160px] max-w-full hidden object-contain rounded" src="" alt="Answer TikZ Preview">
+                                    </div>
+                                </div>
+                            </div>
                             
                             <!-- Right: Final Preview -->
                             <div class="flex flex-col border border-slate-200 rounded-xl bg-white overflow-hidden">
@@ -957,6 +1029,40 @@
                             <input type="password" id="settingsAliBailianKey" placeholder="输入您的 ALI_BAILIAN_API_KEY"
                                    class="glass-input w-full px-3.5 py-2.5 rounded-xl text-xs font-mono">
                         </div>
+
+                        <!-- Zhongzhan A (适合 GPT 模型) Keys -->
+                        <div class="grid grid-cols-2 gap-2">
+                            <div class="space-y-1">
+                                <label class="block text-[11px] font-semibold text-slate-500 flex items-center justify-between">
+                                    <span>中转站 A (GPT) Key</span>
+                                    <a href="https://www.right.codes/register?aff=f7656b31" target="_blank" class="text-brand-500 hover:underline text-[9px]">推荐中转 GPT</a>
+                                </label>
+                                <input type="password" id="settingsZhongzhanGptKey" placeholder="ZHONGZHAN_GPT_API_KEY"
+                                       class="glass-input w-full px-3 py-2.5 rounded-xl text-xs font-mono">
+                            </div>
+                            <div class="space-y-1">
+                                <label class="block text-[11px] font-semibold text-slate-500">中转站 A Base URL</label>
+                                <input type="text" id="settingsZhongzhanGptBaseUrl" placeholder="https://api.openai.com/v1"
+                                       class="glass-input w-full px-3 py-2.5 rounded-xl text-xs font-mono">
+                            </div>
+                        </div>
+
+                        <!-- Zhongzhan B (适合 Claude 模型) Keys -->
+                        <div class="grid grid-cols-2 gap-2">
+                            <div class="space-y-1">
+                                <label class="block text-[11px] font-semibold text-slate-500 flex items-center justify-between">
+                                    <span>中转站 B (Claude) Key</span>
+                                    <a href="https://www.packyapi.com/register?aff=5yyF" target="_blank" class="text-brand-500 hover:underline text-[9px]">推荐中转 Claude</a>
+                                </label>
+                                <input type="password" id="settingsZhongzhanClaudeKey" placeholder="ZHONGZHAN_CLAUDE_API_KEY"
+                                       class="glass-input w-full px-3 py-2.5 rounded-xl text-xs font-mono">
+                            </div>
+                            <div class="space-y-1">
+                                <label class="block text-[11px] font-semibold text-slate-500">中转站 B Base URL</label>
+                                <input type="text" id="settingsZhongzhanClaudeBaseUrl" placeholder="https://api.openai.com/v1"
+                                       class="glass-input w-full px-3 py-2.5 rounded-xl text-xs font-mono">
+                            </div>
+                        </div>
                     </div>
 
                     <!-- Column 2: Preferred Models & OCR -->
@@ -968,62 +1074,73 @@
                             </h4>
                         </div>
 
-                        <!-- Preferred Solve Model -->
-                        <div class="space-y-1">
-                            <label class="block text-xs font-semibold text-slate-500">
-                                <span>AI 智能解题首选模型 (PREFER_SOLVE_MODEL)</span>
-                            </label>
-                            <select id="settingsPreferSolveModel" class="glass-select w-full px-3.5 py-2.5 rounded-xl text-xs">
-                                <option value="deepseek-v4-pro">DeepSeek-V4-Pro (智能教研满血版)</option>
-                                <option value="deepseek-v4-flash">DeepSeek-V4-Flash (极速预览版)</option>
-                                <option value="qwen3.7-max">Ali Bailian qwen3.7-max (阿里旗舰大模型)</option>
-                            </select>
-                        </div>
-
-                        <!-- Preferred Parse Model -->
-                        <div class="space-y-1">
-                            <label class="block text-xs font-semibold text-slate-500">
-                                <span>试卷智能拆解与分类首选模型 (PREFER_PARSE_MODEL)</span>
-                            </label>
-                            <select id="settingsPreferParseModel" class="glass-select w-full px-3.5 py-2.5 rounded-xl text-xs">
-                                <option value="deepseek-v4-flash">DeepSeek-V4-Flash (推荐 - 极速分步拆解)</option>
-                                <option value="deepseek-v4-pro">DeepSeek-V4-Pro (高精度推理拆解)</option>
-                                <option value="qwen3.7-max">Ali Bailian qwen3.7-max (阿里旗舰大模型)</option>
-                            </select>
-                        </div>
-
-                        <!-- Preferred OCR Engine -->
-                        <div class="space-y-1">
-                            <label class="block text-xs font-semibold text-slate-500">
-                                <span>默认公式识图首选引擎</span>
-                            </label>
-                            <select id="settingsPreferEngine" class="glass-select w-full px-3.5 py-2.5 rounded-xl text-xs">
-                                <option value="siliconflow">SiliconFlow 硅基流动云端 (多模态 Qwen 强力识图)</option>
-                                <option value="ali_bailian">Alibaba Bailian 阿里百炼 (qwen3-vl-flash 极速强力识图)</option>
-                                <option value="simpletex">SimpleTex 官方云端 (专注数学公式/手写 OCR 引擎)</option>
-                            </select>
-                        </div>
-
-                        <!-- OCR Model Down-selections -->
-                        <div class="grid grid-cols-1 md:grid-cols-2 gap-3 pt-1">
-                            <div class="space-y-1">
-                                <label class="block text-[10px] font-semibold text-slate-500 leading-tight">
-                                    <span>SiliconFlow OCR 模型</span>
-                                </label>
-                                <select id="settingsSiliconflowModel" class="glass-select w-full px-2.5 py-2 rounded-lg text-[11px]">
-                                    <option value="Qwen/Qwen3.5-4B">Qwen/Qwen3.5-4B (高精度推荐)</option>
-                                    <option value="Qwen/Qwen3-VL-8B-Instruct">Qwen/Qwen3-VL-8B-Instruct (极速秒级响应)</option>
-                                    <option value="Qwen/Qwen3-VL-8B-Thinking">Qwen/Qwen3-VL-8B-Thinking (带视觉推理)</option>
-                                    <option value="Qwen/Qwen3-VL-32B-Instruct">Qwen/Qwen3-VL-32B-Instruct (高阶大尺寸精准)</option>
-                                </select>
+                        <div class="space-y-3 max-h-[380px] overflow-y-auto pr-1">
+                            <!-- 1. AI 智能解题模型 -->
+                            <div class="p-3 bg-slate-50/40 rounded-xl border border-slate-200/60 space-y-1.5 shadow-3xs">
+                                <label class="block text-[11px] font-bold text-slate-600">AI 智能解题模型 (PREFER_SOLVE_MODEL)</label>
+                                <div class="flex items-center space-x-2">
+                                    <select id="solveModelProvider" onchange="onModelProviderChange('solve')" class="glass-select w-1/3 px-2 py-1.5 rounded-lg text-xs">
+                                        <option value="deepseek">DeepSeek 官方</option>
+                                        <option value="siliconflow">硅基流动</option>
+                                        <option value="bailian">阿里百炼</option>
+                                        <option value="zhongzhan_gpt">中转站 A (GPT)</option>
+                                        <option value="zhongzhan_claude">中转站 B (Claude)</option>
+                                    </select>
+                                    <div id="solveModelValueContainer" class="flex-1 flex items-center space-x-1.5">
+                                        <!-- Dynamic Load -->
+                                    </div>
+                                </div>
                             </div>
-                            <div class="space-y-1">
-                                <label class="block text-[10px] font-semibold text-slate-500 leading-tight">
-                                    <span>阿里百炼 OCR 模型</span>
-                                </label>
-                                <select id="settingsAliBailianModel" class="glass-select w-full px-2.5 py-2 rounded-lg text-[11px]">
-                                    <option value="qwen3-vl-flash" selected>qwen3-vl-flash (推荐首选 - 极速响应)</option>
-                                </select>
+
+                            <!-- 2. 试卷智能拆解模型 -->
+                            <div class="p-3 bg-slate-50/40 rounded-xl border border-slate-200/60 space-y-1.5 shadow-3xs">
+                                <label class="block text-[11px] font-bold text-slate-600">试卷智能拆解模型 (PREFER_PARSE_MODEL)</label>
+                                <div class="flex items-center space-x-2">
+                                    <select id="parseModelProvider" onchange="onModelProviderChange('parse')" class="glass-select w-1/3 px-2 py-1.5 rounded-lg text-xs">
+                                        <option value="deepseek">DeepSeek 官方</option>
+                                        <option value="siliconflow">硅基流动</option>
+                                        <option value="bailian">阿里百炼</option>
+                                        <option value="zhongzhan_gpt">中转站 A (GPT)</option>
+                                        <option value="zhongzhan_claude">中转站 B (Claude)</option>
+                                    </select>
+                                    <div id="parseModelValueContainer" class="flex-1 flex items-center space-x-1.5">
+                                        <!-- Dynamic Load -->
+                                    </div>
+                                </div>
+                            </div>
+
+                            <!-- 3. 默认公式识图模型 -->
+                            <div class="p-3 bg-slate-50/40 rounded-xl border border-slate-200/60 space-y-1.5 shadow-3xs">
+                                <label class="block text-[11px] font-bold text-slate-600">默认公式识图模型 (DEFAULT_OCR_ENGINE)</label>
+                                <div class="flex items-center space-x-2">
+                                    <select id="ocrModelProvider" onchange="onModelProviderChange('ocr')" class="glass-select w-1/3 px-2 py-1.5 rounded-lg text-xs">
+                                        <option value="siliconflow">硅基流动</option>
+                                        <option value="bailian">阿里百炼</option>
+                                        <option value="zhongzhan_gpt">中转站 A (GPT)</option>
+                                        <option value="zhongzhan_claude">中转站 B (Claude)</option>
+                                        <option value="simpletex">SimpleTex</option>
+                                    </select>
+                                    <div id="ocrModelValueContainer" class="flex-1 flex items-center space-x-1.5">
+                                        <!-- Dynamic Load -->
+                                    </div>
+                                </div>
+                            </div>
+
+                            <!-- 4. 高级 TikZ 绘图模型 -->
+                            <div class="p-3 bg-slate-50/40 rounded-xl border border-slate-200/60 space-y-1.5 shadow-3xs">
+                                <label class="block text-[11px] font-bold text-slate-600">高级 TikZ 绘图模型 (PREFER_DRAW_MODEL)</label>
+                                <div class="flex items-center space-x-2">
+                                    <select id="drawModelProvider" onchange="onModelProviderChange('draw')" class="glass-select w-1/3 px-2 py-1.5 rounded-lg text-xs">
+                                        <option value="siliconflow">硅基流动</option>
+                                        <option value="bailian">阿里百炼</option>
+                                        <option value="zhongzhan_gpt">中转站 A (GPT)</option>
+                                        <option value="zhongzhan_claude">中转站 B (Claude)</option>
+                                        <option value="deepseek">DeepSeek 官方</option>
+                                    </select>
+                                    <div id="drawModelValueContainer" class="flex-1 flex items-center space-x-1.5">
+                                        <!-- Dynamic Load -->
+                                    </div>
+                                </div>
                             </div>
                         </div>
                     </div>

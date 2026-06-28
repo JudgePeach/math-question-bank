@@ -193,4 +193,9 @@ def generate_markdown_library(questions, filepath: str):
                                     rel_img = f"../{img.lstrip('/')}"
                                     f.write(f"![题库插图]({rel_img})\n\n")
                                     
+                            # TikZ 绘图源代码备份
+                            if getattr(q, "tikz_code", None) and q.tikz_code.strip():
+                                f.write("**【TikZ 几何绘图源码】**\n\n")
+                                f.write(f"```latex\n{q.tikz_code.strip()}\n```\n\n")
+                                    
                             f.write("---\n\n")

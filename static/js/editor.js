@@ -261,7 +261,7 @@ const PAGE_LIMIT = 20;
                                 <i class="fa-solid fa-wand-magic-sparkles text-brand-600 text-sm animate-pulse"></i>
                             </div>
                             <div>
-                                <h3 class="font-bold text-sm text-slate-800">题目缺少学段与章节</h3>
+                                <h3 class="font-bold text-sm text-slate-800">题目分类信息不完整</h3>
                                 <p class="text-[10px] text-slate-400">MATHBANK 教研分类指引</p>
                             </div>
                         </div>
@@ -273,9 +273,9 @@ const PAGE_LIMIT = 20;
                                 <i class="fa-solid fa-pen-to-square text-slate-500"></i>
                                 <span>手动选择 / 输入教材定位</span>
                             </button>
-                            <button id="aiCompulsoryBtn" type="button" class="w-full px-4 py-2.5 bg-gradient-to-r from-brand-600 to-indigo-600 hover:from-brand-500 hover:to-indigo-500 active:scale-[0.99] text-white rounded-xl font-bold transition-all text-xs flex items-center justify-center space-x-2 shadow-md shadow-brand-500/10">
-                                <i class="fa-solid fa-robot animate-bounce"></i>
-                                <span>交给 AI 智能分析并定位</span>
+                            <button id="autoSaveClassifyBtn" type="button" class="w-full px-4 py-2.5 bg-indigo-600 hover:bg-indigo-500 active:scale-[0.99] text-white rounded-xl font-bold transition-all text-xs flex items-center justify-center space-x-2 shadow-sm">
+                                <i class="fa-solid fa-wand-magic-sparkles"></i>
+                                <span>交给系统自动分析并定位</span>
                             </button>
                         </div>
                         <div class="flex justify-end pt-2 border-t border-slate-100">
@@ -305,7 +305,7 @@ const PAGE_LIMIT = 20;
                 };
 
                 document.getElementById('manualCompulsoryBtn').onclick = () => closeModal('manual');
-                document.getElementById('aiCompulsoryBtn').onclick = () => closeModal('ai');
+                document.getElementById('autoSaveClassifyBtn').onclick = () => closeModal('ai');
                 document.getElementById('cancelCompulsoryBtn').onclick = () => closeModal('cancel');
             });
         }
@@ -662,28 +662,8 @@ const PAGE_LIMIT = 20;
 
         function openStatsModal() {
             const modal = document.getElementById('statsModal');
-            modal.classList.remove('hidden');
             
-            // Set current local Year and Month
-            const now = new Date();
-            document.getElementById('statsYearSelect').value = now.getFullYear().toString();
-            document.getElementById('statsMonthSelect').value = (now.getMonth() + 1).toString();
-            
-            // Reset query selections
-            document.getElementById('statsQueryCompulsory').value = '';
-            const chapSelect = document.getElementById('statsQueryChapter');
-            chapSelect.innerHTML = '<option value="">-- 先选择学段 --</option>';
-            chapSelect.disabled = true;
-            document.getElementById('statsQueryResultEmpty').classList.remove('hidden');
-            document.getElementById('statsQueryResultData').classList.add('hidden');
-            
-            setTimeout(() => {
-                modal.classList.remove('opacity-0');
-                modal.querySelector('div').classList.remove('scale-95');
-                modal.querySelector('div').classList.add('scale-100');
-            }, 50);
-            
-            // Fetch stats from server
+            // 🟢 先拉取并渲染数据，让弹窗内部 DOM 完全静态就绪后再显示弹窗，完美消除毛玻璃背景下的二次重绘闪烁冲突
             fetch('/api/stats')
                 .then(r => r.json())
                 .then(data => {
@@ -701,6 +681,28 @@ const PAGE_LIMIT = 20;
                         
                         // Render increments calendar
                         renderStatsCalendar();
+                        
+                        // Set current local Year and Month
+                        const now = new Date();
+                        document.getElementById('statsYearSelect').value = now.getFullYear().toString();
+                        document.getElementById('statsMonthSelect').value = (now.getMonth() + 1).toString();
+                        
+                        // Reset query selections
+                        document.getElementById('statsQueryCompulsory').value = '';
+                        const chapSelect = document.getElementById('statsQueryChapter');
+                        chapSelect.innerHTML = '<option value="">-- 先选择学段 --</option>';
+                        chapSelect.disabled = true;
+                        document.getElementById('statsQueryResultEmpty').classList.remove('hidden');
+                        document.getElementById('statsQueryResultData').classList.add('hidden');
+                        
+                        // 数据和图表完全就绪，再顺滑滑入弹窗并淡化背景
+                        document.body.classList.add('modal-active');
+                        modal.classList.remove('hidden');
+                        setTimeout(() => {
+                            modal.classList.remove('opacity-0');
+                            modal.querySelector('div').classList.remove('scale-95');
+                            modal.querySelector('div').classList.add('scale-100');
+                        }, 50);
                     } else {
                         showToast('获取统计大屏数据失败: ' + data.message, 'error');
                     }
@@ -712,6 +714,8 @@ const PAGE_LIMIT = 20;
 
         function closeStatsModal() {
             const modal = document.getElementById('statsModal');
+            document.body.classList.remove('modal-active');
+            
             modal.classList.add('opacity-0');
             modal.querySelector('div').classList.remove('scale-100');
             modal.querySelector('div').classList.add('scale-95');

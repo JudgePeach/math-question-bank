@@ -54,6 +54,13 @@
 > * **🤖 AI 推理大模型**：请注册并获取密钥于 [DeepSeek 开放平台](https://platform.deepseek.com/)
 > * **📷 OCR 公式识别（首选通道）**：请通过专属 [硅基流动 (SiliconFlow) 邀请链接](https://cloud.siliconflow.cn/i/hkgjSWrg) 注册并获取密钥 (模型推荐使用 `Qwen/Qwen3-VL-8B-Instruct`，正常够用了；也可以选择 `Qwen/Qwen3-VL-32B-Instruct`，双倍价格但效果更好)
 > * **📷 OCR 公式识别（备选通道）**：请注册并获取 Token 于 [SimpleTex 开放平台](https://simpletex.cn/) (专注复杂数学公式识别)
+> * **🔗 推荐多模态中转站 A (适合 GPT 模型)**：通过专属 [RightCodes 注册链接](https://www.right.codes/register?aff=f7656b31) 获取 API Key。该中转站提供价格实惠且性能优越的 gpt-5.5 (gpt-4o) 系列模型，极其适合进行 codex 编译和高等智能解析推理。
+> * **🔗 推荐多模态中转站 B (适合 Claude 模型)**：通过专属 [PackyAPI 注册链接](https://www.packyapi.com/register?aff=5yyF) 获取 API Key。该中转站对 Anthropic 的 `claude-3-5-sonnet`、`claude-opus-4-8` 等高端模型提供非常优厚的折算，且内置了极其方便的阿里系大模型优惠。
+>
+> > [!IMPORTANT]
+> > **关于 TikZ 自动几何重绘与本地 LaTeX 编译环境依赖**：
+> > 系统的 AI 智能几何插图 TikZ 重绘和实时 PNG 编译预览功能，高度依赖您**本地已安装的 LaTeX 编译排版环境**（如 macOS 下的 **MacTeX**，Windows 下的 **TeX Live** 或 **MiKTeX**）。
+> > 请确保安装后，您本地的命令行中能正常调用 `pdflatex` 命令（即已正确将 LaTeX 工具链加入系统的环境变量 `PATH`）。如果本地未安装，AI 生成的 TikZ 源码依旧能够完好保存，但前端预览卡片将无法正常编译渲染出 PNG 几何图像。
 >
 > *如果您需要进行二次开发或习惯使用终端，请参照以下常规步骤运行源码：*
 

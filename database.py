@@ -29,6 +29,7 @@ class Question(Base):
     review = Column(Text, default="")  # 评述 (允许空白)
     association_group_id = Column(String(100), default="", index=True)  # 关联题目分组ID (支持传递关系)
     _image_paths = Column(Text, default="[]", name="image_paths")  # 以JSON字符串形式存储相对路径列表
+    tikz_code = Column(Text, default="")  # TikZ 几何绘图源代码
     created_at = Column(DateTime, default=datetime.datetime.utcnow)
 
     @property
@@ -59,6 +60,7 @@ class Question(Base):
             "review": self.review,
             "association_group_id": self.association_group_id,
             "image_paths": self.image_paths,
+            "tikz_code": self.tikz_code,
             "created_at": (self.created_at.isoformat() + "Z") if self.created_at else None
         }
 
@@ -103,6 +105,10 @@ def init_db():
             if "association_group_id" not in columns:
                 conn.execute(text("ALTER TABLE questions ADD COLUMN association_group_id VARCHAR(100) DEFAULT ''"))
                 print("Added column 'association_group_id' to questions table successfully.")
+                
+            if "tikz_code" not in columns:
+                conn.execute(text("ALTER TABLE questions ADD COLUMN tikz_code TEXT DEFAULT ''"))
+                print("Added column 'tikz_code' to questions table successfully.")
                 
             conn.execute(text("CREATE INDEX IF NOT EXISTS idx_questions_category_compulsory ON questions (category_compulsory)"))
             conn.execute(text("CREATE INDEX IF NOT EXISTS idx_questions_category_chapter ON questions (category_chapter)"))

@@ -3,6 +3,7 @@ import io
 import uuid
 import json
 import time
+import re
 import signal
 import datetime
 import threading
@@ -256,6 +257,10 @@ def read_index():
         html_content = html_content.replace('<head>', f'<head>\n    {token_script}')
             
         res = HTMLResponse(content=html_content)
+        res.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
+        res.headers["Pragma"] = "no-cache"
+        res.headers["Expires"] = "0"
+        
         res.set_cookie(
             key="local_token",
             value=LOCAL_TOKEN,
@@ -384,7 +389,8 @@ def ocr_via_siliconflow(image_path: str, api_key: str, model_name: str = "Qwen/Q
                             "3. **变量/点/坐标包裹**：所有的几何点符号（如 $A$, $B$, $C$, $D$, $O$, $P$ 等）、所有单个字母变量（如 $x$, $y$, $m$, $n$ 等）以及所有的坐标表达式（如 $(1,2)$, $(3,3)$, $(x,y)$ 等）均需严格包裹在单美元符号 $...$ 中。\n"
                             "4. **严禁整段包裹**：不要将普通的中文文本、题目描述或整段话包裹在 LaTeX 标记中。\n"
                             "5. **精精确保留排版结构**：务必精精确保留原图的换行、段落以及选项（A、B、C、D）的对齐排版。\n"
-                            "6. **过滤干扰符**：省略公式与汉字之间干扰渲染的薄空格（如 `\\,` 或 `\\!` 等），确保数学公式的标准纯净。"
+                            "6. **过滤干扰符**：省略公式与汉字之间干扰渲染的薄空格（如 `\\,` 或 `\\!` 等），确保数学公式的标准纯净。\n"
+                            "7. **几何插图区域识别 (极重要)**：请仔细观察图像中是否包含立体几何、平面几何、函数图像、平面向量等几何插图。如果包含，**请务必在输出的文本末尾**追加输出该插图在整张图片中的归一化百分比坐标包围框，格式严格为：`[ILLUSTRATION_BOX: ymin, xmin, ymax, xmax]`。其中四个数值代表插图在图片中占用的百分比比例，范围为 0 到 100 之间的整数（例如插图在整张图偏右侧，可以输出为 `[ILLUSTRATION_BOX: 10, 45, 90, 95]`；如果整张图没有插图，则绝对不要输出 `[ILLUSTRATION_BOX: ...]`）。"
                         )
                     },
                     {
@@ -457,7 +463,8 @@ def ocr_via_ali_bailian(image_path: str, api_key: str, model_name: str = "qwen3-
                             "3. **公式级包裹**：仅对纯数学符号、代数式、集合、方程等数学对象使用 LaTeX。行内变量/符号（如 $A$、$x$、$-7$ 等）使用单美元符号 `$...$`；独立的一行长公式或复杂等式才使用双美元符号 `$$...$$`。\n"
                             "4. **精确保留排版结构**：务必精确保留原图的换行、段落以及选项（A、B、C、D）的对齐排版。\n"
                             "5. **过滤干扰符**：省略公式与汉字之间干扰渲染的薄空格（如 `\\,` 或 `\\!` 等），确保数学公式的标准纯净。\n"
-                            "6. **保留所有中文文字**：在转录过程中必须百分之百保留题目中的叙述文字，例如定义段落和前言介绍，严禁只输出最后一句问句。"
+                            "6. **保留所有中文文字**：在转录过程中必须百分之百保留题目中的叙述文字，例如定义段落和前言介绍，严禁只输出最后一句问句。\n"
+                            "7. **几何插图区域识别 (极重要)**：请仔细观察图像中是否包含立体几何、平面几何、函数图像、平面向量等几何插图。如果包含，**请务必在输出 the 文本末尾**追加输出该插图在整张图片中的归一化百分比坐标包围框，格式严格为：`[ILLUSTRATION_BOX: ymin, xmin, ymax, xmax]`。其中四个数值代表插图在图片中占用的百分比比例，范围为 0 到 100 之间的整数（例如插图在整张图偏右侧，可以输出为 `[ILLUSTRATION_BOX: 10, 45, 90, 95]`；如果整张图没有插图，则绝对不要输出 `[ILLUSTRATION_BOX: ...]`）。"
                         )
                     },
                     {
@@ -492,6 +499,201 @@ def ocr_via_ali_bailian(image_path: str, api_key: str, model_name: str = "qwen3-
         raise RuntimeError(f"解析阿里云百炼响应数据失败: {str(e)}")
 
 
+def ocr_via_zhongzhan(image_path: str, api_key: str, base_url: str, model_name: str) -> str:
+    """调用中转站 (OpenAI 兼容) API 进行多模态图文公式识别"""
+    import base64
+    import requests
+    
+    print(f"[OCR Flow] 正在向中转站 (OpenAI 兼容) 提交多模态识别任务: {image_path} (模型: {model_name})...")
+    
+    try:
+        with open(image_path, "rb") as image_file:
+            encoded_string = base64.b64encode(image_file.read()).decode("utf-8")
+    except Exception as e:
+        raise RuntimeError(f"读取并对图片进行 Base64 编码失败: {str(e)}")
+        
+    base_url = base_url.rstrip("/")
+    url = f"{base_url}/chat/completions" if not base_url.endswith("/chat/completions") else base_url
+    headers = {
+        "Authorization": f"Bearer {api_key.strip()}",
+        "Content-Type": "application/json"
+    }
+    
+    prompt = (
+        "请精确识别并提取这幅图像中的**所有文字与数学公式**。必须完整转录，不得遗漏、删减或改写图像中的任何字符（包括方括号、题目来源如 '[2025 · 武汉二中高一月考]'、定义说明、前言等大段文字）。\n"
+        "直接输出图像内容的转录结果，绝对不要夹带任何你个人的说明、开场白、回复语或解释。\n"
+        "【排版格式与 LaTeX 语法关键准则】：\n"
+        "1. **严禁整段包裹**：绝对不要将普通的中文文本、题目描述或整段话包裹在 LaTeX 标记（如 `$$...$$` 或 `$...$`）中。普通的中文叙述和文字必须作为普通的文本直接输出。\n"
+        "2. **严禁滥用 \\text 语法**：不要在 LaTeX 公式中使用 `\\text{...}` 来包裹大段的中文描述。所有的中文文字都应该写在 LaTeX 块外部。\n"
+        "3. **公式级包裹**：仅对纯数学符号、代数式、集合、方程等数学对象使用 LaTeX。行内变量/符号（如 $A$、$x$ 等）使用单美元符号 `$...$`。\n"
+        "4. **精精确保留排版结构**：务必精精确保留原图的换行、段落以及选项的对齐排版。\n"
+        "5. **过滤干扰符**：省略公式与汉字之间干扰渲染的薄空格，确保数学公式的标准纯净。\n"
+        "6. **保留所有中文文字**：在转录过程中必须百分之百保留题目中的叙述文字，严禁只输出最后一句问句。\n"
+        "7. **几何插图区域识别 (极重要)**：请仔细观察图像中是否包含几何插图。如果包含，**请务必在输出的文本末尾**追加输出该插图在整张图片中的归一化百分比坐标包围框，格式严格为：`[ILLUSTRATION_BOX: ymin, xmin, ymax, xmax]`。其中四个数值代表插图在图片中占用的百分比比例，范围为 0 到 100 之间的整数。"
+    )
+    
+    payload = {
+        "model": model_name,
+        "messages": [
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": prompt},
+                    {
+                        "type": "image_url",
+                        "image_url": {
+                            "url": f"data:image/png;base64,{encoded_string}"
+                        }
+                    }
+                ]
+            }
+        ],
+        "stream": False
+    }
+    
+    try:
+        response = robust_request_post(url, headers=headers, json=payload, timeout=120)
+    except Exception as e:
+        raise RuntimeError(f"请求中转站多模态 OCR 失败: {str(e)}")
+        
+    if response.status_code != 200:
+        raise RuntimeError(f"中转站多模态 OCR 识别失败，HTTP 状态码: {response.status_code}，详情: {response.text}")
+        
+    res_json = response.json()
+    try:
+        choices = res_json.get("choices", [])
+        if choices and len(choices) > 0:
+            content = choices[0].get("message", {}).get("content", "")
+            return content.strip()
+        else:
+            raise RuntimeError(f"中转站返回的数据中未包含 Choices 结果: {str(res_json)}")
+    except Exception as e:
+        raise RuntimeError(f"解析中转站响应数据失败: {str(e)}")
+
+
+def draw_tikz_via_high_model(image_path: str, prefer_draw: str, latex_content: str = None) -> str:
+    """使用指定的高级绘图模型（多模态或纯文本自适应）生成 TikZ 代码"""
+    import base64
+    import requests
+    import re
+    
+    is_zhongzhan_gpt = prefer_draw.startswith("ZHONGZHAN_GPT/") or prefer_draw.startswith("ZHONGZHAN/")
+    is_zhongzhan_claude = prefer_draw.startswith("ZHONGZHAN_CLAUDE/")
+    is_zhongzhan = is_zhongzhan_gpt or is_zhongzhan_claude
+    
+    if is_zhongzhan:
+        if is_zhongzhan_gpt:
+            api_key = os.getenv("ZHONGZHAN_GPT_API_KEY") or os.getenv("ZHONGZHAN_API_KEY")
+            base_url = os.getenv("ZHONGZHAN_GPT_BASE_URL") or os.getenv("ZHONGZHAN_BASE_URL", "https://api.openai.com/v1")
+            provider_label = "中转站 (GPT)"
+        else:
+            api_key = os.getenv("ZHONGZHAN_CLAUDE_API_KEY")
+            base_url = os.getenv("ZHONGZHAN_CLAUDE_BASE_URL", "https://api.openai.com/v1")
+            provider_label = "中转站 (Claude)"
+            
+        if not api_key:
+            print(f"[High Model Draw] 未配置 {provider_label} 密钥，降级跳过。")
+            return None
+        model_name = prefer_draw.split("/", 1)[1]
+        base_url = base_url.rstrip("/")
+        url = f"{base_url}/chat/completions" if not base_url.endswith("/chat/completions") else base_url
+    else:
+        api_key = os.getenv("SILICONFLOW_API_KEY")
+        if not api_key:
+            print("[High Model Draw] 未配置 SILICONFLOW_API_KEY，无法调用 SiliconFlow 高级绘图，降级跳过。")
+            return None
+        model_name = prefer_draw
+        url = "https://api.siliconflow.cn/v1/chat/completions"
+
+    # 判断是否为多模态模型 (名称中含 'vl', 'gpt', 'claude'，或者只要是中转站我们一般默认为多模态)
+    is_multimodal = is_zhongzhan or "vl" in model_name.lower() or "thinking" in model_name.lower()
+    
+    headers = {
+        "Authorization": f"Bearer {api_key.strip()}",
+        "Content-Type": "application/json"
+    }
+
+    if is_multimodal:
+        # 多模态图文输入模式
+        try:
+            with open(image_path, "rb") as f:
+                encoded_image = base64.b64encode(f.read()).decode("utf-8")
+        except Exception as e:
+            print(f"[High Model Draw] 读取裁剪小图 Base64 失败: {str(e)}")
+            return None
+            
+        prompt = (
+            "你是一个 LaTeX/TikZ 几何绘图专家。下面第一张图是从试卷题目中分割裁剪出来的几何插图局部。\n"
+            "另外，这道数学几何题目的完整题干文本如下，请务必作为绘图逻辑参考：\n"
+            f"```latex\n{latex_content if latex_content else '暂无题干'}\n```\n"
+            "请使用标准的 LaTeX TikZ 几何绘图语言，将这幅几何图形高精度重新绘制一遍。\n"
+            "【绘图重要规范与自愈提示】：\n"
+            "1. 你的回答必须以 ```latex ... ``` 代码块包裹修正后的完整 TikZ 代码（只输出 \\begin{tikzpicture} 和 \\end{tikzpicture} 之间的部分）。请确保不输出任何与代码无关的闲聊、问候或说明文字。\n"
+            "2. 结合题干文本（如提及线线垂直、线面平行以及几何点的真实名称）来理解和校正剪切图中可能缺失、磨损或由于裁剪漏掉的字母。例如，如果题干提到 PA 垂直于面 ABC，但插图顶部顶点上面没有字母，请根据题意在顶部顶点标注为 'P'（绝对不要随意编造非题干中提及的字母，如 D 等）。\n"
+            "3. 仔细识别并使用 `\\node` 或 `label` 标在对应的物理位置。重要被遮挡线条请使用 `dashed` 虚线绘制。不要在大片空白处留多余线头。"
+        )
+        
+        content_payload = [
+            {"type": "text", "text": prompt},
+            {
+                "type": "image_url",
+                "image_url": {
+                    "url": f"data:image/png;base64,{encoded_image}"
+                }
+            }
+        ]
+    else:
+        # 纯文本推理模式 (如 Qwen3.5-397B)，我们把题目题干文字作为逻辑来源
+        if not latex_content:
+            print("[High Model Draw] 纯文本高级绘图模型未获得输入文本，跳过。")
+            return None
+            
+        prompt = (
+            "你是一个 LaTeX/TikZ 几何绘图专家。已知有一道数学几何题目，其文字描述和公式如下：\n"
+            f"```latex\n{latex_content}\n```\n"
+            "请仔细分析该题目中各几何元素之间的逻辑关系（如线面垂直、平行、坐标位置、夹角等），"
+            "编写出一段最精确、美观的 LaTeX TikZ 代码来绘制这道题目的示意插图。\n"
+            "【绘图重要规范】：\n"
+            "1. 你的回答必须以 ```latex ... ``` 代码块包裹修正后的完整 TikZ 代码（只输出 \\begin{tikzpicture} 和 \\end{tikzpicture} 之间的部分）。请确保不输出任何与代码无关的闲聊或说明文字。\n"
+            "2. 绘图比例和字母标注位置要协调美观，重要被遮挡线条请使用 `dashed` 虚线绘制。"
+        )
+        content_payload = prompt
+
+    payload = {
+        "model": model_name,
+        "messages": [
+            {
+                "role": "user",
+                "content": content_payload
+            }
+        ],
+        "stream": False
+    }
+
+    try:
+        response = robust_request_post(url, headers=headers, json=payload, timeout=120)
+        if response.status_code == 200:
+            res_json = response.json()
+            choices = res_json.get("choices", [])
+            if choices:
+                ai_message = choices[0].get("message", {}).get("content", "")
+                match = re.search(r"\\begin{tikzpicture}.*?\\end{tikzpicture}", ai_message, re.DOTALL | re.IGNORECASE)
+                if match:
+                    return match.group(0)
+                match_block = re.search(r"```(?:latex)?(.*?)```", ai_message, re.DOTALL | re.IGNORECASE)
+                if match_block:
+                    code = match_block.group(1).strip()
+                    if "tikzpicture" not in code:
+                        code = f"\\begin{{tikzpicture}}\n{code}\n\\end{{tikzpicture}}"
+                    return code
+                return ai_message.strip()
+        else:
+            print(f"[High Model Draw Error] 接口返回 HTTP {response.status_code}: {response.text}")
+    except Exception as e:
+        print(f"[High Model Draw Error] 大模型请求发生异常: {str(e)}")
+    return None
+
+
 @app.post("/api/ocr")
 def ocr_formula(
     file: UploadFile = File(...),
@@ -499,7 +701,7 @@ def ocr_formula(
 ):
     temp_filepath = None
     try:
-        # 同步读取文件字节（此def端点在FastAPI独立线程池中执行，完全不阻塞主事件循环）
+        # 同步读取文件字节
         file_bytes = file.file.read()
         
         image = Image.open(io.BytesIO(file_bytes)).convert("RGB")
@@ -507,9 +709,9 @@ def ocr_formula(
         # 1. 运行自适应图像去噪/自动切边预处理
         image = auto_crop_image(image)
         
-        # 保存裁剪后的图片，用唯一的临时文件名以防并发冲突
-        temp_filename = f"ocr_temp_{uuid.uuid4().hex}.png"
-        temp_filepath = os.path.join(UPLOAD_DIR, temp_filename)
+        # 将裁剪后的图片保存为持久化 OCR 文件，未来可作为题目配图
+        filename = f"ocr_original_{uuid.uuid4().hex[:12]}.png"
+        temp_filepath = os.path.join(UPLOAD_DIR, filename)
         image.save(temp_filepath, format="PNG")
         
         # 确定调用的具体引擎。
@@ -551,9 +753,32 @@ def ocr_formula(
             else:
                 print("[OCR Flow Warning] 未配置 ALI_BAILIAN_API_KEY，阿里云百炼引擎无法启动！")
 
-        # ----------------- 引擎 3: SimpleTex 云端 API (如果是首选，或者 siliconflow/ali_bailian 识别失败时作为兜底/并存选项) -----------------
+        # ----------------- 引擎 2.5: 中转站 多模态识图 -----------------
+        elif engine in ["zhongzhan", "zhongzhan_gpt", "zhongzhan_claude"]:
+            if engine == "zhongzhan_claude":
+                zz_key = os.getenv("ZHONGZHAN_CLAUDE_API_KEY")
+                zz_base_url = os.getenv("ZHONGZHAN_CLAUDE_BASE_URL", "https://api.openai.com/v1")
+                zz_model = os.getenv("ZHONGZHAN_CLAUDE_OCR_MODEL", "claude-3-5-sonnet")
+                provider_label = "中转站 (Claude)"
+            else:
+                zz_key = os.getenv("ZHONGZHAN_GPT_API_KEY") or os.getenv("ZHONGZHAN_API_KEY")
+                zz_base_url = os.getenv("ZHONGZHAN_GPT_BASE_URL") or os.getenv("ZHONGZHAN_BASE_URL", "https://api.openai.com/v1")
+                zz_model = os.getenv("ZHONGZHAN_GPT_OCR_MODEL") or os.getenv("ZHONGZHAN_OCR_MODEL", "gpt-4o")
+                provider_label = "中转站 (GPT)"
+                
+            if zz_key and zz_key.strip():
+                try:
+                    latex_content = ocr_via_zhongzhan(temp_filepath, zz_key, zz_base_url, model_name=zz_model)
+                    confidence = 0.99
+                    provider = f"{provider_label} ({zz_model})"
+                except Exception as e:
+                    print(f"[{provider_label} 识别失败] 发生异常: {str(e)}")
+            else:
+                print(f"[OCR Flow Warning] 未配置 {provider_label} 密钥，中转站引擎无法启动！")
+
+        # ----------------- 引擎 3: SimpleTex 云端 API (如果是首选，或者其它多模态引擎识别失败时作为兜底/并存选项) -----------------
         if not latex_content:
-            if engine in ["siliconflow", "ali_bailian"]:
+            if engine in ["siliconflow", "ali_bailian", "zhongzhan", "zhongzhan_gpt", "zhongzhan_claude"]:
                 print(f"[OCR Flow Auto-Fallback] {engine} 识别未成功，正在自动无缝降级至 SimpleTex 引擎兜底...")
             
             simpletex_token = os.getenv("SIMPLETEX_TOKEN")
@@ -604,11 +829,59 @@ def ocr_formula(
             # 过滤干扰字符
             latex_content = latex_content.replace("\\,", "").replace("\\!", "")
 
+        # ----------------- 双阶段多模态识图与高级 TikZ 绘图模型联动 -----------------
+        tikz_code_from_high_model = None
+        tikz_image_path = None
+        
+        if latex_content:
+            import re
+            # 提取可能由默认模型标注的示意图 Bounding Box 标记
+            box_match = re.search(r"\[ILLUSTRATION_BOX:\s*(\d+),\s*(\d+),\s*(\d+),\s*(\d+)\]", latex_content, re.IGNORECASE)
+            if box_match:
+                # 第一步先确保擦除标记，防止乱入题干文本框
+                latex_content = re.sub(r"\[ILLUSTRATION_BOX:.*?\]", "", latex_content).strip()
+                
+                try:
+                    # 不再执行物理分割裁剪，直接将整张原始题目截图发送给高级视觉绘图模型进行图形分析与重画
+                    prefer_draw = os.getenv("PREFER_DRAW_MODEL", "Qwen/Qwen3-VL-32B-Instruct")
+                    print(f"[Illustration Draw] 检测到插图标记，直接将整张原图送往高级模型 {prefer_draw} 进行 TikZ 解析绘图...")
+                    
+                    tikz_code_from_high_model = draw_tikz_via_high_model(
+                        temp_filepath, # 传入整图
+                        prefer_draw,
+                        latex_content=latex_content
+                    )
+                except Exception as draw_err:
+                    print(f"[Illustration Draw Fail] 高级多模态模型整图分析绘图失败: {str(draw_err)}")
+            else:
+                # 剔除可能存在的由于大模型幻觉或者部分输出造成的残缺标记
+                latex_content = re.sub(r"\[ILLUSTRATION_BOX:.*?\]", "", latex_content).strip()
+
+        # 如果高级模型成功生成了 TikZ 代码，我们在后台自动进行编译预览，并格式化追加到 latex 文本中！
+        if tikz_code_from_high_model:
+            try:
+                print(f"[Illustration Draw] 高级绘图模型成功输出 TikZ 源码！正在开始编译为预览图...")
+                compiled_path = compile_tikz_to_png(tikz_code_from_high_model)
+                if compiled_path:
+                    tikz_image_path = compiled_path
+                    # 自动在题干文本的尾部追加 Markdown 插图引用
+                    latex_content += f"\n\n![]({compiled_path})"
+                    print(f"[Illustration Draw] 编译成功: {compiled_path}")
+            except Exception as compile_err:
+                print(f"[Illustration Draw] 编译高级模型生成的 TikZ 失败: {str(compile_err)}")
+
+        # 将 temp_filepath 置为 None，避免在 finally 块中被删除
+        saved_filepath = temp_filepath
+        temp_filepath = None
+
         return {
             "status": "success",
             "latex": latex_content,
             "confidence": confidence,
-            "provider": provider
+            "provider": provider,
+            "image_path": f"/{UPLOAD_DIR_REL}/{os.path.basename(saved_filepath)}",
+            "tikz_code": tikz_code_from_high_model,
+            "tikz_image_path": tikz_image_path
         }
     except Exception as e:
         return JSONResponse(
@@ -633,33 +906,53 @@ async def ai_solve(
     thinking: str = Form("enabled"),
     model: str = Form("deepseek-v4-pro")
 ):
+    # 动态解析模型所属的服务商前缀与真实模型名
     model_lower = model.lower()
-    is_qwen = "qwen" in model_lower
+    api_key = None
+    api_base = None
+    model_name = model
     
-    if is_qwen:
-        api_key = os.getenv("ALI_BAILIAN_API_KEY")
-        if not api_key:
-            return JSONResponse(
-                content={
-                    "status": "error", 
-                    "message": "阿里百炼 API Key (ALI_BAILIAN_API_KEY) 未在 .env 文件中配置！请在工作台右上角进行配置后重试。"
-                },
-                status_code=400
-            )
-        api_base = os.getenv("ALI_BAILIAN_API_BASE", "https://dashscope.aliyuncs.com/compatible-mode/v1")
-        if model == "qwen3.7-max":
-            model = "qwen-max"
+    if "/" in model:
+        parts = model.split("/", 1)
+        prefix = parts[0].upper()
+        model_name = parts[1]
+        
+        if prefix == "SILICONFLOW":
+            api_key = os.getenv("SILICONFLOW_API_KEY")
+            api_base = "https://api.siliconflow.cn/v1"
+        elif prefix == "BAILIAN":
+            api_key = os.getenv("ALI_BAILIAN_API_KEY")
+            api_base = os.getenv("ALI_BAILIAN_API_BASE", "https://dashscope.aliyuncs.com/compatible-mode/v1")
+            if model_name == "qwen3.7-max":
+                model_name = "qwen-max"
+        elif prefix == "DEEPSEEK":
+            api_key = os.getenv("DEEPSEEK_API_KEY")
+            api_base = os.getenv("DEEPSEEK_API_BASE", "https://api.deepseek.com")
+        elif prefix == "ZHONGZHAN_GPT":
+            api_key = os.getenv("ZHONGZHAN_GPT_API_KEY")
+            api_base = os.getenv("ZHONGZHAN_GPT_BASE_URL", "https://api.openai.com/v1")
+        elif prefix == "ZHONGZHAN_CLAUDE":
+            api_key = os.getenv("ZHONGZHAN_CLAUDE_API_KEY")
+            api_base = os.getenv("ZHONGZHAN_CLAUDE_BASE_URL", "https://api.openai.com/v1")
     else:
-        api_key = os.getenv("DEEPSEEK_API_KEY")
-        if not api_key:
-            return JSONResponse(
-                content={
-                    "status": "error", 
-                    "message": "DeepSeek API Key (DEEPSEEK_API_KEY) 未在 .env 文件中配置！请在工作台右上角或根目录配置后重试。"
-                },
-                status_code=400
-            )
-        api_base = os.getenv("DEEPSEEK_API_BASE", "https://api.deepseek.com")
+        # 向后兼容传统无前缀模式
+        if "qwen" in model_lower:
+            api_key = os.getenv("ALI_BAILIAN_API_KEY")
+            api_base = os.getenv("ALI_BAILIAN_API_BASE", "https://dashscope.aliyuncs.com/compatible-mode/v1")
+            model_name = "qwen-max" if model == "qwen3.7-max" else model
+        else:
+            api_key = os.getenv("DEEPSEEK_API_KEY")
+            api_base = os.getenv("DEEPSEEK_API_BASE", "https://api.deepseek.com")
+            model_name = model
+
+    if not api_key:
+        return JSONResponse(
+            content={
+                "status": "error", 
+                "message": f"未配置对应的 API Key！请在控制面板中填写后重试。"
+            },
+            status_code=400
+        )
         
     try:
         url = f"{api_base.rstrip('/')}/chat/completions"
@@ -755,11 +1048,22 @@ def get_settings():
     ds_key = os.getenv("DEEPSEEK_API_KEY", "")
     sf_key = os.getenv("SILICONFLOW_API_KEY", "")
     ali_key = os.getenv("ALI_BAILIAN_API_KEY", "")
+    
+    # 兼容老版 ZHONGZHAN 环境变量
+    zz_gpt_key = os.getenv("ZHONGZHAN_GPT_API_KEY") or os.getenv("ZHONGZHAN_API_KEY", "")
+    zz_gpt_base = os.getenv("ZHONGZHAN_GPT_BASE_URL") or os.getenv("ZHONGZHAN_BASE_URL", "")
+    zz_gpt_ocr_model = os.getenv("ZHONGZHAN_GPT_OCR_MODEL") or os.getenv("ZHONGZHAN_OCR_MODEL", "gpt-4o")
+    
+    zz_claude_key = os.getenv("ZHONGZHAN_CLAUDE_API_KEY", "")
+    zz_claude_base = os.getenv("ZHONGZHAN_CLAUDE_BASE_URL", "")
+    zz_claude_ocr_model = os.getenv("ZHONGZHAN_CLAUDE_OCR_MODEL", "claude-3-5-sonnet")
+    
     prefer_engine = os.getenv("OCR_PREFER_ENGINE", "siliconflow")
     sf_model = os.getenv("SILICONFLOW_OCR_MODEL", "Qwen/Qwen3.5-4B")
     ali_model = os.getenv("ALI_BAILIAN_OCR_MODEL", "qwen3-vl-flash")
     prefer_solve_model = os.getenv("PREFER_SOLVE_MODEL", "deepseek-v4-pro")
     prefer_parse_model = os.getenv("PREFER_PARSE_MODEL", "deepseek-v4-flash")
+    prefer_draw_model = os.getenv("PREFER_DRAW_MODEL", "Qwen/Qwen3-VL-32B-Instruct")
     
     masked_ds = ""
     if ds_key:
@@ -772,16 +1076,31 @@ def get_settings():
     masked_ali = ""
     if ali_key:
         masked_ali = ali_key[:4] + "••••" + ali_key[-4:] if len(ali_key) > 8 else "••••••••"
+
+    masked_zz_gpt = ""
+    if zz_gpt_key:
+        masked_zz_gpt = zz_gpt_key[:4] + "••••" + zz_gpt_key[-4:] if len(zz_gpt_key) > 8 else "••••••••"
+        
+    masked_zz_claude = ""
+    if zz_claude_key:
+        masked_zz_claude = zz_claude_key[:4] + "••••" + zz_claude_key[-4:] if len(zz_claude_key) > 8 else "••••••••"
         
     return {
         "deepseek_key": masked_ds,
         "siliconflow_key": masked_sf,
         "ali_bailian_key": masked_ali,
+        "zhongzhan_gpt_key": masked_zz_gpt,
+        "zhongzhan_gpt_base_url": zz_gpt_base,
+        "zhongzhan_gpt_ocr_model": zz_gpt_ocr_model,
+        "zhongzhan_claude_key": masked_zz_claude,
+        "zhongzhan_claude_base_url": zz_claude_base,
+        "zhongzhan_claude_ocr_model": zz_claude_ocr_model,
         "prefer_engine": prefer_engine,
         "siliconflow_model": sf_model,
         "ali_bailian_model": ali_model,
         "prefer_solve_model": prefer_solve_model,
-        "prefer_parse_model": prefer_parse_model
+        "prefer_parse_model": prefer_parse_model,
+        "prefer_draw_model": prefer_draw_model
     }
 
 @app.post("/api/settings/save")
@@ -789,11 +1108,18 @@ async def save_settings(
     deepseek_key: str = Form(""),
     siliconflow_key: str = Form(""),
     ali_bailian_key: str = Form(""),
+    zhongzhan_gpt_key: str = Form(""),
+    zhongzhan_gpt_base_url: str = Form(""),
+    zhongzhan_gpt_ocr_model: str = Form(""),
+    zhongzhan_claude_key: str = Form(""),
+    zhongzhan_claude_base_url: str = Form(""),
+    zhongzhan_claude_ocr_model: str = Form(""),
     prefer_engine: str = Form("siliconflow"),
     siliconflow_model: str = Form("Qwen/Qwen3.5-4B"),
     ali_bailian_model: str = Form("qwen3-vl-flash"),
     prefer_solve_model: str = Form("deepseek-v4-pro"),
-    prefer_parse_model: str = Form("deepseek-v4-flash")
+    prefer_parse_model: str = Form("deepseek-v4-flash"),
+    prefer_draw_model: str = Form("Qwen/Qwen3-VL-32B-Instruct")
 ):
     try:
         # If masked, preserve current key
@@ -803,6 +1129,10 @@ async def save_settings(
             siliconflow_key = os.getenv("SILICONFLOW_API_KEY", "")
         if "••••" in ali_bailian_key:
             ali_bailian_key = os.getenv("ALI_BAILIAN_API_KEY", "")
+        if "••••" in zhongzhan_gpt_key:
+            zhongzhan_gpt_key = os.getenv("ZHONGZHAN_GPT_API_KEY") or os.getenv("ZHONGZHAN_API_KEY", "")
+        if "••••" in zhongzhan_claude_key:
+            zhongzhan_claude_key = os.getenv("ZHONGZHAN_CLAUDE_API_KEY", "")
             
         # Read current .env
         env_lines = []
@@ -814,11 +1144,18 @@ async def save_settings(
             "DEEPSEEK_API_KEY": False,
             "SILICONFLOW_API_KEY": False,
             "ALI_BAILIAN_API_KEY": False,
+            "ZHONGZHAN_GPT_API_KEY": False,
+            "ZHONGZHAN_GPT_BASE_URL": False,
+            "ZHONGZHAN_GPT_OCR_MODEL": False,
+            "ZHONGZHAN_CLAUDE_API_KEY": False,
+            "ZHONGZHAN_CLAUDE_BASE_URL": False,
+            "ZHONGZHAN_CLAUDE_OCR_MODEL": False,
             "OCR_PREFER_ENGINE": False,
             "SILICONFLOW_OCR_MODEL": False,
             "ALI_BAILIAN_OCR_MODEL": False,
             "PREFER_SOLVE_MODEL": False,
-            "PREFER_PARSE_MODEL": False
+            "PREFER_PARSE_MODEL": False,
+            "PREFER_DRAW_MODEL": False
         }
         new_lines = []
         
@@ -837,6 +1174,24 @@ async def save_settings(
             elif line_strip.startswith("ALI_BAILIAN_API_KEY="):
                 new_lines.append(f"ALI_BAILIAN_API_KEY={ali_bailian_key}\n")
                 keys_replaced["ALI_BAILIAN_API_KEY"] = True
+            elif line_strip.startswith("ZHONGZHAN_GPT_API_KEY="):
+                new_lines.append(f"ZHONGZHAN_GPT_API_KEY={zhongzhan_gpt_key}\n")
+                keys_replaced["ZHONGZHAN_GPT_API_KEY"] = True
+            elif line_strip.startswith("ZHONGZHAN_GPT_BASE_URL="):
+                new_lines.append(f"ZHONGZHAN_GPT_BASE_URL={zhongzhan_gpt_base_url}\n")
+                keys_replaced["ZHONGZHAN_GPT_BASE_URL"] = True
+            elif line_strip.startswith("ZHONGZHAN_GPT_OCR_MODEL="):
+                new_lines.append(f"ZHONGZHAN_GPT_OCR_MODEL={zhongzhan_gpt_ocr_model}\n")
+                keys_replaced["ZHONGZHAN_GPT_OCR_MODEL"] = True
+            elif line_strip.startswith("ZHONGZHAN_CLAUDE_API_KEY="):
+                new_lines.append(f"ZHONGZHAN_CLAUDE_API_KEY={zhongzhan_claude_key}\n")
+                keys_replaced["ZHONGZHAN_CLAUDE_API_KEY"] = True
+            elif line_strip.startswith("ZHONGZHAN_CLAUDE_BASE_URL="):
+                new_lines.append(f"ZHONGZHAN_CLAUDE_BASE_URL={zhongzhan_claude_base_url}\n")
+                keys_replaced["ZHONGZHAN_CLAUDE_BASE_URL"] = True
+            elif line_strip.startswith("ZHONGZHAN_CLAUDE_OCR_MODEL="):
+                new_lines.append(f"ZHONGZHAN_CLAUDE_OCR_MODEL={zhongzhan_claude_ocr_model}\n")
+                keys_replaced["ZHONGZHAN_CLAUDE_OCR_MODEL"] = True
             elif line_strip.startswith("OCR_PREFER_ENGINE="):
                 new_lines.append(f"OCR_PREFER_ENGINE={prefer_engine}\n")
                 keys_replaced["OCR_PREFER_ENGINE"] = True
@@ -852,6 +1207,9 @@ async def save_settings(
             elif line_strip.startswith("PREFER_PARSE_MODEL="):
                 new_lines.append(f"PREFER_PARSE_MODEL={prefer_parse_model}\n")
                 keys_replaced["PREFER_PARSE_MODEL"] = True
+            elif line_strip.startswith("PREFER_DRAW_MODEL="):
+                new_lines.append(f"PREFER_DRAW_MODEL={prefer_draw_model}\n")
+                keys_replaced["PREFER_DRAW_MODEL"] = True
             else:
                 new_lines.append(line)
                 
@@ -862,6 +1220,18 @@ async def save_settings(
             new_lines.append(f"SILICONFLOW_API_KEY={siliconflow_key}\n")
         if not keys_replaced["ALI_BAILIAN_API_KEY"]:
             new_lines.append(f"ALI_BAILIAN_API_KEY={ali_bailian_key}\n")
+        if not keys_replaced["ZHONGZHAN_GPT_API_KEY"]:
+            new_lines.append(f"ZHONGZHAN_GPT_API_KEY={zhongzhan_gpt_key}\n")
+        if not keys_replaced["ZHONGZHAN_GPT_BASE_URL"]:
+            new_lines.append(f"ZHONGZHAN_GPT_BASE_URL={zhongzhan_gpt_base_url}\n")
+        if not keys_replaced["ZHONGZHAN_GPT_OCR_MODEL"]:
+            new_lines.append(f"ZHONGZHAN_GPT_OCR_MODEL={zhongzhan_gpt_ocr_model}\n")
+        if not keys_replaced["ZHONGZHAN_CLAUDE_API_KEY"]:
+            new_lines.append(f"ZHONGZHAN_CLAUDE_API_KEY={zhongzhan_claude_key}\n")
+        if not keys_replaced["ZHONGZHAN_CLAUDE_BASE_URL"]:
+            new_lines.append(f"ZHONGZHAN_CLAUDE_BASE_URL={zhongzhan_claude_base_url}\n")
+        if not keys_replaced["ZHONGZHAN_CLAUDE_OCR_MODEL"]:
+            new_lines.append(f"ZHONGZHAN_CLAUDE_OCR_MODEL={zhongzhan_claude_ocr_model}\n")
         if not keys_replaced["OCR_PREFER_ENGINE"]:
             new_lines.append(f"OCR_PREFER_ENGINE={prefer_engine}\n")
         if not keys_replaced["SILICONFLOW_OCR_MODEL"]:
@@ -872,6 +1242,8 @@ async def save_settings(
             new_lines.append(f"PREFER_SOLVE_MODEL={prefer_solve_model}\n")
         if not keys_replaced["PREFER_PARSE_MODEL"]:
             new_lines.append(f"PREFER_PARSE_MODEL={prefer_parse_model}\n")
+        if not keys_replaced["PREFER_DRAW_MODEL"]:
+            new_lines.append(f"PREFER_DRAW_MODEL={prefer_draw_model}\n")
             
         with open(".env", "w", encoding="utf-8") as f:
             f.writelines(new_lines)
@@ -883,11 +1255,19 @@ async def save_settings(
         os.environ["DEEPSEEK_API_KEY"] = deepseek_key
         os.environ["SILICONFLOW_API_KEY"] = siliconflow_key
         os.environ["ALI_BAILIAN_API_KEY"] = ali_bailian_key
+        os.environ["ZHONGZHAN_GPT_API_KEY"] = zhongzhan_gpt_key
+        os.environ["ZHONGZHAN_GPT_BASE_URL"] = zhongzhan_gpt_base_url
+        os.environ["ZHONGZHAN_GPT_OCR_MODEL"] = zhongzhan_gpt_ocr_model
+        os.environ["ZHONGZHAN_CLAUDE_API_KEY"] = zhongzhan_claude_key
+        os.environ["ZHONGZHAN_CLAUDE_BASE_URL"] = zhongzhan_claude_base_url
+        os.environ["ZHONGZHAN_CLAUDE_OCR_MODEL"] = zhongzhan_claude_ocr_model
+        
         os.environ["OCR_PREFER_ENGINE"] = prefer_engine
         os.environ["SILICONFLOW_OCR_MODEL"] = siliconflow_model
         os.environ["ALI_BAILIAN_OCR_MODEL"] = ali_bailian_model
         os.environ["PREFER_SOLVE_MODEL"] = prefer_solve_model
         os.environ["PREFER_PARSE_MODEL"] = prefer_parse_model
+        os.environ["PREFER_DRAW_MODEL"] = prefer_draw_model
         
         return {"status": "success", "message": "API 与首选大模型配置已成功保存并即时生效！"}
     except Exception as e:
@@ -895,6 +1275,305 @@ async def save_settings(
             content={"status": "error", "message": f"保存配置失败: {str(e)}"},
             status_code=500
         )
+
+# ----------------- TikZ Render & AI Correction API -----------------
+
+def compile_tikz_to_png(tikz_code: str) -> str:
+    """
+    编译 TikZ 代码为 PNG 并存放在静态资源目录中。
+    如果编译成功，返回相对路径（如 /static/uploads/tikz_xxx.png）。
+    如果编译失败，抛出 Exception 详细说明原因。
+    """
+    import shutil
+    import uuid
+    import subprocess
+    import os
+
+    # 1. 检查 xelatex
+    if not shutil.which("xelatex"):
+        raise RuntimeError("系统未检测到 'xelatex' 编译器。请确保您的系统已安装 MacTeX/TeX Live 并将其加入 PATH。")
+
+    # 2. 检查 PyMuPDF (fitz)
+    try:
+        import fitz
+    except ImportError:
+        raise RuntimeError("Python 环境中未安装 'pymupdf'，无法将 PDF 转换为图像，请运行 'pip install pymupdf' 安装。")
+
+    # 3. 创建临时文件夹
+    temp_dir = os.path.join(UPLOAD_DIR, ".tikz_temp")
+    os.makedirs(temp_dir, exist_ok=True)
+
+    unique_id = uuid.uuid4().hex
+    tex_path = os.path.join(temp_dir, f"{unique_id}.tex")
+    pdf_path = os.path.join(temp_dir, f"{unique_id}.pdf")
+    png_path = os.path.join(temp_dir, f"{unique_id}.png")
+    aux_path = os.path.join(temp_dir, f"{unique_id}.aux")
+    log_path = os.path.join(temp_dir, f"{unique_id}.log")
+
+    # 拼装完整的 TeX 模板
+    tex_content = f"""\\documentclass[tikz, border=2mm]{{standalone}}
+\\usepackage{{ctex}}
+\\usepackage{{amsmath}}
+\\usepackage{{amssymb}}
+\\usepackage{{tikz}}
+\\usepackage{{pgfplots}}
+\\pgfplotsset{{compat=1.16}}
+\\usetikzlibrary{{patterns}}
+\\usetikzlibrary{{calc,positioning,intersections,arrows}}
+\\usetikzlibrary{{shapes.geometric,through,decorations.pathmorphing,arrows.meta,quotes,mindmap,shapes.symbols,shapes.arrows,automata,angles,3d,trees,shadows,shapes.callouts,decorations.pathreplacing,decorations.markings}}
+\\begin{{document}}
+{tikz_code}
+\\end{{document}}"""
+
+    try:
+        # 写入临时 tex 文件
+        with open(tex_path, "w", encoding="utf-8") as f:
+            f.write(tex_content)
+
+        # 调用 xelatex 编译
+        result = subprocess.run(
+            ["xelatex", "-interaction=nonstopmode", "-halt-on-error", "-output-directory", temp_dir, tex_path],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            timeout=15
+        )
+
+        if result.returncode != 0:
+            # 尝试提取编译错误原因
+            log_content = ""
+            if os.path.exists(log_path):
+                try:
+                    with open(log_path, "r", encoding="utf-8", errors="ignore") as lf:
+                        lines = lf.readlines()
+                        # 找到包含 ! 的报错行
+                        error_lines = [line.strip() for line in lines if line.startswith("!")]
+                        if error_lines:
+                            log_content = "\n".join(error_lines[:3])
+                except Exception:
+                    pass
+            error_msg = log_content if log_content else "LaTeX 语法错误，编译失败。"
+            raise RuntimeError(f"编译错误: {error_msg}")
+
+        if not os.path.exists(pdf_path):
+            raise RuntimeError("编译未生成 PDF 文件。")
+
+        # 使用 fitz 将 PDF 转换成 PNG
+        doc = fitz.open(pdf_path)
+        if len(doc) == 0:
+            raise RuntimeError("生成的 PDF 文件为空。")
+        page = doc.load_page(0)
+        pix = page.get_pixmap(dpi=150)
+        pix.save(png_path)
+        doc.close()
+
+        if not os.path.exists(png_path):
+            raise RuntimeError("PDF 转换 PNG 失败。")
+
+        # 将最终生成的图片拷贝到 uploads 目录下
+        final_filename = f"tikz_{unique_id}.png"
+        final_dest = os.path.join(UPLOAD_DIR, final_filename)
+        shutil.copy2(png_path, final_dest)
+
+        # 返回相对路径
+        return f"/{UPLOAD_DIR_REL}/{final_filename}"
+
+    except subprocess.TimeoutExpired:
+        raise RuntimeError("编译超时 (15秒)，可能是您的 TikZ 绘图循环出现了死循环。")
+    except Exception as e:
+        raise RuntimeError(str(e))
+    finally:
+        # 清理临时文件
+        for temp_file in [tex_path, pdf_path, png_path, aux_path, log_path]:
+            if os.path.exists(temp_file):
+                try:
+                    os.remove(temp_file)
+                except Exception:
+                    pass
+
+@app.post("/api/render_tikz")
+def render_tikz_endpoint(tikz_code: str = Form(...)):
+    """接收 TikZ 代码并编译成静态 PNG，返回其相对路径"""
+    try:
+        image_path = compile_tikz_to_png(tikz_code)
+        return {"status": "success", "image_path": image_path}
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+@app.post("/api/correct_tikz")
+def correct_tikz_endpoint(
+    tikz_code: str = Form(...),
+    original_image_path: str = Form(...),
+    user_prompt: str = Form(None)
+):
+    """利用用户指定的高级绘图模型进行 TikZ 纠错，支持人工指导意见注入"""
+    import base64
+    import requests
+    
+    # 动态读取高级绘图模型配置
+    prefer_draw = os.getenv("PREFER_DRAW_MODEL", "Qwen/Qwen3-VL-32B-Instruct")
+    is_zhongzhan = prefer_draw.startswith("ZHONGZHAN/")
+    
+    if is_zhongzhan:
+        zhongzhan_key = os.getenv("ZHONGZHAN_API_KEY")
+        if not zhongzhan_key:
+            raise HTTPException(
+                status_code=400,
+                detail="未配置中转站 API Key (ZHONGZHAN_API_KEY)！请在设置面板中配置后重试。"
+            )
+        api_key = zhongzhan_key.strip()
+        model_name = prefer_draw.split("/", 1)[1]
+        base_url = os.getenv("ZHONGZHAN_BASE_URL", "https://api.openai.com/v1").rstrip("/")
+        url = f"{base_url}/chat/completions" if not base_url.endswith("/chat/completions") else base_url
+        print(f"[TikZ Correction] 启用中转站高级模型进行纠错: {model_name}, Base URL: {url}")
+    else:
+        # SiliconFlow 路由配置
+        sf_key = os.getenv("SILICONFLOW_API_KEY")
+        if not sf_key:
+            raise HTTPException(
+                status_code=400,
+                detail="未配置 硅基流动 API Key (SILICONFLOW_API_KEY)！请在设置面板中配置后重试。"
+            )
+        api_key = sf_key.strip()
+        model_name = prefer_draw
+        url = "https://api.siliconflow.cn/v1/chat/completions"
+        print(f"[TikZ Correction] 启用 SiliconFlow 高级模型进行纠错: {model_name}")
+
+    # 对原始截图进行 Base64 编码
+    clean_original_path = original_image_path.lstrip("/")
+    if not os.path.exists(clean_original_path):
+        raise HTTPException(status_code=400, detail=f"找不到原始题目图片: {original_image_path}")
+
+    try:
+        with open(clean_original_path, "rb") as f:
+            encoded_original = base64.b64encode(f.read()).decode("utf-8")
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"读取原始图片失败: {str(e)}")
+
+    # 尝试编译当前的 TikZ 代码
+    rendered_image_path = None
+    compile_error_log = None
+    try:
+        rendered_image_path = compile_tikz_to_png(tikz_code)
+    except Exception as e:
+        compile_error_log = str(e)
+
+    # 构造请求头部
+    headers = {
+        "Authorization": f"Bearer {api_key}",
+        "Content-Type": "application/json"
+    }
+
+    # 视觉比对模式（编译成功，获取到两张图）
+    if rendered_image_path:
+        clean_rendered_path = rendered_image_path.lstrip("/")
+        try:
+            with open(clean_rendered_path, "rb") as f:
+                encoded_rendered = base64.b64encode(f.read()).decode("utf-8")
+        except Exception as e:
+            raise HTTPException(status_code=400, detail=f"读取渲染出的 TikZ 图片失败: {str(e)}")
+
+        prompt = (
+            "你是一个 LaTeX/TikZ 几何绘图专家和视觉审稿人。下面为你提供两张图片：\n"
+            "第一张（Image A）是手绘或试卷中的原始题目插图，第二张（Image B）是我使用 TikZ 渲染出来的插图。\n"
+            "另外，这是我目前用于绘制第二张图的 TikZ 代码：\n"
+            "```latex\n"
+            f"{tikz_code}\n"
+            "```\n"
+            "请完成以下任务：\n"
+            "1. 仔细对比两张图，找出不一致的地方（如几何点位置、夹角大小、实线/虚线、字母标注、箭头方向等拓扑细节）。\n"
+            "2. 针对性修改我的 TikZ 绘图代码，使其生成的图形能够 100% 还原原始插图 (Image A)。\n"
+            "3. 你的回答必须以 ```latex ... ``` 代码块包裹修正后的完整 TikZ 代码（只输出 \\begin{tikzpicture} 和 \\end{tikzpicture} 之间的部分，或者包含它们）。请确保不输出任何与代码无关的开场白或闲聊文字。"
+        )
+        if user_prompt and user_prompt.strip():
+            prompt += f"\n\n【人工修改和纠错指导意见】：\n用户指出了当前图形的以下具体错误或修改意见，请你在生成修正代码时务必优先且绝对遵循这一意见：\n{user_prompt.strip()}"
+
+        content_payload = [
+            {"type": "text", "text": prompt},
+            {
+                "type": "image_url",
+                "image_url": {
+                    "url": f"data:image/png;base64,{encoded_original}"
+                }
+            },
+            {
+                "type": "image_url",
+                "image_url": {
+                    "url": f"data:image/png;base64,{encoded_rendered}"
+                }
+            }
+        ]
+        
+        # 临时创建的渲染图在使用后也可以删除，以节省磁盘
+        try:
+            os.remove(clean_rendered_path)
+        except Exception:
+            pass
+
+    # 报错自愈模式（编译失败，只有原始图 + 报错日志）
+    else:
+        prompt = (
+            "你是一个 LaTeX/TikZ 几何绘图专家。下面第一张图是原始题目的正确几何插图。\n"
+            "我试图用 TikZ 绘制它，但我的代码在编译时报错了。\n"
+            "这是我当前编写的代码：\n"
+            "```latex\n"
+            f"{tikz_code}\n"
+            "```\n"
+            f"编译器的具体报错日志如下：\n"
+            f"```text\n"
+            f"{compile_error_log}\n"
+            "```\n"
+            "请完成以下任务：\n"
+            "1. 结合原始图片以及报错日志，找出代码中的语法错误或逻辑死循环。\n"
+            "2. 修正这些语法错误，使其能通过 LaTeX 编译，并精准绘制出原始图中的几何图形。\n"
+            "3. 你的回答必须以 ```latex ... ``` 代码块包裹修正后的完整 TikZ 代码（只输出 \\begin{tikzpicture} 和 \\end{tikzpicture} 之间的部分，或者包含它们）。请确保不输出任何与代码无关的开场白或闲聊文字。"
+        )
+        if user_prompt and user_prompt.strip():
+            prompt += f"\n\n【人工修改和纠错指导意见】：\n用户指出了当前图形的以下具体错误或修改意见，请你在生成修正代码时务必优先且绝对遵循这一意见：\n{user_prompt.strip()}"
+
+        content_payload = [
+            {"type": "text", "text": prompt},
+            {
+                "type": "image_url",
+                "image_url": {
+                    "url": f"data:image/png;base64,{encoded_original}"
+                }
+            }
+        ]
+
+    payload = {
+        "model": model_name,
+        "messages": [
+            {
+                "role": "user",
+                "content": content_payload
+            }
+        ],
+        "stream": False
+    }
+
+    try:
+        response = robust_request_post(url, headers=headers, json=payload, timeout=90)
+        if response.status_code != 200:
+            raise RuntimeError(f"大模型接口返回错误 HTTP {response.status_code}: {response.text}")
+        
+        res_json = response.json()
+        choices = res_json.get("choices", [])
+        if not choices:
+            raise RuntimeError("大模型返回结果为空 choices")
+            
+        ai_message = choices[0].get("message", {}).get("content", "")
+        
+        # 使用正则从大模型的回答中抓取 ```latex ... ``` 里面的内容
+        match = re.search(r"```(?:latex)?(.*?)```", ai_message, re.DOTALL | re.IGNORECASE)
+        corrected_code = match.group(1).strip() if match else ai_message.strip()
+        
+        return {
+            "status": "success",
+            "corrected_code": corrected_code,
+            "mode": "visual_diff" if rendered_image_path else "error_recovery"
+        }
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"AI 纠错请求失败: {str(e)}")
 
 # ----------------- Questions Management API -----------------
 
@@ -978,6 +1657,7 @@ def create_question(
     source: str = Form(""),
     answer_markdown: str = Form(""),
     review: str = Form(""),
+    tikz_code: str = Form(""),
     related_question_id: str = Form(""),
     image_paths: str = Form("[]"),  # JSON array string
     db: Session = Depends(get_db)
@@ -999,7 +1679,8 @@ def create_question(
             difficulty=difficulty,
             source=source,
             answer_markdown=answer_markdown,
-            review=review
+            review=review,
+            tikz_code=tikz_code
         )
         db_question.image_paths = parsed_img_paths
         
@@ -1045,6 +1726,7 @@ def update_question(
     source: str = Form(""),
     answer_markdown: str = Form(""),
     review: str = Form(""),
+    tikz_code: str = Form(""),
     related_question_id: str = Form(""),
     image_paths: str = Form("[]"),
     db: Session = Depends(get_db)
@@ -1069,6 +1751,7 @@ def update_question(
         db_question.source = source
         db_question.answer_markdown = answer_markdown
         db_question.review = review
+        db_question.tikz_code = tikz_code
         # Clean up removed images from disk to prevent storage leaks
         old_images = db_question.image_paths
         removed_images = set(old_images) - set(parsed_img_paths)
