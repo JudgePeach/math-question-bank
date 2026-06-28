@@ -679,13 +679,13 @@ const PAGE_LIMIT = 20;
                         // Populate compulsory stages for stats query
                         populateStatsQueryCompulsory();
                         
-                        // Render increments calendar
-                        renderStatsCalendar();
-                        
                         // Set current local Year and Month
                         const now = new Date();
                         document.getElementById('statsYearSelect').value = now.getFullYear().toString();
                         document.getElementById('statsMonthSelect').value = (now.getMonth() + 1).toString();
+                        
+                        // Render increments calendar
+                        renderStatsCalendar();
                         
                         // Reset query selections
                         document.getElementById('statsQueryCompulsory').value = '';
