@@ -132,5 +132,37 @@ PYTHONPATH=. pytest tests/
 
 ---
 
+## 📂 项目目录结构
+
+```text
+.
+├── data_backup/                # 异步实时备份与 AI 专属题库目录 (备份内容已忽略)
+│   ├── questions_backup.json   # [本地/已忽略] 完整数据库 JSON 备份
+│   └── questions_library.md    # [本地/已忽略] AI 专属只读题库（过滤答案，防 AI 泄露）
+├── static/                     # 前端静态资源目录
+│   ├── index.html              # 主控制台前端页面
+│   ├── uploads/                # [本地/已忽略] 插图存储目录 (自动物理清理垃圾插图)
+│   └── js/                     # 渐进式级联加载前端脚本（顺序依存）
+│       ├── api.js              # 全局 API 交互与本地 Token 鉴权拦截
+│       ├── editor.js           # 题目编辑、公式实时预览与 TikZ 编译逻辑
+│       ├── ocr.js              # OCR 公式识别与多通道高可用交互
+│       └── import.js           # 数据批量导入与初始化逻辑
+├── tests/                      # Pytest 单元测试目录 (使用内存数据库，零污染)
+│   ├── test_api.py             # FastAPI 路由接口测试
+│   ├── test_database.py        # SQLAlchemy 数据库模型与 StaticPool 内存测试
+│   └── test_sync.py            # 同步与排版清洗测试
+├── database.py                 # SQLite 数据库模型 (SQLAlchemy) 与会话管理
+├── main.py                     # FastAPI 后端服务主入口与路由业务逻辑
+├── sync_helper.py              # 数据同步、备份锁与 AI 题库排版清洗函数
+├── search_questions.py         # 本地终端 SQL 极速模糊检索 CLI 工具
+├── 启动题库系统.bat            # Windows 一键环境检测、端口清理与拉起脚本
+├── 启动题库系统.command        # macOS 一键环境检测、端口自愈与拉起脚本
+├── requirements.txt            # Python 依赖包清单
+├── .env                        # [本地/已忽略] 环境变量配置文件（保存 API 密钥）
+└── .env.example                # 环境变量配置模板
+```
+
+---
+
 ## 📄 开源协议
 本项目采用 MIT 协议开源。
