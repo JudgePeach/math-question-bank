@@ -1298,8 +1298,15 @@ def compile_tikz_to_png(tikz_code: str) -> str:
     import uuid
     import subprocess
     import os
+    import platform
 
     # 1. 检查 xelatex
+    # macOS 特有处理：如果系统是 macOS 且标准 MacTeX 路径存在，确保其在 PATH 中，防止 GUI/后台进程环境变量丢失
+    if platform.system() == "Darwin":
+        mactex_bin = "/Library/TeX/texbin"
+        if os.path.exists(mactex_bin) and mactex_bin not in os.environ.get("PATH", ""):
+            os.environ["PATH"] = os.environ.get("PATH", "") + os.path.pathsep + mactex_bin
+
     if not shutil.which("xelatex"):
         raise RuntimeError("系统未检测到 'xelatex' 编译器。请确保您的系统已安装 MacTeX/TeX Live 并将其加入 PATH。")
 
