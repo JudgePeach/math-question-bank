@@ -398,9 +398,9 @@
                     document.getElementById('settingsAliBailianKey').value = settings.ali_bailian_key || '';
                     
                     document.getElementById('settingsZhongzhanGptKey').value = settings.zhongzhan_gpt_key || '';
-                    document.getElementById('settingsZhongzhanGptBaseUrl').value = settings.zhongzhan_gpt_base_url || 'https://api.openai.com/v1';
+                    document.getElementById('settingsZhongzhanGptBaseUrl').value = settings.zhongzhan_gpt_base_url || '';
                     document.getElementById('settingsZhongzhanClaudeKey').value = settings.zhongzhan_claude_key || '';
-                    document.getElementById('settingsZhongzhanClaudeBaseUrl').value = settings.zhongzhan_claude_base_url || 'https://api.openai.com/v1';
+                    document.getElementById('settingsZhongzhanClaudeBaseUrl').value = settings.zhongzhan_claude_base_url || '';
                     
                     // 辅助解析解析 "PROVIDER/model" 前缀
                     function parseModelConfig(val, defaultProvider, defaultModel) {
