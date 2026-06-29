@@ -988,10 +988,9 @@
             const qtype = document.getElementById('editQType').value;
             const customPrompt = document.getElementById('aiCustomPrompt').value;
             
-            // Premium model selection & thinking toggle
-            const model = document.getElementById('aiModelSelect').value;
-            const thinkingToggle = document.getElementById('aiThinkingToggle');
-            const thinking = thinkingToggle.checked ? 'enabled' : 'disabled';
+            // Use globally configured preferred solve model
+            const model = typeof systemPreferSolveModel !== 'undefined' ? systemPreferSolveModel : 'deepseek-v4-pro';
+            const thinking = 'enabled';
             
             if (!content.trim()) {
                 showToast('请先在上方输入题干内容，AI需要读取题干生成解答步骤！', 'error');
@@ -1006,18 +1005,18 @@
             
             // Set dynamic loading explanation depending on thinking mode and model
             let modelFriendly = '';
-            if (model === 'deepseek-v4-pro') {
+            if (model.includes('deepseek-v4-pro') || model.includes('deepseek-reasoner')) {
                 modelFriendly = 'DeepSeek-V4-Pro (R1 满血版)';
-            } else if (model === 'deepseek-v4-flash') {
+            } else if (model.includes('deepseek-v4-flash')) {
                 modelFriendly = 'DeepSeek-V4-Flash (R1 预览版)';
-            } else if (model === 'qwen3.7-max') {
-                modelFriendly = 'Ali Bailian Qwen3.7-Max (阿里旗舰大模型)';
+            } else if (model.includes('qwen-max') || model.includes('qwen3.7-max')) {
+                modelFriendly = 'Ali Bailian Qwen-Max';
             } else {
-                modelFriendly = model;
+                modelFriendly = model.includes('/') ? model.split('/')[1] : model;
             }
 
             if (thinking === 'enabled') {
-                loadingText.textContent = `${modelFriendly} 正在进行深度思考、构建 LaTeX 解析步骤... (思考与生成可能需要 15-90 秒，请耐心等待)`;
+                loadingText.textContent = `${modelFriendly} 正在进行深度思考并构建 LaTeX 解析步骤... (思考与生成可能需要 15-90 秒，请耐心等待)`;
             } else {
                 loadingText.textContent = `${modelFriendly} 正在极速生成简要 LaTeX 解析步骤... (预计 3-10 秒即可完成，请稍后)`;
             }

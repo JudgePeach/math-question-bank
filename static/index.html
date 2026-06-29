@@ -566,42 +566,13 @@
                                        class="w-full px-3 py-2.5 rounded-xl text-xs border border-slate-200 focus:border-brand-500 focus:ring-2 focus:ring-brand-100 transition-all">
                             </div>
 
-                            <!-- AI Config Controls -->
-                            <div class="bg-slate-50 border border-slate-200 grid grid-cols-1 md:grid-cols-2 gap-3 p-3 rounded-xl">
-                                <div class="space-y-1.5">
-                                    <label class="block text-[11px] font-semibold text-slate-500 flex items-center space-x-1">
-                                        <i class="fa-solid fa-cube text-slate-400"></i>
-                                        <span>大模型选型</span>
-                                    </label>
-                                    <select id="aiModelSelect" class="w-full h-9 px-2.5 bg-white rounded-xl text-xs border border-slate-200 focus:border-brand-500 focus:ring-2 focus:ring-brand-100 transition-all">
-                                        <option value="deepseek-v4-pro" selected>DeepSeek-V4-Pro (智能教研满血版)</option>
-                                        <option value="deepseek-v4-flash">DeepSeek-V4-Flash (极速预览版)</option>
-                                        <option value="qwen3.7-max">Ali Bailian qwen3.7-max (阿里旗舰大模型)</option>
-                                    </select>
-                                </div>
-                                <div class="space-y-1.5">
-                                    <label class="block text-[11px] font-semibold text-slate-500 flex items-center space-x-1">
-                                        <i class="fa-solid fa-brain text-slate-400"></i>
-                                        <span>推理模式控制</span>
-                                    </label>
-                                    <div class="flex items-center justify-between h-9 px-2.5 bg-white border border-slate-200 rounded-xl">
-                                        <span class="text-[11px] font-medium text-slate-600 flex items-center space-x-1">
-                                            <i id="thinkingIcon" class="fa-solid fa-brain text-brand-500 animate-pulse"></i>
-                                            <span id="thinkingLabel">深度思考</span>
-                                        </span>
-                                        <label class="relative inline-flex items-center cursor-pointer select-none">
-                                            <input type="checkbox" id="aiThinkingToggle" checked onchange="toggleThinkingStyle()" class="sr-only peer">
-                                            <div class="w-9 h-5 bg-slate-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full rtl:peer-checked:after:-translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:start-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-brand-500"></div>
-                                        </label>
-                                    </div>
-                                </div>
-                            </div>
-                            
-                            <div class="flex items-center justify-between">
-                                <span class="text-xs text-slate-400"><i class="fa-solid fa-wand-magic-sparkles text-brand-500"></i> 极速调用首选智能大模型，自动获取超清推导。</span>
-                                <button type="button" onclick="triggerAISolve()" id="aiSolveBtn" class="px-5 py-2.5 rounded-xl font-medium text-xs flex items-center space-x-1.5 bg-brand-600/80 hover:bg-brand-600 text-white backdrop-blur-sm border border-brand-500/20 shadow-sm transition-all">
+                            <!-- AI Action Row (Redundant labels & toggles removed. Solid color theme styling forced for absolute reliability) -->
+                            <div class="flex justify-end border-t border-slate-100 pt-3 mt-1">
+                                <button type="button" onclick="triggerAISolve()" id="aiSolveBtn" 
+                                        style="background-color: rgb(var(--brand-600-rgb)); border-color: rgb(var(--brand-700-rgb)); color: #ffffff;"
+                                        class="px-5 py-2.5 rounded-xl font-medium text-xs flex items-center space-x-1.5 hover:opacity-90 active:scale-95 shadow-sm border transition-all">
                                     <i class="fa-solid fa-wand-magic-sparkles"></i>
-                                    <span>一键生成深度解析</span>
+                                    <span>一键生成解析</span>
                                 </button>
                             </div>
                             
