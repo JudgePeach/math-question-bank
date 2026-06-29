@@ -1007,8 +1007,8 @@ async def ai_solve(
             "max_tokens": 8192
         }
         
-        # Configure thinking parameter if specified (only for DeepSeek models/endpoints)
-        is_deepseek = "deepseek" in model_name.lower() or "deepseek" in api_base.lower()
+        # Configure thinking parameter if specified (only for DeepSeek models/endpoints, excluding legacy models that don't support it)
+        is_deepseek = ("deepseek" in model_name.lower() or "deepseek" in api_base.lower()) and "deepseek-chat" not in model_name.lower() and "deepseek-reasoner" not in model_name.lower()
         if is_deepseek and thinking in ["enabled", "disabled"]:
             data["thinking"] = {"type": thinking}
             
@@ -2365,8 +2365,8 @@ async def ai_classify(content: str = Form(...)):
             "max_tokens": 512
         }
         
-        # Only add thinking if using a DeepSeek model or DeepSeek base URL
-        is_deepseek = "deepseek" in model_name.lower() or "deepseek" in api_base.lower()
+        # Only add thinking if using a DeepSeek model or DeepSeek base URL, excluding legacy models that don't support it
+        is_deepseek = ("deepseek" in model_name.lower() or "deepseek" in api_base.lower()) and "deepseek-chat" not in model_name.lower() and "deepseek-reasoner" not in model_name.lower()
         if is_deepseek:
             data["thinking"] = {
                 "type": "disabled"
@@ -2375,7 +2375,7 @@ async def ai_classify(content: str = Form(...)):
         
         response = robust_request_post(url, headers=headers, json=data, timeout=30)
         if response.status_code != 200:
-            raise Exception(f"{provider_name} 接口错误: HTTP {response.status_code}")
+            raise Exception(f"{provider_name} 接口错误: HTTP {response.status_code}, 内容: {response.text}")
             
         res_json = response.json()
         ai_message = res_json.get("choices", [{}])[0].get("message", {}).get("content", "").strip()
@@ -2599,8 +2599,8 @@ async def ai_parse_paper(
             "max_tokens": 8192
         }
         
-        # Only add thinking if using a DeepSeek model or DeepSeek base URL
-        is_deepseek = "deepseek" in model_name.lower() or "deepseek" in api_base.lower()
+        # Only add thinking if using a DeepSeek model or DeepSeek base URL, excluding legacy models that don't support it
+        is_deepseek = ("deepseek" in model_name.lower() or "deepseek" in api_base.lower()) and "deepseek-chat" not in model_name.lower() and "deepseek-reasoner" not in model_name.lower()
         if is_deepseek:
             data["thinking"] = {
                 "type": "disabled"
@@ -2609,7 +2609,7 @@ async def ai_parse_paper(
         
         response = robust_request_post(url, headers=headers, json=data, timeout=180)
         if response.status_code != 200:
-            raise Exception(f"{provider_name} 接口错误: HTTP {response.status_code}")
+            raise Exception(f"{provider_name} 接口错误: HTTP {response.status_code}, 内容: {response.text}")
             
         res_json = response.json()
         raw_ai_text = res_json["choices"][0]["message"]["content"].strip()

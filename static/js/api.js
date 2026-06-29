@@ -381,6 +381,9 @@
 
         // Settings Modal Controls
         function openSettingsModal() {
+            if (window.switchSettingsTab) {
+                window.switchSettingsTab('api');
+            }
             const modal = document.getElementById('settingsModal');
             document.body.classList.add('modal-active');
             
@@ -455,6 +458,16 @@
                 })
                 .catch(err => {
                     console.error('获取系统配置失败:', err);
+                });
+
+            // 同时拉取最新的自定义维度配置 JSON 并填入，防止直接保存时由于未切换 Tab 导致值为空引发校验错误
+            fetch('/api/config/metadata')
+                .then(r => r.json())
+                .then(data => {
+                    document.getElementById('settingsMetadataJson').value = JSON.stringify(data, null, 2);
+                })
+                .catch(err => {
+                    console.error('获取元数据配置失败:', err);
                 });
                 
             modal.classList.remove('hidden');
