@@ -30,6 +30,7 @@ class Question(Base):
     association_group_id = Column(String(100), default="", index=True)  # 关联题目分组ID (支持传递关系)
     _image_paths = Column(Text, default="[]", name="image_paths")  # 以JSON字符串形式存储相对路径列表
     tikz_code = Column(Text, default="")  # TikZ 几何绘图源代码
+    tags = Column(Text, default="")  # 自定义标签 (逗号分隔或字符串)
     created_at = Column(DateTime, default=datetime.datetime.utcnow)
 
     @property
@@ -61,6 +62,7 @@ class Question(Base):
             "association_group_id": self.association_group_id,
             "image_paths": self.image_paths,
             "tikz_code": self.tikz_code,
+            "tags": self.tags,
             "created_at": (self.created_at.isoformat() + "Z") if self.created_at else None
         }
 
@@ -76,6 +78,7 @@ class Question(Base):
             "source": self.source,
             "association_group_id": self.association_group_id,
             "image_paths": self.image_paths,
+            "tags": self.tags,
             "created_at": (self.created_at.isoformat() + "Z") if self.created_at else None
         }
 
@@ -110,11 +113,16 @@ def init_db():
                 conn.execute(text("ALTER TABLE questions ADD COLUMN tikz_code TEXT DEFAULT ''"))
                 print("Added column 'tikz_code' to questions table successfully.")
                 
+            if "tags" not in columns:
+                conn.execute(text("ALTER TABLE questions ADD COLUMN tags TEXT DEFAULT ''"))
+                print("Added column 'tags' to questions table successfully.")
+                
             conn.execute(text("CREATE INDEX IF NOT EXISTS idx_questions_category_compulsory ON questions (category_compulsory)"))
             conn.execute(text("CREATE INDEX IF NOT EXISTS idx_questions_category_chapter ON questions (category_chapter)"))
             conn.execute(text("CREATE INDEX IF NOT EXISTS idx_questions_category_knowledge ON questions (category_knowledge)"))
             conn.execute(text("CREATE INDEX IF NOT EXISTS idx_questions_question_type ON questions (question_type)"))
             conn.execute(text("CREATE INDEX IF NOT EXISTS idx_questions_difficulty ON questions (difficulty)"))
             conn.execute(text("CREATE INDEX IF NOT EXISTS idx_questions_association_group_id ON questions (association_group_id)"))
+            conn.execute(text("CREATE INDEX IF NOT EXISTS idx_questions_tags ON questions (tags)"))
     except Exception as e:
         print(f"Error creating indexes or running migrations: {e}")

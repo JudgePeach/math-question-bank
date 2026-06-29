@@ -1634,14 +1634,16 @@ def list_questions(
                 (Question.content.like(f"%{q}%")) | 
                 (Question.source.like(f"%{q}%")) |
                 (Question.answer_markdown.like(f"%{q}%")) |
-                (Question.review.like(f"%{q}%"))
+                (Question.review.like(f"%{q}%")) |
+                (Question.tags.like(f"%{q}%"))
             )
         else:
             query = query.filter(
                 (Question.content.like(f"%{q}%")) | 
                 (Question.source.like(f"%{q}%")) |
                 (Question.answer_markdown.like(f"%{q}%")) |
-                (Question.review.like(f"%{q}%"))
+                (Question.review.like(f"%{q}%")) |
+                (Question.tags.like(f"%{q}%"))
             )
     if compulsory:
         query = query.filter(Question.category_compulsory == compulsory)
@@ -1683,6 +1685,7 @@ def create_question(
     answer_markdown: str = Form(""),
     review: str = Form(""),
     tikz_code: str = Form(""),
+    tags: str = Form(""),
     related_question_id: str = Form(""),
     image_paths: str = Form("[]"),  # JSON array string
     db: Session = Depends(get_db)
@@ -1705,7 +1708,8 @@ def create_question(
             source=source,
             answer_markdown=answer_markdown,
             review=review,
-            tikz_code=tikz_code
+            tikz_code=tikz_code,
+            tags=tags
         )
         db_question.image_paths = parsed_img_paths
         
@@ -1752,6 +1756,7 @@ def update_question(
     answer_markdown: str = Form(""),
     review: str = Form(""),
     tikz_code: str = Form(""),
+    tags: str = Form(""),
     related_question_id: str = Form(""),
     image_paths: str = Form("[]"),
     db: Session = Depends(get_db)
@@ -1777,6 +1782,7 @@ def update_question(
         db_question.answer_markdown = answer_markdown
         db_question.review = review
         db_question.tikz_code = tikz_code
+        db_question.tags = tags
         # Clean up removed images from disk to prevent storage leaks
         old_images = db_question.image_paths
         removed_images = set(old_images) - set(parsed_img_paths)
@@ -2085,6 +2091,94 @@ RENJIAO_A_CURRICULUM = {
     }
 }
 
+METADATA_FILE = "data_backup/custom_metadata.json"
+METADATA_CACHE = {}
+
+def get_current_curriculum():
+    return METADATA_CACHE.get("curriculum", RENJIAO_A_CURRICULUM)
+
+def load_or_init_metadata():
+    global METADATA_CACHE
+    default_metadata = {
+        "question_types": [
+            {"value": "single_choice", "label": "单选题"},
+            {"value": "multi_choice", "label": "多选题"},
+            {"value": "fill_in_blank", "label": "填空题"},
+            {"value": "detailed_answer", "label": "解答题"}
+        ],
+        "difficulties": [
+            {"value": "easy_error", "label": "易错题", "color": "text-green-600 bg-green-50 border-green-200"},
+            {"value": "challenge", "label": "挑战题", "color": "text-red-600 bg-red-50 border-red-200"},
+            {"value": "qiangji", "label": "强基题", "color": "text-purple-600 bg-purple-50 border-purple-200"}
+        ],
+        "curriculum": RENJIAO_A_CURRICULUM
+    }
+    
+    # Ensure backup directory exists
+    os.makedirs(os.path.dirname(METADATA_FILE), exist_ok=True)
+    
+    if os.path.exists(METADATA_FILE):
+        try:
+            with open(METADATA_FILE, "r", encoding="utf-8") as f:
+                loaded = json.load(f)
+                # Verify schema
+                if isinstance(loaded, dict) and "question_types" in loaded and "difficulties" in loaded and "curriculum" in loaded:
+                    METADATA_CACHE = loaded
+                    print(f"[Metadata] Loaded custom metadata from {METADATA_FILE}")
+                    return
+        except Exception as e:
+            print(f"[Metadata Warning] Error loading {METADATA_FILE}: {e}. Overwriting with default.")
+            
+    # Self-heal / initialize
+    try:
+        with open(METADATA_FILE, "w", encoding="utf-8") as f:
+            json.dump(default_metadata, f, ensure_ascii=False, indent=2)
+        print(f"[Metadata] Initialized default metadata at {METADATA_FILE}")
+    except Exception as e:
+        print(f"[Metadata Error] Could not write default metadata: {e}")
+        
+    METADATA_CACHE = default_metadata
+
+# Load metadata on startup
+load_or_init_metadata()
+
+@app.get("/api/config/metadata")
+def get_metadata_config():
+    return METADATA_CACHE
+
+@app.post("/api/config/metadata")
+def save_metadata_config(payload: dict, db: Session = Depends(get_db)):
+    global METADATA_CACHE
+    # Validation
+    if not isinstance(payload, dict):
+        raise HTTPException(status_code=400, detail="请求 Payload 格式错误")
+        
+    for field in ["question_types", "difficulties", "curriculum"]:
+        if field not in payload:
+            raise HTTPException(status_code=400, detail=f"元数据配置缺少核心字段: '{field}'")
+            
+    # Simple validate question_types and difficulties lists
+    if not isinstance(payload["question_types"], list) or not isinstance(payload["difficulties"], list):
+        raise HTTPException(status_code=400, detail="question_types 或 difficulties 必须是数组列表")
+        
+    if not isinstance(payload["curriculum"], dict):
+        raise HTTPException(status_code=400, detail="curriculum 必须是字典对象")
+        
+    # Write to file
+    try:
+        with open(METADATA_FILE, "w", encoding="utf-8") as f:
+            json.dump(payload, f, ensure_ascii=False, indent=2)
+        METADATA_CACHE = payload
+        print(f"[Metadata] Saved new custom metadata to {METADATA_FILE}")
+        
+        # Trigger export in background to update AI library with new mappings
+        from sync_helper import export_database_to_files
+        export_database_to_files(db)
+        
+        return {"status": "success", "message": "元数据配置保存成功！"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"写入配置文件失败: {str(e)}")
+
 # ----------------- DB Statistics API -----------------
 
 @app.get("/api/stats")
@@ -2140,7 +2234,7 @@ def get_db_stats(db: Session = Depends(get_db)):
 def list_categories(db: Session = Depends(get_db)):
     # Initialize with predefined curriculum
     hierarchy = {}
-    for comp, chapters in RENJIAO_A_CURRICULUM.items():
+    for comp, chapters in get_current_curriculum().items():
         hierarchy[comp] = {}
         for chap, sections in chapters.items():
             hierarchy[comp][chap] = list(sections)
@@ -2241,11 +2335,11 @@ async def ai_classify(content: str = Form(...)):
         
         # Build curriculum text for instructions
         curriculum_text = ""
-        for book, chapters in RENJIAO_A_CURRICULUM.items():
+        for book, chapters in get_current_curriculum().items():
             curriculum_text += f"- {book}: {list(chapters.keys())}\n"
             
         system_instructions = (
-            "你是一个专门为中国高中数学教材分类的 AI 专家。请分析以下输入的数学题目，将其归入【人教版A】的高中数学教材体系。\n"
+            "你是一个专门为教材分类的 AI 专家。请分析以下输入的题目，将其归入特定的教材体系中。\n"
             "【可选教材范围及各章名称】:\n"
             f"{curriculum_text}\n"
             "【分类规则】:\n"
@@ -2299,19 +2393,22 @@ async def ai_classify(content: str = Form(...)):
         compulsory = result.get("compulsory", "")
         chapter = result.get("chapter", "")
         
-        # Verification: make sure returned values exist in RENJIAO_A_CURRICULUM
-        if compulsory in RENJIAO_A_CURRICULUM and chapter in RENJIAO_A_CURRICULUM[compulsory]:
+        # Verification: make sure returned values exist in get_current_curriculum()
+        curr = get_current_curriculum()
+        if compulsory in curr and chapter in curr[compulsory]:
             return {
                 "status": "success",
                 "compulsory": compulsory,
                 "chapter": chapter
             }
         else:
-            # Fallback to general default
+            # Fallback dynamically to the first available category book/chapter
+            first_comp = list(curr.keys())[0] if curr else "必修一"
+            first_chap = list(curr[first_comp].keys())[0] if curr and first_comp in curr and curr[first_comp] else "1. 集合与常用逻辑用语"
             return {
                 "status": "success",
-                "compulsory": "必修一",
-                "chapter": "1. 集合与常用逻辑用语",
+                "compulsory": first_comp,
+                "chapter": first_chap,
                 "is_fallback": True,
                 "raw_recommendation": f"{compulsory} -> {chapter}"
             }
@@ -2439,12 +2536,12 @@ async def ai_parse_paper(
         
         # Build curriculum text for instructions
         curriculum_text = ""
-        for book, chapters in RENJIAO_A_CURRICULUM.items():
+        for book, chapters in get_current_curriculum().items():
             curriculum_text += f"- {book}: {list(chapters.keys())}\n"
             
         if generate_answers_bool:
             answer_generation_rule = (
-                "   - 如果试卷中只有题干没有答案，请根据题干自动生成详尽的解答步骤与解析，填入 `answer_markdown` 字段。特别注意：由于这些题目均为高中数学题，自动生成的解答过程、解题思路和技巧绝对不能超出普通高中阶段水平，严禁使用任何高等数学、微积分、洛必达法则、泰勒公式、拉格朗日中值定理等大学超纲方法，必须完全采用符合高中知识体系和认知范围的常规或技巧性方法。\n"
+                "   - 如果试卷中只有题干没有答案，请根据题干自动生成详尽的解答步骤与解析，填入 `answer_markdown` 字段。特别注意：自动生成的解答过程、解题思路和技巧绝对不能超出本阶段水平，必须完全采用符合本知识体系和认知范围的常规或技巧性方法。\n"
             )
         else:
             answer_generation_rule = (
@@ -2452,7 +2549,7 @@ async def ai_parse_paper(
             )
 
         system_instructions = (
-            "你是一位极其严谨的高中数学教研专家与 LaTeX 排版大师。请阅读并解析用户输入的【整张高中数学试卷 LaTeX 源码】，将其智能拆解为独立的数学题目列表，并分析每一题的属性。\n"
+            "你是一位极其严谨的教研专家与 LaTeX 排版大师。请阅读并解析用户输入的【整张试卷 LaTeX 源码】，将其智能拆解为独立的题目列表，并分析每一题属性。\n"
             "【可选教材范围及各章名称】:\n"
             f"{curriculum_text}\n"
             "【分类规则】:\n"

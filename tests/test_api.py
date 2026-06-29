@@ -131,6 +131,7 @@ def test_api_search_by_review(client):
         "source": "单元测试",
         "answer_markdown": "答案解析内容",
         "review": "这是名师特别推荐的精品评析",
+        "tags": "高一,期中,真题",
         "related_question_id": "",
         "image_paths": "[]"
     }
@@ -152,6 +153,13 @@ def test_api_search_by_review(client):
         assert len(response.json()) == 1
         assert response.json()[0]["id"] == q_id
 
+        # Search for something in tags
+        response = client.get("/api/questions?q=期中")
+        assert response.status_code == 200
+        assert len(response.json()) == 1
+        assert response.json()[0]["id"] == q_id
+        assert response.json()[0]["tags"] == "高一,期中,真题"
+
         # Search for non-existent text
         response = client.get("/api/questions?q=不存在的关键字")
         assert response.status_code == 200
@@ -159,4 +167,43 @@ def test_api_search_by_review(client):
     finally:
         # Clean up
         client.delete(f"/api/questions/{q_id}", headers=headers)
+
+
+def test_api_metadata_config(client):
+    headers = {"X-Local-Token": LOCAL_TOKEN}
+    # 1. GET metadata
+    response = client.get("/api/config/metadata")
+    assert response.status_code == 200
+    data = response.json()
+    assert "question_types" in data
+    assert "difficulties" in data
+    assert "curriculum" in data
+
+    # 保存原始配置以便还原
+    original_config = data
+
+    try:
+        # 2. POST custom config (Forbidden without token)
+        test_payload = {
+            "question_types": [{"value": "test_type", "label": "测试题型"}],
+            "difficulties": [{"value": "test_diff", "label": "测试难度", "color": "color-test"}],
+            "curriculum": {"测试学段": {"测试章节": ["测试小节"]}}
+        }
+        response = client.post("/api/config/metadata", json=test_payload)
+        assert response.status_code == 403
+
+        # 3. POST custom config (Success with token)
+        response = client.post("/api/config/metadata", json=test_payload, headers=headers)
+        assert response.status_code == 200
+        assert response.json()["status"] == "success"
+
+        # 4. Verify config updated
+        response = client.get("/api/config/metadata")
+        assert response.status_code == 200
+        new_data = response.json()
+        assert new_data["question_types"][0]["value"] == "test_type"
+        assert new_data["curriculum"]["测试学段"]["测试章节"] == ["测试小节"]
+    finally:
+        # 5. Restore original config
+        client.post("/api/config/metadata", json=original_config, headers=headers)
 

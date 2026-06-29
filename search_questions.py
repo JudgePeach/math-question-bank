@@ -33,7 +33,7 @@ def search_questions(query=None, qtype=None, difficulty=None, limit=50, with_ans
 
     # Build SQL dynamically
     base_query = """
-        SELECT id, content, question_type, category_compulsory, category_chapter, category_knowledge, difficulty, source, answer_markdown, review, association_group_id
+        SELECT id, content, question_type, category_compulsory, category_chapter, category_knowledge, difficulty, source, answer_markdown, review, association_group_id, tags
         FROM questions
         WHERE 1=1
     """
@@ -56,11 +56,12 @@ def search_questions(query=None, qtype=None, difficulty=None, limit=50, with_ans
                 category_chapter LIKE ? OR
                 category_knowledge LIKE ? OR
                 content LIKE ? OR
-                source LIKE ?
+                source LIKE ? OR
+                tags LIKE ?
             )
         """
         like_query = f"%{query}%"
-        params.extend([like_query, like_query, like_query, like_query, like_query])
+        params.extend([like_query, like_query, like_query, like_query, like_query, like_query])
 
     if qtype:
         base_query += " AND question_type = ?"
@@ -137,7 +138,7 @@ def main():
     print(f"{title_msg}\n")
     
     for idx, row in enumerate(results, 1):
-        q_id, content, question_type, compulsory, chapter, knowledge, difficulty, source, answer, review, group_id = row
+        q_id, content, question_type, compulsory, chapter, knowledge, difficulty, source, answer, review, group_id, tags = row
         
         print(f"### 题目 {idx} (ID: #{q_id})")
         print(f"- **分类学段**: `{compulsory or '未分类'}`")
@@ -147,6 +148,8 @@ def main():
             print(f"- **来源**: *{source}*")
         if group_id:
             print(f"- **关联组 ID**: `{group_id}`")
+        if tags:
+            print(f"- **自定义标签**: *{tags}*")
         
         print(f"\n#### 【题干】\n{content}\n")
         

@@ -159,7 +159,8 @@ const PAGE_LIMIT = 20;
                 category_compulsory: document.getElementById('editCompulsory').value,
                 category_chapter: document.getElementById('editChapter').value,
                 category_knowledge: document.getElementById('editKnowledge').value,
-                image_paths: JSON.stringify(uploadedImages)
+                image_paths: JSON.stringify(uploadedImages),
+                tags: document.getElementById('editTags') ? document.getElementById('editTags').value : ''
             };
         }
 
@@ -177,6 +178,7 @@ const PAGE_LIMIT = 20;
             const currentChap = document.getElementById('editChapter').value;
             const currentKnow = document.getElementById('editKnowledge').value;
             const currentImages = JSON.stringify(uploadedImages);
+            const currentTags = document.getElementById('editTags') ? document.getElementById('editTags').value : '';
             
             return currentContent !== originalQuestionState.content ||
                    currentAnswer !== originalQuestionState.answer_markdown ||
@@ -187,7 +189,8 @@ const PAGE_LIMIT = 20;
                    currentComp !== originalQuestionState.category_compulsory ||
                    currentChap !== originalQuestionState.category_chapter ||
                    currentKnow !== originalQuestionState.category_knowledge ||
-                   currentImages !== originalQuestionState.image_paths;
+                   currentImages !== originalQuestionState.image_paths ||
+                   currentTags !== originalQuestionState.tags;
         }
 
         // Custom Premium Confirmation Modal for Unsaved Changes (3 Options)
@@ -370,6 +373,7 @@ const PAGE_LIMIT = 20;
             const source = document.getElementById('editSource').value;
             const answerMarkdown = document.getElementById('editAnswerMarkdown').value;
             const review = document.getElementById('editReview').value;
+            const tags = document.getElementById('editTags') ? document.getElementById('editTags').value.trim() : '';
             
             const draft = {
                 id: currentDraftId || ('draft-' + Date.now()),
@@ -382,6 +386,7 @@ const PAGE_LIMIT = 20;
                 source: source,
                 answer_markdown: answerMarkdown,
                 review: review,
+                tags: tags,
                 image_paths: Array.from(new Set([
                     ...uploadedImages,
                     ...(typeof uploadedAnswerImages !== 'undefined' ? uploadedAnswerImages : [])
@@ -425,6 +430,9 @@ const PAGE_LIMIT = 20;
             document.getElementById('editSource').value = draft.source || '';
             document.getElementById('editAnswerMarkdown').value = draft.answer_markdown || '';
             document.getElementById('editReview').value = draft.review || '';
+            if (document.getElementById('editTags')) {
+                document.getElementById('editTags').value = draft.tags || '';
+            }
             
             // Load cascading categories
             const compSelect = document.getElementById('editCompulsory');
@@ -532,7 +540,8 @@ const PAGE_LIMIT = 20;
                     return (item.content || '').toLowerCase().includes(q) ||
                            (item.source || '').toLowerCase().includes(q) ||
                            (item.category_chapter || '').toLowerCase().includes(q) ||
-                           (item.review || '').toLowerCase().includes(q);
+                           (item.review || '').toLowerCase().includes(q) ||
+                           (item.tags || '').toLowerCase().includes(q);
                 });
             }
             
@@ -596,6 +605,18 @@ const PAGE_LIMIT = 20;
                 
                 const cleanContent = preprocessFormulaForKaTeX(item.content || '');
                 
+                let tagsHtml = '';
+                if (item.tags) {
+                    const tagList = item.tags.split(/[,，]+/).map(t => t.trim()).filter(t => t.length > 0);
+                    if (tagList.length > 0) {
+                        tagsHtml = '<div class="flex flex-wrap gap-1 mt-1">';
+                        tagList.forEach(tag => {
+                            tagsHtml += `<span class="text-[9px] font-bold text-amber-600 bg-amber-50 border border-amber-250/60 px-1.5 py-0.5 rounded-full flex items-center space-x-0.5"><i class="fa-solid fa-tag text-[7px] text-amber-500 mr-0.5"></i>${tag}</span>`;
+                        });
+                        tagsHtml += '</div>';
+                    }
+                }
+
                 itemCard.innerHTML = `
                     <div class="flex items-center justify-between">
                         <span class="text-[10px] font-bold px-2 py-0.5 rounded bg-emerald-50 text-emerald-700">草稿 • ${typeText}</span>
@@ -608,6 +629,7 @@ const PAGE_LIMIT = 20;
                         </div>
                     </div>
                     <div class="text-xs text-slate-700 leading-relaxed font-medium line-clamp-2 card-formula-render">${cleanContent || '[未填题干]'}</div>
+                    ${tagsHtml}
                     <div class="flex justify-between items-center text-[9px] text-slate-400 border-t pt-1.5">
                         <span class="truncate max-w-[120px] font-semibold text-emerald-600"><i class="fa-solid fa-box mr-0.5"></i>${item.category_knowledge || item.category_chapter || '未分类'}</span>
                         <span class="font-mono text-slate-400">${item.source ? item.source.substring(0, 12) : '草稿暂存'}</span>
@@ -1079,6 +1101,18 @@ const PAGE_LIMIT = 20;
                         
                         const cleanContent = preprocessFormulaForKaTeX(item.content || '');
                         
+                        let tagsHtml = '';
+                        if (item.tags) {
+                            const tagList = item.tags.split(/[,，]+/).map(t => t.trim()).filter(t => t.length > 0);
+                            if (tagList.length > 0) {
+                                tagsHtml = '<div class="flex flex-wrap gap-1 mt-1">';
+                                tagList.forEach(tag => {
+                                    tagsHtml += `<span class="text-[9px] font-bold text-amber-600 bg-amber-50 border border-amber-250/60 px-1.5 py-0.5 rounded-full flex items-center space-x-0.5"><i class="fa-solid fa-tag text-[7px] text-amber-500 mr-0.5"></i>${tag}</span>`;
+                                });
+                                tagsHtml += '</div>';
+                            }
+                        }
+
                         itemCard.innerHTML = `
                             <div class="flex items-center justify-between">
                                 <span class="text-[10px] font-bold px-2 py-0.5 rounded bg-slate-100 text-slate-500">${typeText}</span>
@@ -1092,6 +1126,7 @@ const PAGE_LIMIT = 20;
                                 </div>
                             </div>
                             <div class="text-xs text-slate-700 leading-relaxed font-medium line-clamp-2 card-formula-render">${cleanContent || '[空白题干]'}</div>
+                            ${tagsHtml}
                             <!-- Time Badge -->
                             <div class="text-[8px] text-slate-400/80 flex items-center space-x-1 py-0.5">
                                 <i class="fa-regular fa-clock text-[8px]"></i>
@@ -1403,6 +1438,8 @@ const PAGE_LIMIT = 20;
             const editDifficulty = document.getElementById('editDifficulty');
             const editSource = document.getElementById('editSource');
             
+            const editTags = document.getElementById('editTags');
+            
             const updatePaperMeta = () => {
                 const badges = document.getElementById('paperBadges');
                 const sourceEl = document.getElementById('paperFooterSource');
@@ -1414,10 +1451,20 @@ const PAGE_LIMIT = 20;
                     seqBadge = `<span class="text-[10px] font-bold px-2 py-0.5 rounded-full bg-slate-150 text-slate-500">编号：新题目</span>`;
                 }
                 
+                let paperTagsHtml = '';
+                const tagsVal = editTags ? editTags.value.trim() : '';
+                if (tagsVal) {
+                    const tagList = tagsVal.split(/[,，]+/).map(t => t.trim()).filter(t => t.length > 0);
+                    tagList.forEach(tag => {
+                        paperTagsHtml += `<span class="text-[10px] font-bold px-2 py-0.5 rounded-full bg-amber-50 text-amber-600 border border-amber-250/60 flex items-center space-x-0.5"><i class="fa-solid fa-tag text-[8px] text-amber-500 mr-1"></i>${tag}</span>`;
+                    });
+                }
+                
                 badges.innerHTML = `
                     ${seqBadge}
                     <span class="text-[10px] font-bold px-2 py-0.5 rounded-full bg-brand-50 text-brand-700">题型：${getTypeText(editQType.value)}</span>
                     <span class="text-[10px] font-bold px-2 py-0.5 rounded-full bg-indigo-50 text-indigo-700">难度：${getDifficultyText(editDifficulty.value)}</span>
+                    ${paperTagsHtml}
                 `;
                 sourceEl.textContent = `来源: ${editSource.value || '本地教研录入'}`;
             };
@@ -1425,6 +1472,7 @@ const PAGE_LIMIT = 20;
             editQType.addEventListener('change', updatePaperMeta);
             editDifficulty.addEventListener('change', updatePaperMeta);
             editSource.addEventListener('input', updatePaperMeta);
+            if (editTags) editTags.addEventListener('input', updatePaperMeta);
             
             // Initial render of meta badges
             updatePaperMeta();

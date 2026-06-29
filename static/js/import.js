@@ -7,6 +7,7 @@
             document.getElementById('editSource').value = '';
             document.getElementById('editAnswerMarkdown').value = '';
             document.getElementById('aiCustomPrompt').value = '';
+            if (document.getElementById('editTags')) document.getElementById('editTags').value = '';
             
             document.getElementById('aiOutputBox').classList.add('hidden');
             document.getElementById('ocrOutputBox').classList.add('hidden');
@@ -81,6 +82,7 @@
                 document.getElementById('editAnswerMarkdown').value = '';
                 document.getElementById('aiCustomPrompt').value = '';
                 document.getElementById('editReview').value = '';
+                if (document.getElementById('editTags')) document.getElementById('editTags').value = '';
                 document.getElementById('editRelatedQuestion').value = '';
                 document.getElementById('editRelatedQuestionNum').value = '';
                 document.getElementById('editReview').dispatchEvent(new Event('input')); // Hide review preview
@@ -130,6 +132,7 @@
             document.getElementById('editAnswerMarkdown').value = '';
             document.getElementById('aiCustomPrompt').value = '';
             document.getElementById('editReview').value = '';
+            if (document.getElementById('editTags')) document.getElementById('editTags').value = '';
             if (document.getElementById('editContentTikzCode')) document.getElementById('editContentTikzCode').value = '';
             if (document.getElementById('editAnswerTikzCode')) document.getElementById('editAnswerTikzCode').value = '';
             
@@ -427,6 +430,9 @@
                     // Cascade bindings
                     document.getElementById('editQType').value = fullItem.question_type;
                     document.getElementById('editDifficulty').value = fullItem.difficulty;
+                    if (document.getElementById('editTags')) {
+                        document.getElementById('editTags').value = fullItem.tags || '';
+                    }
                     
                     const compSelect = document.getElementById('editCompulsory');
                     const chapSelect = document.getElementById('editChapter');
@@ -473,11 +479,20 @@
                     const badges = document.getElementById('paperBadges');
                     const sourceEl = document.getElementById('paperFooterSource');
                     
+                    let paperTagsHtml = '';
+                    if (fullItem.tags) {
+                        const tagList = fullItem.tags.split(/[,，]+/).map(t => t.trim()).filter(t => t.length > 0);
+                        tagList.forEach(tag => {
+                            paperTagsHtml += `<span class="text-[10px] font-bold px-2 py-0.5 rounded-full bg-amber-50 text-amber-600 border border-amber-250/60 flex items-center space-x-0.5"><i class="fa-solid fa-tag text-[8px] text-amber-500 mr-1"></i>${tag}</span>`;
+                        });
+                    }
+
                     badges.innerHTML = `
                         <span class="text-[10px] font-bold px-2 py-0.5 rounded-full bg-slate-100 text-slate-700">编号：#${fullItem.seq_num}</span>
                         <span class="text-[10px] font-bold px-2 py-0.5 rounded-full bg-brand-50 text-brand-700">题型：${getTypeText(fullItem.question_type)}</span>
                         <span class="text-[10px] font-bold px-2 py-0.5 rounded-full bg-indigo-50 text-indigo-700">难度：${getDifficultyText(fullItem.difficulty)}</span>
                         <span class="text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-700 inline-flex items-center"><i class="fa-regular fa-clock mr-1"></i>录入于：${formatChineseDate(fullItem.created_at)}</span>
+                        ${paperTagsHtml}
                     `;
                     sourceEl.textContent = `来源: ${fullItem.source || '本地教研录入'}`;
                     
@@ -513,6 +528,7 @@
                 const review = document.getElementById('editReview').value;
                 const relatedQuestionId = document.getElementById('editRelatedQuestion').value;
                 const tikzCode = document.getElementById('editContentTikzCode') ? document.getElementById('editContentTikzCode').value : '';
+                const tags = document.getElementById('editTags') ? document.getElementById('editTags').value.trim() : '';
                 
                 if (!content.trim()) {
                     showToast('保存失败：题干内容不能为空！', 'error');
@@ -572,6 +588,7 @@
                 formData.append('review', review);
                 formData.append('related_question_id', relatedQuestionId);
                 formData.append('tikz_code', tikzCode);
+                formData.append('tags', tags);
                 const combinedImages = Array.from(new Set([
                     ...uploadedImages,
                     ...(typeof uploadedAnswerImages !== 'undefined' ? uploadedAnswerImages : [])
@@ -1213,6 +1230,33 @@
             }
 
             questions.forEach((q, index) => {
+                let qTypeOptionsHtml = '';
+                if (window.systemMetadata && window.systemMetadata.question_types) {
+                    window.systemMetadata.question_types.forEach(item => {
+                        qTypeOptionsHtml += `<option value="${item.value}" ${q.question_type === item.value ? 'selected' : ''}>${item.label}</option>`;
+                    });
+                } else {
+                    qTypeOptionsHtml = `
+                        <option value="single_choice" ${q.question_type === 'single_choice' ? 'selected' : ''}>单选题</option>
+                        <option value="multi_choice" ${q.question_type === 'multi_choice' ? 'selected' : ''}>多选题</option>
+                        <option value="fill_in_blank" ${q.question_type === 'fill_in_blank' ? 'selected' : ''}>填空题</option>
+                        <option value="detailed_answer" ${q.question_type === 'detailed_answer' ? 'selected' : ''}>解答题</option>
+                    `;
+                }
+
+                let difficultyOptionsHtml = '';
+                if (window.systemMetadata && window.systemMetadata.difficulties) {
+                    window.systemMetadata.difficulties.forEach(item => {
+                        difficultyOptionsHtml += `<option value="${item.value}" ${q.difficulty === item.value ? 'selected' : ''}>${item.label}</option>`;
+                    });
+                } else {
+                    difficultyOptionsHtml = `
+                        <option value="easy_error" ${q.difficulty === 'easy_error' ? 'selected' : ''}>易错题</option>
+                        <option value="challenge" ${q.difficulty === 'challenge' ? 'selected' : ''}>挑战题</option>
+                        <option value="qiangji" ${q.difficulty === 'qiangji' ? 'selected' : ''}>强基题</option>
+                    `;
+                }
+
                 const card = document.createElement('div');
                 card.className = "glass-card rounded-xl p-4 space-y-3 flex flex-col relative";
                 card.id = `parsed-card-${index}`;
@@ -1226,15 +1270,10 @@
                             <span>题型与难度</span>
                         </div>
                         <select class="card-qtype glass-select px-2 py-1.5 rounded-lg text-2xs font-semibold">
-                            <option value="single_choice" ${q.question_type === 'single_choice' ? 'selected' : ''}>单选题</option>
-                            <option value="multi_choice" ${q.question_type === 'multi_choice' ? 'selected' : ''}>多选题</option>
-                            <option value="fill_in_blank" ${q.question_type === 'fill_in_blank' ? 'selected' : ''}>填空题</option>
-                            <option value="detailed_answer" ${q.question_type === 'detailed_answer' ? 'selected' : ''}>解答题</option>
+                            ${qTypeOptionsHtml}
                         </select>
                         <select class="card-difficulty glass-select px-2 py-1.5 rounded-lg text-2xs font-semibold">
-                            <option value="easy_error" ${q.difficulty === 'easy_error' ? 'selected' : ''}>易错题</option>
-                            <option value="challenge" ${q.difficulty === 'challenge' ? 'selected' : ''}>挑战题</option>
-                            <option value="qiangji" ${q.difficulty === 'qiangji' ? 'selected' : ''}>强基题</option>
+                            ${difficultyOptionsHtml}
                         </select>
                         <input type="text" class="card-source glass-input px-2.5 py-1.5 rounded-lg text-2xs font-semibold" value="${q.source || ''}" placeholder="题目来源">
                         <!-- Success / Saved indicator -->

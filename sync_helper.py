@@ -104,21 +104,37 @@ def generate_markdown_library(questions, filepath: str):
     total_count = len(questions)
     
     # 题型和难度映射关系
-    type_display = {
-        "single_choice": "单选题",
-        "multi_choice": "多选题",
-        "fill_in_blank": "填空题",
-        "detailed_answer": "解答题"
-    }
-    
-    difficulty_display = {
-        "easy": "🟢 容易",
-        "medium": "🟡 中等",
-        "hard": "🔴 较难",
-        "easy_error": "🟠 易错题",
-        "challenge": "🔥 压轴挑战题",
-        "qiangji": "🎓 强基/竞赛题"
-    }
+    custom_meta = None
+    custom_meta_path = "data_backup/custom_metadata.json"
+    if os.path.exists(custom_meta_path):
+        try:
+            with open(custom_meta_path, "r", encoding="utf-8") as f:
+                custom_meta = json.load(f)
+        except Exception:
+            pass
+
+    if custom_meta and isinstance(custom_meta, dict) and "question_types" in custom_meta and "difficulties" in custom_meta:
+        type_display = {item["value"]: item["label"] for item in custom_meta["question_types"]}
+        difficulty_display = {item["value"]: item["label"] for item in custom_meta["difficulties"]}
+        # 保底映射默认系统内置字段以防老旧数据不匹配
+        for val, lbl in [("easy", "🟢 容易"), ("medium", "🟡 中等"), ("hard", "🔴 较难")]:
+            if val not in difficulty_display:
+                difficulty_display[val] = lbl
+    else:
+        type_display = {
+            "single_choice": "单选题",
+            "multi_choice": "多选题",
+            "fill_in_blank": "填空题",
+            "detailed_answer": "解答题"
+        }
+        difficulty_display = {
+            "easy": "🟢 容易",
+            "medium": "🟡 中等",
+            "hard": "🔴 较难",
+            "easy_error": "🟠 易错题",
+            "challenge": "🔥 压轴挑战题",
+            "qiangji": "🎓 强基/竞赛题"
+        }
 
     with open(filepath, "w", encoding="utf-8") as f:
         # 文件头
@@ -178,6 +194,8 @@ def generate_markdown_library(questions, filepath: str):
                                 f.write(f"- **题目来源**：`{q.source}`\n")
                             if q.association_group_id:
                                 f.write(f"- **关联题目组 ID**：`{q.association_group_id}`\n")
+                            if q.tags:
+                                f.write(f"- **标签**：`{q.tags}`\n")
                             f.write("\n")
                             
                             # 经过转换与清理的纯净题干

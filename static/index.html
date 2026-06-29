@@ -137,7 +137,7 @@
             <!-- Settings Button - Apple Glass Style -->
             <button onclick="openSettingsModal()" class="glass-btn flex items-center space-x-2 px-4 py-2 rounded-xl text-xs font-medium text-slate-600">
                 <i class="fa-solid fa-sliders text-slate-500"></i>
-                <span>API</span>
+                <span>设置</span>
             </button>
 
             <!-- Shutdown Button - Apple Glass Danger Style -->
@@ -349,6 +349,16 @@
                                 <option value="">先选章节</option>
                             </select>
                         </div>
+                    </div>
+
+                    <!-- Row 3: Custom Tags -->
+                    <div class="mt-3">
+                        <label class="block text-[11px] font-medium text-slate-500 mb-1 flex items-center">
+                            <i class="fa-solid fa-tags text-slate-400 mr-1"></i>
+                            <span>自定义标签 (Tag)</span>
+                        </label>
+                        <input type="text" id="editTags" placeholder="如：高一, 期中, 真题 (使用逗号分隔)"
+                               class="w-full px-2.5 py-2 rounded-lg text-xs border border-slate-200 focus:border-brand-500 focus:ring-1 focus:ring-brand-100 transition-all">
                     </div>
                 </div>
 
@@ -961,7 +971,20 @@
             </div>
 
             <form id="settingsForm" class="space-y-5" onsubmit="saveSettings(event)">
-                <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+                <!-- Settings Modal Tab Headers -->
+                <div class="flex items-center space-x-2 border-b border-slate-200/50 pb-1">
+                    <button type="button" onclick="switchSettingsTab('api')" id="btn-settings-api" class="px-4 py-2 border-b-2 border-brand-500 text-brand-600 font-semibold text-xs transition-all flex items-center space-x-1.5 focus:outline-none">
+                        <i class="fa-solid fa-gears"></i>
+                        <span>API 接口设置</span>
+                    </button>
+                    <button type="button" onclick="switchSettingsTab('metadata')" id="btn-settings-metadata" class="px-4 py-2 border-b-2 border-transparent text-slate-500 hover:text-slate-700 font-medium text-xs transition-all flex items-center space-x-1.5 focus:outline-none">
+                        <i class="fa-solid fa-tags"></i>
+                        <span>自定义维度配置</span>
+                    </button>
+                </div>
+
+                <!-- API Keys & Models Tab Content -->
+                <div id="settings-tab-api" class="grid grid-cols-1 md:grid-cols-2 gap-6">
                     <!-- Column 1: API Keys -->
                     <div class="space-y-4">
                         <div class="border-b border-slate-200/60 pb-2">
@@ -1133,6 +1156,38 @@
                         </div>
                     </div>
                 </div>
+                <!-- End of settings-tab-api -->
+
+                <!-- Metadata Tab Content (JSON Editor) -->
+                <div id="settings-tab-metadata" class="hidden space-y-4">
+                    <div class="flex items-center justify-between">
+                        <div>
+                            <h4 class="text-xs font-bold text-slate-700 flex items-center space-x-2">
+                                <i class="fa-solid fa-code text-brand-500"></i>
+                                <span>自定义维度 JSON 配置编辑器</span>
+                            </h4>
+                            <p class="text-[10px] text-slate-400 mt-0.5">可在此处编辑自定义的题型、难度等级（含颜色）以及层级教学大纲树状结构。</p>
+                        </div>
+                        <button type="button" onclick="resetMetadataToDefault()" class="glass-btn px-2.5 py-1.5 rounded-lg text-[10px] text-brand-600 hover:text-brand-700 font-medium flex items-center space-x-1">
+                            <i class="fa-solid fa-rotate-left"></i>
+                            <span>重置为默认高中数学大纲</span>
+                        </button>
+                    </div>
+                    
+                    <div class="relative">
+                        <textarea id="settingsMetadataJson" 
+                                  class="w-full h-[320px] p-4 bg-slate-900 text-slate-100 rounded-xl text-xs font-mono border border-slate-700 focus:outline-none focus:ring-2 focus:ring-brand-500/30 whitespace-pre scrollbar-thin"
+                                  placeholder="正在读取元数据配置..."></textarea>
+                    </div>
+                    
+                    <div class="bg-amber-50 border border-amber-200 rounded-xl p-3 text-[10px] text-amber-700 space-y-1">
+                        <p class="font-bold flex items-center space-x-1"><i class="fa-solid fa-circle-info"></i><span>配置说明：</span></p>
+                        <p>1. <strong>question_types</strong>: 题型列表。例如：<code>{"value": "single_choice", "label": "单选题"}</code>。</p>
+                        <p>2. <strong>difficulties</strong>: 难度等级列表。必须包含 value, label 和 color 属性。color 使用 Tailwind CSS 类名控制徽章样式。</p>
+                        <p>3. <strong>curriculum</strong>: 树状大纲目录结构。格式为：<code>"学段名称": {"章节名称": ["知识点/小节1", "知识点/小节2"]}</code>。修改并保存后，AI 智能分类与试卷智能拆解将立刻感知并应用新大纲！</p>
+                    </div>
+                </div>
+                <!-- End of settings-tab-metadata -->
 
                 <div class="p-3 bg-amber-50 text-[10px] text-amber-700 rounded-lg flex items-start space-x-2 leading-relaxed">
                     <i class="fa-solid fa-circle-exclamation mt-0.5"></i>

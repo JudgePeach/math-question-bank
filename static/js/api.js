@@ -70,6 +70,7 @@
         let currentDraftId = null; // Track if current editing item is a draft
         let activeSidebarTab = 'bank'; // 'bank' or 'drafts'
         let categoryTree = {};
+        let systemMetadata = { question_types: [], difficulties: [], curriculum: {} };
         let uploadedImages = [];
         let uploadedAnswerImages = [];
         let originalQuestionState = null;
@@ -608,28 +609,67 @@
             formData.append('prefer_classify_model', preferClassifyModel);
             formData.append('prefer_draw_model', preferDrawModel);
             
-            fetch('/api/settings/save', {
+            // Chain both saves: metadata JSON and ENV settings parameters
+            let metaPayload = null;
+            const metadataStr = document.getElementById('settingsMetadataJson').value.trim();
+            try {
+                metaPayload = JSON.parse(metadataStr);
+            } catch (err) {
+                showToast('元数据配置 JSON 格式错误，请检查括号与逗号！', 'error');
+                return;
+            }
+
+            fetch('/api/config/metadata', {
                 method: 'POST',
-                body: formData
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify(metaPayload)
+            })
+            .then(r => {
+                if (!r.ok) {
+                    return r.json().then(d => { throw new Error(d.detail || '保存元数据配置失败') });
+                }
+                return r.json();
+            })
+            .then(() => {
+                return fetch('/api/settings/save', {
+                    method: 'POST',
+                    body: formData
+                });
             })
             .then(r => r.json())
             .then(data => {
                 if (data.status === 'success') {
-                    showToast(data.message);
+                    showToast('所有配置（含自定义维度）保存成功！');
                     closeSettingsModal();
                     fetchConfigStatus();
+                    loadCategories(); // Reload all dynamic metadata and categories
                 } else {
                     showToast(data.message, 'error');
                 }
             })
             .catch(err => {
-                showToast('保存接口设置出错: ' + err, 'error');
+                showToast('保存接口设置出错: ' + (err.message || err), 'error');
             });
         }
 
         // Load Categories from Database to Autocomplete Selects
         function loadCategories(retryCount = 0) {
-            fetch('/api/categories')
+            fetch('/api/config/metadata')
+                .then(r => {
+                    if (!r.ok) {
+                        throw new Error(`获取元数据状态异常: ${r.status}`);
+                    }
+                    return r.json();
+                })
+                .then(meta => {
+                    systemMetadata = meta;
+                    window.systemMetadata = meta; // Global export
+                    populateMetadataDropdowns();
+                    
+                    return fetch('/api/categories');
+                })
                 .then(r => {
                     if (!r.ok) {
                         throw new Error(`HTTP 状态码异常: ${r.status}`);
@@ -642,15 +682,174 @@
                     populateFilterDropdowns();
                 })
                 .catch(err => {
-                    console.error('加载分类目录树发生异常:', err);
+                    console.error('加载分类目录树或元数据配置发生异常:', err);
                     if (retryCount < 3) {
-                        console.warn(`[Auto-Retry] 正在尝试第 ${retryCount + 1} 次自适应重新加载分类数据...`);
+                        console.warn(`[Auto-Retry] 正在尝试第 ${retryCount + 1} 次自适应重新加载数据...`);
                         setTimeout(() => loadCategories(retryCount + 1), 1500);
                     } else {
-                        showToast('系统正在连接或初始化后台，加载分类失败，请刷新重试', 'error');
+                        showToast('系统正在连接或初始化后台，加载分类及大纲数据失败，请刷新重试', 'error');
                     }
                 });
         }
+
+        // Populate Metadata Select Option Lists Dynamically
+        function populateMetadataDropdowns() {
+            if (!systemMetadata || !systemMetadata.question_types || !systemMetadata.difficulties) return;
+
+            // 1. Edit Question Type select
+            const editQType = document.getElementById('editQType');
+            if (editQType) {
+                const currentVal = editQType.value || 'single_choice';
+                editQType.innerHTML = '';
+                systemMetadata.question_types.forEach(item => {
+                    const opt = document.createElement('option');
+                    opt.value = item.value;
+                    opt.textContent = item.label;
+                    editQType.appendChild(opt);
+                });
+                // Restore selected value if matches
+                if (systemMetadata.question_types.some(t => t.value === currentVal)) {
+                    editQType.value = currentVal;
+                } else if (systemMetadata.question_types.length > 0) {
+                    editQType.value = systemMetadata.question_types[0].value;
+                }
+            }
+
+            // 2. Edit Difficulty select
+            const editDiff = document.getElementById('editDifficulty');
+            if (editDiff) {
+                const currentVal = editDiff.value || 'easy_error';
+                editDiff.innerHTML = '';
+                systemMetadata.difficulties.forEach(item => {
+                    const opt = document.createElement('option');
+                    opt.value = item.value;
+                    opt.textContent = item.label;
+                    editDiff.appendChild(opt);
+                });
+                if (systemMetadata.difficulties.some(d => d.value === currentVal)) {
+                    editDiff.value = currentVal;
+                } else if (systemMetadata.difficulties.length > 0) {
+                    editDiff.value = systemMetadata.difficulties[0].value;
+                }
+            }
+
+            // 3. Sidebar Filter Question Type select
+            const filterQType = document.getElementById('filterQType');
+            if (filterQType) {
+                const currentVal = filterQType.value || '';
+                filterQType.innerHTML = '<option value="">全部题型</option>';
+                systemMetadata.question_types.forEach(item => {
+                    const opt = document.createElement('option');
+                    opt.value = item.value;
+                    opt.textContent = item.label;
+                    filterQType.appendChild(opt);
+                });
+                filterQType.value = currentVal;
+            }
+
+            // 4. Sidebar Filter Difficulty select
+            const filterDiff = document.getElementById('filterDifficulty');
+            if (filterDiff) {
+                const currentVal = filterDiff.value || '';
+                filterDiff.innerHTML = '<option value="">全部难度</option>';
+                systemMetadata.difficulties.forEach(item => {
+                    const opt = document.createElement('option');
+                    opt.value = item.value;
+                    opt.textContent = item.label;
+                    filterDiff.appendChild(opt);
+                });
+                filterDiff.value = currentVal;
+            }
+        }
+
+        // Settings tab switcher
+        let activeSettingsTab = 'api';
+        window.switchSettingsTab = function(tabName) {
+            activeSettingsTab = tabName;
+            const btnApi = document.getElementById('btn-settings-api');
+            const btnMeta = document.getElementById('btn-settings-metadata');
+            const tabApi = document.getElementById('settings-tab-api');
+            const tabMeta = document.getElementById('settings-tab-metadata');
+            
+            if (tabName === 'api') {
+                btnApi.classList.add('border-brand-500', 'text-brand-600');
+                btnApi.classList.remove('border-transparent', 'text-slate-500');
+                btnMeta.classList.add('border-transparent', 'text-slate-500');
+                btnMeta.classList.remove('border-brand-500', 'text-brand-600');
+                
+                tabApi.classList.remove('hidden');
+                tabMeta.classList.add('hidden');
+            } else {
+                btnMeta.classList.add('border-brand-500', 'text-brand-600');
+                btnMeta.classList.remove('border-transparent', 'text-slate-500');
+                btnApi.classList.add('border-transparent', 'text-slate-500');
+                btnApi.classList.remove('border-brand-500', 'text-brand-600');
+                
+                tabMeta.classList.remove('hidden');
+                tabApi.classList.add('hidden');
+                
+                // Load latest JSON from API
+                fetch('/api/config/metadata')
+                    .then(r => r.json())
+                    .then(data => {
+                        document.getElementById('settingsMetadataJson').value = JSON.stringify(data, null, 2);
+                    })
+                    .catch(err => {
+                        showToast('加载元数据配置失败: ' + err, 'error');
+                    });
+            }
+        };
+
+        // Reset Metadata to High school math template
+        window.resetMetadataToDefault = function() {
+            if (confirm('确认要重置所有题型、难度和学段为默认的高中数学大纲配置吗？这不会修改您的数据库题目，但会改变界面选项。')) {
+                const defaultMetadata = {
+                    "question_types": [
+                        {"value": "single_choice", "label": "单选题"},
+                        {"value": "multi_choice", "label": "多选题"},
+                        {"value": "fill_in_blank", "label": "填空题"},
+                        {"value": "detailed_answer", "label": "解答题"}
+                    ],
+                    "difficulties": [
+                        {"value": "easy_error", "label": "易错题", "color": "text-green-600 bg-green-50 border-green-200"},
+                        {"value": "challenge", "label": "挑战题", "color": "text-red-600 bg-red-50 border-red-200"},
+                        {"value": "qiangji", "label": "强基题", "color": "text-purple-600 bg-purple-50 border-purple-200"}
+                    ],
+                    "curriculum": {
+                        "必修一": {
+                            "1. 集合与常用逻辑用语": ["1.1 集合的概念", "1.2 集合间的基本关系", "1.3 集合的基本运算", "1.4 充分条件与必要条件", "1.5 全称量词与存在量词"],
+                            "2. 一元二次函数、方程和不等式": ["2.1 等式性质与不等式性质", "2.2 基本不等式", "2.3 二次函数与一元二次方程、不等式"],
+                            "3. 函数的概念与性质": ["3.1 函数的概念及其表示", "3.2 函数的基本性质", "3.3 幂函数", "3.4 函数的应用(一)"],
+                            "4. 指数函数与对数函数": ["4.1 指数", "4.2 指数函数", "4.3 对数", "4.4 对数函数", "4.5 函数的应用(二)"],
+                            "5. 三角函数": ["5.1 任意角和弧度制", "5.2 三角函数的概念", "5.3 诱导公式", "5.4 三角函数的图象与性质", "5.5 三角恒等变换", "5.6 函数y=Asin(wx+φ)", "5.7 三角函数的应用"]
+                        },
+                        "必修二": {
+                            "6. 平面向量及其应用": ["6.1 平面向量的概念", "6.2 平面向量的运算", "6.3 平面向量基本定理及坐标表示", "6.4 平面向量的应用"],
+                            "7. 复数": ["7.1 复数的概念", "7.2 复数的四则运算", "7.3 复数的三角表示"],
+                            "8. 立体几何初步": ["8.1 基本立体图形", "8.2 立体图形的直观图", "8.3 简单几何体的表面积与体积", "8.4 空间点、直线、平面之间的位置关系", "8.5 空间直线、平面的平行", "8.6 空间直线、平面的垂直"],
+                            "9. 统计": ["9.1 随机抽样", "9.2 用样本估计总体", "9.3 统计案例"],
+                            "10. 概率": ["10.1 随机事件与概率", "10.2 事件的相互独立性", "10.3 频率与概率"]
+                        },
+                        "选择性必修一": {
+                            "1. 空间向量与立体几何": ["1.1 空间向量及其运算", "1.2 空间向量基本定理", "1.3 空间向量及其运算的坐标表示", "1.4 空间向量的应用"],
+                            "2. 直线和圆的方程": ["2.1 直线的倾斜角和斜率", "2.2 直线的方程", "2.3 直线的交点坐标与距离公式", "2.4 圆的方程", "2.5 直线与圆、圆与圆的位置关系"],
+                            "3. 圆锥曲线的方程": ["3.1 椭圆", "3.2 双曲线", "3.3 抛物线"]
+                        },
+                        "选择性必修二": {
+                            "4. 数列": ["4.1 数列的概念", "4.2 等差数列", "4.3 等比数列", "4.4 数学归纳法"],
+                            "5. 一元函数的导数及其应用": ["5.1 导数的概念及其意义", "5.2 导数的运算", "5.3 导数在研究函数中的应用"]
+                        },
+                        "选择性必修三": {
+                            "6. 计数原理": ["6.1 分类加法计数原理与分步乘法计数原理", "6.2 排列与组合", "6.3 二项式定理"],
+                            "7. 随机变量及其分布": ["7.1 条件概率与全概率公式", "7.2 离散型随机变量及其分布列", "7.3 离散型随机变量的数字特征", "7.4 二项分布与超几何分布", "7.5 正态分布"],
+                            "8. 成对数据的统计分析": ["8.1 成对数据的统计相关性", "8.2 一元线性回归模型及其应用", "8.3 列联表与独立性检验"]
+                        }
+                    }
+                };
+                document.getElementById('settingsMetadataJson').value = JSON.stringify(defaultMetadata, null, 2);
+                showToast('已加载默认配置模板，请点击 [保存配置] 按钮进行保存。');
+            }
+        };
 
         // Populate Categories in Editor Selects
         function formatChineseDate(isoStr) {
@@ -671,26 +870,42 @@
 
         // Helper string mappings
         function getDifficultyBadge(diff) {
-            if (diff === 'easy_error') return '<span class="text-[9px] font-bold text-amber-600 bg-amber-50 px-1.5 py-0.5 rounded">易错</span>';
-            if (diff === 'challenge') return '<span class="text-[9px] font-bold text-red-600 bg-red-50 px-1.5 py-0.5 rounded">挑战</span>';
-            if (diff === 'qiangji') return '<span class="text-[9px] font-bold text-purple-600 bg-purple-50 px-1.5 py-0.5 rounded">强基</span>';
-            return '<span class="text-[9px] font-bold text-slate-550 bg-slate-100 px-1.5 py-0.5 rounded">未定</span>';
+            if (!systemMetadata || !systemMetadata.difficulties || systemMetadata.difficulties.length === 0) {
+                if (diff === 'easy_error') return '<span class="text-[9px] font-bold text-amber-600 bg-amber-50 px-1.5 py-0.5 rounded">易错</span>';
+                if (diff === 'challenge') return '<span class="text-[9px] font-bold text-red-600 bg-red-50 px-1.5 py-0.5 rounded">挑战</span>';
+                if (diff === 'qiangji') return '<span class="text-[9px] font-bold text-purple-600 bg-purple-50 px-1.5 py-0.5 rounded">强基</span>';
+                return '<span class="text-[9px] font-bold text-slate-550 bg-slate-100 px-1.5 py-0.5 rounded">未定</span>';
+            }
+            const found = systemMetadata.difficulties.find(d => d.value === diff);
+            if (found) {
+                // Strip emojis (symbols) from label to keep badge clean and neat
+                const cleanLabel = found.label.replace(/[\u2700-\u27BF]|[\uE000-\uF8FF]|\uD83C[\uDC00-\uDFFF]|\uD83D[\uDC00-\uDFFF]|[\u2011-\u26FF]|\uD83E[\uDD00-\uDFFF]/g, '').trim();
+                return `<span class="text-[9px] font-bold ${found.color || 'text-slate-550 bg-slate-100'} px-1.5 py-0.5 rounded">${cleanLabel}</span>`;
+            }
+            return `<span class="text-[9px] font-bold text-slate-550 bg-slate-100 px-1.5 py-0.5 rounded">${diff}</span>`;
         }
 
         function getTypeText(type) {
-            if (type === 'single_choice') return '单选题';
-            if (type === 'multi_choice') return '多选题';
-            if (type === 'fill_in_blank') return '填空题';
-            if (type === 'detailed_answer') return '解答题';
-            return '数学题';
+            if (!systemMetadata || !systemMetadata.question_types || systemMetadata.question_types.length === 0) {
+                if (type === 'single_choice') return '单选题';
+                if (type === 'multi_choice') return '多选题';
+                if (type === 'fill_in_blank') return '填空题';
+                if (type === 'detailed_answer') return '解答题';
+                return '数学题';
+            }
+            const found = systemMetadata.question_types.find(t => t.value === type);
+            return found ? found.label : type;
         }
 
-        // Debounced Live Realtime Preview Setup
         function getDifficultyText(val) {
-            if (val === 'easy_error') return '易错题';
-            if (val === 'challenge') return '挑战题';
-            if (val === 'qiangji') return '强基题';
-            return '未定';
+            if (!systemMetadata || !systemMetadata.difficulties || systemMetadata.difficulties.length === 0) {
+                if (val === 'easy_error') return '易错题';
+                if (val === 'challenge') return '挑战题';
+                if (val === 'qiangji') return '强基题';
+                return '未定';
+            }
+            const found = systemMetadata.difficulties.find(d => d.value === val);
+            return found ? found.label : val;
         }
 
         // Tab Switching for 3-in-1 workflow
