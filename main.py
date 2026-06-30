@@ -2569,7 +2569,10 @@ async def ai_parse_paper(
             "8. **【排版与字符格式规范】（极其重要）**：\n"
             "   - **推荐使用标准的 LaTeX 列表与排版环境**：为了方便用户直接复制高价值的 LaTeX 源码，推荐在需要列表、段落或编号排版时输出标准的 LaTeX 语法环境，如 `\\begin{itemize}`, `\\end{itemize}`, `\\item`, `\\begin{enumerate}`, `\\end{enumerate}`, `\\begin{center}`, `\\end{center}`。LaTeX 标记（如 `$` 或 `$$`）应该包围所有纯数学公式。\n"
             "   - **禁止输出字面量 `\\n` 字符**：在 `content` 或 `answer_markdown` 的字符串内部换行时，直接在 JSON 字段里输出真实的换行符（回车换行），绝对不要输出转义后的字面量 `\\n`（即双斜杠字符 `\\\\n` 或斜杠加n），防止页面上直接显示出带有物理字符 `\\n` 的尴尬情况。\n"
-            "9. **你的输出必须是一个合法的 JSON 对象，其根键为 `\"questions\"`，对应的值为一个 JSON 数组（包含以下结构化对象）。不要有任何多余的 Markdown 标记、代码块或解释文字**：\n"
+            "9. **【出处智能提取规范】**：仔细辨认题干开头（如“1. (2024·上海·高考真题) 已知...”中的“(2024·上海·高考真题)”)或结尾是否包含年份、考试来源等括号标注的出处信息：\n"
+            "   - 若有，必须将其完整提取至 `source` 字段中（去除外层括号），并在 `content` 字段中彻底剥离删除该出处标注以及前面的题号前缀（如“10.”、“1.”），只保留纯净的题目内容。\n"
+            "   - 若无特定出处，则 `source` 字段设为 null 或不填。\n"
+            "10. **你的输出必须是一个合法的 JSON 对象，其根键为 `\"questions\"`，对应的值为一个 JSON 数组（包含以下结构化对象）。不要有任何多余的 Markdown 标记、代码块或解释文字**：\n"
             "{\n"
             "  \"questions\": [\n"
             "    {\n"
@@ -2579,6 +2582,7 @@ async def ai_parse_paper(
             '      "category_compulsory": "人教A学段名称",\n'
             '      "category_chapter": "人教A章节名称",\n'
             '      "difficulty": "easy_error / challenge / qiangji",\n'
+            '      "source": "提取出的具体出处（如 2019·全国·高考真题），没有则填 null",\n'
             '      "referenced_images": ["引用的原始插图文件名1.png", "fig2.jpg"]\n'
             "    }\n"
             "  ]\n"
@@ -2586,6 +2590,8 @@ async def ai_parse_paper(
             "注意：只输出最干净的 JSON，千万不要包含 ```json ``` 等 Markdown 代码块标记！如果试卷中没有插图，referenced_images 数组留空。"
         )
         
+        max_output_tokens = 65536
+
         data = {
             "model": model_name,
             "messages": [
@@ -2596,7 +2602,7 @@ async def ai_parse_paper(
                 "type": "json_object"
             },
             "temperature": 0.2,
-            "max_tokens": 8192
+            "max_tokens": max_output_tokens
         }
         
         # Only add thinking if using a DeepSeek model or DeepSeek base URL, excluding legacy models that don't support it
@@ -2638,7 +2644,24 @@ async def ai_parse_paper(
         # Translate referenced_images to server paths
         import re
         for q in parsed_questions:
-            q["source"] = paper_title
+            # 智能提取出处双重保险：AI 提取优先，若 AI 未提取则尝试正则从 content 中提取
+            extracted_source = q.get("source")
+            content_str = q.get("content", "")
+            
+            # 正则匹配题干开头形如 "10. (2019·全国·高考真题)已知..." 的出处
+            # group(1): 题号前缀, group(2): 左括号, group(3): 出处内容, group(4): 右括号
+            prefix_match = re.match(r'^(\s*(?:\d+[\.、\s]*)?)([\(（])([^\(（\)）\s]{4,})([\)）])', content_str)
+            if prefix_match:
+                if not extracted_source:
+                    extracted_source = prefix_match.group(3).strip()
+                # 剔除题干中的出处括号及前面的题号前缀，保持题干纯净
+                to_remove = prefix_match.group(1) + prefix_match.group(2) + prefix_match.group(3) + prefix_match.group(4)
+                content_str = content_str.replace(to_remove, "", 1).strip()
+                # 移除可能残存的开头符号（如句点或顿号）
+                content_str = re.sub(r'^[\s、\.．]+', '', content_str)
+                q["content"] = content_str
+                
+            q["source"] = (extracted_source or paper_title).strip()
             
             # Clean up double-escaped literal \n in fields
             for field in ["content", "answer_markdown"]:

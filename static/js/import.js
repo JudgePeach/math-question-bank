@@ -1069,7 +1069,7 @@
                         parseModelFriendly = 'DeepSeek-V4-Pro';
                     }
                     
-                    document.getElementById('importLoadingText').textContent = `${parseBrand} 正在极速拆解试卷 (预计仅需 5-25 秒)...`;
+                    document.getElementById('importLoadingText').textContent = `${parseBrand} 正在智能分析并拆解试卷，请稍候...`;
                     appendImportLog(`正在调用 ${parseModelFriendly} 教研大模型进行试题智能分割与属性匹配...`, 'info');
                     appendImportLog('大纲映射范围：高中人教版A 必修一至选择性必修三。请耐心等候...', 'info');
 
