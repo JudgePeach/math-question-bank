@@ -26,13 +26,13 @@
                 extend: {
                     colors: {
                         brand: {
-                            50: 'rgb(var(--brand-50-rgb) / <alpha-value>)',
-                            100: 'rgb(var(--brand-100-rgb) / <alpha-value>)',
-                            200: 'rgb(var(--brand-200-rgb) / <alpha-value>)',
-                            500: 'rgb(var(--brand-500-rgb) / <alpha-value>)',
-                            600: 'rgb(var(--brand-600-rgb) / <alpha-value>)',
-                            700: 'rgb(var(--brand-700-rgb) / <alpha-value>)',
-                            900: 'rgb(var(--brand-900-rgb) / <alpha-value>)',
+                            50: 'rgba(var(--brand-50-rgb), <alpha-value>)',
+                            100: 'rgba(var(--brand-100-rgb), <alpha-value>)',
+                            200: 'rgba(var(--brand-200-rgb), <alpha-value>)',
+                            500: 'rgba(var(--brand-500-rgb), <alpha-value>)',
+                            600: 'rgba(var(--brand-600-rgb), <alpha-value>)',
+                            700: 'rgba(var(--brand-700-rgb), <alpha-value>)',
+                            900: 'rgba(var(--brand-900-rgb), <alpha-value>)',
                         }
                     },
                     fontFamily: {
@@ -1507,6 +1507,10 @@
                                 </div>
                             </div>
                             <div class="flex items-center space-x-2.5">
+                                <button onclick="confirmClearAllParsed()" class="flex items-center space-x-1.5 px-4 py-2 rounded-xl bg-rose-50 hover:bg-rose-100 text-rose-600 font-bold text-xs border border-rose-200 shadow-sm transition-all active:scale-95">
+                                    <i class="fa-solid fa-trash-can text-[10px]"></i>
+                                    <span>一键清除</span>
+                                </button>
                                 <button onclick="clearAllParsedSources()" class="flex items-center space-x-1.5 px-4 py-2 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-600 font-bold text-xs border border-slate-200 shadow-sm transition-all active:scale-95">
                                     <i class="fa-solid fa-eraser text-[10px]"></i>
                                     <span>一键清除标题</span>

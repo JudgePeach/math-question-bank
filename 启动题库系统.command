@@ -50,7 +50,7 @@ if [ ! -d "venv" ]; then
 fi
 
 # 自动检测并强力清理霸占 8000 端口的残余 Python/Uvicorn 僵尸进程，确保 100% 启动成功
-PORT_PID=$(lsof -t -i:8000)
+PORT_PID=$(lsof -t -i:8000 -n -P)
 if [ ! -z "$PORT_PID" ]; then
     echo "检测到端口 8000 被上一次未完全释放的残余进程 ($PORT_PID) 占用。"
     echo "正在为您安全释放端口并清理运行环境..."
@@ -93,7 +93,7 @@ SERVICE_READY=0
 
 while [ $COUNTER -lt $TIMEOUT ]; do
     # 使用 curl 探测 /api/questions 端口响应，加上 || true 防御 Network Refused 报错
-    HTTP_STATUS=$(curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1:8000/api/questions || echo "000")
+    HTTP_STATUS=$(curl -s -o /dev/null -w "%{http_code}" --connect-timeout 2 --max-time 3 --noproxy "*" http://127.0.0.1:8000/api/questions || echo "000")
     if [ "$HTTP_STATUS" = "200" ]; then
         echo "🎉 后台服务已成功拉起，题库 API 响应正常！"
         SERVICE_READY=1

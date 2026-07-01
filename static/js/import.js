@@ -938,39 +938,6 @@
                 renderImagesList();
             }
 
-            function renderImagesList() {
-                imagesListContainer.innerHTML = '';
-                if (batchSelectedImages.length === 0) {
-                    imagesListContainer.classList.add('hidden');
-                    imagesCountName.textContent = "点击或多选拖入试卷引用的所有图片";
-                    imagesCountName.className = "text-xs text-slate-600 font-medium";
-                    imagesFileIcon.className = "fa-solid fa-images text-slate-400 text-xl mb-1.5";
-                    return;
-                }
-
-                imagesListContainer.classList.remove('hidden');
-                imagesCountName.textContent = `已选择 ${batchSelectedImages.length} 张图片`;
-                imagesCountName.className = "text-xs text-brand-600 font-bold";
-                imagesFileIcon.className = "fa-solid fa-images text-brand-500 text-xl mb-1.5 animate-pulse";
-
-                batchSelectedImages.forEach((file, index) => {
-                    const item = document.createElement('div');
-                    item.className = "relative group flex items-center justify-between bg-white border border-slate-200 rounded-lg px-2 py-0.5 text-[10px] text-slate-600 space-x-1.5 shrink-0 max-w-[140px]";
-                    item.innerHTML = `
-                        <span class="truncate font-semibold max-w-[90px]" title="${file.name}">${file.name}</span>
-                        <button class="text-slate-400 hover:text-red-500 transition-colors" title="移除">
-                            <i class="fa-solid fa-circle-xmark"></i>
-                        </button>
-                    `;
-                    item.querySelector('button').addEventListener('click', (e) => {
-                        e.stopPropagation();
-                        batchSelectedImages.splice(index, 1);
-                        renderImagesList();
-                    });
-                    imagesListContainer.appendChild(item);
-                });
-            }
-
             // Input event listener for pasted LaTeX or manual edits
             latexTextarea.addEventListener('input', () => {
                 const autoTitle = extractTitleFromLatex(latexTextarea.value);
@@ -1141,6 +1108,45 @@
                 });
         }
 
+        function renderImagesList() {
+            const imagesListContainer = document.getElementById('importImagesList');
+            const imagesCountName = document.getElementById('imagesCountName');
+            const imagesFileIcon = document.getElementById('imagesFileIcon');
+            
+            if (!imagesListContainer || !imagesCountName || !imagesFileIcon) return;
+
+            imagesListContainer.innerHTML = '';
+            if (batchSelectedImages.length === 0) {
+                imagesListContainer.classList.add('hidden');
+                imagesCountName.textContent = "点击或多选拖入试卷引用的所有图片";
+                imagesCountName.className = "text-xs text-slate-600 font-medium";
+                imagesFileIcon.className = "fa-solid fa-images text-slate-400 text-xl mb-1.5";
+                return;
+            }
+
+            imagesListContainer.classList.remove('hidden');
+            imagesCountName.textContent = `已选择 ${batchSelectedImages.length} 张图片`;
+            imagesCountName.className = "text-xs text-brand-600 font-bold";
+            imagesFileIcon.className = "fa-solid fa-images text-brand-500 text-xl mb-1.5 animate-pulse";
+
+            batchSelectedImages.forEach((file, index) => {
+                const item = document.createElement('div');
+                item.className = "relative group flex items-center justify-between bg-white border border-slate-200 rounded-lg px-2 py-0.5 text-[10px] text-slate-600 space-x-1.5 shrink-0 max-w-[140px]";
+                item.innerHTML = `
+                    <span class="truncate font-semibold max-w-[90px]" title="${file.name}">${file.name}</span>
+                    <button class="text-slate-400 hover:text-red-500 transition-colors" title="移除">
+                        <i class="fa-solid fa-circle-xmark"></i>
+                    </button>
+                `;
+                item.querySelector('button').addEventListener('click', (e) => {
+                    e.stopPropagation();
+                    batchSelectedImages.splice(index, 1);
+                    renderImagesList();
+                });
+                imagesListContainer.appendChild(item);
+            });
+        }
+
         function clearAllImportInputs() {
             // 清空左侧输入栏
             const titleInput = document.getElementById('importPaperTitle');
@@ -1209,6 +1215,16 @@
             parsedQuestionsData = [];
             if (typeof updateSelectedCount === 'function') {
                 updateSelectedCount();
+            }
+
+            // 清空右侧解析题目卡片 DOM
+            const container = document.getElementById('parsedCardsContainer');
+            if (container) {
+                container.innerHTML = '';
+            }
+            const countBadge = document.getElementById('parsedCountBadge');
+            if (countBadge) {
+                countBadge.textContent = '共 0 题';
             }
 
             const shouldShow = (showToastMessage === true || typeof showToastMessage !== 'boolean');
@@ -1576,6 +1592,13 @@
                 saveBtn.innerHTML = '<i class="fa-solid fa-file-arrow-up"></i> <span>导入此题</span>';
                 throw err;
             });
+        }
+
+        function confirmClearAllParsed() {
+            if (confirm('确定要清除所有拆解出来的题目，并返回初始录入界面吗？\n清除后，当前列表中的草稿题目将丢失。')) {
+                clearAllImportInputs();
+                resetImportState(true);
+            }
         }
 
         function clearAllParsedSources() {

@@ -77,9 +77,14 @@
 3. **`ocr.js`**：剪贴板粘贴、拖拽、上传、灯箱放大等图像处理逻辑。
 4. **`import.js`**：DOM 启动监听、页面级渲染绑定与草稿/题库列表业务中枢。
 
+> [!IMPORTANT]
+> **文档指南同步更新规则**：
+> 在进行任何系统更新、重构、功能新增或回滚（Rollback）操作时，AI 代理与开发者**必须同步更新 `AGENTS.md` 和 `CLAUDE.md`**，确保两个文档中记录的技术设计、接口规范与实际代码实现 100% 准确一致，严防信息滞后。
+
 > [!WARNING]
 > - **禁用正则后行断言**：为了确保与旧版本 Safari / 移动端 WebView 的极致兼容，前端代码中**严禁使用正则后行断言 `(?<!...)` 与 `(?<=...)`**，此类语法在不支持的设备上会导致 fatal `SyntaxError` 并挂起 `DOMContentLoaded`。必须使用捕获组配合 callback 或普通字符比对进行替代。
 > - **版本号自动缓存击穿 (Cache Busting)**：系统已在 Python 后端（`main.py` 的首页路由 `read_index` 中）实现自动缓存击穿机制。每次浏览器请求首页时，后端会自动获取前端 JS 文件的最新修改时间戳作为版本号后缀（如 `?v=时间戳`）注入 HTML。开发者无需手动修改 HTML 中的版本号。
+> - **Tailwind 色彩 Alpha 透明度适配**：在 `tailwind.config` 中扩展自定义颜色（如品牌色 `brand` 等）时，由于颜色变量中带逗号（如 `124, 58, 237`），**严禁写成 `rgb(var(--brand-xxx-rgb) / <alpha-value>)`** 语法。这类混用语法会导致浏览器在解析带透明度修饰符的类名时判定为无效规则，最终按钮背景将不可见。必须写成 `rgba(var(--brand-xxx-rgb), <alpha-value>)` 格式以确保高兼容。
 
 ### 3.7 启动端口竞态自愈与前端级联防挂起重试机制
 为了彻底杜绝由于本地多进程拉起时序不一致（Uvicorn 尚未完全就绪但浏览器已抢先加载）导致的 API 请求报错 (502 / TCP Connection Refused) 以及前端 JS 未捕获异常引起的首屏死锁，系统实现了以下稳定性架构：
@@ -87,6 +92,18 @@
 - **前端后台自适应静默重试 (Silent Auto-Retry)**：首屏在 `DOMContentLoaded` 事件中触发的 `/api/categories` 和 `/api/questions` 抓取加入了严格的 `.catch()`。当检测到请求异常时，前端会自动执行后台静默重新加载，每次间隔 1.5 秒，上限 3 次，使用户对瞬间的时序偏差达到“无感就绪”。
 - **友好 UI 容错兜底与重新加载**：如果多次重试均失败，前端会捕获异常并拦截 promise 抛出，同时在左侧题库区渲染成精致的“连接题库列表失败”红字提示面板，提供一键 `[重新加载]` 按钮，允许用户手动触发重新拉取。
 - **Dropdown 防御性校验**：所有在首屏数据装载前会触发的分类填充操作（如 `populateCategoryDropdowns` 与 `populateFilterDropdowns`），其入口处均内置了健壮的 DOM 及 categoryTree 级联数据空判定安全防护，杜绝由于异步时序不同步产生的页面挂起。
+
+### 3.8 TikZ 几何绘图与智能纠错工作流
+- **自动编译与预览**：编辑器下方集成了 TikZ 代码专属编辑和预览区。前端会将 TikZ 代码通过 `/api/render_tikz` 送往后端，后端在本地调用编译链转换为 PNG 并返回相对路径，在前端实现无缝的几何图像秒级预览。
+- **AI 几何绘图与纠错**：支持人工与大模型闭环协同。遇到几何图题，AI 可优先直接生成 TikZ 代码编译。如遇到 TikZ 语法编译报错，用户可写入“指导意见”调用 `/api/correct_tikz` 交由高级大模型进行智能纠正，修复编译报错直至绘图完美。
+
+### 3.9 题目双向关联与题组管理
+- **双向绑定机制**：系统通过 `association_group_id` 进行关联。同组题目（变式题、子母题、一题多解等）均具备相同的 `association_group_id`。绑定两个已属于不同组的题目时，系统会在后端自动将旧组的题目批量迁移合并到新组。
+- **管理操作**：前端可通过 API 动态查询同组题目、一键添加关联（合并现有组关系）以及解除当前题目的关联（安全解绑，不会导致其他关联题目失联）。
+
+### 3.10 批量图片上传与 AI 智能拆卷/解析系统
+- **批量图片分发**：用户可在前端一次性拖入多张截图，通过 `/api/upload/batch` 瞬间在后台保存，并返回形如 `[图片1]` 的占位符映射表，方便在解析文本中插入对应位置。
+- **大模型文本切片与拆解**：用户提交完整的试卷 LaTeX/Markdown 文本及图片映射后，`/api/ai/parse-paper` 接口调用 `.env` 配置文件中的 `PREFER_PARSE_MODEL` 将文本按题目智能切片，自动识别其类型、章节、难度、题干与配图，并可选择是否同步生成详细的解答解析，最终整卷产出结构化 JSON 存入草稿箱或导入题库。
 
 ---
 
@@ -110,6 +127,22 @@
 - 所有对题库、草稿箱和系统配置进行新增、更新、删除的写操作接口均需安全鉴权。
 - **鉴权核心机制**：后端会在第一次连接或通过特定校验后生成/验证 Local Token。前端在发送 POST/PUT/DELETE 请求时，必须在请求头中附带 `X-Local-Token` 字段，且内容需与后端的 `LOCAL_TOKEN` 吻合。
 - 前端 `api.js` 中重写了 `window.fetch` 方法，在发送非 GET 请求时自动附加对应的 Token，使得该过程对业务开发完全透明。
+
+### 4.4 TikZ 编译与 AI 纠错接口
+- **编译预览 (`/api/render_tikz`)**：POST 请求，参数为 `tikz_code`。后端通过本地 LaTeX 环境编译后，返回预览图片的相对路径。
+- **AI 智能纠错 (`/api/correct_tikz`)**：POST 请求，接收 `tikz_code`、`error_message`（编译报错信息，可选）与 `guidance`（用户修改指导意见，可选），由高级大模型（如 `qwen-max` 或中转站模型）智能返回修改后的 TikZ 完整代码。
+
+### 4.5 批量图片上传与 AI 智能拆卷接口
+- **批量上传 (`/api/upload/batch`)**：POST 请求，接收 `files: List[UploadFile]`，在 `static/uploads/` 保存并返回图片文件名与其对应的临时标签。
+- **智能拆解 (`/api/ai/parse-paper`)**：POST 请求，参数接收 `latex_content` (试卷文本), `paper_title` (试卷名称), `image_mapping_json` (图片映射 JSON), `generate_answers` ("true"/"false")。后端根据 `.env` 中 `PREFER_PARSE_MODEL` 调用 AI 将试卷源码进行切片并结构化导出。
+
+### 4.6 题目关联管理接口
+- **获取关联 (`/api/questions/{question_id}/associated`)**：GET 请求，返回与当前题目相同 `association_group_id` 的所有题目。
+- **绑定关联 (`/api/questions/{question_id}/associate`)**：POST 请求，参数接收 `target_id: int`（待关联的题目 ID），自动在后端进行关联组分配和旧组关系的安全合并。
+- **解除关联 (`/api/questions/{question_id}/associated`)**：DELETE 请求，将当前题目从所属的关联组中安全移出。
+
+### 4.7 代理绕过与网络稳定性 (Robust Networking)
+- **原理与实现**：当系统调用国内大模型接口（阿里百炼、SiliconFlow、SimpleTex 等）时，如遭遇本地代理引发的 Refused 或超时报错，后端在 `main.py` 的网络访问函数 `robust_request_post` / `robust_request_get` 中会自动清除当前环境变量中的系统代理设置并进行直连重试，确保数学题库系统的核心识图与解题服务高可用。
 
 ---
 
