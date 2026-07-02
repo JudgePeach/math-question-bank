@@ -169,6 +169,7 @@
                 "deepseek-v4-pro"
             ],
             siliconflow: [
+                "Qwen/Qwen3-VL-32B-Thinking",
                 "Qwen/Qwen3-VL-32B-Instruct",
                 "Qwen/Qwen3-VL-8B-Instruct",
                 "deepseek-ai/DeepSeek-V4-Pro",

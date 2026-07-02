@@ -207,3 +207,28 @@ def test_api_metadata_config(client):
         # 5. Restore original config
         client.post("/api/config/metadata", json=original_config, headers=headers)
 
+
+def test_pdf_task_and_crop(client):
+    headers = {"X-Local-Token": LOCAL_TOKEN}
+    # 1. Test POST /api/upload/pdf-task with invalid format
+    response = client.post(
+        "/api/upload/pdf-task",
+        files={"file": ("test.txt", b"some plain text", "text/plain")},
+        data={"generate_answers": "false"},
+        headers=headers
+    )
+    assert response.status_code == 400
+    assert "必须为 .pdf 格式" in response.json()["message"]
+
+    # 2. Test status route for non-existent task
+    response = client.get("/api/tasks/non-existent-task-id/status")
+    assert response.status_code == 404
+
+    # 3. Test clear-temp-crops endpoint
+    payload = {"paths": ["/static/uploads/tmp/pdf_crop_test_nonexistent.png"]}
+    response = client.post("/api/ai/clear-temp-crops", json=payload, headers=headers)
+    assert response.status_code == 200
+    assert response.json()["status"] == "success"
+
+
+

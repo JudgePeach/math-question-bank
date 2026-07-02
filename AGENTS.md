@@ -79,6 +79,16 @@
 - **友好 UI 容错兜底与重新加载**：如果多次重试均失败，前端会捕获异常并拦截 promise 抛出，同时在左侧题库区渲染成精致的“连接题库列表失败”红字提示面板，提供一键 `[重新加载]` 按钮，允许用户手动触发重新拉取。
 - **Dropdown 防御性校验**：所有在首屏数据装载前会触发的分类填充操作（如 `populateCategoryDropdowns` 与 `populateFilterDropdowns`），其入口处均内置了健壮的 DOM 及 categoryTree 级联数据空判定安全防护，杜绝由于异步时序不同步产生的页面挂起。
 
+### 3.8 PDF 试卷多模态拆解与手动截图系统
+- **切片与异步任务**：支持上传 PDF 文件，后端在后台利用 `fitz` (PyMuPDF) 将 PDF 栅格化为高清图片。利用 ThreadPoolExecutor 并行发起 VLM 多模态 OCR 转译。
+- **配图自动裁剪**：若 OCR 结果中返回 `[ILLUSTRATION_BOX: ymin, xmin, ymax, xmax]` 百分比坐标，后端利用 Pillow 自动裁剪原图并作为临时图片暂存在 `static/uploads/tmp/`。
+- **进度轮询与状态展示**：前端通过 `/api/upload/pdf-task` 提交文件并在右侧展现毛玻璃遮罩层与进度条，以每 1.5 秒的频率请求 `/api/tasks/{task_id}/status` 直至 `completed`。
+- **手动拖拽框选截图**：每个拆解卡片均提供“手动截图”选项，点击可调出 PDF 页面查看灯箱，支持在页面图上左键点击并拖拽框选区域，向 `/api/ai/manual-crop-pdf` 发送百分比坐标进行精准的物理裁剪配图。
+- **生命周期管理与净化**：
+  - **升级晋升 (Promotion)**：保存题目或更新题目时，若检测到 `/tmp/` 下的临时裁剪图，系统自动在后端将其 `shutil.move` 到 `static/uploads/` 永久保存并同步修改正文中的引用。
+  - **临时清理 (Cleanup)**：如果用户点击“一键清除”或关闭拆卷面板，前端会调用 `/api/ai/clear-temp-crops` 将所有产生的未保存裁剪配图从磁盘上彻底物理删除。
+  - **定时净化 (Self-Healing)**：自愈清理任务中加入对 `static/uploads/tmp/` 目录的扫描，定时物理删除修改时间超过 1 小时的孤儿或废弃临时裁剪图片。
+
 ## 4. 外部 API 接入与接口安全严格规范
 必须读取根目录 `.env` 文件中的密钥进行 API 调用：
 - **安全鉴权机制**：

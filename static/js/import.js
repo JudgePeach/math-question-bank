@@ -833,6 +833,9 @@
         }
 
         function closeImportModal() {
+            if (typeof performOrphanedTempCropsCleanup === 'function') {
+                performOrphanedTempCropsCleanup();
+            }
             const modal = document.getElementById('latexImportModal');
             modal.classList.add('opacity-0');
             modal.querySelector('div').classList.remove('scale-100');
@@ -841,6 +844,388 @@
                 modal.classList.add('hidden');
             }, 300);
         }
+
+        // PDF & Crop Global States
+        window.currentPdfFile = null;
+        window.pdfPageImages = [];
+        window.currentPdfTaskId = null;
+        window.activeCropQuestionIndex = null;
+        window.tempCroppedPathsThisSession = [];
+
+        // Crop Selection variables
+        let isDrawing = false;
+        let startX = 0;
+        let startY = 0;
+        let rectLeft = 0;
+        let rectTop = 0;
+        let rectWidth = 0;
+        let rectHeight = 0;
+        let activePageIndex = 0;
+        let baseWidth = 0;
+        let baseHeight = 0;
+        let zoomFactor = 1.0;
+
+        window.zoomPdfCropIn = function() {
+            zoomFactor = Math.min(3.0, zoomFactor + 0.2);
+            applyZoom();
+        };
+
+        window.zoomPdfCropOut = function() {
+            zoomFactor = Math.max(0.5, zoomFactor - 0.2);
+            applyZoom();
+        };
+
+        window.resetPdfCropZoom = function() {
+            zoomFactor = 1.0;
+            applyZoom();
+        };
+
+        function applyZoom() {
+            const img = document.getElementById('pdfCropActiveImage');
+            const container = document.getElementById('pdfCropImageContainer');
+            const zoomText = document.getElementById('pdfZoomFactorText');
+            if (!img || !container || baseWidth === 0) return;
+            
+            const w = baseWidth * zoomFactor;
+            const h = baseHeight * zoomFactor;
+            
+            img.style.width = `${w}px`;
+            img.style.height = `${h}px`;
+            img.style.maxWidth = 'none';
+            img.style.maxHeight = 'none';
+            
+            container.style.width = `${w}px`;
+            container.style.height = `${h}px`;
+            
+            if (zoomText) {
+                zoomText.textContent = `${Math.round(zoomFactor * 100)}%`;
+            }
+            
+            clearPdfCropSelection();
+        }
+
+        function openPdfCropModalForQuestion(questionIndex) {
+            window.activeCropQuestionIndex = questionIndex;
+            activePageIndex = 0;
+            zoomFactor = 1.0;
+            baseWidth = 0;
+            baseHeight = 0;
+            window.lastCropLoadedSrc = '';
+            
+            // Render sidebar page thumbnails
+            renderPdfPagesThumbnails();
+            
+            // Setup drawing listeners FIRST to avoid load race conditions
+            setupPdfCropDrawListeners();
+            
+            // Load the first page (triggers src change and onload cleanly)
+            loadPdfCropPage(0);
+            
+            // Show modal
+            const modal = document.getElementById('pdfCropModal');
+            modal.classList.remove('hidden');
+            setTimeout(() => {
+                modal.classList.remove('opacity-0');
+                modal.querySelector('div').classList.remove('scale-95');
+                modal.querySelector('div').classList.add('scale-100');
+            }, 50);
+        }
+
+        function closePdfCropModal() {
+            const modal = document.getElementById('pdfCropModal');
+            modal.classList.add('opacity-0');
+            modal.querySelector('div').classList.remove('scale-100');
+            modal.querySelector('div').classList.add('scale-95');
+            setTimeout(() => {
+                modal.classList.add('hidden');
+                clearPdfCropSelection();
+            }, 300);
+        }
+
+        function renderPdfPagesThumbnails() {
+            const container = document.getElementById('pdfPagesThumbnailsContainer');
+            container.innerHTML = '';
+            
+            window.pdfPageImages.forEach((url, i) => {
+                const thumb = document.createElement('div');
+                thumb.className = `cursor-pointer border-2 rounded-lg overflow-hidden transition-all duration-200 aspect-[3/4] relative group hover:border-brand-500 bg-white ${i === activePageIndex ? 'border-brand-500 shadow-md ring-2 ring-brand-500/20' : 'border-slate-200'}`;
+                thumb.innerHTML = `
+                    <img src="${url}" class="w-full h-full object-cover">
+                    <div class="absolute bottom-1 right-1 bg-black/60 text-white text-[8px] px-1 rounded font-bold">P${i + 1}</div>
+                `;
+                thumb.onclick = () => {
+                    loadPdfCropPage(i);
+                };
+                container.appendChild(thumb);
+            });
+        }
+
+        function loadPdfCropPage(pageIdx) {
+            activePageIndex = pageIdx;
+            
+            // Update active thumbnail border class
+            const thumbnails = document.getElementById('pdfPagesThumbnailsContainer').children;
+            for (let i = 0; i < thumbnails.length; i++) {
+                if (i === pageIdx) {
+                    thumbnails[i].className = 'cursor-pointer border-2 rounded-lg overflow-hidden transition-all duration-200 aspect-[3/4] relative group hover:border-brand-500 bg-white border-brand-500 shadow-md ring-2 ring-brand-500/20';
+                } else {
+                    thumbnails[i].className = 'cursor-pointer border-2 rounded-lg overflow-hidden transition-all duration-200 aspect-[3/4] relative group hover:border-brand-500 bg-white border-slate-200';
+                }
+            }
+            
+            document.getElementById('pdfCropPageIndicator').textContent = `第 ${pageIdx + 1} / ${window.pdfPageImages.length} 页`;
+            
+            const img = document.getElementById('pdfCropActiveImage');
+            img.src = window.pdfPageImages[pageIdx];
+            
+            clearPdfCropSelection();
+        }
+
+        function setupPdfCropDrawListeners() {
+            const wrapper = document.getElementById('pdfCropCanvasWrapper');
+            if (!wrapper) return;
+            
+            // Recreate wrapper to drop old listeners clean
+            const newWrapper = wrapper.cloneNode(true);
+            wrapper.parentNode.replaceChild(newWrapper, wrapper);
+            
+            const activeWrapper = document.getElementById('pdfCropCanvasWrapper');
+            const activeContainer = document.getElementById('pdfCropImageContainer');
+            const activeOverlay = document.getElementById('pdfCropOverlayRect');
+            const activeImg = document.getElementById('pdfCropActiveImage');
+            
+            // Bind trackpad pinch zoom
+            activeWrapper.addEventListener('wheel', (e) => {
+                if (e.ctrlKey || e.metaKey) {
+                    e.preventDefault();
+                    const zoomSpeed = 0.03;
+                    if (e.deltaY < 0) {
+                        zoomFactor = Math.min(3.0, zoomFactor + zoomSpeed);
+                    } else {
+                        zoomFactor = Math.max(0.5, zoomFactor - zoomSpeed);
+                    }
+                    applyZoom();
+                }
+            }, { passive: false });
+            
+            // Bind image onload
+            activeImg.onload = function() {
+                if (baseWidth === 0 || activeImg.src !== window.lastCropLoadedSrc) {
+                    // Reset style to read original viewport-fitted size
+                    activeImg.style.width = '';
+                    activeImg.style.height = '';
+                    activeImg.style.maxWidth = '';
+                    activeImg.style.maxHeight = '';
+                    
+                    baseWidth = activeImg.clientWidth || 600;
+                    baseHeight = activeImg.clientHeight || 800;
+                    window.lastCropLoadedSrc = activeImg.src;
+                }
+                applyZoom();
+            };
+            
+            // Bind drawing select listeners
+            activeContainer.addEventListener('mousedown', (e) => {
+                if (e.button !== 0) return; // Only left click
+                isDrawing = true;
+                
+                const rect = activeContainer.getBoundingClientRect();
+                startX = e.clientX - rect.left;
+                startY = e.clientY - rect.top;
+                
+                rectLeft = startX;
+                rectTop = startY;
+                rectWidth = 0;
+                rectHeight = 0;
+                
+                activeOverlay.style.left = `${rectLeft}px`;
+                activeOverlay.style.top = `${rectTop}px`;
+                activeOverlay.style.width = '0px';
+                activeOverlay.style.height = '0px';
+                activeOverlay.classList.remove('hidden');
+                
+                e.preventDefault();
+            });
+            
+            window.addEventListener('mousemove', (e) => {
+                if (!isDrawing) return;
+                
+                const rect = activeContainer.getBoundingClientRect();
+                let currentX = e.clientX - rect.left;
+                let currentY = e.clientY - rect.top;
+                
+                currentX = Math.max(0, Math.min(currentX, rect.width));
+                currentY = Math.max(0, Math.min(currentY, rect.height));
+                
+                rectLeft = Math.min(startX, currentX);
+                rectTop = Math.min(startY, currentY);
+                rectWidth = Math.abs(startX - currentX);
+                rectHeight = Math.abs(startY - currentY);
+                
+                activeOverlay.style.left = `${rectLeft}px`;
+                activeOverlay.style.top = `${rectTop}px`;
+                activeOverlay.style.width = `${rectWidth}px`;
+                activeOverlay.style.height = `${rectHeight}px`;
+            });
+            
+            window.addEventListener('mouseup', () => {
+                if (!isDrawing) return;
+                isDrawing = false;
+                
+                if (rectWidth > 15 && rectHeight > 15) {
+                    document.getElementById('pdfCropConfirmBtn').disabled = false;
+                    document.getElementById('pdfCropClearBtn').disabled = false;
+                } else {
+                    clearPdfCropSelection();
+                }
+            });
+        }
+
+        function clearPdfCropSelection() {
+            const overlay = document.getElementById('pdfCropOverlayRect');
+            if (overlay) {
+                overlay.classList.add('hidden');
+                overlay.style.width = '0px';
+                overlay.style.height = '0px';
+            }
+            rectWidth = 0;
+            rectHeight = 0;
+            
+            const confirmBtn = document.getElementById('pdfCropConfirmBtn');
+            if (confirmBtn) confirmBtn.disabled = true;
+            
+            const clearBtn = document.getElementById('pdfCropClearBtn');
+            if (clearBtn) clearBtn.disabled = true;
+        }
+
+        function submitPdfCropCoordinates() {
+            const img = document.getElementById('pdfCropActiveImage');
+            const container = document.getElementById('pdfCropImageContainer');
+            
+            // Adjust coords relative to base (un-zoomed) dimensions
+            const containerRect = container.getBoundingClientRect();
+            
+            const xmin = (rectLeft / containerRect.width) * 100.0;
+            const ymin = (rectTop / containerRect.height) * 100.0;
+            const xmax = ((rectLeft + rectWidth) / containerRect.width) * 100.0;
+            const ymax = ((rectTop + rectHeight) / containerRect.height) * 100.0;
+            
+            const confirmBtn = document.getElementById('pdfCropConfirmBtn');
+            confirmBtn.disabled = true;
+            confirmBtn.innerHTML = '<i class="fa-solid fa-spinner animate-spin"></i><span>正在裁剪...</span>';
+            
+            fetch('/api/ai/manual-crop-pdf', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'X-Local-Token': localStorage.getItem('local_token') || ''
+                },
+                body: JSON.stringify({
+                    task_id: window.currentPdfTaskId,
+                    page_index: activePageIndex,
+                    ymin: ymin,
+                    xmin: xmin,
+                    ymax: ymax,
+                    xmax: xmax
+                })
+            })
+            .then(r => {
+                if (!r.ok) throw new Error("裁剪失败");
+                return r.json();
+            })
+            .then(data => {
+                if (data.status === 'success') {
+                    showToast("裁剪并生成配图成功！已自动关联至此题卡。");
+                    
+                    const croppedUrl = data.image_path;
+                    window.tempCroppedPathsThisSession.push(croppedUrl);
+                    
+                    const qIdx = window.activeCropQuestionIndex;
+                    if (qIdx !== null && parsedQuestionsData[qIdx]) {
+                        const q = parsedQuestionsData[qIdx];
+                        if (!q.image_paths) q.image_paths = [];
+                        
+                        if (!q.image_paths.includes(croppedUrl)) {
+                            q.image_paths.push(croppedUrl);
+                        }
+                        
+                        // Append the image tag to content textarea to render in card preview
+                        const card = document.getElementById(`parsed-card-${qIdx}`);
+                        if (card) {
+                            const textarea = card.querySelector('.card-content-textarea');
+                            if (textarea) {
+                                textarea.value = textarea.value.trim() + `\n\n![插图](${croppedUrl})\n\n`;
+                                textarea.dispatchEvent(new Event('input'));
+                            }
+                        }
+                        
+                        const badgesContainer = document.getElementById(`card-images-badges-${qIdx}`);
+                        if (badgesContainer) {
+                            badgesContainer.innerHTML = '';
+                            q.image_paths.forEach(path => {
+                                const filename = path.split('/').pop();
+                                const badge = document.createElement('div');
+                                badge.className = "flex items-center space-x-1 px-2 py-0.5 bg-slate-100 border rounded-full text-[9px] font-semibold text-slate-500 hover:bg-white transition-colors cursor-pointer select-none";
+                                badge.innerHTML = `<i class="fa-solid fa-image text-slate-400"></i><span class="truncate max-w-[80px]" title="${filename}">${filename}</span>`;
+                                badgesContainer.appendChild(badge);
+                            });
+                        }
+                    }
+                    
+                    closePdfCropModal();
+                } else {
+                    throw new Error(data.message || "裁剪错误");
+                }
+            })
+            .catch(err => {
+                console.error(err);
+                showToast(`手动截图报错: ${err.message}`, 'error');
+            })
+            .finally(() => {
+                confirmBtn.innerHTML = '<i class="fa-solid fa-crop-simple mr-1.5"></i><span>确认截取配图</span>';
+            });
+        }
+
+        function performOrphanedTempCropsCleanup() {
+            const tempPaths = [];
+            parsedQuestionsData.forEach(q => {
+                if (!q.saved && q.image_paths) {
+                    q.image_paths.forEach(p => {
+                        if (p.includes('/tmp/pdf_crop_')) {
+                            tempPaths.push(p);
+                        }
+                    });
+                }
+            });
+            
+            if (window.tempCroppedPathsThisSession && window.tempCroppedPathsThisSession.length > 0) {
+                window.tempCroppedPathsThisSession.forEach(p => {
+                    if (!tempPaths.includes(p)) {
+                        tempPaths.push(p);
+                    }
+                });
+            }
+            
+            if (tempPaths.length === 0) return;
+            
+            fetch('/api/ai/clear-temp-crops', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'X-Local-Token': localStorage.getItem('local_token') || ''
+                },
+                body: JSON.stringify({ paths: tempPaths })
+            })
+            .then(r => r.json())
+            .then(res => {
+                console.log("[Storage Cleanup] Server cleaned temporary crops:", res);
+                window.tempCroppedPathsThisSession = [];
+            })
+            .catch(err => {
+                console.error("[Storage Cleanup] Error:", err);
+            });
+        }
+
 
         function setupImportFileHandlers() {
             const texDrop = document.getElementById('texDropzone');
@@ -855,7 +1240,7 @@
             const imagesFileIcon = document.getElementById('imagesFileIcon');
             const imagesListContainer = document.getElementById('importImagesList');
 
-            // LaTeX File drag & select
+            // LaTeX / PDF File drag & select
             texDrop.addEventListener('click', () => texInput.click());
             texInput.addEventListener('change', (e) => handleTexFileSelect(e.target.files[0]));
 
@@ -875,32 +1260,47 @@
 
             texDrop.addEventListener('drop', (e) => {
                 const file = e.dataTransfer.files[0];
-                if (file && file.name.endsWith('.tex')) {
+                if (file && (file.name.endsWith('.tex') || file.name.endsWith('.pdf'))) {
                     handleTexFileSelect(file);
                 } else {
-                    showToast('请拖入有效的 .tex 格式试卷文件！', 'warning');
+                    showToast('请拖入有效的 .tex 或 .pdf 格式试卷文件！', 'warning');
                 }
             });
 
             function handleTexFileSelect(file) {
                 if (!file) return;
-                texFileName.textContent = file.name;
-                texFileName.className = "text-xs text-brand-600 font-bold";
-                texFileIcon.className = "fa-solid fa-file-circle-check text-brand-500 text-xl mb-1.5 animate-bounce";
                 
-                const reader = new FileReader();
-                reader.onload = (e) => {
-                    latexTextarea.value = e.target.result;
+                if (file.name.endsWith('.pdf')) {
+                    window.currentPdfFile = file;
+                    texFileName.textContent = file.name;
+                    texFileName.className = "text-xs text-brand-600 font-bold";
+                    texFileIcon.className = "fa-solid fa-file-pdf text-brand-500 text-xl mb-1.5 animate-bounce";
+                    latexTextarea.value = `[PDF 试卷已成功载入: ${file.name}]\n总页数、高清转换与插图定位将会在点击“开始智能拆解试卷”后于后台异步执行。`;
+                    latexTextarea.disabled = true;
                     
-                    // Auto-extract title from the LaTeX file content
-                    const autoTitle = extractTitleFromLatex(e.target.result);
-                    if (autoTitle) {
-                        const titleInput = document.getElementById('importPaperTitle');
-                        titleInput.value = autoTitle;
-                        showToast(`已自动从 LaTeX 文件中读取试卷标题: ${autoTitle}`);
+                    const titleInput = document.getElementById('importPaperTitle');
+                    if (!titleInput.value) {
+                        titleInput.value = file.name.replace(/\.[^/.]+$/, "");
                     }
-                };
-                reader.readAsText(file);
+                } else {
+                    window.currentPdfFile = null;
+                    texFileName.textContent = file.name;
+                    texFileName.className = "text-xs text-brand-600 font-bold";
+                    texFileIcon.className = "fa-solid fa-file-circle-check text-brand-500 text-xl mb-1.5 animate-bounce";
+                    latexTextarea.disabled = false;
+                    
+                    const reader = new FileReader();
+                    reader.onload = (e) => {
+                        latexTextarea.value = e.target.result;
+                        const autoTitle = extractTitleFromLatex(e.target.result);
+                        if (autoTitle) {
+                            const titleInput = document.getElementById('importPaperTitle');
+                            titleInput.value = autoTitle;
+                            showToast(`已自动从 LaTeX 文件中读取试卷标题: ${autoTitle}`);
+                        }
+                    };
+                    reader.readAsText(file);
+                }
             }
 
             // Images File multi drag & select
@@ -972,8 +1372,8 @@
             const title = titleInput.value.trim();
             const latex = document.getElementById('importLatexContent').value.trim();
 
-            if (!latex) {
-                showToast('请粘贴或上传 LaTeX 试卷内容！', 'warning');
+            if (!latex && !window.currentPdfFile) {
+                showToast('请粘贴或上传 LaTeX 试卷内容，或拖入 PDF 文件！', 'warning');
                 return;
             }
 
@@ -997,8 +1397,77 @@
             runBtn.disabled = true;
             runBtn.innerHTML = '<i class="fa-solid fa-spinner animate-spin"></i> <span>正在全力拆解中...</span>';
 
+            const generateAnswersCheckbox = document.getElementById('importGenerateAnswers');
+            const generateAnswers = generateAnswersCheckbox ? generateAnswersCheckbox.checked : false;
+
+            // Handle PDF branch
+            if (window.currentPdfFile) {
+                document.getElementById('importLoadingText').textContent = '正在上传 PDF 试卷并创建处理任务...';
+                appendImportLog('开始上传 PDF 试卷文件...', 'info');
+                document.getElementById('importProgressBarContainer').classList.remove('hidden');
+                document.getElementById('importProgressBar').style.width = '0%';
+
+                const pdfFormData = new FormData();
+                pdfFormData.append('file', window.currentPdfFile);
+                pdfFormData.append('generate_answers', generateAnswers ? "true" : "false");
+
+                fetch('/api/upload/pdf-task', {
+                    method: 'POST',
+                    headers: {
+                        'X-Local-Token': localStorage.getItem('local_token') || ''
+                    },
+                    body: pdfFormData
+                })
+                .then(r => {
+                    if (!r.ok) {
+                        return r.json().then(errData => {
+                            throw new Error(errData.detail || errData.message || `HTTP ${r.status}`);
+                        });
+                    }
+                    return r.json();
+                })
+                .then(taskData => {
+                    if (taskData.status === 'success') {
+                        const taskId = taskData.task_id;
+                        window.currentPdfTaskId = taskId;
+                        appendImportLog(`任务已成功创建！任务 ID: ${taskId}，开始轮询后台分析进度...`, 'success');
+                        pollPdfTaskStatus(taskId, title);
+                    } else {
+                        throw new Error(taskData.message || '创建 PDF 解析任务失败');
+                    }
+                })
+                .catch(err => {
+                    console.error(err);
+                    appendImportLog(`PDF 任务创建失败: ${err.message}`, 'error');
+                    
+                    const loadingIcon = document.querySelector('#importLoadingState .fa-spinner');
+                    if (loadingIcon) {
+                        loadingIcon.classList.remove('fa-spinner', 'animate-spin');
+                        loadingIcon.classList.add('fa-circle-exclamation', 'text-red-500');
+                    }
+                    document.getElementById('importLoadingText').textContent = 'PDF 上传解析出错！';
+
+                    const loadingState = document.getElementById('importLoadingState');
+                    let resetBtn = document.getElementById('resetImportBtn');
+                    if (!resetBtn) {
+                        resetBtn = document.createElement('button');
+                        resetBtn.id = 'resetImportBtn';
+                        resetBtn.className = 'mt-4 px-6 py-2.5 rounded-xl bg-gradient-to-r from-slate-500 to-slate-600 hover:from-slate-600 hover:to-slate-700 text-white font-bold text-xs shadow-lg transition-all active:scale-95 flex items-center space-x-2';
+                        resetBtn.innerHTML = '<i class="fa-solid fa-arrow-rotate-left"></i><span>重置并重新开始</span>';
+                        resetBtn.onclick = resetImportState;
+                        loadingState.appendChild(resetBtn);
+                    }
+                    resetBtn.classList.remove('hidden');
+                    runBtn.disabled = false;
+                    runBtn.innerHTML = '<i class="fa-solid fa-wand-magic-sparkles"></i> <span>一键 AI 智能拆解并关联</span>';
+                });
+                return;
+            }
+
+            // Normal LaTeX branch
             document.getElementById('importLoadingText').textContent = '正在上传配套图片并整理文件名映射...';
             appendImportLog('开始检查配套图片...', 'info');
+            document.getElementById('importProgressBarContainer').classList.add('hidden');
 
             let uploadPromise = Promise.resolve({});
             if (batchSelectedImages.length > 0) {
@@ -1010,6 +1479,9 @@
 
                 uploadPromise = fetch('/api/upload/batch', {
                     method: 'POST',
+                    headers: {
+                        'X-Local-Token': localStorage.getItem('local_token') || ''
+                    },
                     body: imgFormData
                 })
                 .then(r => r.json())
@@ -1040,9 +1512,6 @@
                     appendImportLog(`正在调用 ${parseModelFriendly} 教研大模型进行试题智能分割与属性匹配...`, 'info');
                     appendImportLog('大纲映射范围：高中人教版A 必修一至选择性必修三。请耐心等候...', 'info');
 
-                    const generateAnswersCheckbox = document.getElementById('importGenerateAnswers');
-                    const generateAnswers = generateAnswersCheckbox ? generateAnswersCheckbox.checked : false;
-
                     const parseFormData = new FormData();
                     parseFormData.append('latex_content', latex);
                     parseFormData.append('paper_title', title);
@@ -1051,6 +1520,9 @@
 
                     return fetch('/api/ai/parse-paper', {
                         method: 'POST',
+                        headers: {
+                            'X-Local-Token': localStorage.getItem('local_token') || ''
+                        },
                         body: parseFormData
                     });
                 })
@@ -1079,7 +1551,6 @@
                     console.error(err);
                     appendImportLog(`拆解出错: ${err.message}`, 'error');
 
-                    // 更新加载状态为中断样式
                     const loadingIcon = document.querySelector('#importLoadingState .fa-spinner');
                     if (loadingIcon) {
                         loadingIcon.classList.remove('fa-spinner', 'animate-spin');
@@ -1087,7 +1558,6 @@
                     }
                     document.getElementById('importLoadingText').textContent = '试卷拆解中断！';
 
-                    // 添加重置按钮
                     const loadingState = document.getElementById('importLoadingState');
                     let resetBtn = document.getElementById('resetImportBtn');
                     if (!resetBtn) {
@@ -1106,6 +1576,77 @@
                     runBtn.disabled = false;
                     runBtn.innerHTML = '<i class="fa-solid fa-wand-magic-sparkles"></i> <span>一键 AI 智能拆解并关联</span>';
                 });
+        }
+
+        function pollPdfTaskStatus(taskId, paperTitle) {
+            let lastLog = '';
+            const runBtn = document.getElementById('runParseBtn');
+            
+            const timer = setInterval(() => {
+                fetch(`/api/tasks/${taskId}/status`)
+                .then(r => {
+                    if (!r.ok) throw new Error("获取任务进度失败");
+                    return r.json();
+                })
+                .then(task => {
+                    if (task.progress !== undefined) {
+                        document.getElementById('importProgressBar').style.width = `${task.progress}%`;
+                    }
+                    
+                    if (task.log && task.log !== lastLog) {
+                        lastLog = task.log;
+                        appendImportLog(task.log, 'info');
+                        document.getElementById('importLoadingText').textContent = task.log;
+                    }
+                    
+                    if (task.page_images && task.page_images.length > 0) {
+                        window.pdfPageImages = task.page_images;
+                    }
+                    
+                    if (task.status === 'completed') {
+                        clearInterval(timer);
+                        parsedQuestionsData = task.data || [];
+                        appendImportLog(`PDF 试卷智能分析并拆解成功！共分析出 ${parsedQuestionsData.length} 道高定数学题。`, 'success');
+                        
+                        renderParsedQuestionsList(parsedQuestionsData);
+                        
+                        document.getElementById('importLoadingState').classList.add('hidden');
+                        document.getElementById('parsedQuestionsWrapper').classList.remove('hidden');
+                        
+                        runBtn.disabled = false;
+                        runBtn.innerHTML = '<i class="fa-solid fa-wand-magic-sparkles"></i> <span>一键 AI 智能拆解并关联</span>';
+                    } else if (task.status === 'error') {
+                        clearInterval(timer);
+                        appendImportLog(`分析失败: ${task.error || '未知错误'}`, 'error');
+                        
+                        const loadingIcon = document.querySelector('#importLoadingState .fa-spinner');
+                        if (loadingIcon) {
+                            loadingIcon.classList.remove('fa-spinner', 'animate-spin');
+                            loadingIcon.classList.add('fa-circle-exclamation', 'text-red-500');
+                        }
+                        document.getElementById('importLoadingText').textContent = 'PDF 试卷分析中断！';
+
+                        const loadingState = document.getElementById('importLoadingState');
+                        let resetBtn = document.getElementById('resetImportBtn');
+                        if (!resetBtn) {
+                            resetBtn = document.createElement('button');
+                            resetBtn.id = 'resetImportBtn';
+                            resetBtn.className = 'mt-4 px-6 py-2.5 rounded-xl bg-gradient-to-r from-slate-500 to-slate-600 hover:from-slate-600 hover:to-slate-700 text-white font-bold text-xs shadow-lg transition-all active:scale-95 flex items-center space-x-2';
+                            resetBtn.innerHTML = '<i class="fa-solid fa-arrow-rotate-left"></i><span>重置并重新开始</span>';
+                            resetBtn.onclick = resetImportState;
+                            loadingState.appendChild(resetBtn);
+                        }
+                        resetBtn.classList.remove('hidden');
+                        
+                        runBtn.disabled = false;
+                        runBtn.innerHTML = '<i class="fa-solid fa-wand-magic-sparkles"></i> <span>一键 AI 智能拆解并关联</span>';
+                        showToast(`PDF 拆解分析失败: ${task.error || '未知错误'}`, 'error');
+                    }
+                })
+                .catch(err => {
+                    console.error(err);
+                });
+            }, 1500);
         }
 
         function renderImagesList() {
@@ -1153,7 +1694,10 @@
             if (titleInput) titleInput.value = '';
 
             const latexTextarea = document.getElementById('importLatexContent');
-            if (latexTextarea) latexTextarea.value = '';
+            if (latexTextarea) {
+                latexTextarea.value = '';
+                latexTextarea.disabled = false;
+            }
 
             const texFileInput = document.getElementById('texFileInput');
             if (texFileInput) texFileInput.value = '';
@@ -1165,17 +1709,24 @@
             const texFileName = document.getElementById('texFileName');
             const texFileIcon = document.getElementById('texFileIcon');
             if (texFileName) {
-                texFileName.textContent = "点击或拖放拖入 .tex 格式试卷文件";
+                texFileName.textContent = "点击或拖放拖入 .tex 或 .pdf 格式试卷文件";
                 texFileName.className = "text-xs text-slate-600 font-medium";
             }
             if (texFileIcon) {
-                texFileIcon.className = "fa-solid fa-file-code text-slate-400 text-xl mb-1.5";
+                texFileIcon.className = "fa-solid fa-file-pdf text-slate-400 text-xl mb-1.5";
             }
 
             // 清空批量配图
             batchSelectedImages = [];
             // 重置图片展示列表与状态
             renderImagesList();
+            
+            // 重置 PDF 状态
+            window.currentPdfFile = null;
+            window.pdfPageImages = [];
+            window.currentPdfTaskId = null;
+            window.activeCropQuestionIndex = null;
+            window.tempCroppedPathsThisSession = [];
         }
 
         function resetImportState(showToastMessage = true) {
@@ -1338,10 +1889,18 @@
                         <div class="flex flex-wrap gap-1.5 items-center max-w-[70%]" id="card-images-badges-${index}">
                             <!-- Thumbnail labels of images selected -->
                         </div>
-                        <button onclick="saveParsedQuestion(${index})" class="card-save-btn px-4 py-1.5 rounded-lg text-2xs flex items-center space-x-1 shrink-0 ${q.saved ? 'bg-green-50 text-green-700 font-bold border border-green-200 cursor-not-allowed' : 'glass-btn text-brand-700 font-bold'}" ${q.saved ? 'disabled' : ''}>
-                            <i class="fa-solid ${q.saved ? 'fa-check' : 'fa-file-arrow-up'}"></i>
-                            <span>${q.saved ? '已导入' : '导入此题'}</span>
-                        </button>
+                        <div class="flex items-center space-x-2">
+                            ${window.pdfPageImages && window.pdfPageImages.length > 0 ? `
+                                <button onclick="openPdfCropModalForQuestion(${index})" class="glass-btn text-amber-700 font-bold px-3 py-1.5 rounded-lg text-2xs flex items-center space-x-1" title="查看 PDF 页面并拖拽框选截图">
+                                    <i class="fa-solid fa-scissors"></i>
+                                    <span>手动截图</span>
+                                </button>
+                            ` : ''}
+                            <button onclick="saveParsedQuestion(${index})" class="card-save-btn px-4 py-1.5 rounded-lg text-2xs flex items-center space-x-1 shrink-0 ${q.saved ? 'bg-emerald-50 text-emerald-700 font-bold border border-emerald-250 hover:bg-emerald-100' : 'glass-btn text-brand-700 font-bold'}">
+                                <i class="fa-solid ${q.saved ? 'fa-rotate-right' : 'fa-file-arrow-up'}"></i>
+                                <span>${q.saved ? '再次导入' : '导入此题'}</span>
+                            </button>
+                        </div>
                     </div>
                 `;
 
@@ -1452,12 +2011,38 @@
             const contentPrev = card.querySelector('.card-content-preview');
             const answerPrev = card.querySelector('.card-answer-preview');
             
+            // Extract card index to find its image_paths dynamically
+            const indexStr = card.id ? card.id.replace('parsed-card-', '') : '';
+            const index = indexStr ? parseInt(indexStr) : null;
+            const q = (index !== null && !isNaN(index)) ? parsedQuestionsData[index] : null;
+            
             // For content
             if (!contentText.trim()) {
                 contentPrev.innerHTML = '<span class="text-slate-400 italic text-2xs">题干预览将在此实时渲染...</span>';
             } else {
                 try {
-                    contentPrev.innerHTML = parseMarkdownWithMath(contentText);
+                    let html = parseMarkdownWithMath(contentText);
+                    
+                    // Automatically append associated image thumbnails to preview if not already rendered in markdown HTML
+                    if (q && q.image_paths && q.image_paths.length > 0) {
+                        let hasUnrenderedImage = false;
+                        let imgHtml = '<div class="flex flex-wrap gap-2 mt-3 pt-2.5 border-t border-dashed border-slate-200/60">';
+                        q.image_paths.forEach(p => {
+                            if (p && !html.includes(p)) {
+                                hasUnrenderedImage = true;
+                                imgHtml += `
+                                    <div class="relative group border border-slate-150 rounded-lg overflow-hidden bg-white max-w-[120px] aspect-[4/3] flex items-center justify-center shadow-2xs hover:shadow-sm transition-all duration-300">
+                                        <img src="${p}" class="max-h-full max-w-full object-contain cursor-zoom-in hover:scale-105 transition-transform duration-300" onclick="window.open('${p}', '_blank')" title="点击在新标签页中查看大图">
+                                    </div>`;
+                            }
+                        });
+                        imgHtml += '</div>';
+                        if (hasUnrenderedImage) {
+                            html += imgHtml;
+                        }
+                    }
+                    
+                    contentPrev.innerHTML = html;
                     renderMathInElement(contentPrev, {
                         delimiters: [
                             {left: '$$', right: '$$', display: true},
@@ -1495,7 +2080,7 @@
 
         function saveParsedQuestion(index) {
             const q = parsedQuestionsData[index];
-            if (!q || q.saved) return Promise.resolve(true);
+            if (!q) return Promise.resolve(true);
 
             const card = document.getElementById(`parsed-card-${index}`);
             if (!card) return Promise.reject(new Error('Card element not found'));
@@ -1564,8 +2149,9 @@
                     statusBadge.textContent = '已导入';
                     statusBadge.className = 'card-status-badge text-[10px] font-bold px-2 py-0.5 rounded bg-green-50 text-green-700 border border-green-150 animate-pulse';
                     
-                    saveBtn.className = 'card-save-btn px-4 py-1.5 rounded-lg bg-green-50 text-green-700 font-bold text-2xs border border-green-200 cursor-not-allowed';
-                    saveBtn.innerHTML = '<i class="fa-solid fa-check"></i> <span>已导入</span>';
+                    saveBtn.className = 'card-save-btn px-4 py-1.5 rounded-lg bg-emerald-50 text-emerald-700 font-bold text-2xs border border-emerald-250 hover:bg-emerald-100 transition-colors';
+                    saveBtn.innerHTML = '<i class="fa-solid fa-rotate-right"></i> <span>再次导入</span>';
+                    saveBtn.disabled = false;
                     
                     const cb = card.querySelector('.card-select-checkbox');
                     if (cb) {
@@ -1596,6 +2182,9 @@
 
         function confirmClearAllParsed() {
             if (confirm('确定要清除所有拆解出来的题目，并返回初始录入界面吗？\n清除后，当前列表中的草稿题目将丢失。')) {
+                if (typeof performOrphanedTempCropsCleanup === 'function') {
+                    performOrphanedTempCropsCleanup();
+                }
                 clearAllImportInputs();
                 resetImportState(true);
             }
@@ -2194,7 +2783,7 @@
                 })
                 .then(data => {
                     btn.disabled = false;
-                    btn.innerHTML = '<i class="fa-solid fa-play"></i> <span>编译并插入题干</span>';
+                    btn.innerHTML = '<i class="fa-solid fa-circle-play"></i> <span>编译并插入题干</span>';
                     
                     if (data.status === 'success') {
                         showToast('题干 TikZ 几何图编译成功，已插入插图列表！');
@@ -2235,7 +2824,7 @@
                 })
                 .catch(err => {
                     btn.disabled = false;
-                    btn.innerHTML = '<i class="fa-solid fa-play"></i> <span>编译并插入题干</span>';
+                    btn.innerHTML = '<i class="fa-solid fa-circle-play"></i> <span>编译并插入题干</span>';
                     statusText.textContent = '编译出错';
                     placeholder.classList.remove('hidden');
                     previewImg.classList.add('hidden');
@@ -2440,6 +3029,124 @@
                     btn.innerHTML = '<i class="fa-solid fa-wand-magic-sparkles animate-pulse"></i> <span>AI 纠错</span>';
                     statusText.textContent = '纠错失败';
                     showToast('AI 纠错出错: ' + err.message, 'error');
+                });
+            };
+
+            window.drawContentTikzFromImageWithAI = function() {
+                let originalPath = window.lastOcrOriginalImagePath || '';
+                if (!originalPath) {
+                    const originalImgs = typeof uploadedImages !== 'undefined' ? uploadedImages.filter(path => !path.includes('/tikz_')) : [];
+                    if (originalImgs.length > 0) {
+                        originalPath = originalImgs[0];
+                    }
+                }
+                
+                if (!originalPath) {
+                    showToast('当前题目未检测到任何插图可供 AI 识别绘图。', 'error');
+                    return;
+                }
+                
+                const latexContent = document.getElementById('editContent').value;
+                const btn = document.getElementById('btnDrawContentTikzFromImage');
+                const statusText = document.getElementById('contentTikzStatusText');
+                
+                btn.disabled = true;
+                btn.innerHTML = '<i class="fa-solid fa-spinner animate-spin"></i> <span>识别绘制中...</span>';
+                statusText.textContent = '识别绘制中...';
+                
+                const formData = new FormData();
+                formData.append('image_path', originalPath);
+                if (latexContent && latexContent.trim()) {
+                    formData.append('latex_content', latexContent);
+                }
+                
+                fetch('/api/ai/draw_tikz_from_image', {
+                    method: 'POST',
+                    body: formData
+                })
+                .then(r => {
+                    if (!r.ok) {
+                        return r.json().then(data => { throw new Error(data.detail || '识别绘图失败') });
+                    }
+                    return r.json();
+                })
+                .then(data => {
+                    btn.disabled = false;
+                    btn.innerHTML = '<i class="fa-solid fa-circle-nodes"></i> <span>AI 识图绘图</span>';
+                    
+                    if (data.status === 'success') {
+                        showToast('AI 识图绘图完成，已生成 TikZ 代码并开始自动编译！');
+                        document.getElementById('editContentTikzCode').value = data.tikz_code;
+                        document.getElementById('editContentTikzCode').dispatchEvent(new Event('input'));
+                        window.renderContentTikzToImage();
+                    } else {
+                        throw new Error(data.message || '识别绘图失败');
+                    }
+                })
+                .catch(err => {
+                    btn.disabled = false;
+                    btn.innerHTML = '<i class="fa-solid fa-circle-nodes"></i> <span>AI 识图绘图</span>';
+                    statusText.textContent = '识别绘图失败';
+                    showToast('AI 识图绘图出错: ' + err.message, 'error');
+                });
+            };
+
+            window.drawAnswerTikzFromImageWithAI = function() {
+                let originalPath = window.lastOcrOriginalImagePath || '';
+                if (!originalPath) {
+                    const originalImgs = typeof uploadedImages !== 'undefined' ? uploadedImages.filter(path => !path.includes('/tikz_')) : [];
+                    if (originalImgs.length > 0) {
+                        originalPath = originalImgs[0];
+                    }
+                }
+                
+                if (!originalPath) {
+                    showToast('当前题目未检测到任何插图可供 AI 识别绘图。', 'error');
+                    return;
+                }
+                
+                const latexContent = document.getElementById('editContent').value;
+                const btn = document.getElementById('btnDrawAnswerTikzFromImage');
+                const statusText = document.getElementById('answerTikzStatusText');
+                
+                btn.disabled = true;
+                btn.innerHTML = '<i class="fa-solid fa-spinner animate-spin"></i> <span>识别绘制中...</span>';
+                statusText.textContent = '识别绘制中...';
+                
+                const formData = new FormData();
+                formData.append('image_path', originalPath);
+                if (latexContent && latexContent.trim()) {
+                    formData.append('latex_content', latexContent);
+                }
+                
+                fetch('/api/ai/draw_tikz_from_image', {
+                    method: 'POST',
+                    body: formData
+                })
+                .then(r => {
+                    if (!r.ok) {
+                        return r.json().then(data => { throw new Error(data.detail || '识别绘图失败') });
+                    }
+                    return r.json();
+                })
+                .then(data => {
+                    btn.disabled = false;
+                    btn.innerHTML = '<i class="fa-solid fa-circle-nodes"></i> <span>AI 识图绘图</span>';
+                    
+                    if (data.status === 'success') {
+                        showToast('AI 识图绘图完成，已生成 TikZ 代码并开始自动编译！');
+                        document.getElementById('editAnswerTikzCode').value = data.tikz_code;
+                        document.getElementById('editAnswerTikzCode').dispatchEvent(new Event('input'));
+                        window.renderAnswerTikzToImage();
+                    } else {
+                        throw new Error(data.message || '识别绘图失败');
+                    }
+                })
+                .catch(err => {
+                    btn.disabled = false;
+                    btn.innerHTML = '<i class="fa-solid fa-circle-nodes"></i> <span>AI 识图绘图</span>';
+                    statusText.textContent = '识别绘图失败';
+                    showToast('AI 识图绘图出错: ' + err.message, 'error');
                 });
             };
         });
