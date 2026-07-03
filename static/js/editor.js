@@ -1591,6 +1591,9 @@ const PAGE_LIMIT = 20;
                                .replace(/<ul class="list-disc pl-4 my-1">\s*<\/li>/g, '<ul class="list-disc pl-4 my-1">')
                                .replace(/<ol class="list-decimal pl-4 my-1">\s*<\/li>/g, '<ol class="list-decimal pl-4 my-1">');
 
+            // Process LaTeX bold formatting outside math environments
+            tempText = tempText.replace(/\\textbf\s*\{([^{}]*?)\}/g, '<strong>$1</strong>');
+
             // Replace spacing commands outside math blocks with non-breaking spaces for a clean sidebar preview
             tempText = tempText.replace(/\\\\qquad/g, '&nbsp;&nbsp;&nbsp;&nbsp;')
                                .replace(/\\\\quad/g, '&nbsp;&nbsp;')
