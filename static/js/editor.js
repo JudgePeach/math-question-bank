@@ -1689,6 +1689,9 @@ const PAGE_LIMIT = 20;
                                .replace(/\\qquad/g, '<span style="display:inline-block; width:2em;"></span>')
                                .replace(/\\quad/g, '<span style="display:inline-block; width:1em;"></span>');
             
+            // Process LaTeX bold formatting outside math environments
+            tempText = tempText.replace(/\\textbf\s*\{([^{}]*?)\}/g, '<strong>$1</strong>');
+
             // Replace all non-math LaTeX line breaks with HTML br tags
             tempText = tempText.replace(/\\\\/g, '<br>');
             
