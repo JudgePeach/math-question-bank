@@ -13,6 +13,7 @@
             };
             
             setupDragDropListeners(illDropZone, (file) => uploadIllustration(file));
+            setupPasteListener(illDropZone, (file) => uploadIllustration(file));
             setupPasteListener(document.getElementById('editContent'), (file) => uploadIllustration(file));
 
             // Setup OCR drag and drop
@@ -79,17 +80,32 @@
                 }
             });
 
-            function getDistanceFromScreenCenter(element) {
-                if (!element) return Infinity;
-                const rect = element.getBoundingClientRect();
-                const elementCenterY = rect.top + rect.height / 2;
-                const screenCenterY = window.innerHeight / 2;
-                return Math.abs(elementCenterY - screenCenterY);
+            // Initialize and persist state of skipTikz checkboxes in localStorage
+            const contentSkipBox = document.getElementById('contentOcrSkipTikz');
+            const answerSkipBox = document.getElementById('answerOcrSkipTikz');
+
+            if (contentSkipBox) {
+                const savedContentState = localStorage.getItem('contentOcrSkipTikz');
+                if (savedContentState !== null) {
+                    contentSkipBox.checked = (savedContentState === 'true');
+                }
+                contentSkipBox.addEventListener('change', () => {
+                    localStorage.setItem('contentOcrSkipTikz', contentSkipBox.checked);
+                });
             }
 
-            // Global smart clipboard paste routing for images/screenshots (Tab visibility priority)
+            if (answerSkipBox) {
+                const savedAnswerState = localStorage.getItem('answerOcrSkipTikz');
+                if (savedAnswerState !== null) {
+                    answerSkipBox.checked = (savedAnswerState === 'true');
+                }
+                answerSkipBox.addEventListener('change', () => {
+                    localStorage.setItem('answerOcrSkipTikz', answerSkipBox.checked);
+                });
+            }
+
+            // Global smart clipboard paste routing for images/screenshots (Euclidean distance matching to closest visible DropZone)
             window.addEventListener('paste', (e) => {
-                const activeEl = document.activeElement;
                 const items = (e.clipboardData || e.originalEvent.clipboardData).items;
                 let hasImage = false;
                 let imageFile = null;
@@ -104,68 +120,63 @@
                 }
                 
                 if (hasImage && imageFile) {
-                    // Check active tab visibility to route intelligently first!
-                    const contentOcrTab = document.getElementById('contentTabContent-ocr');
-                    const answerOcrTab = document.getElementById('tabContent-ocr');
-                    const answerImageTab = document.getElementById('tabContent-image');
-                    
-                    const isContentOcrVisible = contentOcrTab && !contentOcrTab.classList.contains('hidden');
-                    const isAnswerOcrVisible = answerOcrTab && !answerOcrTab.classList.contains('hidden');
-                    const isAnswerImageVisible = answerImageTab && !answerImageTab.classList.contains('hidden');
-                    
-                    // Determine which panel is the target of the paste action
-                    let targetPanel = null;
-                    
-                    // 1. If we have a focused input element, prioritize its container
-                    if (activeEl) {
-                        if (activeEl.closest('#answerExplanationPanel')) {
-                            targetPanel = 'answer';
-                        } else if (activeEl.closest('#questionContentPanel')) {
-                            targetPanel = 'question';
+                    // Define all potential target zones with their corresponding elements and handlers
+                    const targets = [
+                        {
+                            element: document.getElementById('illustrationDropZone'),
+                            handler: (file) => uploadIllustration(file)
+                        },
+                        {
+                            element: document.getElementById('contentOcrDropZone'),
+                            handler: (file) => runContentOcr(file)
+                        },
+                        {
+                            element: document.getElementById('ocrDropZone'),
+                            handler: (file) => runOcr(file)
+                        },
+                        {
+                            element: document.getElementById('imageAnswerDropZone'),
+                            handler: (file) => uploadAnswerImage(file)
                         }
-                    }
+                    ];
                     
-                    // 2. If no explicit container focus, determine based on which panel is closer to the screen center (visible viewport)
-                    if (!targetPanel) {
-                        const questionPanel = document.getElementById('questionContentPanel');
-                        const answerPanel = document.getElementById('answerExplanationPanel');
+                    // Filter to only get elements that are actually visible on screen
+                    const visibleTargets = targets.filter(t => {
+                        return t.element && t.element.offsetParent !== null;
+                    });
+                    
+                    if (visibleTargets.length > 0) {
+                        // Calculate coordinates of the center of the viewport
+                        const viewCenterX = window.innerWidth / 2;
+                        const viewCenterY = window.innerHeight / 2;
                         
-                        if (questionPanel && answerPanel) {
-                            const qDist = getDistanceFromScreenCenter(questionPanel);
-                            const aDist = getDistanceFromScreenCenter(answerPanel);
-                            targetPanel = aDist < qDist ? 'answer' : 'question';
-                        }
-                    }
-                    
-                    // 3. Route to the target panel intelligently
-                    if (targetPanel === 'answer') {
-                        if (isAnswerOcrVisible) {
-                            runOcr(imageFile);
-                            e.preventDefault();
-                            return;
-                        } else if (isAnswerImageVisible) {
-                            uploadAnswerImage(imageFile);
-                            e.preventDefault();
-                            return;
-                        } else {
-                            // Default to OCR in answer area if AI or other tab is focused
-                            runOcr(imageFile);
-                            e.preventDefault();
-                            return;
-                        }
-                    } else if (targetPanel === 'question') {
-                        if (isContentOcrVisible) {
-                            runContentOcr(imageFile);
-                            e.preventDefault();
-                            return;
-                        } else {
-                            uploadIllustration(imageFile);
+                        let bestTarget = null;
+                        let minDistance = Infinity;
+                        
+                        visibleTargets.forEach(t => {
+                            const rect = t.element.getBoundingClientRect();
+                            const centerX = rect.left + rect.width / 2;
+                            const centerY = rect.top + rect.height / 2;
+                            
+                            // Euclidean distance to viewport center
+                            const dx = centerX - viewCenterX;
+                            const dy = centerY - viewCenterY;
+                            const dist = Math.sqrt(dx * dx + dy * dy);
+                            
+                            if (dist < minDistance) {
+                                minDistance = dist;
+                                bestTarget = t;
+                            }
+                        });
+                        
+                        if (bestTarget) {
+                            bestTarget.handler(imageFile);
                             e.preventDefault();
                             return;
                         }
                     }
                     
-                    // 4. Default fallback: upload as an illustration
+                    // Fallback to upload as illustration if no targets are visible
                     uploadIllustration(imageFile);
                     e.preventDefault();
                 }
@@ -531,29 +542,25 @@
         // 2. OCR Answer screenshot handler
         function updateOcrPlaceholder(type) {
             const getEngineLabel = (val) => {
-                if (val === 'default') {
-                    return `默认配置 (当前: ${getEngineLabel(systemPreferEngine)})`;
-                } else if (val === 'siliconflow') {
-                    return "SiliconFlow 硅基流动云端 (多模态 Qwen 强力识图)";
+                if (val === 'siliconflow') {
+                    return "SiliconFlow 硅基流动云端";
                 } else if (val === 'ali_bailian') {
-                    return "阿里百炼 (qwen3-vl-flash 多模态极速识图)";
-                } else if (val === 'simpletex') {
-                    return "SimpleTex 官方云端 (专注数学公式/手写 OCR 引擎)";
+                    return "阿里百炼";
                 }
-                return "";
+                return val || "";
             };
 
+            const label = `当前引擎: ${getEngineLabel(systemPreferEngine)}`;
+
             if (type === 'content') {
-                const select = document.getElementById('contentOcrEngine');
                 const subText = document.getElementById('contentOcrPlaceholderSub');
-                if (select && subText) {
-                    subText.textContent = getEngineLabel(select.value);
+                if (subText) {
+                    subText.textContent = label;
                 }
             } else if (type === 'answer') {
-                const select = document.getElementById('answerOcrEngine');
                 const subText = document.getElementById('answerOcrPlaceholderSub');
-                if (select && subText) {
-                    subText.textContent = getEngineLabel(select.value);
+                if (subText) {
+                    subText.textContent = label;
                 }
             }
         }
@@ -598,12 +605,13 @@
             answerOcrAbortController = new AbortController();
             const signal = answerOcrAbortController.signal;
             
-            const engineSelect = document.getElementById('answerOcrEngine');
-            const engine = engineSelect ? engineSelect.value : 'default';
+            const engine = 'default';
+            const skipTikz = document.getElementById('answerOcrSkipTikz') ? document.getElementById('answerOcrSkipTikz').checked : false;
             
             const formData = new FormData();
             formData.append('file', file);
             formData.append('engine', engine);
+            formData.append('skip_tikz', skipTikz ? "true" : "false");
             
             fetch('/api/ocr', {
                 method: 'POST',
@@ -725,12 +733,13 @@
             contentOcrAbortController = new AbortController();
             const signal = contentOcrAbortController.signal;
             
-            const engineSelect = document.getElementById('contentOcrEngine');
-            const engine = engineSelect ? engineSelect.value : 'default';
+            const engine = 'default';
+            const skipTikz = document.getElementById('contentOcrSkipTikz') ? document.getElementById('contentOcrSkipTikz').checked : false;
             
             const formData = new FormData();
             formData.append('file', file);
             formData.append('engine', engine);
+            formData.append('skip_tikz', skipTikz ? "true" : "false");
             
             fetch('/api/ocr', {
                 method: 'POST',
@@ -1004,16 +1013,7 @@
             const loadingText = document.getElementById('aiLoadingText');
             
             // Set dynamic loading explanation depending on thinking mode and model
-            let modelFriendly = '';
-            if (model.includes('deepseek-v4-pro') || model.includes('deepseek-reasoner')) {
-                modelFriendly = 'DeepSeek-V4-Pro (R1 满血版)';
-            } else if (model.includes('deepseek-v4-flash')) {
-                modelFriendly = 'DeepSeek-V4-Flash (R1 预览版)';
-            } else if (model.includes('qwen-max') || model.includes('qwen3.7-max')) {
-                modelFriendly = 'Ali Bailian Qwen-Max';
-            } else {
-                modelFriendly = model.includes('/') ? model.split('/')[1] : model;
-            }
+            let modelFriendly = model.includes('/') ? model.split('/').pop() : model;
 
             if (thinking === 'enabled') {
                 loadingText.textContent = `${modelFriendly} 正在进行深度思考并构建 LaTeX 解析步骤... (思考与生成可能需要 15-90 秒，请耐心等待)`;

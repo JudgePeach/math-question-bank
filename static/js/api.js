@@ -183,9 +183,6 @@
                 "qwen-max",
                 "qwen-plus"
             ],
-            simpletex: [
-                "simpletex"
-            ],
             zhongzhan_gpt: [],
             zhongzhan_claude: []
         };
@@ -319,12 +316,6 @@
                             class="h-7 w-7 rounded-lg border border-slate-200 hover:border-red-500 hover:text-red-600 flex items-center justify-center text-xs transition-colors shrink-0 bg-white" title="清除历史记录的模型">
                         <i class="fa-solid fa-trash-can"></i>
                     </button>
-                `;
-            } else if (provider === 'simpletex') {
-                // SimpleTex 专属 (只读)
-                container.innerHTML = `
-                    <input type="text" readonly value="SimpleTex 官方接口"
-                           class="glass-input flex-1 px-2.5 py-1.5 rounded-lg text-xs bg-slate-100 text-slate-500 cursor-not-allowed">
                 `;
             } else {
                 // 下拉菜单列表模式
@@ -559,8 +550,6 @@
                 if (provider === 'zhongzhan' || provider === 'zhongzhan_gpt' || provider === 'zhongzhan_claude') {
                     const input = document.getElementById(`settings_${typeKey}_model_input`);
                     return input ? input.value.trim() : '';
-                } else if (provider === 'simpletex') {
-                    return 'simpletex';
                 } else {
                     const select = document.getElementById(`settings_${typeKey}_model_select`);
                     return select ? select.value : '';

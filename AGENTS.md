@@ -9,8 +9,8 @@
 - **数据库**：SQLite + SQLAlchemy（轻量级，数据存储在本地 `.db` 文件中）。
 - **前端页面**：纯 HTML + 原生 JavaScript。
 - **前端脚本拆分**：前端 JS 采用无编译的“渐进式级联加载”架构，分模块存放在 `static/js/` 目录下（`api.js`、`editor.js`、`ocr.js`、`import.js`），加载顺序严格依存，不允许产生任何编译及捆绑动作。
-- **前端样式**：通过 CDN 引入 Tailwind CSS。
-- **公式渲染**：通过 CDN 引入 KaTeX，必须支持题干与解析框实时解析、秒级渲染。
+- **前端样式**：Tailwind CSS + FontAwesome 图标库（均已下载至本地 `/static/lib` 支持 100% 离线使用）。
+- **公式渲染**：KaTeX（已下载至本地支持 100% 离线数学公式渲染），必须支持题干与解析框实时解析、秒级渲染。
 
 > [!IMPORTANT]
 > **文档指南同步更新规则**：
@@ -31,6 +31,7 @@
   - 目录级联（必修/选修 -> 章节 -> 知识点）。
   - 题型标签（单选、多选、填空、解答）。
   - 其他属性（难度、来源等）。
+  - 自定义标签：卡片顶部右侧（紧靠难度标签）使用 items-start 与 flex-1 弹性对齐，智能限制至多显示 2 个（单标签超长截断），其余折叠至 `+N` 徽章，悬浮时使用定制琥珀色气泡瞬时展示，且阻断点击事件不干扰卡片跳转。
 
 ### 3.2 解答与解析模块（多功能输入与工作流）
 解答区包含以下 Tab 的交互组件，所有途径获取的内容最终都需汇总至“终审编辑框”作为草稿，由用户确认后方可入库：
@@ -43,6 +44,10 @@
 #### 3.2.1 TikZ 几何绘图与智能纠错工作流
 - **编译预览**：系统提供 TikZ 渲染服务，编辑 TikZ 代码时，前端发送代码给 `/api/render_tikz`，后端本地调用 LaTeX 编译环境将其转换为标准的 PNG 预览图并返回相对路径展示。
 - **AI 智能纠错**：若绘图编译报错或有细节不完美，用户可在纠错输入框中填写“修改意见”，调用 `/api/correct_tikz` 结合原有 TikZ 代码和指导意见由 AI 进行闭环智能修改。
+
+#### 3.2.2 双阶段多模态识图与高级 TikZ 绘图模型联动
+- **多模态插图检测**：在单题 OCR 识图（`/api/ocr`）过程中，如果选择或默认的多模态大模型引擎识别到题目包含插图，会在返回的 LaTeX 文本中自动植入 `[ILLUSTRATION_BOX: ...]` 临时定位标记。
+- **高阶 TikZ 自动生成与编译**：后端接口解析到此插图标记后，会自动将其擦除，并自动触发双阶段联动——将整张原始题目截图及提取出的 LaTeX 题干文本同时发送给配置的高级绘图模型（由 `PREFER_DRAW_MODEL` 指定），由其自动识别图文逻辑并生成高精度 LaTeX TikZ 几何绘图代码。生成后系统会在后台自动将其编译为 PNG 图片存入静态目录，并在题干末尾自动追加 Markdown 格式的插图引用（如 `![](/static/uploads/tikz_xxx.png)`），实现单题从图文识别到矢量几何图重绘的一键自愈流程。
 
 ### 3.3 异步实时备份与 AI 专属只读题库系统
 系统在题目写操作时，通过 FastAPI 的 `BackgroundTasks` 在后台异步自动触发备份同步逻辑，并受全局线程锁 `threading.Lock` 保护：
@@ -81,7 +86,7 @@
 
 ### 3.8 PDF 试卷多模态拆解与手动截图系统
 - **切片与异步任务**：支持上传 PDF 文件，后端在后台利用 `fitz` (PyMuPDF) 将 PDF 栅格化为高清图片。利用 ThreadPoolExecutor 并行发起 VLM 多模态 OCR 转译。
-- **配图裁剪机制（取消自动裁剪）**：由于自动识别裁切容易产生不准的误差，系统已取消自动裁剪机制，全面改由用户进行纯手动拖拽框选精准截图，确保配图插图的高画质和 100% 零误差。
+- **配图裁剪机制（取消自动裁剪，拆解题目默认不含配图）**：由于自动识别裁切容易产生不准的误差，系统已取消自动裁剪机制，拆解出的题目默认是不包含任何图片的。若原题包含配图，必须由用户在前端点击「手动截图」弹窗，纯手动拖拽框选出精准截图以进行关联，这确保了配图插图的高画质和 100% 零误差。
 - **进度轮询与状态展示**：前端通过 `/api/upload/pdf-task` 提交文件并在右侧展现毛玻璃遮罩层与进度条，以每 1.5 秒的频率请求 `/api/tasks/{task_id}/status` 直至 `completed`。
 - **手动拖拽框选截图**：每个拆解卡片均提供“手动截图”选项，点击可调出 PDF 页面查看灯箱，支持在页面图上左键点击并拖拽框选区域，向 `/api/ai/manual-crop-pdf` 发送百分比坐标进行精准的物理裁剪配图。
 - **生命周期管理与净化**：
@@ -97,13 +102,12 @@
 - **OCR 接口（多通道高可用设计）**：
   - **首选引擎 (Ali Bailian)**：默认首选调用阿里百炼运行多模态识图模型（推荐使用 `qwen3-vl-flash`），Token 变量为 `ALI_BAILIAN_API_KEY`，模型变量为 `ALI_BAILIAN_OCR_MODEL`。
   - **备用多模态通道**：支持调用 SiliconFlow (`SILICONFLOW_API_KEY`，模型 `Qwen/Qwen3-VL-8B-Instruct`)，以及中转站 GPT (`ZHONGZHAN_GPT_API_KEY`, 模型 `gpt-4o`) 和中转站 Claude (`ZHONGZHAN_CLAUDE_API_KEY`, 模型 `claude-3-5-sonnet`)。
-  - **智能降级兜底引擎 (SimpleTex)**：若上述多模态大模型引擎识别失败，系统将自动、无缝降级调用 SimpleTex 接口的标准公式识别模型。Token 变量为 `SIMPLETEX_TOKEN`。
 - **大模型智能解答与解析/拆卷接口 (DeepSeek / 阿里百炼 / 多源 API)**：
-  - 解题模型与试卷拆解模型可通过 `.env` 配置文件中的 `PREFER_SOLVE_MODEL` 和 `PREFER_PARSE_MODEL` 指定（支持 `deepseek-chat`, `deepseek-reasoner`, `qwen-max` 等）。
+  - 解题模型、试卷拆解模型、题目自动分类模型以及高级 TikZ 绘图模型可通过 `.env` 配置文件中的 `PREFER_SOLVE_MODEL`、`PREFER_PARSE_MODEL`、`PREFER_CLASSIFY_MODEL` 和 `PREFER_DRAW_MODEL` 指定（支持 `deepseek-chat`、`deepseek-reasoner`、`qwen-max` 等主流解题与拆卷模型，以及 SiliconFlow `Qwen/Qwen3-VL-32B-Instruct` 等多模态 VLM 高级绘图模型）。
   - 后端通过统一底座接口支持 DeepSeek (`DEEPSEEK_API_KEY`)、通义千问阿里百炼 (`ALI_BAILIAN_API_KEY`) 以及中转站等多元渠道。
   - Prompt 设定必须强调：逻辑严密、分步推导、强制使用标准 LaTeX 语法输出公式、适当使用 TikZ 提供几何辅助说明。
 - **代理绕过与网络稳定性 (Robust Networking)**：
-  - 国内知名 API 服务（如阿里百炼 `aliyuncs.com`、SimpleTex `simpletex.net`、硅基流动 `siliconflow`）通常在直连模式下速度最快。
+  - 国内知名 API 服务（如阿里百炼 `aliyuncs.com`、硅基流动 `siliconflow`）通常在直连模式下速度最快。
   - 后端在 `main.py` 中实现了 `robust_request_post` / `robust_request_get`。若发生网络代理连接或握手错误，会自动清除系统 HTTP/HTTPS 代理环境变量进行重试，确保网络通信高可用。AI 代理编写请求时应务必使用此健壮的网络请求函数。
 
 ## 5. UI/UX 设计规范 (执行 ui-ux-pro-max 标准)

@@ -34,9 +34,11 @@
 
 ## 🌟 核心特性
 
-- 🧪 **极简技术栈**：后端基于 `Python + FastAPI + SQLAlchemy`，数据库使用轻量级 `SQLite`；前端使用纯 `HTML + JavaScript`（无编译、无捆绑），通过 CDN 引入 `Tailwind CSS` 和 `KaTeX`。
-- 📐 **完美公式渲染**：原生支持题干与解析框的 LaTeX 公式实时解析，秒级双向预览渲染。
-- 🤖 **三合一解答工作流**：支持手动录入、AI 智能生成（如 DeepSeek 步骤推导）、OCR 图像识别（支持阿里百炼、硅基流动、SimpleTex 多通道公式识别）。
+- 🧪 **极简技术栈与 100% 离线支持**：后端基于 `Python + FastAPI + SQLAlchemy`，数据库使用轻量级 `SQLite`；前端使用纯 `HTML + JavaScript`（无编译、无捆绑），且核心资源（Tailwind CSS, FontAwesome, KaTeX 等）均已本地化（仅 2.4MB），支持完全的离线使用和本地公式渲染。
+- 📐 **完美公式渲染**：原生支持题干与解析框的 LaTeX 公式实时解析，秒级双向预览渲染。即使在断网状态下也能完美完成公式渲染。
+- 🤖 **三合一解答工作流**：支持手动录入、AI 智能生成（如 DeepSeek 步骤推导），OCR 图像识别（支持阿里百炼、硅基流动等双通道公式识别）。
+- 🎨 **双阶段多模态 TikZ 几何绘图联动**：在单题 OCR 过程中如识别到插图，系统能自动调用多模态大模型（如 GPT-4o/Qwen-VL）根据题意和画面重画 TikZ 矢量代码，并在后台本地编译 PNG 预览图自动插入题干。
+- 📄 **PDF 试卷多模态拆解（支持指定页码范围）**：支持上传 PDF 试卷文件，后台自动利用 `PyMuPDF` 高清栅格化与 VLM 并行识别切片。**新增支持指定解析页码范围（如 1-6）**，只解析试卷页面，彻底过滤后续冗余的答案页，提升速度并节省 API Token 成本。用户亦可在前端通过「手动截图」进行高精度的配图关联。
 - 📂 **存储自愈净化**：编辑或删除题目时，系统会在后台物理删除不被任何题目引用的垃圾图片文件，并支持服务启动安全防误删扫描净化。
 - 🔒 **AI 专属只读题库备份**：后台写入时自动生成 `data_backup/questions_library.md`（AI 专属题库），自动清洗 `\item` 等 Markdown 不兼容排版命令，且**彻底过滤答案与解析**，保障备课和 AI 命题时的隐私安全。
 - 💻 **CLI 极速模糊检索**：内置终端检索工具 `search_questions.py`，支持在终端通过命令行快速查询知识点和题干。
@@ -55,10 +57,15 @@
 > 无论是使用源码还是便携包，AI 智能解析与 OCR 公式识别均依赖外部 API。请先前往以下平台注册并申请相应的 API 密钥，在启动项目后，点击网页右上角的 **设置（齿轮）按钮** 即可一键填入并保存：
 > * **🤖 AI 推理大模型**：请注册并获取密钥于 [DeepSeek 开放平台](https://platform.deepseek.com/)
 > * **📷 OCR 公式识别（首选通道）**：请通过专属 [硅基流动 (SiliconFlow) 邀请链接](https://cloud.siliconflow.cn/i/hkgjSWrg) 注册并获取密钥 (模型推荐使用 `Qwen/Qwen3-VL-8B-Instruct`，正常够用了；也可以选择 `Qwen/Qwen3-VL-32B-Instruct`，双倍价格但效果更好)
-> * **📷 OCR 公式识别（备选通道）**：请注册并获取 Token 于 [SimpleTex 开放平台](https://simpletex.cn/) (专注复杂数学公式识别)，价格比较高，不太推荐，我自己也没有用。
 > * 关于中转站：下面两个都是我自用的，各有优势，谨慎使用。
-> * **🔗 推荐多模态中转站 A (适合 GPT 模型)**：通过专属 [RightCodes 注册链接](https://www.right.codes/register?aff=f7656b31) 获取 API Key。该中转站提供价格实惠且性能优越的 gpt-5.5 (gpt-4o) 系列模型，极其适合进行 codex 编译和高等智能解析推理。
+> * **🔗 推荐多模态中转站 A (适合 GPT 模型)**：通过专属 [RightCodes 注册链接](https://www.right.codes/register?aff=f7656b31) 获取 API Key。该中转站提供价格实惠且性能优越的 gpt-5.5 (gpt-4o) 系列模型，极其适合作为高级 TikZ 绘图模型 (`PREFER_DRAW_MODEL`) 进行多模态图形分析与矢量几何插图重建。
 > * **🔗 推荐多模态中转站 B (适合 Claude 模型)**：通过专属 [PackyAPI 注册链接](https://www.packyapi.com/register?aff=5yyF) 获取 API Key。该中转站对 Anthropic 的 `claude-3-5-sonnet`、`claude-opus-4-8` 等高端模型提供非常优厚的折算，且内置了极其方便的阿里系大模型优惠。
+>
+> 💡 **关于模型偏好配置 (Preferences)**：您可以在网页端右上角的**设置 (齿轮图标)**中对各项默认模型进行配置，系统将自动写入 `.env`：
+> * `PREFER_SOLVE_MODEL` (解答模型)：默认 `deepseek-v4-pro` (支持中转站或 DeepSeek 官方)。
+> * `PREFER_PARSE_MODEL` (整卷拆解模型)：默认 `deepseek-v4-flash`。
+> * `PREFER_CLASSIFY_MODEL` (题目分类模型)：默认 `deepseek-v4-flash`。
+> * `PREFER_DRAW_MODEL` (高级 TikZ 绘图模型)：推荐使用 `ZHONGZHAN_GPT/gpt-5.5`、`ZHONGZHAN_CLAUDE/claude-3-5-sonnet` 或硅基流动 `Qwen/Qwen3-VL-32B-Instruct` 等多模态 VLM，以实现双阶段 OCR 自动多模态重绘。
 >
 > > [!IMPORTANT]
 > > **关于 TikZ 自动几何重绘与本地 LaTeX 编译环境依赖**：
@@ -114,6 +121,37 @@ http://127.0.0.1:8000
 python -m uvicorn main:app --reload
 ```
 打开浏览器访问 `http://127.0.0.1:8000`。
+
+---
+
+## 🔄 版本升级与数据备份
+
+本题库系统的所有核心数据均存储在本地。当发布新版本时，您可以通过以下方式进行安全升级：
+
+### 方式 A：使用 Git 升级 (最推荐 ⚡)
+如果您是通过 `git clone` 获取的项目，直接在项目根目录下执行：
+```bash
+git pull
+```
+- **安全性**：100% 安全。由于您的本地数据库 (`*.db`)、API 密钥 (`.env`)、自定义维度配置 (`data_backup/`) 以及上传的插图 (`static/uploads/`) 均已被 Git 忽略，因此 `git pull` **绝对不会**覆盖或影响您的任何本地数据和个人配置。
+
+### 方式 B：使用 Release 便携包覆盖更新 (需注意 ⚠️)
+如果您是下载 Release 压缩包 (`MathBank-Windows-x64.zip` 或 `MathBank-macOS.zip`) 使用的用户：
+1. **覆盖式更新**：直接将压缩包解压，把新版本的文件**覆盖/合并**到现有的项目文件夹中。
+   - 由于 Release 压缩包中不包含任何数据库文件和自定义配置文件，覆盖解压是安全的，您的数据会得以保留。
+2. **⚠️ 危险防范（防误删）**：
+   - **千万不要**在解压新版本前**彻底删除**旧的项目文件夹。
+   - 在覆盖拖拽解压时，如果系统提示“替换”或“合并”，**必须选择“合并”或直接覆盖**，不要选择可能会直接删除旧目录的整包替换选项。
+
+> [!IMPORTANT]
+> **💡 升级前安全建议（防患未然）**
+> 无论是使用何种方式升级，在操作前，强烈建议您手动将以下四个重要数据文件/夹复制一份到其他位置作为备份：
+> - `*.db`（本地题目数据库文件，内含您录入的所有题目）
+> - `.env`（API 密钥配置文件）
+> - `data_backup/`（自定义维度与章节大纲配置文件及系统自动备份数据）
+> - `static/uploads/`（您录入题目时上传的所有插图与几何图形）
+> 
+> 升级完成后，如遇异常导致数据缺失，只需将这四个备份恢复至项目根目录，即可 100% 还原所有题库数据及配置。
 
 ---
 

@@ -34,11 +34,10 @@ UPLOAD_DIR_REL = "static/test_uploads" if IS_TESTING else "static/uploads"
 
 def robust_request_post(url, **kwargs):
     """发送 POST 请求，并在发生 Proxy/Connection 错误时自动尝试禁用代理重试"""
-    # 如果目标 URL 是国内知名 API（如阿里百炼、SimpleTex、SiliconFlow 等），
+    # 如果目标 URL 是国内知名 API（如阿里百炼、SiliconFlow 等），
     # 且 kwargs 中没有明确指定 proxies，直接在首次请求时默认禁用代理，避免代理延迟、握手失败或超时！
     is_domestic = any(domain in url.lower() for domain in [
         "aliyuncs.com", 
-        "simpletex.net", 
         "siliconflow"
     ])
     if is_domestic and "proxies" not in kwargs:
@@ -58,7 +57,6 @@ def robust_request_get(url, **kwargs):
     """发送 GET 请求，并在发生 Proxy/Connection 错误时自动尝试禁用代理重试"""
     is_domestic = any(domain in url.lower() for domain in [
         "aliyuncs.com", 
-        "simpletex.net", 
         "siliconflow"
     ])
     if is_domestic and "proxies" not in kwargs:
@@ -358,7 +356,7 @@ def auto_crop_image(image):
     return image
 
 
-def ocr_via_siliconflow(image_path: str, api_key: str, model_name: str = "Qwen/Qwen3.5-4B") -> str:
+def ocr_via_siliconflow(image_path: str, api_key: str, model_name: str = "Qwen/Qwen3.5-4B", include_illustration_box: bool = False) -> str:
     """调用 SiliconFlow 官方 API 进行多模态图文公式识别 (使用 Qwen3.5-4B / Qwen2.5-VL 等)"""
     import base64
     import requests
@@ -378,6 +376,20 @@ def ocr_via_siliconflow(image_path: str, api_key: str, model_name: str = "Qwen/Q
         "Content-Type": "application/json"
     }
     
+    prompt_text = (
+        "请精确识别并提取这幅图像中的**所有文字与数学公式**。必须完整转录，不得遗漏或删减图像中的任何字符（包括方括号、题目来源如 '[2025 · 江苏淮安高一期末]' 等）。\n"
+        "直接输出图像内容的转录结果，绝对不要夹带任何你个人的说明、开场白、回复语或解释。\n"
+        "【排版格式与 LaTeX 语法关键准则 (极重要)】：\n"
+        "1. **公式级包裹**：所有 LaTeX 数学命令（如 \\overrightarrow, \\cos, \\sin, \\theta, \\cdot, \\alpha, \\beta, \\gamma, \\Delta 等）以及所有代数式、方程、集合、平面向量符号，**必须并且只能**包裹在 LaTeX 标记中（行内公式使用 $...$，行间/独立公式使用 $$...$$）。绝对不能让任何带有反斜杠 `\\` 的 LaTeX 语法暴露在普通文本中。例如，普通文本中不能出现 `\\overrightarrow{AB}`，而必须写为 `$\\overrightarrow{AB}$`。\n"
+        "2. **严禁使用 \\text 语法**：不要在 LaTeX 公式中使用 `\\text{...}` 来包裹大段中文或题目来源。普通的中文叙述和文字必须作为普通的文本直接输出在 LaTeX 块外部。例如，绝对不能输出 `$\\text{江苏淮安高一期末}$`，而必须写为普通的文本：`[2025 · 江苏淮安高一期末]`；绝对不能输出 `$\\text{已知在直角坐标系中}$`，而必须写为 `已知在直角坐标系中`。\n"
+        "3. **变量/点/坐标包裹**：所有的几何点符号（如 $A$, $B$, $C$, $D$, $O$, $P$ 等）、所有单个字母变量（如 $x$, $y$, $m$, $n$ 等）以及所有的坐标表达式（如 $(1,2)$, $(3,3)$, $(x,y)$ 等）均需严格包裹在单美元符号 $...$ 中。\n"
+        "4. **严禁整段包裹**：不要将普通的中文文本、题目描述或整段话包裹在 LaTeX 标记中。\n"
+        "5. **精精确保留排版结构**：务必精精确保留原图的换行、段落以及选项（A、B、C、D）的对齐排版。\n"
+        "6. **过滤干扰符**：省略公式与汉字之间干扰渲染的薄空格（如 `\\,` 或 `\\!` 等），确保数学公式的标准纯净。"
+    )
+    if include_illustration_box:
+        prompt_text += "\n7. **几何插图区域识别 (极重要)**：请仔细观察图像中是否包含立体几何、平面几何、函数图像、平面向量等几何插图。如果包含，**请务必在输出的文本末尾**追加输出该插图在整张图片中的归一化百分比坐标包围框，格式严格为：`[ILLUSTRATION_BOX: ymin, xmin, ymax, xmax]`。其中四个数值代表插图在图片中占用的百分比比例，范围为 0 到 100 之间的整数（例如插图在整张图偏右侧，可以输出为 `[ILLUSTRATION_BOX: 10, 45, 90, 95]`；如果整张图没有插图，则绝对不要输出 `[ILLUSTRATION_BOX: ...]`）。"
+
     # 构造 SiliconFlow 的多模态内容消息
     payload = {
         "model": model_name,
@@ -387,17 +399,7 @@ def ocr_via_siliconflow(image_path: str, api_key: str, model_name: str = "Qwen/Q
                 "content": [
                     {
                         "type": "text",
-                        "text": (
-                            "请精确识别并提取这幅图像中的**所有文字与数学公式**。必须完整转录，不得遗漏或删减图像中的任何字符（包括方括号、题目来源如 '[2025 · 江苏淮安高一期末]' 等）。\n"
-                            "直接输出图像内容的转录结果，绝对不要夹带任何你个人的说明、开场白、回复语或解释。\n"
-                            "【排版格式与 LaTeX 语法关键准则 (极重要)】：\n"
-                            "1. **公式级包裹**：所有 LaTeX 数学命令（如 \\overrightarrow, \\cos, \\sin, \\theta, \\cdot, \\alpha, \\beta, \\gamma, \\Delta 等）以及所有代数式、方程、集合、平面向量符号，**必须并且只能**包裹在 LaTeX 标记中（行内公式使用 $...$，行间/独立公式使用 $$...$$）。绝对不能让任何带有反斜杠 `\\` 的 LaTeX 语法暴露在普通文本中。例如，普通文本中不能出现 `\\overrightarrow{AB}`，而必须写为 `$\\overrightarrow{AB}$`。\n"
-                            "2. **严禁使用 \\text 语法**：不要在 LaTeX 公式中使用 `\\text{...}` 来包裹大段中文或题目来源。普通的中文叙述和文字必须作为普通的文本直接输出在 LaTeX 块外部。例如，绝对不能输出 `$\\text{江苏淮安高一期末}$`，而必须写为普通的文本：`[2025 · 江苏淮安高一期末]`；绝对不能输出 `$\\text{已知在直角坐标系中}$`，而必须写为 `已知在直角坐标系中`。\n"
-                            "3. **变量/点/坐标包裹**：所有的几何点符号（如 $A$, $B$, $C$, $D$, $O$, $P$ 等）、所有单个字母变量（如 $x$, $y$, $m$, $n$ 等）以及所有的坐标表达式（如 $(1,2)$, $(3,3)$, $(x,y)$ 等）均需严格包裹在单美元符号 $...$ 中。\n"
-                            "4. **严禁整段包裹**：不要将普通的中文文本、题目描述或整段话包裹在 LaTeX 标记中。\n"
-                            "5. **精精确保留排版结构**：务必精精确保留原图的换行、段落以及选项（A、B、C、D）的对齐排版。\n"
-                            "6. **过滤干扰符**：省略公式与汉字之间干扰渲染的薄空格（如 `\\,` 或 `\\!` 等），确保数学公式的标准纯净。"
-                        )
+                        "text": prompt_text
                     },
                     {
                         "type": "image_url",
@@ -452,7 +454,7 @@ def ocr_via_siliconflow(image_path: str, api_key: str, model_name: str = "Qwen/Q
         raise RuntimeError(f"解析 SiliconFlow 响应数据失败: {str(e)}")
 
 
-def ocr_via_ali_bailian(image_path: str, api_key: str, model_name: str = "qwen3-vl-flash") -> str:
+def ocr_via_ali_bailian(image_path: str, api_key: str, model_name: str = "qwen3-vl-flash", include_illustration_box: bool = False) -> str:
     """调用阿里云百炼 (Alibaba Bailian) 官方 API 进行多模态图文公式识别 (使用 qwen3-vl-flash 等)"""
     import base64
     import requests
@@ -472,6 +474,20 @@ def ocr_via_ali_bailian(image_path: str, api_key: str, model_name: str = "qwen3-
         "Content-Type": "application/json"
     }
     
+    prompt_text = (
+        "请精确识别并提取这幅图像中的**所有文字与数学公式**。必须完整转录，不得遗漏、删减或改写图像中的任何字符（包括方括号、题目来源如 '[2025 · 武汉二中高一月考]'、定义说明、前言等大段文字）。\n"
+        "直接输出图像内容的转录结果，绝对不要夹带任何你个人的说明、开场白、回复语或解释（例如，不要包含 '这是识别结果：' 等多余的 AI 聊天文字）。\n"
+        "【排版格式与 LaTeX 语法关键准则】：\n"
+        "1. **严禁整段包裹**：绝对不要将普通的中文文本、题目描述或整段话包裹在 LaTeX 标记（如 `$$...$$` 或 `$...$`）中。普通的中文叙述和文字必须作为普通的文本直接输出。\n"
+        "2. **严禁滥用 \\text 语法**：不要在 LaTeX 公式中使用 `\\text{...}` 来包裹大段的中文描述。所有的中文文字都应该写在 LaTeX 块外部。例如，不要输出 `$\\text{已知集合 } B$`，而应该输出 `已知集合 $B$`。\n"
+        "3. **公式级包裹**：仅对纯数学符号、代数式、集合、方程等数学对象使用 LaTeX。行内变量/符号（如 $A$、$x$、$-7$ 等）使用单美元符号 `$...$`；独立的一行长公式或复杂等式才使用双美元符号 `$$...$$`。\n"
+        "4. **精确保留排版结构**：务必精确保留原图的换行、段落以及选项（A、B、C、D）的对齐排版。\n"
+        "5. **过滤干扰符**：省略公式与汉字之间干扰渲染的薄空格（如 `\\,` 或 `\\!` 等），确保数学公式的标准纯净。\n"
+        "6. **保留所有中文文字**：在转录过程中必须百分之百保留题目中的叙述文字，例如定义段落和前言介绍，严禁只输出最后一句问句。"
+    )
+    if include_illustration_box:
+        prompt_text += "\n7. **几何插图区域识别 (极重要)**：请仔细观察图像中是否包含立体几何、平面几何、函数图像、平面向量等几何插图。如果包含，**请务必在输出的文本末尾**追加输出该插图在整张图片中的归一化百分比坐标包围框，格式严格为：`[ILLUSTRATION_BOX: ymin, xmin, ymax, xmax]`。其中四个数值代表插图在图片中占用的百分比比例，范围为 0 到 100 之间的整数（例如插图在整张图偏右侧，可以输出为 `[ILLUSTRATION_BOX: 10, 45, 90, 95]`；如果整张图没有插图，则绝对不要输出 `[ILLUSTRATION_BOX: ...]`）。"
+
     # 构造阿里云百炼的多模态内容消息
     payload = {
         "model": model_name,
@@ -481,17 +497,7 @@ def ocr_via_ali_bailian(image_path: str, api_key: str, model_name: str = "qwen3-
                 "content": [
                     {
                         "type": "text",
-                        "text": (
-                            "请精确识别并提取这幅图像中的**所有文字与数学公式**。必须完整转录，不得遗漏、删减或改写图像中的任何字符（包括方括号、题目来源如 '[2025 · 武汉二中高一月考]'、定义说明、前言等大段文字）。\n"
-                            "直接输出图像内容的转录结果，绝对不要夹带任何你个人的说明、开场白、回复语或解释（例如，不要包含 '这是识别结果：' 等多余的 AI 聊天文字）。\n"
-                            "【排版格式与 LaTeX 语法关键准则】：\n"
-                            "1. **严禁整段包裹**：绝对不要将普通的中文文本、题目描述或整段话包裹在 LaTeX 标记（如 `$$...$$` 或 `$...$`）中。普通的中文叙述和文字必须作为普通的文本直接输出。\n"
-                            "2. **严禁滥用 \\text 语法**：不要在 LaTeX 公式中使用 `\\text{...}` 来包裹大段的中文描述。所有的中文文字都应该写在 LaTeX 块外部。例如，不要输出 `$\\text{已知集合 } B$`，而应该输出 `已知集合 $B$`。\n"
-                            "3. **公式级包裹**：仅对纯数学符号、代数式、集合、方程等数学对象使用 LaTeX。行内变量/符号（如 $A$、$x$、$-7$ 等）使用单美元符号 `$...$`；独立的一行长公式或复杂等式才使用双美元符号 `$$...$$`。\n"
-                            "4. **精确保留排版结构**：务必精确保留原图的换行、段落以及选项（A、B、C、D）的对齐排版。\n"
-                            "5. **过滤干扰符**：省略公式与汉字之间干扰渲染的薄空格（如 `\\,` 或 `\\!` 等），确保数学公式的标准纯净。\n"
-                            "6. **保留所有中文文字**：在转录过程中必须百分之百保留题目中的叙述文字，例如定义段落和前言介绍，严禁只输出最后一句问句。"
-                        )
+                        "text": prompt_text
                     },
                     {
                         "type": "image_url",
@@ -546,7 +552,7 @@ def ocr_via_ali_bailian(image_path: str, api_key: str, model_name: str = "qwen3-
         raise RuntimeError(f"解析阿里云百炼响应数据失败: {str(e)}")
 
 
-def ocr_via_zhongzhan(image_path: str, api_key: str, base_url: str, model_name: str) -> str:
+def ocr_via_zhongzhan(image_path: str, api_key: str, base_url: str, model_name: str, include_illustration_box: bool = False) -> str:
     """调用中转站 (OpenAI 兼容) API 进行多模态图文公式识别"""
     import base64
     import requests
@@ -577,6 +583,8 @@ def ocr_via_zhongzhan(image_path: str, api_key: str, base_url: str, model_name: 
         "5. **过滤干扰符**：省略公式与汉字之间干扰渲染的薄空格，确保数学公式的标准纯净。\n"
         "6. **保留所有中文文字**：在转录过程中必须百分之百保留题目中的叙述文字，严禁只输出最后一句问句。"
     )
+    if include_illustration_box:
+        prompt += "\n7. **几何插图区域识别 (极重要)**：请仔细观察图像中是否包含立体几何、平面几何、函数图像、平面向量等几何插图。如果包含，**请务必在输出的文本末尾**追加输出该插图在整张图片中的归一化百分比坐标包围框，格式严格为：`[ILLUSTRATION_BOX: ymin, xmin, ymax, xmax]`。其中四个数值代表插图在图片中占用的百分比比例，范围为 0 到 100 之间的整数。"
     
     payload = {
         "model": model_name,
@@ -773,7 +781,8 @@ def draw_tikz_via_high_model(image_path: str, prefer_draw: str, latex_content: s
 @app.post("/api/ocr")
 def ocr_formula(
     file: UploadFile = File(...),
-    engine: str = Form(None)
+    engine: str = Form(None),
+    skip_tikz: bool = Form(False)
 ):
     temp_filepath = None
     try:
@@ -807,7 +816,7 @@ def ocr_formula(
             sf_model = os.getenv("SILICONFLOW_OCR_MODEL", "Qwen/Qwen3.5-4B")
             if sf_key and sf_key.strip():
                 try:
-                    latex_content = ocr_via_siliconflow(temp_filepath, sf_key, model_name=sf_model)
+                    latex_content = ocr_via_siliconflow(temp_filepath, sf_key, model_name=sf_model, include_illustration_box=True)
                     confidence = 0.99
                     provider = f"SiliconFlow ({sf_model})"
                 except Exception as e:
@@ -821,7 +830,7 @@ def ocr_formula(
             ali_model = os.getenv("ALI_BAILIAN_OCR_MODEL", "qwen3-vl-flash")
             if ali_key and ali_key.strip():
                 try:
-                    latex_content = ocr_via_ali_bailian(temp_filepath, ali_key, model_name=ali_model)
+                    latex_content = ocr_via_ali_bailian(temp_filepath, ali_key, model_name=ali_model, include_illustration_box=True)
                     confidence = 0.99
                     provider = f"阿里云百炼 ({ali_model})"
                 except Exception as e:
@@ -844,7 +853,7 @@ def ocr_formula(
                 
             if zz_key and zz_key.strip():
                 try:
-                    latex_content = ocr_via_zhongzhan(temp_filepath, zz_key, zz_base_url, model_name=zz_model)
+                    latex_content = ocr_via_zhongzhan(temp_filepath, zz_key, zz_base_url, model_name=zz_model, include_illustration_box=True)
                     confidence = 0.99
                     provider = f"{provider_label} ({zz_model})"
                 except Exception as e:
@@ -852,53 +861,8 @@ def ocr_formula(
             else:
                 print(f"[OCR Flow Warning] 未配置 {provider_label} 密钥，中转站引擎无法启动！")
 
-        # ----------------- 引擎 3: SimpleTex 云端 API (如果是首选，或者其它多模态引擎识别失败时作为兜底/并存选项) -----------------
         if not latex_content:
-            if engine in ["siliconflow", "ali_bailian", "zhongzhan", "zhongzhan_gpt", "zhongzhan_claude"]:
-                print(f"[OCR Flow Auto-Fallback] {engine} 识别未成功，正在自动无缝降级至 SimpleTex 引擎兜底...")
-            
-            simpletex_token = os.getenv("SIMPLETEX_TOKEN")
-            if simpletex_token and simpletex_token.strip():
-                try:
-                    with open(temp_filepath, "rb") as f:
-                        img_bytes = f.read()
-                        
-                    headers = {
-                        "token": simpletex_token.strip()
-                    }
-                    files = {
-                        "file": ("image.png", img_bytes, "image/png")
-                    }
-                    data = {
-                        "rec_mode": "auto"
-                    }
-                    
-                    response = robust_request_post(
-                        "https://server.simpletex.net/api/latex_ocr",
-                        files=files,
-                        data=data,
-                        headers=headers,
-                        timeout=12
-                    )
-                    
-                    if response.status_code == 200:
-                        res_json = response.json()
-                        if res_json.get("status") is True:
-                            res_data = res_json.get("res", {})
-                            latex_content = res_data.get("latex", "")
-                            confidence = res_data.get("conf", 1.0)
-                            provider = "SimpleTex"
-                        else:
-                            print(f"[SimpleTex API 异常] 返回 status 为 false: {res_json.get('error', '未知错误')}")
-                    else:
-                        print(f"[SimpleTex 网络异常] 状态码: {response.status_code}")
-                except Exception as e:
-                    print(f"[SimpleTex 请求失败] 发生异常: {str(e)}")
-            else:
-                print("[OCR Flow Warning] 未配置 SIMPLETEX_TOKEN，SimpleTex 引擎未启动！")
-
-        if not latex_content:
-            raise RuntimeError("当前分配的识图引擎均无法启动或识别失败。请检查右上角「API设置」中是否正确配置了 硅基流动(SiliconFlow)、阿里百炼(Alibaba Bailian) 或是 SimpleTex 的 API Key。")
+            raise RuntimeError("当前分配的识图引擎均无法启动或识别失败。请检查右上角「API设置」中是否正确配置了 硅基流动(SiliconFlow) 或是 阿里百炼(Alibaba Bailian) 的 API Key。")
 
         # 成功，返回且进一步清洗
         if latex_content:
@@ -917,18 +881,21 @@ def ocr_formula(
                 # 第一步先确保擦除标记，防止乱入题干文本框
                 latex_content = re.sub(r"\[ILLUSTRATION_BOX:.*?\]", "", latex_content).strip()
                 
-                try:
-                    # 不再执行物理分割裁剪，直接将整张原始题目截图发送给高级视觉绘图模型进行图形分析与重画
-                    prefer_draw = os.getenv("PREFER_DRAW_MODEL", "Qwen/Qwen3-VL-32B-Instruct")
-                    print(f"[Illustration Draw] 检测到插图标记，直接将整张原图送往高级模型 {prefer_draw} 进行 TikZ 解析绘图...")
-                    
-                    tikz_code_from_high_model = draw_tikz_via_high_model(
-                        temp_filepath, # 传入整图
-                        prefer_draw,
-                        latex_content=latex_content
-                    )
-                except Exception as draw_err:
-                    print(f"[Illustration Draw Fail] 高级多模态模型整图分析绘图失败: {str(draw_err)}")
+                if not skip_tikz:
+                    try:
+                        # 不再执行物理分割裁剪，直接将整张原始题目截图发送给高级视觉绘图模型进行图形分析与重画
+                        prefer_draw = os.getenv("PREFER_DRAW_MODEL", "Qwen/Qwen3-VL-32B-Instruct")
+                        print(f"[Illustration Draw] 检测到插图标记，直接将整张原图送往高级模型 {prefer_draw} 进行 TikZ 解析绘图...")
+                        
+                        tikz_code_from_high_model = draw_tikz_via_high_model(
+                            temp_filepath, # 传入整图
+                            prefer_draw,
+                            latex_content=latex_content
+                        )
+                    except Exception as draw_err:
+                        print(f"[Illustration Draw Fail] 高级多模态模型整图分析绘图失败: {str(draw_err)}")
+                else:
+                    print("[Illustration Draw] 检测到插图标记，但由于已勾选跳过，故未调用高级绘图模型进行 TikZ 绘制")
             else:
                 # 剔除可能存在的由于大模型幻觉或者部分输出造成的残缺标记
                 latex_content = re.sub(r"\[ILLUSTRATION_BOX:.*?\]", "", latex_content).strip()
@@ -3241,8 +3208,6 @@ def ocr_pdf_page_image(image_path: str) -> str:
     zz_base_url = os.getenv("ZHONGZHAN_GPT_BASE_URL") or os.getenv("ZHONGZHAN_BASE_URL", "https://api.openai.com/v1")
     zz_model = os.getenv("ZHONGZHAN_GPT_OCR_MODEL") or os.getenv("ZHONGZHAN_OCR_MODEL", "gpt-4o")
     
-    simple_token = os.getenv("SIMPLETEX_TOKEN")
-
     errors = []
     
     # 根据用户首选的识图引擎调整尝试的顺序
@@ -3279,13 +3244,9 @@ def ocr_pdf_page_image(image_path: str) -> str:
             engines_to_try.append(("阿里云百炼", "ali_bailian", ali_key, ali_model))
         if zz_key and zz_key.strip():
             engines_to_try.append(("中转站", "zhongzhan", zz_key, zz_base_url, zz_model))
-            
-    # 最后加上 SimpleTex 作为最终兜底
-    if simple_token and simple_token.strip():
-        engines_to_try.append(("SimpleTex", "simpletex", simple_token))
         
     if not engines_to_try:
-        raise ValueError("未配置任何识图 Key，请在右上角「API设置」面板中配置 硅基流动、阿里百炼、中转站 或 SimpleTex API 密钥。")
+        raise ValueError("未配置任何识图 Key，请在右上角「API设置」面板中配置 硅基流动、阿里百炼 或 中转站 API 密钥。")
         
     for engine_info in engines_to_try:
         label, engine_type = engine_info[0], engine_info[1]
@@ -3297,26 +3258,6 @@ def ocr_pdf_page_image(image_path: str) -> str:
                 return ocr_via_ali_bailian(image_path, engine_info[2], model_name=engine_info[3])
             elif engine_type == "zhongzhan":
                 return ocr_via_zhongzhan(image_path, engine_info[2], engine_info[3], model_name=engine_info[4])
-            elif engine_type == "simpletex":
-                print(f"[PDF OCR Flow] 正在调用 SimpleTex 进行最终兜底识别...")
-                with open(image_path, "rb") as f:
-                    img_bytes = f.read()
-                headers = {"token": engine_info[2].strip()}
-                files = {"file": ("image.png", img_bytes, "image/png")}
-                data = {"rec_mode": "auto"}
-                response = robust_request_post(
-                    "https://server.simpletex.net/api/latex_ocr",
-                    files=files,
-                    data=data,
-                    headers=headers,
-                    timeout=20
-                )
-                if response.status_code == 200:
-                    res_json = response.json()
-                    if res_json.get("status") is True:
-                        res_data = res_json.get("res", {})
-                        return res_data.get("latex", "").strip()
-                raise RuntimeError(f"SimpleTex 兜底请求失败，HTTP 状态码: {response.status_code}，详情: {response.text}")
         except Exception as e_single:
             err_msg = f"{label} 出错: {str(e_single)}"
             print(f"[PDF OCR Flow Warning] {err_msg}")
@@ -3503,7 +3444,7 @@ def post_process_pdf_parsed_questions(parsed_questions: list, paper_title: str, 
     return parsed_questions
 
 
-def run_pdf_parsing_task(task_id: str, file_bytes: bytes, filename: str, generate_answers: bool = False):
+def run_pdf_parsing_task(task_id: str, file_bytes: bytes, filename: str, generate_answers: bool = False, page_range: str = None):
     """异步 PDF 试卷分析后台主流程：栅格化 -> 并行 OCR -> 自动裁剪 -> 大模型拆题"""
     import concurrent.futures
     import re
@@ -3537,9 +3478,13 @@ def run_pdf_parsing_task(task_id: str, file_bytes: bytes, filename: str, generat
         if total_pages == 0:
             raise ValueError("此 PDF 没有有效页面，或者格式已损坏！")
             
+        # 解析指定的页码范围 (1-indexed -> 0-indexed)
+        target_page_indices = parse_page_range(page_range, total_pages)
+        total_target_pages = len(target_page_indices)
+        
         page_images = []
         page_urls = []
-        for page_num in range(total_pages):
+        for page_num in target_page_indices:
             page = doc.load_page(page_num)
             pix = page.get_pixmap(dpi=150)
             img_filename = f"pdf_page_{task_id}_{page_num}.png"
@@ -3557,42 +3502,44 @@ def run_pdf_parsing_task(task_id: str, file_bytes: bytes, filename: str, generat
             PDF_TASKS[task_id] = {
                 "status": "ocr_extraction",
                 "progress": 30,
-                "log": f"共 {total_pages} 页。正在并行发起多模态 VLM 进行图文公式转译与插图定位...",
+                "log": f"共 {total_pages} 页，指定解析 {total_target_pages} 页。正在并行发起多模态 VLM 进行图文公式转译与插图定位...",
                 "page_images": page_urls
             }
 
         # 并行 OCR 解析
-        ocr_results = [None] * total_pages
+        ocr_results = [None] * total_target_pages
         
-        def ocr_worker(page_idx, img_path):
+        def ocr_worker(local_idx, img_path):
             try:
                 raw_text = ocr_pdf_page_image(img_path)
+                real_page_num = target_page_indices[local_idx] + 1
                 # 注入 Debug 原始文本回显
-                print(f"[DEBUG OCR Raw Response] 第 {page_idx + 1} 页的原始返回结果:\n{raw_text}\n" + "-"*40)
-                return page_idx, raw_text, None
+                print(f"[DEBUG OCR Raw Response] 目标第 {real_page_num} 页的原始返回结果:\n{raw_text}\n" + "-"*40)
+                return local_idx, raw_text, None
             except Exception as e_ocr:
-                return page_idx, "", str(e_ocr)
+                return local_idx, "", str(e_ocr)
                 
-        with concurrent.futures.ThreadPoolExecutor(max_workers=min(total_pages, 8)) as executor:
-            futures = [executor.submit(ocr_worker, i, page_images[i]) for i in range(total_pages)]
+        with concurrent.futures.ThreadPoolExecutor(max_workers=min(total_target_pages, 8)) as executor:
+            futures = [executor.submit(ocr_worker, i, page_images[i]) for i in range(total_target_pages)]
             
             completed = 0
             for fut in concurrent.futures.as_completed(futures):
-                p_idx, text, err = fut.result()
+                local_idx, text, err = fut.result()
                 if err:
-                    raise RuntimeError(f"解析第 {p_idx + 1} 页出错: {err}")
+                    real_page_num = target_page_indices[local_idx] + 1
+                    raise RuntimeError(f"解析第 {real_page_num} 页出错: {err}")
                 
                 # 清洗配图并进行物理裁剪
-                processed_text = process_ocr_illustrations(text, page_images[p_idx], task_id)
-                ocr_results[p_idx] = processed_text
+                processed_text = process_ocr_illustrations(text, page_images[local_idx], task_id)
+                ocr_results[local_idx] = processed_text
                 
                 completed += 1
-                prog = 30 + int((completed / total_pages) * 40)
+                prog = 30 + int((completed / total_target_pages) * 40)
                 with PDF_TASKS_LOCK:
                     # 保持 page_images 的返回，使前端随时可用
                     PDF_TASKS[task_id].update({
                         "progress": prog,
-                        "log": f"多模态转译进度: {completed} / {total_pages} 页已完成..."
+                        "log": f"多模态转译进度: {completed} / {total_target_pages} 页已完成..."
                     })
 
         # 拼接全文 LaTeX 源码
@@ -3633,13 +3580,53 @@ def run_pdf_parsing_task(task_id: str, file_bytes: bytes, filename: str, generat
             }
 
 
+def parse_page_range(range_str: str, total_pages: int) -> list:
+    """
+    解析用户输入的页码范围字符串（1-indexed），转换为包含 0-indexed 页面索引的列表。
+    支持格式如 "1-5", "1,3,5", "1-3,5,7-9"。
+    """
+    if not range_str:
+        return list(range(total_pages))
+    
+    pages = set()
+    parts = range_str.replace(" ", "").split(",")
+    for part in parts:
+        if not part:
+            continue
+        if "-" in part:
+            sub_parts = part.split("-")
+            if len(sub_parts) == 2:
+                try:
+                    start = int(sub_parts[0])
+                    end = int(sub_parts[1])
+                    start_idx = max(0, start - 1)
+                    end_idx = min(total_pages - 1, end - 1)
+                    if start_idx <= end_idx:
+                        for p in range(start_idx, end_idx + 1):
+                            pages.add(p)
+                except ValueError:
+                    pass
+        else:
+            try:
+                p = int(part)
+                p_idx = p - 1
+                if 0 <= p_idx < total_pages:
+                    pages.add(p_idx)
+            except ValueError:
+                pass
+                
+    result = sorted(list(pages))
+    return result if result else list(range(total_pages))
+
+
 # ----------------- PDF Upload & Task Routing Endpoints -----------------
 
 @app.post("/api/upload/pdf-task")
 async def upload_pdf_task(
     background_tasks: BackgroundTasks,
     file: UploadFile = File(...),
-    generate_answers: str = Form("false")
+    generate_answers: str = Form("false"),
+    page_range: Optional[str] = Form(None)
 ):
     try:
         generate_answers_bool = generate_answers.lower() in ("true", "1", "yes")
@@ -3675,7 +3662,8 @@ async def upload_pdf_task(
             task_id,
             content,
             file.filename,
-            generate_answers_bool
+            generate_answers_bool,
+            page_range
         )
         
         return {

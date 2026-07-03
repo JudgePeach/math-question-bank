@@ -1282,12 +1282,18 @@
                     if (!titleInput.value) {
                         titleInput.value = file.name.replace(/\.[^/.]+$/, "");
                     }
+                    
+                    const pdfRangeContainer = document.getElementById('pdfPageRangeContainer');
+                    if (pdfRangeContainer) pdfRangeContainer.classList.remove('hidden');
                 } else {
                     window.currentPdfFile = null;
                     texFileName.textContent = file.name;
                     texFileName.className = "text-xs text-brand-600 font-bold";
                     texFileIcon.className = "fa-solid fa-file-circle-check text-brand-500 text-xl mb-1.5 animate-bounce";
                     latexTextarea.disabled = false;
+                    
+                    const pdfRangeContainer = document.getElementById('pdfPageRangeContainer');
+                    if (pdfRangeContainer) pdfRangeContainer.classList.add('hidden');
                     
                     const reader = new FileReader();
                     reader.onload = (e) => {
@@ -1410,6 +1416,12 @@
                 const pdfFormData = new FormData();
                 pdfFormData.append('file', window.currentPdfFile);
                 pdfFormData.append('generate_answers', generateAnswers ? "true" : "false");
+                
+                const pdfPageRangeInput = document.getElementById('pdfPageRange');
+                const pageRange = pdfPageRangeInput ? pdfPageRangeInput.value.trim() : '';
+                if (pageRange) {
+                    pdfFormData.append('page_range', pageRange);
+                }
 
                 fetch('/api/upload/pdf-task', {
                     method: 'POST',
@@ -1499,15 +1511,8 @@
 
             uploadPromise
                 .then(imageMapping => {
-                    let parseModelFriendly = 'DeepSeek-V4-Flash';
-                    let parseBrand = 'DeepSeek';
-                    if (systemPreferParseModel === 'qwen3.7-max' || systemPreferParseModel.includes('qwen')) {
-                        parseModelFriendly = 'Ali Bailian Qwen3.7-Max';
-                        parseBrand = '阿里百炼 Qwen';
-                    } else if (systemPreferParseModel === 'deepseek-v4-pro') {
-                        parseModelFriendly = 'DeepSeek-V4-Pro';
-                    }
-                    
+                    let parseModelFriendly = systemPreferParseModel.includes('/') ? systemPreferParseModel.split('/').pop() : systemPreferParseModel;
+                    let parseBrand = 'AI';
                     document.getElementById('importLoadingText').textContent = `${parseBrand} 正在智能分析并拆解试卷，请稍候...`;
                     appendImportLog(`正在调用 ${parseModelFriendly} 教研大模型进行试题智能分割与属性匹配...`, 'info');
                     appendImportLog('大纲映射范围：高中人教版A 必修一至选择性必修三。请耐心等候...', 'info');
@@ -1727,6 +1732,11 @@
             window.currentPdfTaskId = null;
             window.activeCropQuestionIndex = null;
             window.tempCroppedPathsThisSession = [];
+            
+            const pdfRange = document.getElementById('pdfPageRange');
+            if (pdfRange) pdfRange.value = '';
+            const pdfRangeContainer = document.getElementById('pdfPageRangeContainer');
+            if (pdfRangeContainer) pdfRangeContainer.classList.add('hidden');
         }
 
         function resetImportState(showToastMessage = true) {

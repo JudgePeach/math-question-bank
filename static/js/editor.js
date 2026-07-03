@@ -609,18 +609,33 @@ const PAGE_LIMIT = 20;
                 if (item.tags) {
                     const tagList = item.tags.split(/[,，]+/).map(t => t.trim()).filter(t => t.length > 0);
                     if (tagList.length > 0) {
-                        tagsHtml = '<div class="flex flex-wrap gap-1 mt-1">';
-                        tagList.forEach(tag => {
-                            tagsHtml += `<span class="text-[9px] font-bold text-amber-600 bg-amber-50 border border-amber-250/60 px-1.5 py-0.5 rounded-full flex items-center space-x-0.5"><i class="fa-solid fa-tag text-[7px] text-amber-500 mr-0.5"></i>${tag}</span>`;
+                        const displayTags = tagList.slice(0, 2);
+                        const hiddenCount = tagList.length - 2;
+                        
+                        displayTags.forEach(tag => {
+                            tagsHtml += `<span class="text-[9px] font-bold text-amber-600 bg-amber-50 border border-amber-250/60 px-1.5 py-0.5 rounded-full flex items-center space-x-0.5"><i class="fa-solid fa-tag text-[7px] text-amber-500 mr-0.5"></i><span class="max-w-[80px] truncate">${tag}</span></span>`;
                         });
-                        tagsHtml += '</div>';
+                        
+                        if (hiddenCount > 0) {
+                            const fullTagsHtml = tagList.map(tag => `<span class="inline-flex items-center whitespace-nowrap"><i class="fa-solid fa-tag text-[7px] text-amber-500/80 mr-1"></i>${tag}</span>`).join('<span class="mx-1.5 text-amber-300/50">|</span>');
+                            tagsHtml += `
+                            <div class="relative flex items-center" onclick="event.stopPropagation()">
+                                <span class="peer text-[9px] font-bold text-amber-600 bg-amber-100 border border-amber-300/60 px-1.5 py-0.5 rounded-full cursor-default flex items-center shadow-sm hover:bg-amber-200 transition-colors">+${hiddenCount}</span>
+                                <div class="absolute top-full right-0 mt-1.5 w-max max-w-[220px] bg-amber-50 border border-amber-200/80 text-amber-800 text-[10px] px-2.5 py-1.5 rounded-lg shadow-md opacity-0 pointer-events-none peer-hover:opacity-100 transition-opacity duration-150 z-50 font-medium invisible peer-hover:visible">
+                                    <div class="flex flex-wrap items-center leading-relaxed">
+                                        ${fullTagsHtml}
+                                    </div>
+                                </div>
+                            </div>`;
+                        }
                     }
                 }
 
                 itemCard.innerHTML = `
-                    <div class="flex items-center justify-between">
-                        <span class="text-[10px] font-bold px-2 py-0.5 rounded bg-emerald-50 text-emerald-700">草稿 • ${typeText}</span>
-                        <div class="flex items-center space-x-1">
+                    <div class="flex items-start justify-between">
+                        <span class="text-[10px] font-bold px-2 py-0.5 rounded bg-emerald-50 text-emerald-700 shrink-0 mt-0.5">草稿 • ${typeText}</span>
+                        <div class="flex items-center gap-1.5 justify-end flex-wrap flex-1 ml-2">
+                            ${tagsHtml}
                             ${difficultyBadge}
                             <!-- Delete Button -->
                             <button onclick="event.stopPropagation(); deleteDraft('${item.id}')" class="text-slate-400 hover:text-red-500 p-0.5 rounded hover:bg-slate-100 transition-all opacity-0 group-hover:opacity-100" title="删除草稿">
@@ -629,7 +644,6 @@ const PAGE_LIMIT = 20;
                         </div>
                     </div>
                     <div class="text-xs text-slate-700 leading-relaxed font-medium line-clamp-2 card-formula-render">${cleanContent || '[未填题干]'}</div>
-                    ${tagsHtml}
                     <div class="flex justify-between items-center text-[9px] text-slate-400 border-t pt-1.5">
                         <span class="truncate max-w-[120px] font-semibold text-emerald-600"><i class="fa-solid fa-box mr-0.5"></i>${item.category_knowledge || item.category_chapter || '未分类'}</span>
                         <span class="font-mono text-slate-400">${item.source ? item.source.substring(0, 12) : '草稿暂存'}</span>
@@ -1105,18 +1119,33 @@ const PAGE_LIMIT = 20;
                         if (item.tags) {
                             const tagList = item.tags.split(/[,，]+/).map(t => t.trim()).filter(t => t.length > 0);
                             if (tagList.length > 0) {
-                                tagsHtml = '<div class="flex flex-wrap gap-1 mt-1">';
-                                tagList.forEach(tag => {
-                                    tagsHtml += `<span class="text-[9px] font-bold text-amber-600 bg-amber-50 border border-amber-250/60 px-1.5 py-0.5 rounded-full flex items-center space-x-0.5"><i class="fa-solid fa-tag text-[7px] text-amber-500 mr-0.5"></i>${tag}</span>`;
+                                const displayTags = tagList.slice(0, 2);
+                                const hiddenCount = tagList.length - 2;
+                                
+                                displayTags.forEach(tag => {
+                                    tagsHtml += `<span class="text-[9px] font-bold text-amber-600 bg-amber-50 border border-amber-250/60 px-1.5 py-0.5 rounded-full flex items-center space-x-0.5"><i class="fa-solid fa-tag text-[7px] text-amber-500 mr-0.5"></i><span class="max-w-[80px] truncate">${tag}</span></span>`;
                                 });
-                                tagsHtml += '</div>';
+                                
+                                if (hiddenCount > 0) {
+                                    const fullTagsHtml = tagList.map(tag => `<span class="inline-flex items-center whitespace-nowrap"><i class="fa-solid fa-tag text-[7px] text-amber-500/80 mr-1"></i>${tag}</span>`).join('<span class="mx-1.5 text-amber-300/50">|</span>');
+                                    tagsHtml += `
+                                    <div class="relative flex items-center" onclick="event.stopPropagation()">
+                                        <span class="peer text-[9px] font-bold text-amber-600 bg-amber-100 border border-amber-300/60 px-1.5 py-0.5 rounded-full cursor-default flex items-center shadow-sm hover:bg-amber-200 transition-colors">+${hiddenCount}</span>
+                                        <div class="absolute top-full right-0 mt-1.5 w-max max-w-[220px] bg-amber-50 border border-amber-200/80 text-amber-800 text-[10px] px-2.5 py-1.5 rounded-lg shadow-md opacity-0 pointer-events-none peer-hover:opacity-100 transition-opacity duration-150 z-50 font-medium invisible peer-hover:visible">
+                                            <div class="flex flex-wrap items-center leading-relaxed">
+                                                ${fullTagsHtml}
+                                            </div>
+                                        </div>
+                                    </div>`;
+                                }
                             }
                         }
 
                         itemCard.innerHTML = `
-                            <div class="flex items-center justify-between">
-                                <span class="text-[10px] font-bold px-2 py-0.5 rounded bg-slate-100 text-slate-500">${typeText}</span>
-                                <div class="flex items-center space-x-1.5">
+                            <div class="flex items-start justify-between">
+                                <span class="text-[10px] font-bold px-2 py-0.5 rounded bg-slate-100 text-slate-500 shrink-0 mt-0.5">${typeText}</span>
+                                <div class="flex items-center gap-1.5 justify-end flex-wrap flex-1 ml-2">
+                                    ${tagsHtml}
                                     ${difficultyBadge}
                                     <span class="text-[10px] font-extrabold px-1.5 py-0.5 rounded bg-brand-50 text-brand-600 shadow-sm">#${item.seq_num}</span>
                                     <!-- Delete Button -->
@@ -1126,7 +1155,6 @@ const PAGE_LIMIT = 20;
                                 </div>
                             </div>
                             <div class="text-xs text-slate-700 leading-relaxed font-medium line-clamp-2 card-formula-render">${cleanContent || '[空白题干]'}</div>
-                            ${tagsHtml}
                             <!-- Time Badge -->
                             <div class="text-[8px] text-slate-400/80 flex items-center space-x-1 py-0.5">
                                 <i class="fa-regular fa-clock text-[8px]"></i>

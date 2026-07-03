@@ -9,7 +9,7 @@
     <link rel="apple-touch-icon" sizes="180x180" href="/static/apple-touch-icon.png?v=2">
     
     <!-- Tailwind CSS -->
-    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="/static/lib/tailwind/tailwind.min.js"></script>
     <script>
         // Prevent theme flash
         (function() {
@@ -47,17 +47,17 @@
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Outfit:wght@300;400;500;600;700&display=swap" rel="stylesheet">
     
     <!-- FontAwesome Icons -->
-    <link rel="stylesheet" href="https://cdn.bootcdn.net/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <link rel="stylesheet" href="/static/lib/font-awesome/css/all.min.css">
     
     <!-- KaTeX CSS & JS -->
-    <link rel="stylesheet" href="https://cdn.bootcdn.net/ajax/libs/KaTeX/0.16.8/katex.min.css">
-    <script src="https://cdn.bootcdn.net/ajax/libs/KaTeX/0.16.8/katex.min.js"></script>
-    <script src="https://cdn.bootcdn.net/ajax/libs/KaTeX/0.16.8/contrib/auto-render.min.js"></script>
+    <link rel="stylesheet" href="/static/lib/katex/katex.min.css">
+    <script src="/static/lib/katex/katex.min.js"></script>
+    <script src="/static/lib/katex/contrib/auto-render.min.js"></script>
     
     <!-- Marked.js for Markdown -->
-    <script src="https://cdn.bootcdn.net/ajax/libs/marked/4.3.0/marked.min.js"></script>
+    <script src="/static/lib/marked/marked.min.js"></script>
     <!-- DOMPurify for XSS Protection -->
-    <script src="https://cdn.bootcdn.net/ajax/libs/dompurify/3.0.5/purify.min.js"></script>
+    <script src="/static/lib/dompurify/purify.min.js"></script>
 
     <link rel="stylesheet" href="/static/css/app.css">
 </head>
@@ -397,15 +397,10 @@
                                     <i class="fa-solid fa-camera text-brand-500"></i>
                                     <span>拖拽或上传题目截图</span>
                                 </p>
-                                <div class="flex items-center space-x-1.5">
-                                    <span class="text-[10px] text-slate-400">临时识图引擎:</span>
-                                    <select id="contentOcrEngine" onchange="updateOcrPlaceholder('content')" class="glass-select text-[10px] px-2 py-1 rounded-lg">
-                                        <option value="default">默认配置</option>
-                                        <option value="siliconflow">SiliconFlow 硅基流动云端 (⚡更精准)</option>
-                                        <option value="ali_bailian">阿里百炼 (⚡Qwen3-VL 极速响应)</option>
-                                        <option value="simpletex">SimpleTex 云端 (数学公式强力)</option>
-                                    </select>
-                                </div>
+                                <label class="inline-flex items-center text-[10px] text-slate-500 cursor-pointer select-none">
+                                    <input type="checkbox" id="contentOcrSkipTikz" class="rounded border-slate-300 text-brand-500 focus:ring-brand-500/20 mr-1">
+                                    <span>仅识别文本公式 (禁用 TikZ 绘图)</span>
+                                </label>
                             </div>
                             
                             <!-- Content OCR Dropzone -->
@@ -415,7 +410,7 @@
                                 <div id="contentOcrPlaceholder" class="space-y-1.5 flex flex-col items-center">
                                     <i class="fa-solid fa-crop-simple text-slate-300 text-3xl mb-0.5 animate-pulse"></i>
                                     <p class="text-xs text-slate-500 font-medium">将题目截图拖拽到此，或点击上传 (支持截图粘贴)</p>
-                                    <p id="contentOcrPlaceholderSub" class="text-[10px] text-slate-400 mt-1">调用 SiliconFlow 硅基流动云端多模态引擎</p>
+                                    <p id="contentOcrPlaceholderSub" class="text-[10px] text-slate-400 mt-1">调用配置的多模态引擎</p>
                                 </div>
                                 <!-- Preview view -->
                                 <div id="contentOcrPreviewContainer" class="hidden w-full flex flex-col items-center space-y-2 py-1">
@@ -621,15 +616,10 @@
                                     <i class="fa-solid fa-camera text-brand-500"></i>
                                     <span>拖拽或上传答案截图</span>
                                 </p>
-                                <div class="flex items-center space-x-1.5">
-                                    <span class="text-[10px] text-slate-400">临时识图引擎:</span>
-                                    <select id="answerOcrEngine" onchange="updateOcrPlaceholder('answer')" class="glass-select text-[10px] px-2 py-1 rounded-lg">
-                                        <option value="default">默认配置</option>
-                                        <option value="siliconflow">SiliconFlow 硅基流动云端 (⚡更精准)</option>
-                                        <option value="ali_bailian">阿里百炼 (⚡Qwen3-VL 极速响应)</option>
-                                        <option value="simpletex">SimpleTex 云端 (数学公式强力)</option>
-                                    </select>
-                                </div>
+                                <label class="inline-flex items-center text-[10px] text-slate-500 cursor-pointer select-none">
+                                    <input type="checkbox" id="answerOcrSkipTikz" class="rounded border-slate-300 text-brand-500 focus:ring-brand-500/20 mr-1">
+                                    <span>仅识别文本公式 (禁用 TikZ 绘图)</span>
+                                </label>
                             </div>
                             
                             <!-- OCR Drag Upload Area -->
@@ -967,8 +957,8 @@
 
     <!-- SETTINGS MODAL (API Configuration) - Apple Glass Style -->
     <div id="settingsModal" class="fixed inset-0 glass-modal-overlay z-50 flex items-center justify-center hidden opacity-0 transition-opacity duration-300">
-        <div class="glass-modal rounded-2xl w-full max-w-4xl p-6 transform scale-95 transition-transform duration-300 space-y-5">
-            <div class="flex justify-between items-center border-b border-slate-200/50 pb-3">
+        <div class="glass-modal rounded-2xl w-full max-w-4xl p-6 transform scale-95 transition-transform duration-300 flex flex-col max-h-[90vh] overflow-hidden">
+            <div class="flex justify-between items-center border-b border-slate-200/50 pb-3 shrink-0">
                 <h3 class="font-bold text-base text-slate-800 flex items-center space-x-2">
                     <i class="fa-solid fa-sliders text-brand-600"></i>
                     <span>外部与本地 API 接口参数设置</span>
@@ -978,9 +968,9 @@
                 </button>
             </div>
 
-            <form id="settingsForm" class="space-y-5" onsubmit="saveSettings(event)">
+            <form id="settingsForm" class="flex flex-col flex-1 overflow-hidden space-y-4" onsubmit="saveSettings(event)">
                 <!-- Settings Modal Tab Headers -->
-                <div class="flex items-center space-x-2 border-b border-slate-200/50 pb-1">
+                <div class="flex items-center space-x-2 border-b border-slate-200/50 pb-1 shrink-0">
                     <button type="button" onclick="switchSettingsTab('api')" id="btn-settings-api" class="px-4 py-2 border-b-2 border-brand-500 text-brand-600 font-semibold text-xs transition-all flex items-center space-x-1.5 focus:outline-none">
                         <i class="fa-solid fa-gears"></i>
                         <span>API 接口设置</span>
@@ -990,6 +980,9 @@
                         <span>自定义维度配置</span>
                     </button>
                 </div>
+
+                <!-- Scrollable Settings Body -->
+                <div class="flex-1 overflow-y-auto pr-1 space-y-5 scrollbar-thin py-2">
 
                 <!-- API Keys & Models Tab Content -->
                 <div id="settings-tab-api" class="grid grid-cols-1 md:grid-cols-2 gap-6">
@@ -1137,7 +1130,6 @@
                                         <option value="bailian">阿里百炼</option>
                                         <option value="zhongzhan_gpt">中转站 A (GPT)</option>
                                         <option value="zhongzhan_claude">中转站 B (Claude)</option>
-                                        <option value="simpletex">SimpleTex</option>
                                     </select>
                                     <div id="ocrModelValueContainer" class="flex-1 flex items-center space-x-1.5">
                                         <!-- Dynamic Load -->
@@ -1201,11 +1193,13 @@
                     <i class="fa-solid fa-circle-exclamation mt-0.5"></i>
                     <span>
                         <strong>多模态与安全说明：</strong>
-                        所有 API 配置信息均直接持久化保存在您的本地根目录 <code>.env</code> 文件中。通过 硅基流动(SiliconFlow) 或 阿里百炼(Alibaba Bailian) 调用 Qwen 多模态视觉模型，能够实现极其高精准度的行内公式与混排题干识别。如果识别不满意，仍可自由选择或自动无缝兜底降级至 SimpleTex 引擎。
+                        所有 API 配置信息均直接持久化保存在您的本地根目录 <code>.env</code> 文件中。通过 硅基流动(SiliconFlow) 或 阿里百炼(Alibaba Bailian) 调用 Qwen 多模态视觉模型，能够实现极其高精准度的行内公式与混排题干识别。
                     </span>
                 </div>
+                </div>
+                <!-- End of Scrollable Settings Body -->
 
-                <div class="flex justify-end space-x-2 pt-2 border-t border-slate-200/50">
+                <div class="flex justify-end space-x-2 pt-2 border-t border-slate-200/50 shrink-0">
                     <button type="button" onclick="closeSettingsModal()" class="glass-btn px-4 py-2 rounded-xl text-xs font-medium text-slate-500">取消</button>
                     <button type="submit" class="glass-btn-primary px-5 py-2 rounded-xl font-medium text-xs">保存配置</button>
                 </div>
@@ -1454,6 +1448,18 @@
                             <label for="importGenerateAnswers" class="block text-xs font-bold text-slate-700 cursor-pointer">自动生成 AI 解答与详细解析</label>
                             <span class="text-[10px] text-slate-400 block leading-normal mt-0.5">若开启，当试卷源码只有题干没有参考答案时，AI 会在后台自动解答并推理；若关闭，则答案内容保持留空。</span>
                         </div>
+                    </div>
+
+                    <!-- PDF Page Range Settings (Visible only when PDF selected) -->
+                    <div id="pdfPageRangeContainer" class="hidden flex items-center justify-between p-3 bg-indigo-50/50 border border-indigo-100 rounded-xl shrink-0">
+                        <div class="flex-1 pr-3">
+                            <label for="pdfPageRange" class="block text-xs font-bold text-indigo-950 flex items-center space-x-1">
+                                <i class="fa-solid fa-file-invoice text-indigo-500"></i>
+                                <span>PDF 解析页码范围 (可选)</span>
+                            </label>
+                            <span class="text-[10px] text-slate-500 block leading-normal mt-0.5">例如: 1-6, 8, 10-12 (留空则默认解析全部页面)</span>
+                        </div>
+                        <input type="text" id="pdfPageRange" placeholder="如: 1-6" class="w-24 px-2 py-1.5 border border-slate-200 focus:border-brand-500 outline-none rounded-lg text-xs font-mono text-center bg-white shadow-sm transition-all shrink-0">
                     </div>
 
                     <!-- Step 4: Run AI Parse button - Apple Glass Style -->

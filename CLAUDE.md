@@ -8,10 +8,10 @@
 - **后端**：Python 3.10+ + FastAPI + Uvicorn。
 - **数据库**：SQLite + SQLAlchemy（轻量化本地数据库，数据存储在项目根目录下的 `./math_question_bank.db` 中）。
 - **前端页面**：单页面应用 `static/index.html`（纯 HTML5 + 原生 JavaScript，无编译，秒级加载）。
-- **前端样式**：Tailwind CSS（通过 CDN 引入）+ FontAwesome 图标库。
-- **公式渲染**：KaTeX（通过 CDN 引入），支持题干与解析框实时解析、秒级渲染。
+- **前端样式**：Tailwind CSS + FontAwesome 图标库（均已下载至本地 `/static/lib` 支持 100% 离线使用）。
+- **公式渲染**：KaTeX（已下载至本地支持 100% 离线数学公式渲染），支持题干与解析框实时解析、秒级渲染。
 - **前端脚本拆分**：前端 JS 采用无编译的“渐进式级联加载”架构，分模块存放在 `static/js/` 目录下（`api.js`、`editor.js`、`ocr.js`、`import.js`），保证代码结构极其清爽。
-- **图文识图 (OCR)**：高精度、多通道的云端 LaTeX OCR 引擎，支持 SiliconFlow (Qwen3.5-4B)、阿里百炼 (qwen3-vl-flash) 以及 SimpleTex 公式识别 API 智能降级兜底。
+- **图文识图 (OCR)**：高精度、多通道的云端 LaTeX OCR 引擎，支持 SiliconFlow (Qwen3.5-4B) 和 阿里百炼 (qwen3-vl-flash) 的双通道并发识图。
 - **接口安全校验**：所有的非只读操作（POST / PUT / DELETE）在后端均有强置 `X-Local-Token` 安全令牌拦截保护，前端由 `api.js` 进行 fetch 全局劫持代理，确保本地数据防跨站越权篡改。
 
 ---
@@ -24,6 +24,7 @@
 - **级联目录体系**：
   - **学段（必修/选修）** -> **章节** -> **小节/知识点** 级联，自动下拉补全。
   - **分类必填校验**：当保存题目未选学段或章节时，页面会**平滑滚动**至对应下拉框，并触发临时的**红色高亮聚焦光晕**（`ring-2 ring-red-400 border-red-400`），动画持续 2.5 秒。
+- **自定义标签顶栏展示与智能折叠**：自定义标签平移至卡片顶部右侧（紧靠难度标签），采用 items-start 与 flex-1 弹性对齐。为防标签过多破坏布局，最多直接展示 2 个标签（单个最大宽度 80px 自动截断），其余折叠至 `+N` 徽章。悬浮在徽章上瞬间唤起定制琥珀色气泡展示全部标签，且阻断点击冒泡。
 
 ### 3.2 草稿箱与三选项决策流
 侧边栏包含双标签卡片切换，无缝管理两个数据源：
@@ -96,6 +97,7 @@
 ### 3.8 TikZ 几何绘图与智能纠错工作流
 - **自动编译与预览**：编辑器下方集成了 TikZ 代码专属编辑和预览区。前端会将 TikZ 代码通过 `/api/render_tikz` 送往后端，后端在本地调用编译链转换为 PNG 并返回相对路径，在前端实现无缝的几何图像秒级预览。
 - **AI 几何绘图与纠错**：支持人工与大模型闭环协同。遇到几何图题，AI 可优先直接生成 TikZ 代码编译。如遇到 TikZ 语法编译报错，用户可写入“指导意见”调用 `/api/correct_tikz` 交由高级大模型进行智能纠正，修复编译报错直至绘图完美。
+- **双阶段多模态识图与 TikZ 绘图联动**：在单题 OCR 公式识图过程中（`/api/ocr`），多模态模型如果检测到插图，会在 LaTeX 文本中植入 `[ILLUSTRATION_BOX: ...]` 定位标签。后端解析到该标签时，会自动将其剥离，并触发第二阶段联动：将整张原始题目图片和提取的 LaTeX 题干文本直接发送给高级绘图视觉大模型（由 `PREFER_DRAW_MODEL` 指定，如 GPT-5.5 / Qwen-VL-32B），由其绘制出 TikZ 源码，并在后台静默编译为 PNG 插图，自动追加到题干末尾（以 Markdown 图片语法 `![](/static/uploads/tikz_xxx.png)` 引用），实现一键图文公式识别与几何绘图矢量化。
 
 ### 3.9 题目双向关联与题组管理
 - **双向绑定机制**：系统通过 `association_group_id` 进行关联。同组题目（变式题、子母题、一题多解等）均具备相同的 `association_group_id`。绑定两个已属于不同组的题目时，系统会在后端自动将旧组的题目批量迁移合并到新组。
@@ -107,7 +109,7 @@
 
 ### 3.11 PDF 试卷多模态拆解与手动截图系统
 - **切片与异步任务**：支持上传 PDF 文件，后端在后台利用 `fitz` (PyMuPDF) 将 PDF 栅格化为高清图片。利用 ThreadPoolExecutor 并行发起 VLM 多模态 OCR 转译。
-- **配图裁剪机制（取消自动裁剪）**：由于自动识别裁切容易产生不准的误差，系统已取消自动裁剪机制，全面改由用户进行纯手动拖拽框选精准截图，确保配图插图的高画质和 100% 零误差。
+- **配图裁剪机制（取消自动裁剪，拆解题目默认不含配图）**：由于自动识别裁切容易产生不准的误差，系统已取消自动裁剪机制，拆解出的题目默认是不包含任何图片的。若原题包含配图，必须由用户在前端点击「手动截图」弹窗，通过拖拽框选进行 100% 零误差的高精度配图关联，这确保了配图插图的高画质和 100% 零误差。
 - **进度轮询与状态展示**：前端通过 `/api/upload/pdf-task` 提交文件并在右侧展现毛玻璃遮罩层与进度条，以每 1.5 秒的频率请求 `/api/tasks/{task_id}/status` 直至 `completed`。
 - **手动拖拽框选截图**：每个拆解卡片均提供“手动截图”选项，点击可调出 PDF 页面查看灯箱，支持在页面图上左键点击并拖拽框选区域，向 `/api/ai/manual-crop-pdf` 发送百分比坐标进行精准的物理裁剪配图。
 - **生命周期管理与净化**：
@@ -121,16 +123,18 @@
 
 ### 4.1 云端多通道 OCR 接口 `/api/ocr`
 - **自适应切边**：后端自动调用自适应图像去噪和切边预处理。
-- **接口参数**：接收 `file` 表单数据和可选参数 `engine`（取值：`default`、`siliconflow`、`simpletex`、`ali_bailian`）。
-- **默认引擎与智能兜底**：
+- **接口参数**：接收 `file` 表单数据和可选参数 `engine`（取值：`default`、`siliconflow`、`ali_bailian`）。
+- **默认引擎**：
   - 未指定引擎时，读取 `.env` 中 `OCR_PREFER_ENGINE` 配置（默认值：`siliconflow`）。
-  - 若首选引擎（如 SiliconFlow 或阿里百炼）请求失败，系统将**自动、无缝地降级至 SimpleTex API 进行公式识别兜底**，确保服务的高可用。
 
 ### 4.2 大模型解答接口 `/api/ai/solve`
 - **接口参数**：接收 `content` (题干), `question_type`, `custom_prompt`, `thinking` (是否开启深度思考), `model`。
-- **默认模型与多源调用**：
-  - 默认读取自 `.env` 中的 `PREFER_SOLVE_MODEL`（默认值：`deepseek-v4-pro`）。
-  - 若调用 DeepSeek 引擎，需配置 `DEEPSEEK_API_KEY`；若调用通义千问系列（如 `qwen-max`），则会从 `ALI_BAILIAN_API_KEY` 读取秘钥，实现多源 API 无缝切换。
+- **默认模型与多源参数配置**：
+  - 解题模型默认读取自 `.env` 中的 `PREFER_SOLVE_MODEL`（默认值：`deepseek-v4-pro`）。
+  - 试卷智能拆解模型默认读取自 `.env` 中的 `PREFER_PARSE_MODEL`（默认值：`deepseek-v4-flash`）。
+  - 题目分类模型默认读取自 `.env` 中的 `PREFER_CLASSIFY_MODEL`（默认值：`deepseek-v4-flash`）。
+  - 高级 TikZ 绘图与纠错模型默认读取自 `.env` 中的 `PREFER_DRAW_MODEL`（默认值：`Qwen/Qwen3-VL-32B-Instruct`）。
+  - 若调用 DeepSeek 引擎，需配置 `DEEPSEEK_API_KEY`；若调用通义千问系列（如 `qwen-max`），则会从 `ALI_BAILIAN_API_KEY` 读取秘钥；若指定 `ZHONGZHAN_GPT` / `ZHONGZHAN_CLAUDE` 专属前缀，则会自动解析并调用对应的中转站 API（从 `ZHONGZHAN_GPT_API_KEY` / `ZHONGZHAN_CLAUDE_API_KEY` 获取密钥），支持多源、跨平台的 AI 解题与多模态绘图推理。
   - `max_tokens` 强置为 **`8192`**，预防由于复杂的数学思维链（Thinking Chain）导致 Token 溢出使得最终 LaTeX 答案被强行切断。
 
 ### 4.3 写入操作鉴权认证 `/api/*` (POST / PUT / DELETE)
@@ -152,7 +156,7 @@
 - **解除关联 (`/api/questions/{question_id}/associated`)**：DELETE 请求，将当前题目从所属的关联组中安全移出。
 
 ### 4.7 代理绕过与网络稳定性 (Robust Networking)
-- **原理与实现**：当系统调用国内大模型接口（阿里百炼、SiliconFlow、SimpleTex 等）时，如遭遇本地代理引发的 Refused 或超时报错，后端在 `main.py` 的网络访问函数 `robust_request_post` / `robust_request_get` 中会自动清除当前环境变量中的系统代理设置并进行直连重试，确保数学题库系统的核心识图与解题服务高可用。
+- **原理与实现**：当系统调用国内大模型接口（阿里百炼、SiliconFlow 等）时，如遭遇本地代理引发的 Refused 或超时报错，后端在 `main.py` 的网络访问函数 `robust_request_post` / `robust_request_get` 中会自动清除当前环境变量中的系统代理设置并进行直连重试，确保数学题库系统的核心识图与解题服务高可用。
 
 ---
 
