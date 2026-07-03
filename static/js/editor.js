@@ -1619,6 +1619,34 @@ const PAGE_LIMIT = 20;
             
         function parseMarkdownWithMath(text) {
             if (!text) return "";
+
+            // Process choices environment (exam-zh-choices)
+            text = text.replace(/\\begin\{choices\}([\s\S]*?)\\end\{choices\}/g, function(match, inner) {
+                const items = inner.split(/\\item/).map(item => item.trim()).filter(item => item.length > 0);
+                const labels = ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H'];
+                let maxLen = 0;
+                items.forEach(item => {
+                    const cleanText = item.replace(/\$/g, '');
+                    if (cleanText.length > maxLen) {
+                        maxLen = cleanText.length;
+                    }
+                });
+
+                let gridCols = "grid-cols-4";
+                if (maxLen > 24) {
+                    gridCols = "grid-cols-1";
+                } else if (maxLen > 10) {
+                    gridCols = "grid-cols-2";
+                }
+
+                let html = `<div class="grid ${gridCols} gap-2 my-2 select-none">`;
+                items.forEach((item, idx) => {
+                    const label = labels[idx] || (idx + 1);
+                    html += `<div class="flex items-start"><span class="font-bold mr-1.5 text-slate-800">${label}.</span><span class="flex-1">${item}</span></div>`;
+                });
+                html += '</div>';
+                return html;
+            });
             
             // 1. Clean up redundant LaTeX line breaks surrounding environments/items to avoid blank block lines
             text = text.replace(/\\\\\s*\\begin\{/g, '\\begin{')
