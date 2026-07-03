@@ -1574,7 +1574,7 @@ const PAGE_LIMIT = 20;
                 let html = `<div class="grid ${gridCols} gap-2 my-2 select-none">`;
                 items.forEach((item, idx) => {
                     const label = labels[idx] || (idx + 1);
-                    html += `<div class="flex items-start"><span class="font-bold mr-1.5 text-slate-800">${label}.</span><span class="flex-1 [&>p]:m-0 [&>p]:inline">${item}</span></div>`;
+                    html += `<div class="flex items-baseline"><span class="font-bold mr-1.5 text-slate-800">${label}.</span><span class="flex-1 [&>p]:m-0 [&>p]:inline">${item}</span></div>`;
                 });
                 html += '</div>';
                 return html;
@@ -1642,7 +1642,7 @@ const PAGE_LIMIT = 20;
                 let html = `<div class="grid ${gridCols} gap-2 my-2 select-none">`;
                 items.forEach((item, idx) => {
                     const label = labels[idx] || (idx + 1);
-                    html += `<div class="flex items-start"><span class="font-bold mr-1.5 text-slate-800">${label}.</span><span class="flex-1 [&>p]:m-0 [&>p]:inline">${item}</span></div>`;
+                    html += `<div class="flex items-baseline"><span class="font-bold mr-1.5 text-slate-800">${label}.</span><span class="flex-1 [&>p]:m-0 [&>p]:inline">${item}</span></div>`;
                 });
                 html += '</div>';
                 return html;
