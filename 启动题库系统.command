@@ -49,6 +49,18 @@ if [ ! -d "venv" ]; then
     echo ""
 fi
 
+# 检查是否缺少必要的依赖（如新增的 pymupdf）
+echo "正在检查运行环境依赖是否完整..."
+if ! ./venv/bin/python -c "import fastapi, uvicorn, sqlalchemy, multipart, dotenv, requests, PIL, fitz" &>/dev/null; then
+    echo "检测到有新增或缺失的的依赖包，正在为您自动增量安装..."
+    ./venv/bin/pip install -r requirements.txt
+    if [ $? -ne 0 ]; then
+        echo "⚠️ 增量安装依赖包失败，请检查网络连接或代理设置。"
+    else
+        echo "🎉 依赖包更新完成！"
+    fi
+fi
+
 # 自动检测并强力清理霸占 8000 端口的残余 Python/Uvicorn 僵尸进程，确保 100% 启动成功
 PORT_PID=$(lsof -t -i:8000 -n -P)
 if [ ! -z "$PORT_PID" ]; then

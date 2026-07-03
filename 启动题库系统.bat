@@ -38,6 +38,20 @@ if "%PYTHON_CMD%"=="" (
 )
 
 echo 使用 Python 命令: %PYTHON_CMD%
+
+:: 检查 Python 依赖包是否完整
+echo 正在检查运行环境依赖是否完整...
+%PYTHON_CMD% -c "import fastapi, uvicorn, sqlalchemy, multipart, dotenv, requests, PIL, fitz" >nul 2>&1
+if errorlevel 1 (
+    echo 检测到有新增或缺失的依赖包，正在为您自动增量安装...
+    %PYTHON_CMD% -m pip install -r requirements.txt
+    if errorlevel 1 (
+        echo [警告] 依赖包安装失败，服务启动可能会报错。请检查网络。
+    ) else (
+        echo [成功] 依赖包更新完成！
+    )
+)
+
 echo 正在本地加载环境并为您启动服务...
 echo 服务启动后，将在浏览器中自动打开: http://127.0.0.1:8000
 echo =================================================
