@@ -35,6 +35,15 @@ def test_clean_latex_to_markdown_for_ai():
     assert "$f(x) = x^2 + 2x$" in cleaned_formula
     assert "$$M$$" in cleaned_formula
 
+    # Test choices environment cleaning
+    latex_choices = "\\begin{choices}\n\\item 选项一\n\\item 选项二\n\\end{choices}"
+    cleaned_choices = clean_latex_to_markdown_for_ai(latex_choices)
+    normalized_choices = " ".join(cleaned_choices.split())
+    assert "- A. 选项一" in normalized_choices
+    assert "- B. 选项二" in normalized_choices
+    assert "\\begin{choices}" not in cleaned_choices
+    assert "\\end{choices}" not in cleaned_choices
+
 
 def test_export_database_to_files(db_session, tmp_path):
     # Setup mock Question

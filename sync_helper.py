@@ -53,6 +53,20 @@ def clean_latex_to_markdown_for_ai(text: str) -> str:
     if not text:
         return ""
     
+    # 0. 专门转换 choices 选择题环境为带 A. B. C. D. 标号的 Markdown 列表
+    def replace_choices(match):
+        inner = match.group(1)
+        items = re.split(r'\\item', inner)
+        items = [it.strip() for it in items if it.strip()]
+        labels = ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H']
+        md_lines = []
+        for idx, it in enumerate(items):
+            label = labels[idx] if idx < len(labels) else str(idx + 1)
+            md_lines.append(f"- {label}. {it}")
+        return "\n" + "\n".join(md_lines) + "\n"
+        
+    text = re.sub(r'\\begin\{choices\}([\s\S]*?)\\end\{choices\}', replace_choices, text)
+    
     # 1. 清理 LaTeX 列表环境标记（列表环境前后多换行以保持呼吸感）
     text = re.sub(r'\\begin\{(itemize|enumerate|center)\}', '\n', text)
     text = re.sub(r'\\end\{(itemize|enumerate|center)\}', '\n', text)
