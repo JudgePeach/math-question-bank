@@ -5,11 +5,13 @@
 # 1. 忽略本地环境变量文件（内含敏感 API Keys 和 Tokens，绝对不能公开）
 .env
 
-# 2. 忽略本地 SQLite 数据库文件及各种连接日志文件
+# 2. 忽略本地 SQLite 数据库文件、日志文件及临时测试数据库备份
 *.db
 *.db-journal
 *.db-shm
 *.db-wal
+*.db.*
+*.failed_attempt
 
 # 3. 忽略本地备份目录下的所有数据备份
 # 但通过排除 .gitkeep，使得 data_backup 目录结构可以被提交到 GitHub 上
@@ -21,12 +23,13 @@ data_backup/*
 static/uploads/*
 !static/uploads/.gitkeep
 
-# 5. 忽略 Python 缓存、测试缓存及运行产生的日志
+# 5. 忽略 Python 运行缓存、测试缓存及本地临时草稿代码目录
 .system_generated/
 __pycache__/
 *.pyc
 .pytest_cache/
 .pytest/
+scratch/
 
 # 6. 忽略操作系统临时文件与 IDE 配置文件
 .DS_Store
@@ -37,5 +40,9 @@ __pycache__/
 *.njsproj
 *.sln
 
-# 7. 忽略构建输出目录
+# 7. 忽略 Python 虚拟环境与本地构建输出目录
 dist/
+venv/
+
+# 8. 忽略本地下载的前端第三方离线静态资源库（可通过脚本单独下载，不推荐提交进 Git）
+static/lib/
