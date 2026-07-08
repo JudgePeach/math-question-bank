@@ -575,8 +575,20 @@
                                        class="w-full px-3 py-2.5 rounded-xl text-xs border border-slate-200 focus:border-brand-500 focus:ring-2 focus:ring-brand-100 transition-all">
                             </div>
 
-                            <!-- AI Action Row (Redundant labels & toggles removed. Solid color theme styling forced for absolute reliability) -->
-                            <div class="flex justify-end border-t border-slate-100 pt-3 mt-1">
+                            <!-- AI Action Row with modern Thinking Toggle Switch -->
+                            <div class="flex justify-between items-center border-t border-slate-100 pt-3 mt-1">
+                                <!-- AI Thinking Mode Toggle Switch -->
+                                <div class="flex items-center space-x-2">
+                                    <label class="relative inline-flex items-center cursor-pointer select-none">
+                                        <input type="checkbox" id="aiThinkingToggle" onchange="toggleThinkingStyle()" class="sr-only peer" checked>
+                                        <div class="w-9 h-5 bg-slate-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-brand-500"></div>
+                                    </label>
+                                    <span class="flex items-center space-x-1.5 text-xs font-semibold text-slate-600">
+                                        <i id="thinkingIcon" class="fa-solid fa-brain text-brand-500 animate-pulse"></i>
+                                        <span id="thinkingLabel">深度思考</span>
+                                    </span>
+                                </div>
+
                                 <button type="button" onclick="triggerAISolve()" id="aiSolveBtn" 
                                         style="background-color: rgb(var(--brand-600-rgb)); border-color: rgb(var(--brand-700-rgb)); color: #ffffff;"
                                         class="px-5 py-2.5 rounded-xl font-medium text-xs flex items-center space-x-1.5 hover:opacity-90 active:scale-95 shadow-sm border transition-all">
@@ -594,7 +606,7 @@
                                 </div>
                                 <p id="aiLoadingText" class="text-xs text-slate-500 font-medium">AI 大模型正在拼命思索、组织 LaTeX 精细步骤... (可能需要10-25秒，请稍后)</p>
                                 <div class="w-full bg-slate-200 h-1 rounded-full overflow-hidden">
-                                    <div class="bg-brand-500 h-1 w-1/3 animate-[pulse_1s_infinite] rounded-full"></div>
+                                    <div id="aiSolveProgressBar" class="bg-brand-500 h-1 w-0 transition-[width] duration-300 ease-out rounded-full"></div>
                                 </div>
                             </div>
 
@@ -931,12 +943,23 @@
 
                 <!-- Recommendation Result -->
                 <div id="classifyResult" class="hidden space-y-3">
-                    <div class="p-4 rounded-xl bg-brand-50 border border-brand-100 space-y-2">
-                        <span class="text-[10px] uppercase font-bold text-brand-600 tracking-wider flex items-center"><i class="fa-solid fa-robot mr-1.5 animate-bounce"></i>AI 推荐教材定位：</span>
-                        <div class="flex items-center space-x-2 font-semibold text-slate-800 text-xs flex-wrap gap-y-1.5">
-                            <span id="recCompulsory" class="bg-brand-100 text-brand-800 px-2.5 py-0.5 rounded-lg text-[10px] font-bold">选择性必修二</span>
-                            <i class="fa-solid fa-chevron-right text-[10px] text-slate-450"></i>
-                            <span id="recChapter" class="text-slate-800 font-bold">5. 一元函数的导数及其应用</span>
+                    <div class="p-4 rounded-xl bg-brand-50 border border-brand-100 space-y-3">
+                        <div>
+                            <span class="text-[10px] uppercase font-bold text-brand-600 tracking-wider flex items-center mb-1.5"><i class="fa-solid fa-robot mr-1.5 animate-bounce"></i>AI 推荐教材定位：</span>
+                            <div class="flex items-center space-x-2 font-semibold text-slate-800 text-xs flex-wrap gap-y-1.5">
+                                <span id="recCompulsory" class="bg-brand-100 text-brand-800 px-2.5 py-0.5 rounded-lg text-[10px] font-bold">选择性必修二</span>
+                                <i class="fa-solid fa-chevron-right text-[10px] text-slate-450"></i>
+                                <span id="recChapter" class="text-slate-800 font-bold">5. 一元函数的导数及其应用</span>
+                            </div>
+                        </div>
+                        <div class="border-t border-brand-100/60 pt-2 space-y-1.5">
+                            <span class="text-[10px] uppercase font-bold text-brand-600 tracking-wider flex items-center"><i class="fa-solid fa-tags mr-1.5 text-indigo-500"></i>AI 判定题型：</span>
+                            <div class="flex items-center space-x-2 text-xs font-semibold text-slate-800">
+                                <span id="recQType" class="bg-indigo-100 text-indigo-800 px-2.5 py-0.5 rounded-lg text-[10px] font-bold">单选题</span>
+                            </div>
+                            <p id="recQTypeReminder" class="text-[11px] text-amber-600 font-medium hidden">
+                                <i class="fa-solid fa-circle-info mr-1"></i>温馨提示：AI 识别此题为选择题，请核对为单选还是多选。
+                            </p>
                         </div>
                     </div>
                 </div>

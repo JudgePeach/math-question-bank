@@ -76,6 +76,8 @@
         let originalQuestionState = null;
         let contentOcrAbortController = null;
         let answerOcrAbortController = null;
+        let aiSolveAbortController = null;
+        let aiSolveProgressTimer = null;
 
         // Global debounce utility
         const debounce = (func, delay) => {
@@ -139,6 +141,49 @@
                     // Update dropdown descriptions to reflect current default engine
                     updateOcrPlaceholder('content');
                     updateOcrPlaceholder('answer');
+
+                    // Populate settings modal selectors on start as well
+                    const solveCfg = parseModelConfig(settings.prefer_solve_model, 'deepseek', 'deepseek-v4-flash');
+                    const solveProv = document.getElementById('solveModelProvider');
+                    if (solveProv) {
+                        solveProv.value = solveCfg.provider;
+                        renderModelSelector('solve', solveCfg.provider, solveCfg.model);
+                    }
+                    
+                    const parseCfg = parseModelConfig(settings.prefer_parse_model, 'deepseek', 'deepseek-v4-flash');
+                    const parseProv = document.getElementById('parseModelProvider');
+                    if (parseProv) {
+                        parseProv.value = parseCfg.provider;
+                        renderModelSelector('parse', parseCfg.provider, parseCfg.model);
+                    }
+                    
+                    const classifyCfg = parseModelConfig(settings.prefer_classify_model, 'deepseek', 'deepseek-v4-flash');
+                    const classifyProv = document.getElementById('classifyModelProvider');
+                    if (classifyProv) {
+                        classifyProv.value = classifyCfg.provider;
+                        renderModelSelector('classify', classifyCfg.provider, classifyCfg.model);
+                    }
+                    
+                    let ocrProvider = settings.prefer_engine || 'siliconflow';
+                    if (ocrProvider === 'ali_bailian') ocrProvider = 'bailian';
+                    if (ocrProvider === 'zhongzhan') ocrProvider = 'zhongzhan_gpt';
+                    const ocrProv = document.getElementById('ocrModelProvider');
+                    if (ocrProv) {
+                        ocrProv.value = ocrProvider;
+                        let ocrModel = "";
+                        if (ocrProvider === 'siliconflow') ocrModel = settings.siliconflow_model || 'Qwen/Qwen3.5-4B';
+                        else if (ocrProvider === 'bailian') ocrModel = settings.ali_bailian_model || 'qwen3-vl-flash';
+                        else if (ocrProvider === 'zhongzhan_gpt') ocrModel = settings.zhongzhan_gpt_ocr_model || 'gpt-4o';
+                        else if (ocrProvider === 'zhongzhan_claude') ocrModel = settings.zhongzhan_claude_ocr_model || 'claude-3-5-sonnet';
+                        renderModelSelector('ocr', ocrProvider, ocrModel);
+                    }
+                    
+                    const drawCfg = parseModelConfig(settings.prefer_draw_model, 'siliconflow', 'Qwen/Qwen3-VL-32B-Instruct');
+                    const drawProv = document.getElementById('drawModelProvider');
+                    if (drawProv) {
+                        drawProv.value = drawCfg.provider;
+                        renderModelSelector('draw', drawCfg.provider, drawCfg.model);
+                    }
                 })
                 .catch(err => {
                     console.error('获取偏好识图引擎设置失败:', err);
@@ -190,8 +235,18 @@
         // 从 localStorage 恢复自定义模型，或者初始化
         function getModelListForProvider(provider) {
             const presets = MODEL_PRESETS[provider] || [];
-            const customStr = localStorage.getItem(`custom_models_${provider}`);
-            const customs = customStr ? JSON.parse(customStr) : [];
+            let customs = [];
+            try {
+                const customStr = localStorage.getItem(`custom_models_${provider}`);
+                if (customStr) {
+                    const parsed = JSON.parse(customStr);
+                    if (Array.isArray(parsed)) {
+                        customs = parsed;
+                    }
+                }
+            } catch (e) {
+                console.error(`解析自定义模型列表失败 for ${provider}:`, e);
+            }
             return Array.from(new Set([...presets, ...customs]));
         }
 
@@ -286,6 +341,22 @@
             
             // 刷新并清空
             renderModelSelector(typeKey, provider, "");
+        }
+
+        // 辅助解析解析 "PROVIDER/model" 前缀
+        function parseModelConfig(val, defaultProvider, defaultModel) {
+            if (val && val.includes("/")) {
+                const idx = val.indexOf("/");
+                const prov = val.substring(0, idx).toLowerCase();
+                const name = val.substring(idx + 1);
+                // 校验前缀合理性
+                if (['deepseek', 'siliconflow', 'bailian', 'zhongzhan', 'zhongzhan_gpt', 'zhongzhan_claude'].includes(prov)) {
+                    let targetProv = prov;
+                    if (targetProv === 'zhongzhan') targetProv = 'zhongzhan_gpt'; // 兼容老数据
+                    return { provider: targetProv, model: name };
+                }
+            }
+            return { provider: defaultProvider, model: val || defaultModel };
         }
 
         // 动态装载模型选择/手写输入区域
@@ -397,22 +468,6 @@
                     document.getElementById('settingsZhongzhanGptBaseUrl').value = settings.zhongzhan_gpt_base_url || '';
                     document.getElementById('settingsZhongzhanClaudeKey').value = settings.zhongzhan_claude_key || '';
                     document.getElementById('settingsZhongzhanClaudeBaseUrl').value = settings.zhongzhan_claude_base_url || '';
-                    
-                    // 辅助解析解析 "PROVIDER/model" 前缀
-                    function parseModelConfig(val, defaultProvider, defaultModel) {
-                        if (val && val.includes("/")) {
-                            const idx = val.indexOf("/");
-                            const prov = val.substring(0, idx).toLowerCase();
-                            const name = val.substring(idx + 1);
-                            // 校验前缀合理性
-                            if (['deepseek', 'siliconflow', 'bailian', 'zhongzhan', 'zhongzhan_gpt', 'zhongzhan_claude'].includes(prov)) {
-                                let targetProv = prov;
-                                if (targetProv === 'zhongzhan') targetProv = 'zhongzhan_gpt'; // 兼容老数据
-                                return { provider: targetProv, model: name };
-                            }
-                        }
-                        return { provider: defaultProvider, model: val || defaultModel };
-                    }
                     
                     // 1. AI 智能解题模型
                     const solveCfg = parseModelConfig(settings.prefer_solve_model, 'deepseek', 'deepseek-v4-flash');

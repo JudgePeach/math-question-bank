@@ -719,6 +719,22 @@
                     document.getElementById('recCompulsory').textContent = data.compulsory;
                     document.getElementById('recChapter').textContent = data.chapter;
                     
+                    const qtypeLabels = {
+                        'single_choice': '单选题',
+                        'multi_choice': '多选题',
+                        'fill_in_blank': '填空题',
+                        'detailed_answer': '解答题'
+                    };
+                    const label = qtypeLabels[data.question_type] || '未知题型';
+                    document.getElementById('recQType').textContent = label;
+                    
+                    const reminder = document.getElementById('recQTypeReminder');
+                    if (data.question_type === 'single_choice' || data.question_type === 'multi_choice') {
+                        reminder.classList.remove('hidden');
+                    } else {
+                        reminder.classList.add('hidden');
+                    }
+                    
                     resultBox.classList.remove('hidden');
                     applyBtn.classList.remove('hidden');
                 } else {
@@ -739,9 +755,18 @@
             const compSelect = document.getElementById('editCompulsory');
             const chapSelect = document.getElementById('editChapter');
             const knowSelect = document.getElementById('editKnowledge');
+            const qtypeSelect = document.getElementById('editQType');
             
             const comp = temporaryClassifyData.compulsory;
             const chap = temporaryClassifyData.chapter;
+            
+            // Apply question type
+            if (temporaryClassifyData.question_type && qtypeSelect) {
+                qtypeSelect.value = temporaryClassifyData.question_type;
+                if (typeof qtypeSelect.onchange === 'function') {
+                    qtypeSelect.onchange();
+                }
+            }
             
             // Ensure nodes exist in local dictionary structure
             if (!categoryTree[comp]) {
@@ -760,7 +785,7 @@
             knowSelect.value = chap; // Default empty third level (小节) to chapter name
             
             closeClassifyModal();
-            showToast('AI 推荐章节已采纳！');
+            showToast('AI 推荐章节及题型已采纳！');
             
             // Save question now with skipCheck = true
             setTimeout(() => {

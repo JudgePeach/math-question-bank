@@ -231,4 +231,49 @@ def test_pdf_task_and_crop(client):
     assert response.json()["status"] == "success"
 
 
+def test_api_ai_solve_with_ocr(client):
+    from unittest.mock import patch, MagicMock
+    headers = {"X-Local-Token": LOCAL_TOKEN}
+    
+    with patch.dict(os.environ, {"DEEPSEEK_API_KEY": "fake_key"}):
+        with patch("main.robust_request_post") as mock_post:
+            mock_resp = MagicMock()
+            mock_resp.status_code = 200
+            mock_resp.json.return_value = {
+                "choices": [
+                    {
+                        "message": {
+                            "content": "\\textbf{【参考答案】}：2\n\\textbf{【详细解析】}：求导结果正确\n\\textbf{【核心知识点】}：导数"
+                        }
+                    }
+                ]
+            }
+            mock_post.return_value = mock_resp
+
+            payload = {
+                "content": "已知 $f(x) = x^2$，求 $f'(1)$",
+                "question_type": "detailed_answer",
+                "ocr_result": "OCR识别的草稿：求导得到2x，带入1得到2",
+                "custom_prompt": "请简化解答步骤",
+                "thinking": "disabled",
+                "model": "DEEPSEEK/deepseek-chat"
+            }
+            
+            response = client.post("/api/ai/solve", data=payload, headers=headers)
+            assert response.status_code == 200
+            res_data = response.json()
+            assert res_data["status"] == "success"
+            assert "2" in res_data["solution"]
+            
+            # Verify request payload included OCR context and custom prompt
+            args, kwargs = mock_post.call_args
+            sent_data = kwargs["json"]
+            user_msg = sent_data["messages"][1]["content"]
+            assert "已有的 OCR 识别解析/草稿内容如下" in user_msg
+            assert "OCR识别的草稿" in user_msg
+            assert "请简化解答步骤" in user_msg
+            assert "已知 $f(x) = x^2$" in user_msg
+
+
+
 

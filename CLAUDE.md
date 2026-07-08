@@ -128,7 +128,8 @@
   - 未指定引擎时，读取 `.env` 中 `OCR_PREFER_ENGINE` 配置（默认值：`siliconflow`）。
 
 ### 4.2 大模型解答接口 `/api/ai/solve`
-- **接口参数**：接收 `content` (题干), `question_type`, `custom_prompt`, `thinking` (是否开启深度思考), `model`。
+- **接口参数**：接收 `content` (题干), `question_type`, `ocr_result` (可选，已有的 OCR 解析/草稿内容), `custom_prompt` (可选，用户补充引导指令), `thinking` (是否开启深度思考), `model`。
+- **OCR 整合与引导机制**：若提供了 `ocr_result`，AI 将基于该解析草稿进行润色、修正公式错误并补全步骤；同时，AI 会根据 `custom_prompt` 里的用户指令（如简化/细化等）调整输出风格。
 - **默认模型与多源参数配置**：
   - 解题模型默认读取自 `.env` 中的 `PREFER_SOLVE_MODEL`（默认值：`deepseek-v4-pro`）。
   - 试卷智能拆解模型默认读取自 `.env` 中的 `PREFER_PARSE_MODEL`（默认值：`deepseek-v4-flash`）。

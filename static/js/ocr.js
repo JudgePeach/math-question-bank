@@ -296,6 +296,30 @@
                     ocrStatusBadge.textContent = '已取消识别 (点击可更换图片)';
                 }
             }
+
+            // Handle AI solve abort
+            if (typeof aiSolveAbortController !== 'undefined' && aiSolveAbortController) {
+                aiSolveAbortController.abort();
+                aiSolveAbortController = null;
+                aborted = true;
+                
+                if (typeof aiSolveProgressTimer !== 'undefined' && aiSolveProgressTimer) {
+                    clearInterval(aiSolveProgressTimer);
+                    aiSolveProgressTimer = null;
+                }
+                const progressBar = document.getElementById('aiSolveProgressBar');
+                if (progressBar) {
+                    progressBar.style.width = '0%';
+                }
+                
+                const aiSolveBtn = document.getElementById('aiSolveBtn');
+                const aiLoader = document.getElementById('aiLoadingIndicator');
+                if (aiSolveBtn && aiLoader) {
+                    aiSolveBtn.disabled = false;
+                    aiSolveBtn.classList.remove('opacity-50', 'pointer-events-none');
+                    aiLoader.classList.add('hidden');
+                }
+            }
             
             if (aborted) {
                 // Restore loading indicator and dropzone UI states (but keep image preview)
@@ -999,7 +1023,8 @@
             
             // Use globally configured preferred solve model
             const model = typeof systemPreferSolveModel !== 'undefined' ? systemPreferSolveModel : 'deepseek-v4-pro';
-            const thinking = 'enabled';
+            const thinkingToggle = document.getElementById('aiThinkingToggle');
+            const thinking = (thinkingToggle && thinkingToggle.checked) ? 'enabled' : 'disabled';
             
             if (!content.trim()) {
                 showToast('请先在上方输入题干内容，AI需要读取题干生成解答步骤！', 'error');
@@ -1012,13 +1037,24 @@
             const resultBox = document.getElementById('aiResultText');
             const loadingText = document.getElementById('aiLoadingText');
             
+            const ocrResultTextEl = document.getElementById('ocrResultText');
+            const ocrResult = ocrResultTextEl ? ocrResultTextEl.textContent.trim() : '';
+
             // Set dynamic loading explanation depending on thinking mode and model
             let modelFriendly = model.includes('/') ? model.split('/').pop() : model;
 
-            if (thinking === 'enabled') {
-                loadingText.textContent = `${modelFriendly} 正在进行深度思考并构建 LaTeX 解析步骤... (思考与生成可能需要 15-90 秒，请耐心等待)`;
+            if (ocrResult) {
+                if (thinking === 'enabled') {
+                    loadingText.textContent = `${modelFriendly} 正在结合题干与 OCR 结果进行深度思考并构建 LaTeX 解析... (大约需要 15-90 秒)`;
+                } else {
+                    loadingText.textContent = `${modelFriendly} 正在结合题干与 OCR 结果极速生成 LaTeX 解析... (预计 3-10 秒)`;
+                }
             } else {
-                loadingText.textContent = `${modelFriendly} 正在极速生成简要 LaTeX 解析步骤... (预计 3-10 秒即可完成，请稍后)`;
+                if (thinking === 'enabled') {
+                    loadingText.textContent = `${modelFriendly} 正在进行深度思考并构建 LaTeX 解析步骤... (思考与生成可能需要 15-90 秒，请耐心等待)`;
+                } else {
+                    loadingText.textContent = `${modelFriendly} 正在极速生成简要 LaTeX 解析步骤... (预计 3-10 秒即可完成，请稍后)`;
+                }
             }
             
             btn.disabled = true;
@@ -1026,39 +1062,142 @@
             loader.classList.remove('hidden');
             outputBox.classList.add('hidden');
             
+            // Initialize progress bar
+            const progressBar = document.getElementById('aiSolveProgressBar');
+            if (progressBar) {
+                progressBar.style.width = '0%';
+            }
+            
+            if (typeof aiSolveProgressTimer !== 'undefined' && aiSolveProgressTimer) {
+                clearInterval(aiSolveProgressTimer);
+                aiSolveProgressTimer = null;
+            }
+            
             const formData = new FormData();
             formData.append('content', content);
             formData.append('question_type', qtype);
+            formData.append('ocr_result', ocrResult);
             formData.append('custom_prompt', customPrompt);
             formData.append('thinking', thinking);
             formData.append('model', model);
+            formData.append('stream', 'true'); // Opt-in to real-time streaming
+            
+            if (typeof aiSolveAbortController !== 'undefined' && aiSolveAbortController) {
+                aiSolveAbortController.abort();
+            }
+            aiSolveAbortController = new AbortController();
+            const signal = aiSolveAbortController.signal;
             
             fetch('/api/ai/solve', {
                 method: 'POST',
-                body: formData
+                body: formData,
+                signal: signal
             })
-            .then(r => r.json())
-            .then(data => {
-                btn.disabled = false;
-                btn.classList.remove('opacity-50', 'pointer-events-none');
-                loader.classList.add('hidden');
-                
-                if (data.status === 'success') {
-                    showToast('AI 解析生成成功！');
-                    outputBox.classList.remove('hidden');
-                    resultBox.textContent = data.solution;
-                    
-                    // Automatically load AI solution into the final review editor
-                    loadToFinalReview('ai');
-                } else {
-                    showToast(data.message, 'error');
+            .then(response => {
+                if (!response.ok) {
+                    throw new Error(`HTTP ${response.status}`);
                 }
+                if (progressBar) progressBar.style.width = '3%';
+                
+                const reader = response.body.getReader();
+                const decoder = new TextDecoder('utf-8');
+                let buffer = '';
+                let accumulatedSolution = '';
+                let accumulatedReasoning = '';
+                
+                function read() {
+                    return reader.read().then(({ done, value }) => {
+                        if (done) {
+                            return;
+                        }
+                        
+                        buffer += decoder.decode(value, { stream: true });
+                        const lines = buffer.split('\n');
+                        buffer = lines.pop(); // Keep last incomplete line
+                        
+                        for (const line of lines) {
+                            const trimmed = line.trim();
+                            if (trimmed.startsWith('data:')) {
+                                try {
+                                    const eventData = JSON.parse(trimmed.slice(5).trim());
+                                    if (eventData.status === 'processing') {
+                                        if (eventData.reasoning) {
+                                            accumulatedReasoning += eventData.reasoning;
+                                            const rCount = eventData.reasoning_count || 0;
+                                            const rPct = Math.min(50, rCount * 0.08); // Up to 50%
+                                            if (progressBar) progressBar.style.width = `${3 + rPct}%`;
+                                            if (loadingText) {
+                                                loadingText.textContent = `${modelFriendly} 正在进行深度推理思考 (已生成 ${rCount} 个 Token)...`;
+                                            }
+                                        }
+                                        if (eventData.content) {
+                                            accumulatedSolution += eventData.content;
+                                            const cCount = eventData.content_count || 0;
+                                            const rCount = eventData.reasoning_count || 0;
+                                            let pct = 3;
+                                            if (rCount > 0) {
+                                                const rPct = Math.min(50, rCount * 0.08);
+                                                const cPct = Math.min(45, cCount * 0.05);
+                                                pct += rPct + cPct;
+                                            } else {
+                                                pct += Math.min(92, cCount * 0.08);
+                                            }
+                                            if (progressBar) progressBar.style.width = `${pct}%`;
+                                            if (loadingText) {
+                                                loadingText.textContent = `${modelFriendly} 正在生成 LaTeX 解析步骤 (已输出 ${cCount} 个 Token)...`;
+                                            }
+                                        }
+                                    } else if (eventData.status === 'error') {
+                                        showToast(eventData.message, 'error');
+                                        cleanupLoader();
+                                        return;
+                                    } else if (eventData.status === 'done') {
+                                        if (progressBar) progressBar.style.width = '100%';
+                                        setTimeout(() => {
+                                            cleanupLoader();
+                                            outputBox.classList.remove('hidden');
+                                            
+                                            let finalOutput = '';
+                                            if (accumulatedReasoning.trim()) {
+                                                finalOutput += `【深度思考推理过程】\n${accumulatedReasoning.trim()}\n\n【参考解析】\n`;
+                                            }
+                                            finalOutput += accumulatedSolution;
+                                            resultBox.textContent = finalOutput;
+                                            
+                                            loadToFinalReview('ai');
+                                            showToast('AI 解析生成成功！');
+                                        }, 300);
+                                        return;
+                                    }
+                                } catch (e) {
+                                    console.error('Failed to parse SSE line:', line, e);
+                                }
+                            }
+                        }
+                        return read();
+                    });
+                }
+                
+                function cleanupLoader() {
+                    btn.disabled = false;
+                    btn.classList.remove('opacity-50', 'pointer-events-none');
+                    loader.classList.add('hidden');
+                }
+                
+                return read();
             })
             .catch(err => {
+                aiSolveAbortController = null;
+                if (progressBar) progressBar.style.width = '0%';
+                
+                if (err.name === 'AbortError') {
+                    showToast('AI 解析生成已取消', 'info');
+                    return; // Gracefully handle manual abort
+                }
                 btn.disabled = false;
                 btn.classList.remove('opacity-50', 'pointer-events-none');
                 loader.classList.add('hidden');
-                showToast('AI 生成解析出错: ' + err, 'error');
+                showToast('AI 生成解析出错: ' + err.message, 'error');
             });
         }
 
@@ -1069,6 +1208,11 @@
             
             if (source === 'ai') {
                 contentToImport = document.getElementById('aiResultText').textContent;
+                // Exclude reasoning block from importing into the final review editor
+                if (contentToImport.includes('【参考解析】')) {
+                    const parts = contentToImport.split('【参考解析】');
+                    contentToImport = parts[1] || parts[0];
+                }
             } else if (source === 'ocr') {
                 contentToImport = document.getElementById('ocrResultText').textContent;
             }

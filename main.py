@@ -9,10 +9,10 @@ import datetime
 import threading
 import requests
 import secrets
-from typing import List
+from typing import List, Optional
 from PIL import Image
 from fastapi import FastAPI, Depends, HTTPException, UploadFile, File, Form, BackgroundTasks, Request, Response, Header
-from fastapi.responses import FileResponse, JSONResponse, HTMLResponse
+from fastapi.responses import FileResponse, JSONResponse, HTMLResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
@@ -945,9 +945,11 @@ def ocr_formula(
 async def ai_solve(
     content: str = Form(...),
     question_type: str = Form("detailed_answer"),
+    ocr_result: str = Form(""),
     custom_prompt: str = Form(""),
     thinking: str = Form("enabled"),
-    model: str = Form("deepseek-v4-pro")
+    model: str = Form("deepseek-v4-pro"),
+    stream: str = Form("false")
 ):
     # 动态解析模型所属的服务商前缀与真实模型名
     model_lower = model.lower()
@@ -1021,37 +1023,89 @@ async def ai_solve(
         }
         type_str = type_mapping.get(question_type, "数学题")
         
+        is_choice_or_blank = question_type in ["single_choice", "multi_choice", "fill_in_blank"]
+        
+        if is_choice_or_blank:
+            first_block_header = "\\\\textbf{【参考答案】}"
+            format_rules = (
+                "3. 你的输出内容必须且仅包含以下三个结构化板块（使用 LaTeX 粗体格式，绝对禁止使用 Markdown 的 ** 双星号加粗语法）：\n"
+                "   - \\\\textbf{【参考答案】}：直接给出最简练、准确的最终选项字母（如 A、B、C、D）或填空答案内容。\n"
+                "   - \\\\textbf{【解析过程】}：写出本题细致的推导和求解过程与解析步骤，方便师生理清思路。\n"
+                "   - \\\\textbf{【核心知识点】}：列出解答本题用到的关键数学公式、定理或思想方法。"
+            )
+        else:
+            first_block_header = "\\\\textbf{【规范解答】}"
+            format_rules = (
+                "3. 你的输出内容必须且仅包含以下三个结构化板块（使用 LaTeX 粗体格式，绝对禁止使用 Markdown 的 ** 双星号加粗语法）：\n"
+                "   - \\\\textbf{【规范解答】}：给出符合高考/正式试卷卷面书写规范的标准解答步骤。注意书写格式要标准且严密，文字要凝练，不要有任何闲话废话或多余的过渡词，供学生参考标准卷面得分步骤。\n"
+                "   - \\\\textbf{【解析思路】}：给出解答本题背后的核心解析思路与破题关窍。解析长短请视该题目的真实难度而定，不要面面俱到，直接点出解答最核心的要点即可，言简意赅，切忌冗长。\n"
+                "   - \\\\textbf{【核心知识点】}：列出解答本题用到的关键数学原理、定理或思想方法。"
+            )
+            
         system_instructions = (
             "你是一位极其严谨的、资深的高中数学教研专家。请解答用户输入的高中数学题目。特别注意：这必须是一道符合高中数学大纲要求的题目，你的解题思路、方法和技巧绝对不能超出中国普通高中阶段的水平（严禁使用大学高等数学、微积分、高等代数、洛必达法则、泰勒展开、拉格朗日中值定理等超出高中阶段教学大纲的大学方法，必须完全采用符合高中知识体系和认知范围的常规或技巧性方法）。\n"
             "【输出核心准则】\n"
             "1. 你的回答必须直接、干净地从下面的结构化板块开始。严禁包含任何前言、导语、引入承接句或问候语（例如“你好！”、“下面是解析：”等）。\n"
-            "2. 你的回答必须直接以“\\\\textbf{【参考答案】}”作为第一个字符开始输出。严禁在结尾包含任何总结、客套话或多余的尾注段落。\n"
+            f"2. 你的回答必须直接以“{first_block_header}”作为第一个字符开始输出。严禁在结尾包含任何总结、客套话或多余的尾注段落。\n"
             "【输出格式要求】\n"
             "1. 必须使用标准的 LaTeX 语法书写所有的数学公式。行内公式使用 $...$ 或 \\( ... \\)，行间公式使用 $$\\n...\\n$$ 或 \\[ ... \\]。\n"
             "2. 排版优雅，逻辑步骤条理清晰，推理严密，没有任何废话。\n"
-            "3. 你的输出内容必须且仅包含以下三个结构化板块（使用 LaTeX 粗体格式，绝对禁止使用 Markdown 的 ** 双星号加粗语法）：\n"
-            "   - \\\\textbf{【参考答案】}：直接给出最简练、准确的最终答案。\n"
-            "   - \\\\textbf{【详细解析】}：分步骤地写出详尽推导过程。如果有分类讨论或多种解法，请逐一清晰列出。如果本题涉及几何图像，你可以适度使用 TikZ 绘图代码描述（置于 ```tikz ... ``` 代码块中，供系统前端解析）。\n"
-            "   - \\\\textbf{【核心知识点】}：列出解答本题用到的关键数学原理、定理或核心思想方法。\n"
+            f"{format_rules}\n"
             "4. 绝不要带有任何无关的字句，直接输出这三个板块。"
         )
         
         user_prompt = f"题目类型: {type_str}\n"
+        if ocr_result.strip():
+            user_prompt += f"已有的 OCR 识别解析/草稿内容如下，请在此基础上进行润色、修正、细化或简化，并生成最终解答步骤：\n{ocr_result}\n\n"
         if custom_prompt:
             user_prompt += f"补充引导指令: {custom_prompt}\n"
         user_prompt += f"题干内容:\n{content}"
         
+        # Double max_tokens to 16384, but cap at 8192 for Alibaba Bailian compatible-mode endpoints
+        max_output_tokens = 8192 if (api_base and "aliyuncs.com" in api_base.lower()) else 16384
+            
         data = {
             "model": model_name,
             "messages": [
                 {"role": "system", "content": system_instructions},
                 {"role": "user", "content": user_prompt}
             ],
-            "max_tokens": 8192
+            "max_tokens": max_output_tokens
         }
         
         # Configure thinking parameter if specified (only for DeepSeek models/endpoints, excluding legacy models that don't support it)
         is_deepseek = ("deepseek" in model_name.lower() or "deepseek" in api_base.lower()) and "deepseek-chat" not in model_name.lower() and "deepseek-reasoner" not in model_name.lower()
+        is_siliconflow = api_base and "siliconflow" in api_base.lower()
+        
+        is_bailian = api_base and "aliyuncs.com" in api_base.lower()
+        if is_bailian:
+            # Connect the front-end '深度思考' toggle button to Alibaba Bailian's 'enable_thinking' API parameter
+            if thinking == "enabled":
+                data["enable_thinking"] = True
+            else:
+                data["enable_thinking"] = False
+
+        if is_siliconflow:
+            # Native R1 models on SiliconFlow do not use enable_thinking (they are always reasoning)
+            # Other models (V3, V4 Pro, Flash, etc.) use enable_thinking and reasoning_effort
+            if "r1" not in model_name.lower():
+                is_deepseek = False  # Bypass OpenAI standard thinking parameter
+                if thinking == "enabled":
+                    data["enable_thinking"] = True
+                    if "v4" in model_name.lower():
+                        data["reasoning_effort"] = "max"
+                else:
+                    data["enable_thinking"] = False
+
+        # Support OpenAI reasoning models (gpt-5, o1, o3, etc.) on transit APIs
+        is_openai_reasoning = ("gpt-5" in model_name.lower() or "o1" in model_name.lower() or "o3" in model_name.lower())
+        if is_openai_reasoning:
+            is_deepseek = False  # Bypass DeepSeek thinking parameter
+            if thinking == "enabled":
+                data["reasoning_effort"] = "high"    # Maximum mathematical depth and verification
+            else:
+                data["reasoning_effort"] = "medium"  # Balanced speed and analytical quality
+        
         if is_deepseek and thinking in ["enabled", "disabled"]:
             data["thinking"] = {"type": thinking}
             
@@ -1060,8 +1114,56 @@ async def ai_solve(
         if not is_deepseek or thinking == "disabled":
             data["temperature"] = 0.2
             
-        # Generous 180 seconds timeout for high-school math reasoning and network proxies
-        response = robust_request_post(url, headers=headers, json=data, timeout=180)
+        if stream == "true":
+            def event_generator():
+                data["stream"] = True
+                try:
+                    response = robust_request_post(url, headers=headers, json=data, timeout=300, stream=True)
+                    if response.status_code != 200:
+                        error_msg = f"{provider_name} 接口错误: HTTP {response.status_code}, 内容: {response.text}"
+                        yield f"data: {json.dumps({'status': 'error', 'message': error_msg}, ensure_ascii=False)}\n\n"
+                        return
+                    
+                    reasoning_count = 0
+                    content_count = 0
+                    
+                    for line in response.iter_lines():
+                        if not line:
+                            continue
+                        line_str = line.decode("utf-8").strip()
+                        if line_str.startswith("data:"):
+                            data_content = line_str[5:].strip()
+                            if data_content == "[DONE]":
+                                break
+                            try:
+                                chunk_json = json.loads(data_content)
+                                delta = chunk_json.get("choices", [{}])[0].get("delta", {})
+                                reasoning = delta.get("reasoning_content") or delta.get("reasoning") or ""
+                                content_piece = delta.get("content") or ""
+                                
+                                if reasoning:
+                                    reasoning_count += 1
+                                if content_piece:
+                                    content_count += 1
+                                    
+                                if reasoning or content_piece:
+                                    yield f"data: {json.dumps({'status': 'processing', 'reasoning': reasoning, 'content': content_piece, 'reasoning_count': reasoning_count, 'content_count': content_count}, ensure_ascii=False)}\n\n"
+                            except Exception:
+                                continue
+                    yield f"data: {json.dumps({'status': 'done'}, ensure_ascii=False)}\n\n"
+                except requests.exceptions.Timeout:
+                    friendly_msg = (
+                        f"AI 解析生成超时（限制为 300 秒）。这通常是因为 {provider_name} "
+                        f"服务端当前排队拥堵或推理速度过慢。建议您稍后再试，或在设置中切换为「DeepSeek 官方」或「阿里百炼」等更稳定的接口平台。"
+                    )
+                    yield f"data: {json.dumps({'status': 'error', 'message': friendly_msg}, ensure_ascii=False)}\n\n"
+                except Exception as e:
+                    yield f"data: {json.dumps({'status': 'error', 'message': f'AI 解析生成出错: {str(e)}'}, ensure_ascii=False)}\n\n"
+            
+            return StreamingResponse(event_generator(), media_type="text/event-stream")
+
+        # Generous 300 seconds timeout (5 minutes) for high-school math reasoning and network proxies
+        response = robust_request_post(url, headers=headers, json=data, timeout=300)
         
         if response.status_code != 200:
             raise Exception(f"{provider_name} 接口错误: HTTP {response.status_code}, 内容: {response.text}")
@@ -1086,6 +1188,15 @@ async def ai_solve(
             "status": "success",
             "solution": ai_message
         }
+    except requests.exceptions.Timeout:
+        friendly_msg = (
+            f"AI 解析生成超时（限制为 300 秒）。这通常是因为 {provider_name} "
+            f"服务端当前排队拥堵或推理速度过慢。建议您稍后再试，或在设置中切换为「DeepSeek 官方」或「阿里百炼」等更稳定的接口平台。"
+        )
+        return JSONResponse(
+            content={"status": "error", "message": friendly_msg},
+            status_code=500
+        )
     except Exception as e:
         return JSONResponse(
             content={"status": "error", "message": f"AI 解析生成出错: {str(e)}"},
@@ -2487,6 +2598,20 @@ async def ai_classify(content: str = Form(...)):
         result = json.loads(ai_message)
         compulsory = result.get("compulsory", "")
         chapter = result.get("chapter", "")
+        qtype = result.get("question_type", "")
+        
+        # Map common Chinese/English variations of question type
+        qtype_mapping = {
+            "single_choice": "single_choice",
+            "multi_choice": "multi_choice",
+            "fill_in_blank": "fill_in_blank",
+            "detailed_answer": "detailed_answer",
+            "单选题": "single_choice",
+            "多选题": "multi_choice",
+            "填空题": "fill_in_blank",
+            "解答题": "detailed_answer"
+        }
+        resolved_qtype = qtype_mapping.get(qtype, "detailed_answer")
         
         # Verification: make sure returned values exist in get_current_curriculum()
         curr = get_current_curriculum()
@@ -2494,7 +2619,8 @@ async def ai_classify(content: str = Form(...)):
             return {
                 "status": "success",
                 "compulsory": compulsory,
-                "chapter": chapter
+                "chapter": chapter,
+                "question_type": resolved_qtype
             }
         else:
             # Fallback dynamically to the first available category book/chapter
@@ -2504,6 +2630,7 @@ async def ai_classify(content: str = Form(...)):
                 "status": "success",
                 "compulsory": first_comp,
                 "chapter": first_chap,
+                "question_type": resolved_qtype,
                 "is_fallback": True,
                 "raw_recommendation": f"{compulsory} -> {chapter}"
             }
