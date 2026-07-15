@@ -481,31 +481,27 @@ html {
 
 /* Glass Input */
 .glass-input {
-    background: rgba(255, 255, 255, 0.6);
-    backdrop-filter: blur(10px);
-    -webkit-backdrop-filter: blur(10px);
+    background: rgba(255, 255, 255, 0.75);
     border: 1px solid rgba(0, 0, 0, 0.08);
     transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
 }
 
 .glass-input:focus {
-    background: rgba(255, 255, 255, 0.9);
+    background: rgba(255, 255, 255, 0.95);
     border-color: rgba(var(--brand-rgb), 0.5);
     box-shadow: 0 0 0 3px rgba(var(--brand-rgb), 0.1), var(--apple-shadow-sm);
 }
 
 /* Glass Select */
 .glass-select {
-    background: rgba(255, 255, 255, 0.6);
-    backdrop-filter: blur(10px);
-    -webkit-backdrop-filter: blur(10px);
+    background: rgba(255, 255, 255, 0.75);
     border: 1px solid rgba(0, 0, 0, 0.08);
     transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
     cursor: pointer;
 }
 
 .glass-select:focus {
-    background: rgba(255, 255, 255, 0.9);
+    background: rgba(255, 255, 255, 0.95);
     border-color: rgba(var(--brand-rgb), 0.5);
     box-shadow: 0 0 0 3px rgba(var(--brand-rgb), 0.1);
 }
@@ -893,7 +889,7 @@ button, a, input, select, textarea {
 
 /* Sidebar Vertical Resizer Styles */
 #sidebarTopPanel {
-    height: 300px;
+    height: auto;
     min-height: 120px;
     transition: background-color 0.25s ease;
 }

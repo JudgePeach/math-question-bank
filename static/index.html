@@ -932,13 +932,13 @@
 
             <div class="space-y-4">
                 <p class="text-xs text-slate-500 leading-relaxed">
-                    您当前未选择 <strong>学段</strong> 或 <strong>所属章节</strong>。本题库默认使用【人教版A】教材体系。是否需要开启 AI 智能进行章节分类匹配？
+                    您当前未选择 <strong>学段</strong> 或 <strong>所属章节</strong>。系统将根据您当前配置的教材大纲，开启 AI 智能进行章节分类匹配。
                 </p>
 
                 <!-- Loading State -->
                 <div id="classifyLoading" class="hidden glass-card rounded-xl p-6 text-center space-y-3">
                     <i class="fa-solid fa-spinner animate-spin text-brand-500 text-2xl"></i>
-                    <p class="text-xs text-slate-500 font-medium">AI 正在研读题干以匹配人教版A大纲...</p>
+                    <p class="text-xs text-slate-500 font-medium">AI 正在研读题干以自动匹配教材大纲...</p>
                 </div>
 
                 <!-- Recommendation Result -->
@@ -1191,10 +1191,21 @@
                             </h4>
                             <p class="text-[10px] text-slate-400 mt-0.5">可在此处编辑自定义的题型、难度等级（含颜色）以及层级教学大纲树状结构。</p>
                         </div>
-                        <button type="button" onclick="resetMetadataToDefault()" class="glass-btn px-2.5 py-1.5 rounded-lg text-[10px] text-brand-600 hover:text-brand-700 font-medium flex items-center space-x-1">
-                            <i class="fa-solid fa-rotate-left"></i>
-                            <span>重置为默认高中数学大纲</span>
-                        </button>
+                        <div class="flex items-center space-x-2">
+                            <span class="text-[10px] font-bold text-slate-400">预设模板一键载入：</span>
+                            <button type="button" onclick="resetMetadataToDefault('A')" class="glass-btn px-2.5 py-1.5 rounded-lg text-[10px] text-brand-600 hover:text-brand-700 font-medium flex items-center space-x-1" title="载入高中数学人教A版大纲">
+                                <i class="fa-solid fa-rotate-left text-[9px]"></i>
+                                <span>人教A版</span>
+                            </button>
+                            <button type="button" onclick="resetMetadataToDefault('B')" class="glass-btn px-2.5 py-1.5 rounded-lg text-[10px] text-brand-600 hover:text-brand-700 font-medium flex items-center space-x-1" title="载入高中数学人教B版大纲">
+                                <i class="fa-solid fa-rotate-left text-[9px]"></i>
+                                <span>人教B版</span>
+                            </button>
+                            <button type="button" onclick="resetMetadataToDefault('S')" class="glass-btn px-2.5 py-1.5 rounded-lg text-[10px] text-brand-600 hover:text-brand-700 font-medium flex items-center space-x-1" title="载入高中数学苏教版大纲">
+                                <i class="fa-solid fa-rotate-left text-[9px]"></i>
+                                <span>苏教版</span>
+                            </button>
+                        </div>
                     </div>
                     
                     <div class="relative">
@@ -1202,6 +1213,8 @@
                                   class="w-full h-[320px] p-4 bg-slate-900 text-slate-100 rounded-xl text-xs font-mono border border-slate-700 focus:outline-none focus:ring-2 focus:ring-brand-500/30 whitespace-pre scrollbar-thin"
                                   placeholder="正在读取元数据配置..."></textarea>
                     </div>
+                    
+
                     
                     <div class="bg-amber-50 border border-amber-200 rounded-xl p-3 text-[10px] text-amber-700 space-y-1">
                         <p class="font-bold flex items-center space-x-1"><i class="fa-solid fa-circle-info"></i><span>配置说明：</span></p>

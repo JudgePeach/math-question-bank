@@ -163,6 +163,7 @@ const PAGE_LIMIT = 20;
                 tags: document.getElementById('editTags') ? document.getElementById('editTags').value : ''
             };
         }
+        window.backupEditorState = backupEditorState;
 
         // Helper to check if the current question has been modified from its original loaded state
         function isEditorModified() {

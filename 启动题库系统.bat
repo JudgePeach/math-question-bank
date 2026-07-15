@@ -1,6 +1,18 @@
 @echo off
 cd /d "%~dp0"
 
+:: 检查是否解压运行（确保当前目录下存在主程序文件）
+if not exist main.py (
+    echo =================================================
+    echo [错误] 启动失败：未在当前目录找到项目关键主程序！
+    echo =================================================
+    echo 出现该错误通常是因为：您直接在 ZIP 压缩包内双击启动了脚本。
+    echo 请务必先将压缩包【全部解压】到一个普通文件夹中，再运行批处理。
+    echo =================================================
+    pause
+    exit /b 1
+)
+
 echo =================================================
 echo      本地数学题库教研系统 (MathBank) Windows 启动器
 echo =================================================
@@ -61,8 +73,8 @@ echo.
 if not exist .system_generated mkdir .system_generated
 del /f /q .system_generated\server.log >nul 2>&1
 
-:: 4. 启动 uvicorn 服务，将其输出重定向到 server.log，并运行在最小化 cmd 窗口以防阻塞
-start /min "MathBank Server" /d "%~dp0" cmd /c "%PYTHON_CMD% -m uvicorn main:app --reload --host 127.0.0.1 >.system_generated\server.log 2>&1"
+:: 4. 启动 uvicorn 服务，通过 PowerShell 在后台完全静默（无窗口）运行，并将输出重定向到 server.log
+powershell -Command "Start-Process cmd -ArgumentList '/c %PYTHON_CMD% -m uvicorn main:app --reload --host 127.0.0.1 >.system_generated\server.log 2>&1' -WindowStyle Hidden"
 
 :: 5. 自适应端口健康检查，最大等待 10 秒（使用 ping 延迟 1 秒，循环 10 次）
 echo 正在探测后台服务启动状态，等待就绪...
@@ -118,8 +130,9 @@ if %SERVICE_READY%==0 (
 start http://127.0.0.1:8000
 
 echo =================================================
-echo [成功] MathBank 服务已成功转入后台运行！
-echo 提示：您可以关闭此窗口。如果需要停止服务，请关闭最小化的命令行窗口，或重新运行此启动器。
+echo [成功] MathBank 服务已成功转入后台静默运行！
+echo 提示：当前命令行窗口会自动关闭。如果未来需要停止或重启服务，
+echo       直接重新运行此启动脚本即可（会自动检测端口并重启）。
 echo =================================================
 ping 127.0.0.1 -n 2 >nul
 exit

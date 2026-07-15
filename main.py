@@ -18,7 +18,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
 from dotenv import load_dotenv
 
-from database import Question, get_db, init_db
+from database import Question, QuestionCurriculum, get_db, init_db
 from sync_helper import export_database_to_files
 
 # Load environment variables
@@ -26,6 +26,44 @@ load_dotenv()
 
 # Initialize DB
 init_db()
+
+def heal_database_curriculum_names():
+    from database import SessionLocal
+    db = SessionLocal()
+    try:
+        mappings = {
+            "选择性必修一": "选修一",
+            "选择性必修二": "选修二",
+            "选择性必修三": "选修三",
+            "必修第一册": "必修一",
+            "必修第二册": "必修二",
+            "必修第三册": "必修三",
+            "必修第四册": "必修四",
+        }
+        updated_questions = 0
+        for old, new in mappings.items():
+            res = db.query(Question).filter(Question.category_compulsory == old).update(
+                {Question.category_compulsory: new}, synchronize_session=False
+            )
+            updated_questions += res
+            
+        updated_mappings = 0
+        for old, new in mappings.items():
+            res = db.query(QuestionCurriculum).filter(QuestionCurriculum.compulsory == old).update(
+                {QuestionCurriculum.compulsory: new}, synchronize_session=False
+            )
+            updated_mappings += res
+            
+        if updated_questions > 0 or updated_mappings > 0:
+            db.commit()
+            print(f"[Self-Healing DB] Migrated {updated_questions} questions and {updated_mappings} mappings to simplified book names.")
+    except Exception as e:
+        db.rollback()
+        print(f"[Self-Healing DB Error] Failed to run database book names migration: {e}")
+    finally:
+        db.close()
+
+heal_database_curriculum_names()
 
 import sys
 # 检测是否在单元测试环境下运行
@@ -1931,6 +1969,18 @@ def create_question(
         db.commit()
         db.refresh(db_question)
         
+        # Save to active QuestionCurriculum mapping
+        active_version = get_active_version_code()
+        curriculum_map = QuestionCurriculum(
+            question_id=db_question.id,
+            version_code=active_version,
+            compulsory=category_compulsory,
+            chapter=category_chapter,
+            knowledge=category_knowledge
+        )
+        db.add(curriculum_map)
+        db.commit()
+        
         # Auto export database to files for Git synchronization and AI referencing (Async Background Task)
         background_tasks.add_task(export_database_to_files)
         
@@ -2024,6 +2074,22 @@ def update_question(
                             {Question.association_group_id: g2}, synchronize_session=False
                         )
                         db_question.association_group_id = g2
+        
+        # Update or create active QuestionCurriculum mapping
+        active_version = get_active_version_code()
+        curriculum_map = db.query(QuestionCurriculum).filter(
+            QuestionCurriculum.question_id == db_question.id,
+            QuestionCurriculum.version_code == active_version
+        ).first()
+        if not curriculum_map:
+            curriculum_map = QuestionCurriculum(
+                question_id=db_question.id,
+                version_code=active_version
+            )
+            db.add(curriculum_map)
+        curriculum_map.compulsory = category_compulsory
+        curriculum_map.chapter = category_chapter
+        curriculum_map.knowledge = category_knowledge
         
         db.commit()
         db.refresh(db_question)
@@ -2243,7 +2309,7 @@ RENJIAO_A_CURRICULUM = {
             "10.3 频率与概率"
         ]
     },
-    "选择性必修一": {
+    "选修一": {
         "1. 空间向量与立体几何": [
             "1.1 空间向量及其运算",
             "1.2 空间向量基本定理",
@@ -2263,7 +2329,7 @@ RENJIAO_A_CURRICULUM = {
             "3.3 抛物线"
         ]
     },
-    "选择性必修二": {
+    "选修二": {
         "4. 数列": [
             "4.1 数列的概念",
             "4.2 等差数列",
@@ -2276,7 +2342,7 @@ RENJIAO_A_CURRICULUM = {
             "5.3 导数在研究函数中的应用"
         ]
     },
-    "选择性必修三": {
+    "选修三": {
         "6. 计数原理": [
             "6.1 分类加法计数原理与分步乘法计数原理",
             "6.2 排列与组合",
@@ -2297,7 +2363,7 @@ RENJIAO_A_CURRICULUM = {
     }
 }
 
-METADATA_FILE = "data_backup/custom_metadata.json"
+METADATA_FILE = "data_backup/custom_metadata_test.json" if IS_TESTING else "data_backup/custom_metadata.json"
 METADATA_CACHE = {}
 
 def get_current_curriculum():
@@ -2314,6 +2380,7 @@ def load_or_init_metadata():
         ],
         "difficulties": [
             {"value": "easy_error", "label": "易错题", "color": "text-green-600 bg-green-50 border-green-200"},
+            {"value": "normal", "label": "常规题", "color": "text-blue-600 bg-blue-50 border-blue-200"},
             {"value": "challenge", "label": "挑战题", "color": "text-red-600 bg-red-50 border-red-200"},
             {"value": "qiangji", "label": "强基题", "color": "text-purple-600 bg-purple-50 border-purple-200"}
         ],
@@ -2329,6 +2396,38 @@ def load_or_init_metadata():
                 loaded = json.load(f)
                 # Verify schema
                 if isinstance(loaded, dict) and "question_types" in loaded and "difficulties" in loaded and "curriculum" in loaded:
+                    # Self-heal metadata file (e.g. add 常规题, update simplified book names)
+                    modified = False
+                    has_normal = any(d.get("value") == "normal" for d in loaded.get("difficulties", []))
+                    if not has_normal:
+                        loaded["difficulties"].insert(1, {"value": "normal", "label": "常规题", "color": "text-blue-600 bg-blue-50 border-blue-200"})
+                        modified = True
+                        
+                    curriculum = loaded.get("curriculum", {})
+                    mappings = {
+                        "选择性必修一": "选修一",
+                        "选择性必修二": "选修二",
+                        "选择性必修三": "选修三",
+                        "必修第一册": "必修一",
+                        "必修第二册": "必修二",
+                        "必修第三册": "必修三",
+                        "必修第四册": "必修四",
+                    }
+                    new_curriculum = {}
+                    for comp, chapters in curriculum.items():
+                        mapped_comp = mappings.get(comp, comp)
+                        if mapped_comp != comp:
+                            modified = True
+                        new_curriculum[mapped_comp] = chapters
+                    if modified:
+                        loaded["curriculum"] = new_curriculum
+                        try:
+                            with open(METADATA_FILE, "w", encoding="utf-8") as f:
+                                json.dump(loaded, f, ensure_ascii=False, indent=2)
+                            print(f"[Metadata Self-Heal] Upgraded {METADATA_FILE} with simplified book names and normal difficulty.")
+                        except Exception as e:
+                            print(f"[Metadata Self-Heal Error] Failed to write updated metadata: {e}")
+                    
                     METADATA_CACHE = loaded
                     print(f"[Metadata] Loaded custom metadata from {METADATA_FILE}")
                     return
@@ -2347,6 +2446,18 @@ def load_or_init_metadata():
 
 # Load metadata on startup
 load_or_init_metadata()
+
+def get_active_version_code() -> str:
+    curriculum = METADATA_CACHE.get("curriculum", {})
+    combined_chapters = ""
+    for book_content in curriculum.values():
+        if isinstance(book_content, dict):
+            combined_chapters += " ".join(book_content.keys())
+    if "第一章" in combined_chapters:
+        return "B"
+    if "第1章" in combined_chapters:
+        return "S"
+    return "A"
 
 @app.get("/api/config/metadata")
 def get_metadata_config():
@@ -2372,18 +2483,155 @@ def save_metadata_config(payload: dict, db: Session = Depends(get_db)):
         
     # Write to file
     try:
+        source_version = get_active_version_code()
+        # Detect target version
+        curriculum = payload.get("curriculum", {})
+        combined_chapters = ""
+        for book_content in curriculum.values():
+            if isinstance(book_content, dict):
+                combined_chapters += " ".join(book_content.keys())
+        if "第一章" in combined_chapters:
+            target_version = "B"
+        elif "第1章" in combined_chapters:
+            target_version = "S"
+        else:
+            target_version = "A"
+
         with open(METADATA_FILE, "w", encoding="utf-8") as f:
             json.dump(payload, f, ensure_ascii=False, indent=2)
         METADATA_CACHE = payload
-        print(f"[Metadata] Saved new custom metadata to {METADATA_FILE}")
+        print(f"[Metadata] Saved new custom metadata to {METADATA_FILE} (Detected version: {target_version})")
         
+        # Incremental migration if curriculum version shifts
+        if source_version != target_version:
+            def route_chapter(comp: str, chap: str, know: str, target: str) -> tuple[str, str]:
+                combined = f"{comp} {chap} {know}"
+                if target == "A":
+                    if "集合" in combined: return "必修一", "1. 集合与常用逻辑用语"
+                    if "逻辑" in combined: return "必修一", "1. 集合与常用逻辑用语"
+                    if "等式" in combined or "不等式" in combined: return "必修一", "2. 一元二次函数、方程和不等式"
+                    if "指数" in combined or "对数" in combined: return "必修一", "4. 指数函数与对数函数"
+                    if "三角函数" in combined or "三角恒等" in combined: return "必修一", "5. 三角函数"
+                    if "函数" in combined: return "必修一", "3. 函数的概念与性质"
+                    if "解三角形" in combined or "正弦" in combined or "余弦" in combined: return "必修二", "6. 平面向量及其应用"
+                    if "数量积" in combined or "平面向量" in combined: return "必修二", "6. 平面向量及其应用"
+                    if "复数" in combined: return "必修二", "7. 复数"
+                    if "立体几何" in combined and "空间向量" not in combined: return "必修二", "8. 立体几何初步"
+                    if "空间向量" in combined: return "选修一", "1. 空间向量与立体几何"
+                    if "直线" in combined or "圆的方程" in combined: return "选修一", "2. 直线和圆的方程"
+                    if "圆" in combined and "圆锥曲线" not in combined: return "选修一", "2. 直线和圆的方程"
+                    if "圆锥曲线" in combined or "椭圆" in combined or "双曲线" in combined or "抛物线" in combined: return "选修一", "3. 圆锥曲线的方程" # wait: keep exact:
+                    if "解析几何" in combined: return "选修一", "2. 直线和圆的方程"
+                    if "数列" in combined: return "选修二", "4. 数列"
+                    if "导数" in combined: return "选修二", "5. 一元函数的导数及其应用"
+                    if "计数" in combined or "排列" in combined or "组合" in combined or "二项式" in combined: return "选修三", "6. 计数原理"
+                    # Elective stats/prob check
+                    if "选修" in combined or "选择性" in combined:
+                        if "概率" in combined or "随机变量" in combined or "分布" in combined: return "选修三", "7. 随机变量及其分布"
+                        if "统计" in combined or "回归" in combined or "独立性" in combined or "成对" in combined: return "选修三", "8. 成对数据的统计分析"
+                    if "回归" in combined or "独立性" in combined or "成对" in combined: return "选修三", "8. 成对数据的统计分析"
+                    if "统计" in combined: return "必修二", "9. 统计"
+                    if "概率" in combined: return "必修二", "10. 概率"
+                    return "必修一", "1. 集合与常用逻辑用语"
+                elif target == "B":
+                    if "集合" in combined: return "必修一", "第一章 集合与常用逻辑用语"
+                    if "逻辑" in combined: return "必修一", "第一章 集合与常用逻辑用语"
+                    if "等式" in combined or "不等式" in combined: return "必修一", "第二章 等式与不等式"
+                    if "指数" in combined or "对数" in combined: return "必修二", "第四章 指数函数、对数函数与幂函数"
+                    if "三角函数" in combined: return "必修三", "第七章 三角函数"
+                    if "函数" in combined: return "必修一", "第三章 函数"
+                    if "解三角形" in combined or "正弦" in combined or "余弦" in combined: return "必修四", "第九章 解三角形"
+                    if "数量积" in combined or "三角恒等" in combined: return "必修三", "第八章 向量的数量积与三角恒等变换"
+                    if "平面向量" in combined: return "必修二", "第六章 平面向量初步"
+                    if "复数" in combined: return "必修四", "第十章 复数"
+                    if "立体几何" in combined and "空间向量" not in combined: return "必修四", "第十一章 立体几何初步"
+                    if "空间向量" in combined: return "选修一", "第一章 空间向量与立体几何"
+                    if "直线" in combined or "圆" in combined or "圆锥曲线" in combined or "椭圆" in combined or "双曲线" in combined or "抛物线" in combined: return "选修一", "第二章 平面解析几何"
+                    if "解析几何" in combined: return "选修一", "第二章 平面解析几何"
+                    if "数列" in combined: return "选修三", "第五章 数列"
+                    if "导数" in combined: return "选修三", "第六章 导数及其应用"
+                    if "计数" in combined or "排列" in combined or "组合" in combined or "二项式" in combined: return "选修二", "第三章 排列、组合与二项式定理"
+                    # Elective stats/prob check
+                    if "选修" in combined or "选择性" in combined:
+                        if "概率" in combined or "统计" in combined or "随机变量" in combined: return "选修二", "第四章 概率与统计"
+                    if "随机变量" in combined or "条件概率" in combined: return "选修二", "第四章 概率与统计"
+                    if "回归" in combined or "独立性" in combined or "成对" in combined: return "选修二", "第四章 概率与统计"
+                    if "统计" in combined or "概率" in combined: return "必修二", "第五章 统计与概率"
+                    return "必修一", "第一章 集合与常用逻辑用语"
+                elif target == "S":
+                    if "集合" in combined: return "必修一", "第1章 集合"
+                    if "逻辑" in combined: return "必修一", "第2章 常用逻辑用语"
+                    if "等式" in combined or "不等式" in combined: return "必修一", "第3章 不等式"
+                    if "指数" in combined or "对数" in combined: return "必修一", "第4章 指数与对数"
+                    if "三角函数" in combined: return "必修一", "第7章 三角函数"
+                    if "函数" in combined: return "必修一", "第5章 函数概念与性质"
+                    if "解三角形" in combined or "正弦" in combined or "余弦" in combined: return "必修二", "第11章 解三角形"
+                    if "数量积" in combined or "平面向量" in combined: return "必修二", "第9章 平面向量"
+                    if "三角恒等" in combined: return "必修二", "第10章 三角恒等变换"
+                    if "复数" in combined: return "必修二", "第12章 复数"
+                    if "立体几何" in combined and "空间向量" not in combined: return "必修二", "第13章 立体几何初步"
+                    if "空间向量" in combined: return "选修二", "第6章 空间向量与立体几何"
+                    if "直线" in combined: return "选修一", "第1章 直线与方程"
+                    if "圆" in combined and "圆锥曲线" not in combined: return "选修一", "第2章 圆与方程"
+                    if "圆锥曲线" in combined or "椭圆" in combined or "双曲线" in combined or "抛物线" in combined: return "选修一", "第3章 圆锥曲线与方程"
+                    if "解析几何" in combined: return "选修一", "第1章 直线与方程"
+                    if "数列" in combined: return "选修一", "第4章 数列"
+                    if "导数" in combined: return "选修一", "第5章 导数及其应用"
+                    if "计数" in combined or "排列" in combined or "组合" in combined or "二项式" in combined: return "选修二", "第7章 计数原理"
+                    # Elective stats/prob check
+                    if "选修" in combined or "选择性" in combined:
+                        if "概率" in combined or "随机变量" in combined or "分布" in combined: return "选修二", "第8章 概率"
+                        if "统计" in combined or "回归" in combined or "独立性" in combined or "成对" in combined: return "选修二", "第9章 统计"
+                    if "随机变量" in combined or "条件概率" in combined: return "选修二", "第8章 概率"
+                    if "回归" in combined or "独立性" in combined or "成对" in combined: return "选修二", "第9章 统计"
+                    if "统计" in combined: return "必修二", "第14章 统计"
+                    if "概率" in combined: return "必修二", "第15章 概率"
+                    return "必修一", "第1章 集合"
+                return "", ""
+
+            # Check and run incremental migration for all questions that do not have classifications for target_version
+            all_questions = db.query(Question).all()
+            for q in all_questions:
+                target_map = db.query(QuestionCurriculum).filter(
+                    QuestionCurriculum.question_id == q.id,
+                    QuestionCurriculum.version_code == target_version
+                ).first()
+                if not target_map or not target_map.compulsory:
+                    source_map = db.query(QuestionCurriculum).filter(
+                        QuestionCurriculum.question_id == q.id,
+                        QuestionCurriculum.version_code == source_version
+                    ).first()
+                    if source_map and source_map.compulsory:
+                        new_comp, new_chap = route_chapter(
+                            source_map.compulsory, source_map.chapter, source_map.knowledge, target_version
+                        )
+                        if not target_map:
+                            target_map = QuestionCurriculum(
+                                question_id=q.id,
+                                version_code=target_version
+                            )
+                            db.add(target_map)
+                        target_map.compulsory = new_comp
+                        target_map.chapter = new_chap
+                        target_map.knowledge = ""
+            db.commit()
+
+        # Batch update main questions table categories with target version values
+        from sqlalchemy import text
+        db.execute(text("""
+            UPDATE questions 
+            SET category_compulsory = COALESCE((SELECT compulsory FROM question_curriculums WHERE question_id = questions.id AND version_code = :v), ''),
+                category_chapter = COALESCE((SELECT chapter FROM question_curriculums WHERE question_id = questions.id AND version_code = :v), ''),
+                category_knowledge = COALESCE((SELECT knowledge FROM question_curriculums WHERE question_id = questions.id AND version_code = :v), '')
+        """), {"v": target_version})
+        db.commit()
+
         # Trigger export in background to update AI library with new mappings
-        from sync_helper import export_database_to_files
         export_database_to_files(db)
         
         return {"status": "success", "message": "元数据配置保存成功！"}
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"写入配置文件失败: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"保存元数据失败: {str(e)}")
 
 # ----------------- DB Statistics API -----------------
 

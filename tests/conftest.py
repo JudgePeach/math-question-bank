@@ -17,6 +17,15 @@ TestSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=test_eng
 database.engine = test_engine
 database.SessionLocal = TestSessionLocal
 
+# Patch sync_helper output paths globally during testing to avoid overwriting or clearing real data_backup files
+import sync_helper
+import tempfile
+import os
+test_backup_dir = tempfile.mkdtemp()
+sync_helper.BACKUP_DIR = test_backup_dir
+sync_helper.JSON_BACKUP_PATH = os.path.join(test_backup_dir, "questions_backup.json")
+sync_helper.MD_BACKUP_PATH = os.path.join(test_backup_dir, "questions_library.md")
+
 @pytest.fixture(scope="function")
 def db_session():
     # Create all tables in the in-memory database

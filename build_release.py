@@ -15,9 +15,10 @@ BUILD_DIR = os.path.join(DIST_DIR, "mathbank-windows")
 PYTHON_DIR = os.path.join(BUILD_DIR, "python")
 WHEELS_DIR = os.path.join(DIST_DIR, "wheels")
 SITE_PACKAGES = os.path.join(PYTHON_DIR, "site-packages")
+CACHE_DIR = os.path.join(BASE_DIR, ".build_cache")
+CACHE_WHEELS_DIR = os.path.join(CACHE_DIR, "wheels")
 
 PYTHON_ZIP_URL = "https://www.python.org/ftp/python/3.10.11/python-3.10.11-embed-amd64.zip"
-PYTHON_ZIP_PATH = os.path.join(DIST_DIR, "python_embed.zip")
 
 def clean_directories():
     print("🧹 Cleaning old directories...")
@@ -30,42 +31,72 @@ def clean_directories():
     os.makedirs(SITE_PACKAGES, exist_ok=True)
 
 def download_python():
-    print(f"📥 Downloading portable Windows Python from {PYTHON_ZIP_URL}...")
-    try:
-        import requests
-        resp = requests.get(PYTHON_ZIP_URL, timeout=30)
-        resp.raise_for_status()
-        with open(PYTHON_ZIP_PATH, "wb") as f:
-            f.write(resp.content)
-    except Exception as e:
-        print(f"⚠️ requests failed, falling back to urllib: {e}")
-        urllib.request.urlretrieve(PYTHON_ZIP_URL, PYTHON_ZIP_PATH)
+    os.makedirs(CACHE_DIR, exist_ok=True)
+    cache_path = os.path.join(CACHE_DIR, "python_embed.zip")
+    
+    # Check if cached file exists and is valid
+    is_cached_valid = False
+    if os.path.exists(cache_path):
+        try:
+            with zipfile.ZipFile(cache_path, 'r') as zf:
+                if zf.testzip() is None:
+                    is_cached_valid = True
+        except Exception:
+            pass
+            
+    if is_cached_valid:
+        print("💾 Using cached portable Windows Python zip...")
+    else:
+        print(f"📥 Downloading portable Windows Python from {PYTHON_ZIP_URL}...")
+        try:
+            import requests
+            resp = requests.get(PYTHON_ZIP_URL, timeout=30)
+            resp.raise_for_status()
+            with open(cache_path, "wb") as f:
+                f.write(resp.content)
+        except Exception as e:
+            print(f"⚠️ requests failed, falling back to urllib: {e}")
+            urllib.request.urlretrieve(PYTHON_ZIP_URL, cache_path)
         
     print("📦 Extracting Python...")
-    with zipfile.ZipFile(PYTHON_ZIP_PATH, 'r') as zip_ref:
+    with zipfile.ZipFile(cache_path, 'r') as zip_ref:
         zip_ref.extractall(PYTHON_DIR)
 
 def download_and_extract_sqlite():
-    print("📥 Downloading sqlite3 binaries from NuGet...")
+    os.makedirs(CACHE_DIR, exist_ok=True)
+    cache_path = os.path.join(CACHE_DIR, "python_nuget.zip")
     nuget_url = "https://www.nuget.org/api/v2/package/python/3.10.11"
-    nuget_zip_path = os.path.join(DIST_DIR, "python_nuget.zip")
     
-    try:
-        import requests
-        resp = requests.get(nuget_url, timeout=30)
-        resp.raise_for_status()
-        with open(nuget_zip_path, "wb") as f:
-            f.write(resp.content)
-    except Exception as e:
-        print(f"⚠️ requests failed, falling back to urllib: {e}")
-        ctx = ssl._create_default_https_context()
-        req = urllib.request.Request(nuget_url, headers={'User-Agent': 'Mozilla/5.0'})
-        with urllib.request.urlopen(req, context=ctx) as response:
-            with open(nuget_zip_path, "wb") as f:
-                f.write(response.read())
+    # Check if cached file exists and is valid
+    is_cached_valid = False
+    if os.path.exists(cache_path):
+        try:
+            with zipfile.ZipFile(cache_path, 'r') as zf:
+                if zf.testzip() is None:
+                    is_cached_valid = True
+        except Exception:
+            pass
+            
+    if is_cached_valid:
+        print("💾 Using cached sqlite3 binaries zip...")
+    else:
+        print("📥 Downloading sqlite3 binaries from NuGet...")
+        try:
+            import requests
+            resp = requests.get(nuget_url, timeout=30)
+            resp.raise_for_status()
+            with open(cache_path, "wb") as f:
+                f.write(resp.content)
+        except Exception as e:
+            print(f"⚠️ requests failed, falling back to urllib: {e}")
+            ctx = ssl._create_default_https_context()
+            req = urllib.request.Request(nuget_url, headers={'User-Agent': 'Mozilla/5.0'})
+            with urllib.request.urlopen(req, context=ctx) as response:
+                with open(cache_path, "wb") as f:
+                    f.write(response.read())
                 
     print("📦 Extracting sqlite3 binaries and VC runtime DLLs...")
-    with zipfile.ZipFile(nuget_zip_path, 'r') as zip_ref:
+    with zipfile.ZipFile(cache_path, 'r') as zip_ref:
         for member in zip_ref.namelist():
             if member == "tools/DLLs/_sqlite3.pyd":
                 target_path = os.path.join(PYTHON_DIR, "_sqlite3.pyd")
@@ -91,8 +122,6 @@ def download_and_extract_sqlite():
                     with zip_ref.open(member) as source, open(target_path, "wb") as target:
                         shutil.copyfileobj(source, target)
                         
-    if os.path.exists(nuget_zip_path):
-        os.remove(nuget_zip_path)
     print("✅ sqlite3 binaries and VC runtime DLLs injected successfully!")
 
 def configure_python_path():
@@ -119,10 +148,11 @@ def configure_python_path():
             f.write("\n".join(new_lines) + "\n")
 
 def download_and_extract_wheels():
-    print("📥 Downloading Windows wheels for requirements...")
+    print("📥 Checking and downloading Windows wheels for requirements...")
     requirements_file = os.path.join(BASE_DIR, "requirements.txt")
+    os.makedirs(CACHE_WHEELS_DIR, exist_ok=True)
     
-    # Use pip to download windows amd64 wheels
+    # Use pip to download windows amd64 wheels, using CACHE_WHEELS_DIR as search links and WHEELS_DIR as output
     cmd = [
         "pip", "download",
         "--only-binary=:all:",
@@ -131,10 +161,20 @@ def download_and_extract_wheels():
         "--implementation", "cp",
         "--abi", "cp310",
         "-d", WHEELS_DIR,
+        "--find-links", CACHE_WHEELS_DIR,
         "-r", requirements_file
     ]
     print(f"Running command: {' '.join(cmd)}")
     subprocess.check_call(cmd)
+    
+    # Copy new wheels back into CACHE_WHEELS_DIR to save cache
+    print("💾 Updating local wheels cache...")
+    for file in os.listdir(WHEELS_DIR):
+        if file.endswith(".whl"):
+            src = os.path.join(WHEELS_DIR, file)
+            dst = os.path.join(CACHE_WHEELS_DIR, file)
+            if not os.path.exists(dst):
+                shutil.copy2(src, dst)
     
     print("📦 Extracting wheels into site-packages...")
     for file in os.listdir(WHEELS_DIR):
@@ -170,6 +210,18 @@ def create_launcher():
     launcher_content = """@echo off
 cd /d "%~dp0"
 
+:: 检查是否解压运行（确保当前目录下存在主程序文件）
+if not exist main.py (
+    echo =================================================
+    echo [错误] 启动失败：未在当前目录找到项目关键主程序！
+    echo =================================================
+    echo 出现该错误通常是因为：您直接在 ZIP 压缩包内双击启动了脚本。
+    echo 请务必先将压缩包【全部解压】到一个普通文件夹中，再运行批处理。
+    echo =================================================
+    pause
+    exit /b 1
+)
+
 echo =================================================
 echo      本地数学题库教研系统 (MathBank) 便携版
 echo =================================================
@@ -184,7 +236,9 @@ echo 正在启动后台服务...
 :: 使用内置的便携式 Python 运行服务，输出重定向到日志文件
 if not exist .system_generated mkdir .system_generated
 del /f /q .system_generated\\server.log >nul 2>&1
-start /min "MathBank Server" /d "%~dp0" cmd /c "python\\python.exe -m uvicorn main:app --host 127.0.0.1 >.system_generated\\server.log 2>&1"
+
+:: 使用 PowerShell 在后台静默运行
+powershell -Command "Start-Process cmd -ArgumentList '/c python\\python.exe -m uvicorn main:app --host 127.0.0.1 >.system_generated\\server.log 2>&1' -WindowStyle Hidden"
 
 echo 正在探测服务启动状态...
 set TIMEOUT=10
@@ -276,8 +330,6 @@ def zip_macos_release():
 
 def cleanup_temp():
     print("🧹 Cleaning up temporary files...")
-    if os.path.exists(PYTHON_ZIP_PATH):
-        os.remove(PYTHON_ZIP_PATH)
     shutil.rmtree(WHEELS_DIR, ignore_errors=True)
     shutil.rmtree(BUILD_DIR, ignore_errors=True)
 

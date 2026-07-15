@@ -82,6 +82,26 @@ class Question(Base):
             "created_at": (self.created_at.isoformat() + "Z") if self.created_at else None
         }
 
+class QuestionCurriculum(Base):
+    __tablename__ = "question_curriculums"
+
+    id = Column(Integer, primary_key=True, index=True)
+    question_id = Column(Integer, index=True, nullable=False)
+    version_code = Column(String(50), index=True, nullable=False)  # 'A', 'B', 'S'
+    compulsory = Column(String(100), default="", index=True)
+    chapter = Column(String(100), default="", index=True)
+    knowledge = Column(String(100), default="", index=True)
+
+    def to_dict(self):
+        return {
+            "id": self.id,
+            "question_id": self.question_id,
+            "version_code": self.version_code,
+            "compulsory": self.compulsory,
+            "chapter": self.chapter,
+            "knowledge": self.knowledge
+        }
+
 # Dependency to get db session
 def get_db():
     db = SessionLocal()
@@ -124,5 +144,20 @@ def init_db():
             conn.execute(text("CREATE INDEX IF NOT EXISTS idx_questions_difficulty ON questions (difficulty)"))
             conn.execute(text("CREATE INDEX IF NOT EXISTS idx_questions_association_group_id ON questions (association_group_id)"))
             conn.execute(text("CREATE INDEX IF NOT EXISTS idx_questions_tags ON questions (tags)"))
+
+            # Create indexes on question_curriculums
+            conn.execute(text("CREATE INDEX IF NOT EXISTS idx_question_curriculums_lookup ON question_curriculums (version_code, compulsory, chapter, knowledge)"))
+            conn.execute(text("CREATE INDEX IF NOT EXISTS idx_question_curriculums_qid ON question_curriculums (question_id)"))
+
+            # Auto-migrate legacy data to A-version question_curriculums
+            cursor = conn.execute(text("SELECT COUNT(*) FROM question_curriculums"))
+            count = cursor.fetchone()[0]
+            if count == 0:
+                conn.execute(text("""
+                    INSERT INTO question_curriculums (question_id, version_code, compulsory, chapter, knowledge)
+                    SELECT id, 'A', category_compulsory, category_chapter, category_knowledge
+                    FROM questions
+                """))
+                print("Successfully auto-migrated legacy question categories to A-version question_curriculums mapping.")
     except Exception as e:
         print(f"Error creating indexes or running migrations: {e}")

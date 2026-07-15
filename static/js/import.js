@@ -514,6 +514,12 @@
                 });
         }
 
+        window.reloadCurrentQuestionSilently = function() {
+            if (currentQuestionId) {
+                selectQuestion({ id: currentQuestionId, seq_num: currentSeqNum });
+            }
+        };
+
         // Save/Update Question in SQLite (returns Promise)
         function saveQuestion(skipCheck = false) {
             return new Promise(async (resolve) => {
@@ -1854,6 +1860,7 @@
                 } else {
                     difficultyOptionsHtml = `
                         <option value="easy_error" ${q.difficulty === 'easy_error' ? 'selected' : ''}>易错题</option>
+                        <option value="normal" ${q.difficulty === 'normal' ? 'selected' : ''}>常规题</option>
                         <option value="challenge" ${q.difficulty === 'challenge' ? 'selected' : ''}>挑战题</option>
                         <option value="qiangji" ${q.difficulty === 'qiangji' ? 'selected' : ''}>强基题</option>
                     `;
