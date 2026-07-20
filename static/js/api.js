@@ -214,7 +214,6 @@
                 "deepseek-v4-pro"
             ],
             siliconflow: [
-                "Qwen/Qwen3-VL-32B-Thinking",
                 "Qwen/Qwen3-VL-32B-Instruct",
                 "Qwen/Qwen3-VL-8B-Instruct",
                 "deepseek-ai/DeepSeek-V4-Pro",
@@ -233,8 +232,8 @@
         };
 
         // 从 localStorage 恢复自定义模型，或者初始化
-        function getModelListForProvider(provider) {
-            const presets = MODEL_PRESETS[provider] || [];
+        function getModelListForProvider(provider, typeKey = "") {
+            let presets = MODEL_PRESETS[provider] || [];
             let customs = [];
             try {
                 const customStr = localStorage.getItem(`custom_models_${provider}`);
@@ -247,7 +246,11 @@
             } catch (e) {
                 console.error(`解析自定义模型列表失败 for ${provider}:`, e);
             }
-            return Array.from(new Set([...presets, ...customs]));
+            let list = Array.from(new Set([...presets, ...customs]));
+            if (provider === 'siliconflow' && typeKey === 'ocr') {
+                list = list.filter(m => !m.toLowerCase().includes('deepseek'));
+            }
+            return list;
         }
 
         function addCustomModelName(provider, typeKey) {
@@ -369,7 +372,7 @@
             if (isZhongzhan) {
                 // 中转站模式：采用 input + datalist 实现“可写、可点选历史记录”的高效设计
                 const datalistId = `datalist_${typeKey}_${provider}`;
-                const models = getModelListForProvider(provider);
+                const models = getModelListForProvider(provider, typeKey);
                 let optionsHtml = models.map(m => `<option value="${m}">`).join('');
                 
                 container.innerHTML = `
@@ -390,7 +393,7 @@
                 `;
             } else {
                 // 下拉菜单列表模式
-                const models = getModelListForProvider(provider);
+                const models = getModelListForProvider(provider, typeKey);
                 const selectId = `settings_${typeKey}_model_select`;
                 
                 let optionsHtml = models.map(m => {
