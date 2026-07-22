@@ -8,7 +8,7 @@
 - **后端**：Python 3.10+ + FastAPI + Uvicorn。
 - **数据库**：SQLite + SQLAlchemy（轻量化本地数据库，数据存储在项目根目录下的 `./math_question_bank.db` 中）。
 - **前端页面**：单页面应用 `static/index.html`（纯 HTML5 + 原生 JavaScript，无编译，秒级加载）。
-- **前端样式**：Tailwind CSS + FontAwesome 图标库（均已下载至本地 `/static/lib` 支持 100% 离线使用）。
+- **前端样式与字体**：Tailwind CSS + FontAwesome 图标库 + Inter/Outfit Webfonts（均已下载至本地 `/static/lib` 支持 100% 离线使用与跨平台字体降级）。
 - **公式渲染**：KaTeX（已下载至本地支持 100% 离线数学公式渲染），支持题干与解析框实时解析、秒级渲染。
 - **前端脚本拆分**：前端 JS 采用无编译的“渐进式级联加载”架构，分模块存放在 `static/js/` 目录下（`api.js`、`editor.js`、`ocr.js`、`import.js`），保证代码结构极其清爽。
 - **图文识图 (OCR)**：高精度、多通道的云端 LaTeX OCR 引擎，支持 SiliconFlow (Qwen3.5-4B) 和 阿里百炼 (qwen3-vl-flash) 的双通道并发识图。

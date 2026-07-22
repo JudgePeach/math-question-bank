@@ -1,6 +1,23 @@
 /* ===== Apple-Style Glassmorphism Design System ===== */
 /* Inspired by macOS Sonoma & visionOS Spatial UI */
 
+/* Local Inter & Outfit Webfonts (100% Offline & Cross-Platform) */
+@font-face {
+    font-family: 'Inter';
+    font-style: normal;
+    font-weight: 300 700;
+    font-display: swap;
+    src: url('../lib/fonts/inter-latin.woff2') format('woff2');
+}
+
+@font-face {
+    font-family: 'Outfit';
+    font-style: normal;
+    font-weight: 300 700;
+    font-display: swap;
+    src: url('../lib/fonts/outfit-latin.woff2') format('woff2');
+}
+
 /* Base Background - Warm Gray & Colors */
 :root {
     --apple-bg: #FAFAF8;
@@ -123,18 +140,28 @@
     --apple-shadow-glow: 0 0 20px rgba(255, 255, 255, 0.02);
 }
 
-/* 1. Global Forms Dark Mode Overrides */
+/* 1. Global Forms Dark Mode Overrides & Contrast Enhancement */
 .dark select,
 .dark input,
 .dark textarea {
-    background-color: rgba(15, 23, 42, 0.75) !important;
-    border-color: rgba(255, 255, 255, 0.1) !important;
-    color: #F1F5F9 !important;
+    background-color: rgba(15, 23, 42, 0.8) !important;
+    border-color: rgba(255, 255, 255, 0.12) !important;
+    color: #F8FAFC !important;
+}
+
+.dark input::placeholder,
+.dark textarea::placeholder {
+    color: #64748B !important;
 }
 
 .dark select option {
     background-color: #161F30 !important;
-    color: #F1F5F9 !important;
+    color: #F8FAFC !important;
+}
+
+.dark select option:checked {
+    background-color: rgba(var(--brand-rgb), 0.3) !important;
+    color: #FFFFFF !important;
 }
 
 /* 2. Question Cards Dark Mode Overrides */
@@ -150,9 +177,10 @@
 }
 
 .dark .question-card.active {
-    background: linear-gradient(135deg, rgba(var(--brand-rgb), 0.15), rgba(99, 102, 241, 0.15)) !important;
-    border-color: rgba(var(--brand-rgb), 0.4) !important;
-    box-shadow: 0 0 12px rgba(var(--brand-rgb), 0.15) !important;
+    background: rgba(var(--brand-rgb), 0.12) !important;
+    border-color: rgba(var(--brand-rgb), 0.3) !important;
+    border-left: 3.5px solid rgb(var(--brand-500-rgb)) !important;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2) !important;
 }
 
 /* 3. Button and Interactive Elements Dark Mode Overrides */
@@ -370,13 +398,17 @@ html {
     backdrop-filter: blur(var(--apple-glass-blur)) saturate(var(--apple-glass-saturate));
     -webkit-backdrop-filter: blur(var(--apple-glass-blur)) saturate(var(--apple-glass-saturate));
     border: 1px solid var(--apple-glass-border);
-    box-shadow: var(--apple-shadow-sm);
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.6), var(--apple-shadow-sm);
     transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.dark .glass-panel {
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.08), var(--apple-shadow-sm) !important;
 }
 
 .glass-panel:hover {
     background: var(--apple-glass-bg-hover);
-    box-shadow: var(--apple-shadow-md);
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.7), var(--apple-shadow-md);
 }
 
 .glass-card {
@@ -384,13 +416,17 @@ html {
     backdrop-filter: blur(16px) saturate(180%);
     -webkit-backdrop-filter: blur(16px) saturate(180%);
     border: 1px solid rgba(255, 255, 255, 0.4);
-    box-shadow: var(--apple-shadow-sm);
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.6), var(--apple-shadow-sm);
     transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.dark .glass-card {
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.08), var(--apple-shadow-sm) !important;
 }
 
 .glass-card:hover {
     background: rgba(255, 255, 255, 0.7);
-    box-shadow: var(--apple-shadow-md);
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.75), var(--apple-shadow-md);
     transform: translateY(-1px);
 }
 
@@ -412,7 +448,7 @@ html {
 }
 
 .glass-btn:active {
-    transform: translateY(0);
+    transform: scale(0.97) translateY(0.5px);
     box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04);
 }
 
@@ -435,7 +471,7 @@ html {
 }
 
 .glass-btn-primary:active {
-    transform: translateY(0);
+    transform: scale(0.97) translateY(0.5px);
     box-shadow: 0 1px 4px rgba(var(--brand-rgb), 0.15);
 }
 
@@ -458,7 +494,7 @@ html {
 }
 
 .glass-btn-danger:active {
-    transform: translateY(0);
+    transform: scale(0.97) translateY(0.5px);
 }
 
 /* Success Glass Button - 2D Flat Style */
@@ -477,6 +513,10 @@ html {
     background: rgba(16, 185, 129, 0.85);
     box-shadow: 0 4px 12px rgba(16, 185, 129, 0.2);
     transform: translateY(-1px);
+}
+
+.glass-btn-success:active {
+    transform: scale(0.97) translateY(0.5px);
 }
 
 /* Glass Input */
@@ -767,10 +807,15 @@ button, a, input, select, textarea {
     transform: translateX(2px);
 }
 
+.question-card:active {
+    transform: scale(0.985);
+}
+
 .question-card.active {
-    background: linear-gradient(135deg, rgba(var(--brand-rgb), 0.06), rgba(99, 102, 241, 0.06));
-    border-color: rgba(var(--brand-rgb), 0.2);
-    box-shadow: 0 0 0 1px rgba(var(--brand-rgb), 0.1);
+    background: rgba(var(--brand-50-rgb), 0.8);
+    border-color: rgba(var(--brand-500-rgb), 0.3);
+    border-left: 3.5px solid rgb(var(--brand-600-rgb));
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.04);
 }
 
 /* Status Indicator - Apple Style */
@@ -1003,7 +1048,7 @@ button, a, input, select, textarea {
 
 /* Premium Project Logo Container */
 .project-icon-box {
-    background: linear-gradient(135deg, rgba(var(--brand-600-rgb), 0.95), #6366f1) !important;
+    background: linear-gradient(135deg, rgb(var(--brand-600-rgb)), rgb(var(--brand-700-rgb))) !important;
     box-shadow: 0 4px 12px rgba(var(--brand-500-rgb), 0.25) !important;
     transition: all 0.25s ease;
 }
@@ -1041,7 +1086,7 @@ button, a, input, select, textarea {
 
 /* Brand Title Gradient Text Override */
 .brand-title {
-    background: linear-gradient(to right, rgb(var(--brand-700-rgb)), #6366f1) !important;
+    background: linear-gradient(to right, rgb(var(--brand-700-rgb)), rgb(var(--brand-900-rgb))) !important;
     -webkit-background-clip: text !important;
     -webkit-text-fill-color: transparent !important;
     background-clip: text !important;
@@ -1050,7 +1095,7 @@ button, a, input, select, textarea {
 }
 
 .dark .brand-title {
-    background: linear-gradient(to right, rgb(var(--brand-500-rgb)), #818cf8) !important;
+    background: linear-gradient(to right, rgb(var(--brand-500-rgb)), #FFFFFF) !important;
     -webkit-background-clip: text !important;
     -webkit-text-fill-color: transparent !important;
     background-clip: text !important;

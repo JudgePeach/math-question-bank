@@ -1449,6 +1449,73 @@
             closeThemeDropdown();
         };
 
+        let isSidebarCollapsed = false;
+        let lastSidebarWidth = 320;
+        let lastPreviewWidth = 450;
+
+        window.toggleSidebarCollapse = function() {
+            const sidebar = document.getElementById('sidebarSection');
+            const preview = document.getElementById('previewSection');
+            const resizer = document.getElementById('resizer-1');
+            const toggleBtn = document.getElementById('toggleSidebarBtn');
+            if (!sidebar) return;
+            
+            if (!isSidebarCollapsed) {
+                // Collapse
+                const currentSidebarWidth = parseFloat(getComputedStyle(sidebar).width) || 320;
+                if (currentSidebarWidth > 50) lastSidebarWidth = currentSidebarWidth;
+                
+                if (preview) {
+                    const currentPreviewWidth = parseFloat(getComputedStyle(preview).width) || 450;
+                    if (currentPreviewWidth > 100) lastPreviewWidth = currentPreviewWidth;
+                }
+
+                sidebar.style.transition = 'width 0.25s cubic-bezier(0.4, 0, 0.2, 1), opacity 0.2s ease';
+                sidebar.style.width = '0px';
+                sidebar.style.minWidth = '0px';
+                sidebar.style.opacity = '0';
+                sidebar.style.pointerEvents = 'none';
+                if (resizer) resizer.style.display = 'none';
+                if (toggleBtn) toggleBtn.classList.add('text-brand-600', 'bg-slate-100/80');
+
+                // Expand preview panel proportionally to 40% window width (60:40 ratio with editor)
+                if (preview) {
+                    const windowWidth = window.innerWidth || document.documentElement.clientWidth || 1400;
+                    const targetPreviewWidth = Math.min(Math.max(Math.round(windowWidth * 0.40), 480), 750);
+                    preview.style.transition = 'width 0.25s cubic-bezier(0.4, 0, 0.2, 1)';
+                    preview.style.width = targetPreviewWidth + 'px';
+                }
+
+                isSidebarCollapsed = true;
+                setTimeout(() => {
+                    if (preview && isSidebarCollapsed) preview.style.transition = '';
+                }, 260);
+            } else {
+                // Expand
+                sidebar.style.transition = 'width 0.25s cubic-bezier(0.4, 0, 0.2, 1), opacity 0.2s ease';
+                sidebar.style.width = `${lastSidebarWidth}px`;
+                sidebar.style.minWidth = '';
+                sidebar.style.opacity = '1';
+                sidebar.style.pointerEvents = 'auto';
+                if (resizer) resizer.style.display = 'block';
+                if (toggleBtn) toggleBtn.classList.remove('text-brand-600', 'bg-slate-100/80');
+
+                // Restore preview panel to previous width
+                if (preview) {
+                    preview.style.transition = 'width 0.25s cubic-bezier(0.4, 0, 0.2, 1)';
+                    preview.style.width = `${lastPreviewWidth}px`;
+                }
+
+                isSidebarCollapsed = false;
+                setTimeout(() => {
+                    if (!isSidebarCollapsed) {
+                        sidebar.style.transition = '';
+                        if (preview) preview.style.transition = '';
+                    }
+                }, 260);
+            }
+        };
+
         window.toggleDarkMode = function() {
             const isDark = document.documentElement.classList.toggle('dark');
             document.body.classList.toggle('dark', isDark);
