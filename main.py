@@ -1175,14 +1175,30 @@ async def ai_solve(
                                 break
                             try:
                                 chunk_json = json.loads(data_content)
+                                
+                                # 优先读取接口可能返回的官方 usage 统计
+                                usage = chunk_json.get("usage")
+                                if usage and isinstance(usage, dict):
+                                    c_tok = usage.get("completion_tokens")
+                                    r_tok = usage.get("completion_tokens_details", {}).get("reasoning_tokens") if isinstance(usage.get("completion_tokens_details"), dict) else None
+                                    if c_tok is not None:
+                                        content_count = max(content_count, c_tok)
+                                    if r_tok is not None:
+                                        reasoning_count = max(reasoning_count, r_tok)
+
                                 delta = chunk_json.get("choices", [{}])[0].get("delta", {})
                                 reasoning = delta.get("reasoning_content") or delta.get("reasoning") or ""
                                 content_piece = delta.get("content") or ""
                                 
+                                # 针对不同模型的流式数据块进行动态 Token 数量估算（兼容大 Chunk 输出模型如 Gemini Flash）
                                 if reasoning:
-                                    reasoning_count += 1
+                                    cjk_c = sum(1 for c in reasoning if '\u4e00' <= c <= '\u9fff' or '\u3000' <= c <= '\u303f' or '\uff00' <= c <= '\uffef')
+                                    oth_c = len(reasoning) - cjk_c
+                                    reasoning_count += max(1, int(cjk_c * 1.2 + oth_c / 4.0 + 0.99))
                                 if content_piece:
-                                    content_count += 1
+                                    cjk_c = sum(1 for c in content_piece if '\u4e00' <= c <= '\u9fff' or '\u3000' <= c <= '\u303f' or '\uff00' <= c <= '\uffef')
+                                    oth_c = len(content_piece) - cjk_c
+                                    content_count += max(1, int(cjk_c * 1.2 + oth_c / 4.0 + 0.99))
                                     
                                 if reasoning or content_piece:
                                     yield f"data: {json.dumps({'status': 'processing', 'reasoning': reasoning, 'content': content_piece, 'reasoning_count': reasoning_count, 'content_count': content_count}, ensure_ascii=False)}\n\n"
