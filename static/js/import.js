@@ -184,8 +184,8 @@
             
             // Sync-clear all previews to avoid 250ms debounce flash
             document.getElementById('contentPreview').innerHTML = '<p class="text-slate-400 italic">在左侧框中输入，此处将实时展示最终排版效果...</p>';
-            document.getElementById('paperContent').innerHTML = '<p class="text-slate-400 italic text-center py-10">输入题干内容后，此处将自动展示为极致精美的数学试卷排版格式。</p>';
-            document.getElementById('answerPreview').innerHTML = '<p class="text-slate-400 italic">在左侧输入解析内容，此处将实时展示极其精美的 LaTeX 排版...</p>';
+            document.getElementById('paperContent').innerHTML = '<p class="text-slate-400 italic text-center py-10">输入题干内容后，此处将展示实时试卷排版效果。</p>';
+            document.getElementById('answerPreview').innerHTML = '<p class="text-slate-400 italic">在左侧输入解析内容，此处将实时展示 LaTeX 渲染排版...</p>';
             document.getElementById('paperAnalysisContent').innerHTML = '<p class="text-slate-400 italic">暂无解析内容。</p>';
             
             // Refresh previews
@@ -483,15 +483,15 @@
                     if (fullItem.tags) {
                         const tagList = fullItem.tags.split(/[,，]+/).map(t => t.trim()).filter(t => t.length > 0);
                         tagList.forEach(tag => {
-                            paperTagsHtml += `<span class="text-[10px] font-bold px-2 py-0.5 rounded-full bg-amber-50 text-amber-600 border border-amber-250/60 flex items-center space-x-0.5"><i class="fa-solid fa-tag text-[8px] text-amber-500 mr-1"></i>${tag}</span>`;
+                            paperTagsHtml += `<span class="text-[10px] font-bold px-2 py-0.5 rounded-md bg-amber-50 text-amber-600 border border-amber-250/60 flex items-center space-x-0.5"><i class="fa-solid fa-tag text-[8px] text-amber-500 mr-1"></i>${tag}</span>`;
                         });
                     }
 
                     badges.innerHTML = `
-                        <span class="text-[10px] font-bold px-2 py-0.5 rounded-full bg-slate-100 text-slate-700">编号：#${fullItem.seq_num}</span>
-                        <span class="text-[10px] font-bold px-2 py-0.5 rounded-full bg-brand-50 text-brand-700">题型：${getTypeText(fullItem.question_type)}</span>
-                        <span class="text-[10px] font-bold px-2 py-0.5 rounded-full bg-indigo-50 text-indigo-700">难度：${getDifficultyText(fullItem.difficulty)}</span>
-                        <span class="text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-700 inline-flex items-center"><i class="fa-regular fa-clock mr-1"></i>录入于：${formatChineseDate(fullItem.created_at)}</span>
+                        <span class="text-[10px] font-bold px-2 py-0.5 rounded-md bg-slate-100 text-slate-700">编号：#${fullItem.seq_num}</span>
+                        <span class="text-[10px] font-bold px-2 py-0.5 rounded-md bg-brand-50 text-brand-700">题型：${getTypeText(fullItem.question_type)}</span>
+                        <span class="text-[10px] font-bold px-2 py-0.5 rounded-md bg-indigo-50 text-indigo-700">难度：${getDifficultyText(fullItem.difficulty)}</span>
+                        <span class="text-[10px] font-bold px-2 py-0.5 rounded-md bg-emerald-50 text-emerald-700 inline-flex items-center"><i class="fa-regular fa-clock mr-1"></i>录入于：${formatChineseDate(fullItem.created_at)}</span>
                         ${paperTagsHtml}
                     `;
                     sourceEl.textContent = `来源: ${fullItem.source || '本地教研录入'}`;

@@ -430,29 +430,29 @@ html {
     transform: translateY(-1px);
 }
 
-/* Glass Button - 2D Flat Style */
+/* Glass Button - Solid Flat Style */
 .glass-btn {
-    background: rgba(255, 255, 255, 0.6);
-    backdrop-filter: blur(12px) saturate(150%);
-    -webkit-backdrop-filter: blur(12px) saturate(150%);
-    border: 1px solid rgba(0, 0, 0, 0.08);
+    background: #ffffff;
+    border: 1px solid #cbd5e1;
     box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04);
     transition: all 0.2s ease;
     cursor: pointer;
+    color: #475569;
 }
 
 .glass-btn:hover {
-    background: rgba(255, 255, 255, 0.8);
+    background: #f8fafc;
+    border-color: #94a3b8;
+    color: #1e293b;
     box-shadow: 0 2px 6px rgba(0, 0, 0, 0.06);
-    transform: translateY(-1px);
 }
 
 .glass-btn:active {
-    transform: scale(0.97) translateY(0.5px);
+    transform: translateY(0.5px);
     box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04);
 }
 
-/* Primary Glass Button (Brand Color) - 2D Flat Style */
+/* Primary Glass Button (Brand Color) - 2D Flat Style (Restored tactile 3D) */
 .glass-btn-primary {
     background: rgba(var(--brand-rgb), 0.75);
     backdrop-filter: blur(12px) saturate(150%);
@@ -475,7 +475,7 @@ html {
     box-shadow: 0 1px 4px rgba(var(--brand-rgb), 0.15);
 }
 
-/* Danger Glass Button - 2D Flat Style */
+/* Danger Glass Button - 2D Flat Style (Restored tactile 3D) */
 .glass-btn-danger {
     background: rgba(239, 68, 68, 0.75);
     backdrop-filter: blur(12px) saturate(150%);
@@ -497,7 +497,7 @@ html {
     transform: scale(0.97) translateY(0.5px);
 }
 
-/* Success Glass Button - 2D Flat Style */
+/* Success Glass Button - 2D Flat Style (Restored tactile 3D) */
 .glass-btn-success {
     background: rgba(16, 185, 129, 0.75);
     backdrop-filter: blur(12px) saturate(150%);
@@ -521,28 +521,28 @@ html {
 
 /* Glass Input */
 .glass-input {
-    background: rgba(255, 255, 255, 0.75);
-    border: 1px solid rgba(0, 0, 0, 0.08);
+    background: #ffffff;
+    border: 1px solid #cbd5e1;
     transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
 }
 
 .glass-input:focus {
-    background: rgba(255, 255, 255, 0.95);
-    border-color: rgba(var(--brand-rgb), 0.5);
+    background: #ffffff;
+    border-color: rgba(var(--brand-rgb), 0.7);
     box-shadow: 0 0 0 3px rgba(var(--brand-rgb), 0.1), var(--apple-shadow-sm);
 }
 
 /* Glass Select */
 .glass-select {
-    background: rgba(255, 255, 255, 0.75);
-    border: 1px solid rgba(0, 0, 0, 0.08);
+    background: #ffffff;
+    border: 1px solid #cbd5e1;
     transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
     cursor: pointer;
 }
 
 .glass-select:focus {
-    background: rgba(255, 255, 255, 0.95);
-    border-color: rgba(var(--brand-rgb), 0.5);
+    background: #ffffff;
+    border-color: rgba(var(--brand-rgb), 0.7);
     box-shadow: 0 0 0 3px rgba(var(--brand-rgb), 0.1);
 }
 
@@ -1054,8 +1054,7 @@ button, a, input, select, textarea {
 }
 
 .project-icon-box:hover {
-    transform: translateY(-1px) scale(1.03);
-    box-shadow: 0 6px 16px rgba(var(--brand-50-rgb), 0.3) !important;
+    transform: none !important;
 }
 
 /* 7. Theme Dropdown Component Dark Mode Overrides */

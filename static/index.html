@@ -72,14 +72,30 @@
             <div class="h-10 w-10 rounded-xl project-icon-box flex items-center justify-center text-white shrink-0">
                 <i class="fa-solid fa-square-root-variable text-xl"></i>
             </div>
-            <div>
-                <span class="font-semibold text-lg tracking-tight font-['Outfit'] brand-title">MathBank</span>
-                <span class="text-xs text-slate-500 block -mt-1">本地化数学题库研讨系统</span>
+            <div class="relative" id="workspaceDropdownContainer">
+                <div onclick="toggleWorkspaceDropdown(event)" id="workspaceDropdownBtn" class="group cursor-pointer rounded-xl px-1.5 py-0.5 -mx-1.5 hover:bg-slate-100/80 active:scale-95 transition-all dark:hover:bg-slate-800/60" title="点击切换工作台">
+                    <span class="font-semibold text-lg tracking-tight font-['Outfit'] brand-title block">MathBank</span>
+                    <div class="flex items-center space-x-1 -mt-1">
+                        <span id="currentWorkspaceName" class="text-sm font-medium text-slate-700 dark:text-slate-200">题库研讨工作台</span>
+                        <i class="fa-solid fa-chevron-down text-[9px] text-slate-400 group-hover:text-slate-600 dark:group-hover:text-slate-300 transition-transform duration-200" id="workspaceDropdownArrow"></i>
+                    </div>
+                </div>
+                <!-- Workspace Dropdown Menu -->
+                <div id="workspaceDropdownMenu" class="absolute left-0 mt-2 w-48 py-1 rounded-xl border border-slate-200/50 bg-white/95 backdrop-blur-xl shadow-lg transition-all duration-200 scale-90 opacity-0 pointer-events-none origin-top-left z-50 dark:bg-slate-900/95 dark:border-slate-800">
+                    <button onclick="selectWorkspace('bank', '题库研讨工作台')" class="w-full px-3 py-2 text-xs text-left text-slate-700 hover:bg-slate-100/80 dark:text-slate-200 dark:hover:bg-slate-800/60 flex items-center justify-between transition-colors font-medium" id="ws-btn-bank">
+                        <span>题库研讨工作台</span>
+                        <i class="fa-solid fa-check text-[10px] text-brand-600" id="ws-check-bank"></i>
+                    </button>
+                    <button onclick="selectWorkspace('paper', '组卷排版工作台')" class="w-full px-3 py-2 text-xs text-left text-slate-600 hover:bg-slate-100/80 dark:text-slate-300 dark:hover:bg-slate-800/60 flex items-center justify-between transition-colors" id="ws-btn-paper">
+                        <span>组卷排版工作台</span>
+                        <i class="fa-solid fa-check text-[10px] text-brand-600 hidden" id="ws-check-paper"></i>
+                    </button>
+                </div>
             </div>
 
             <!-- 2. Sidebar Toggle Button (Placed right after Title) -->
-            <button onclick="toggleSidebarCollapse()" id="toggleSidebarBtn" class="ml-2 p-2 rounded-xl text-slate-500 hover:text-brand-600 hover:bg-slate-100/60 active:scale-95 transition-all focus:outline-none dark:text-slate-300 dark:hover:bg-slate-800/60 border border-slate-200/50 dark:border-slate-700/50" title="展开/收起左侧题库栏">
-                <i class="fa-solid fa-bars-staggered text-sm"></i>
+            <button onclick="toggleSidebarCollapse()" id="toggleSidebarBtn" class="ml-2 p-2 rounded-xl text-slate-500 hover:text-brand-600 hover:bg-slate-100/60 active:scale-95 transition-all focus:outline-none dark:text-slate-300 dark:hover:bg-slate-800/60 border border-slate-200/50 dark:border-slate-700/50" title="收起左侧题库栏">
+                <i class="fa-solid fa-angles-left text-xs transition-transform duration-200" id="toggleSidebarIcon"></i>
             </button>
         </div>
 
@@ -421,7 +437,7 @@
                                 <!-- Preview view -->
                                 <div id="contentOcrPreviewContainer" class="hidden w-full flex flex-col items-center space-y-2 py-1">
                                     <img id="contentOcrPreviewImg" src="" alt="OCR Preview" class="max-h-[140px] rounded-lg border border-slate-200 object-contain shadow-sm bg-slate-50 cursor-zoom-in" onclick="event.stopPropagation(); if (!contentOcrAbortController) zoomImage(this.src);">
-                                    <span id="contentOcrStatusBadge" class="text-[10px] text-brand-600 bg-brand-50 px-2.5 py-0.5 rounded-full font-bold">已加载截图预览 (点击可更换图片)</span>
+                                    <span id="contentOcrStatusBadge" class="text-[10px] text-brand-600 bg-brand-50 px-2.5 py-0.5 rounded-md font-bold">已加载截图预览 (点击可更换图片)</span>
                                     <div id="contentOcrStatusLoadingText" class="hidden text-xs text-slate-500 font-medium flex items-center justify-center space-x-1.5 mt-1">
                                         <i class="fa-solid fa-spinner animate-spin text-brand-500"></i>
                                         <span>正在解析......</span>
@@ -441,7 +457,7 @@
                                     <span class="text-xs font-semibold text-slate-500"><i class="fa-solid fa-square-check text-green-500 mr-1"></i>题干 OCR 识别结果：</span>
                                     <span id="contentOcrConfBadge" class="text-[10px] bg-slate-100 px-2 py-0.5 rounded text-slate-500 font-mono">置信度: --</span>
                                 </div>
-                                <pre id="contentOcrResultText" class="p-3 bg-slate-900 text-slate-100 rounded-xl overflow-x-auto text-xs font-mono whitespace-pre-wrap select-text"></pre>
+                                <pre id="contentOcrResultText" class="p-3 bg-slate-50 border border-slate-200 text-slate-800 dark:bg-slate-800/60 dark:border-slate-700 dark:text-slate-200 rounded-xl overflow-x-auto text-xs font-mono whitespace-pre-wrap select-text"></pre>
                             </div>
                         </div>
 
@@ -465,7 +481,7 @@
                                 <span class="bg-brand-50 text-brand-700 border border-brand-200 rounded-md px-2 py-0.5 text-[11px] font-medium">终审题干</span>
                                 <span>题干编辑框 (核准录入)</span>
                             </label>
-                            <span class="text-[10px] text-amber-500 bg-amber-50 px-2.5 py-0.5 rounded-full font-medium"><i class="fa-solid fa-triangle-exclamation mr-1"></i>修改或识别后，右侧试卷将即时渲染排版</span>
+                            <span class="text-[10px] text-amber-500 bg-amber-50 px-2.5 py-0.5 rounded-md font-medium"><i class="fa-solid fa-triangle-exclamation mr-1"></i>修改或识别后，右侧试卷将即时渲染排版</span>
                         </div>
 
                         <div class="grid grid-cols-1 md:grid-cols-2 gap-4 items-stretch">
@@ -537,7 +553,6 @@
                             <div class="flex flex-col border border-slate-200 rounded-xl bg-white overflow-hidden">
                                 <div class="px-3.5 py-2 bg-slate-50 border-b flex justify-between items-center text-xs font-medium text-slate-500">
                                     <span><i class="fa-solid fa-eye text-slate-400 mr-1"></i>实时排版预览</span>
-                                    <span class="text-[10px] text-brand-500 bg-brand-50 px-2 py-0.5 rounded-full">KaTeX 驱动</span>
                                 </div>
                                 <div id="contentPreview" class="flex-1 p-4 overflow-y-auto text-sm leading-relaxed min-h-[200px] preview-box select-text">
                                     <p class="text-slate-400 italic">在左侧框中输入，此处将实时展示最终排版效果...</p>
@@ -622,7 +637,7 @@
                                     <i class="fa-solid fa-robot"></i>
                                     <span>AI 解析生成结果：</span>
                                 </label>
-                                <pre id="aiResultText" class="p-4 bg-slate-900 text-slate-100 rounded-xl overflow-x-auto text-xs font-mono max-h-[300px] whitespace-pre-wrap select-text"></pre>
+                                <pre id="aiResultText" class="p-4 bg-slate-50 border border-slate-200 text-slate-800 dark:bg-slate-800/60 dark:border-slate-700 dark:text-slate-200 rounded-xl overflow-x-auto text-xs font-mono max-h-[300px] whitespace-pre-wrap select-text"></pre>
                                 <!-- AI auto-fill active, manual button removed -->
                             </div>
                         </div>
@@ -652,7 +667,7 @@
                                 <!-- Preview view -->
                                 <div id="ocrPreviewContainer" class="hidden w-full flex flex-col items-center space-y-2 py-1">
                                     <img id="ocrPreviewImg" src="" alt="OCR Preview" class="max-h-[140px] rounded-lg border border-slate-200 object-contain shadow-sm bg-slate-50 cursor-zoom-in" onclick="event.stopPropagation(); if (!answerOcrAbortController) zoomImage(this.src);">
-                                    <span id="ocrStatusBadge" class="text-[10px] text-brand-600 bg-brand-50 px-2.5 py-0.5 rounded-full font-bold">已加载截图预览 (点击可更换图片)</span>
+                                    <span id="ocrStatusBadge" class="text-[10px] text-brand-600 bg-brand-50 px-2.5 py-0.5 rounded-md font-bold">已加载截图预览 (点击可更换图片)</span>
                                     <div id="ocrStatusLoadingText" class="hidden text-xs text-slate-500 font-medium flex items-center justify-center space-x-1.5 mt-1">
                                         <i class="fa-solid fa-spinner animate-spin text-brand-500"></i>
                                         <span>正在解析......</span>
@@ -672,7 +687,7 @@
                                     <span class="text-xs font-semibold text-slate-500"><i class="fa-solid fa-square-check text-green-500 mr-1"></i>OCR 识别结果：</span>
                                     <span id="ocrConfBadge" class="text-[10px] bg-slate-100 px-2 py-0.5 rounded text-slate-500 font-mono">置信度: --</span>
                                 </div>
-                                <pre id="ocrResultText" class="p-3 bg-slate-900 text-slate-100 rounded-xl overflow-x-auto text-xs font-mono whitespace-pre-wrap select-text"></pre>
+                                <pre id="ocrResultText" class="p-3 bg-slate-50 border border-slate-200 text-slate-800 dark:bg-slate-800/60 dark:border-slate-700 dark:text-slate-200 rounded-xl overflow-x-auto text-xs font-mono whitespace-pre-wrap select-text"></pre>
                                 <!-- OCR auto-fill active, manual button removed -->
                             </div>
                         </div>
@@ -712,7 +727,7 @@
                                 <span class="bg-brand-50 text-brand-700 border border-brand-200 rounded-md px-2 py-0.5 text-[11px] mr-1.5 font-medium">最终结果</span>
                                 <span>终审编辑框 (入库前核准)</span>
                             </label>
-                            <span class="text-[10px] text-amber-500 bg-amber-50 px-2.5 py-0.5 rounded-full font-medium"><i class="fa-solid fa-triangle-exclamation mr-1"></i>以上三种来源均可汇总并在此核改</span>
+                            <span class="text-[10px] text-amber-500 bg-amber-50 px-2.5 py-0.5 rounded-md font-medium"><i class="fa-solid fa-triangle-exclamation mr-1"></i>以上三种来源均可汇总并在此核改</span>
                         </div>
 
                         <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -765,7 +780,7 @@
                             <div class="flex flex-col border border-slate-200 rounded-xl bg-white overflow-hidden">
                                 <div class="px-3.5 py-2 bg-indigo-50/60 border-b flex justify-between items-center text-xs font-medium text-slate-500">
                                     <span><i class="fa-solid fa-spell-check text-slate-400 mr-1"></i>解析最终排版预览</span>
-                                    <span class="text-[10px] text-indigo-500 bg-indigo-50 px-2 py-0.5 rounded-full">实时同步</span>
+                                    <span class="text-[10px] text-indigo-500 bg-indigo-50 px-2 py-0.5 rounded-md">实时同步</span>
                                 </div>
                                 <div id="answerPreview" class="flex-1 p-4 overflow-y-auto text-sm leading-relaxed max-h-[360px] min-h-[220px] preview-box select-text">
                                     <p class="text-slate-400 italic">在左侧输入解析内容，此处将实时展示极其精美的 LaTeX 排版...</p>
@@ -824,11 +839,10 @@
         <section class="glass-sidebar flex flex-col h-full shrink-0 overflow-y-auto" style="width: 450px; min-width: 0px;" id="previewSection">
             <!-- Title Bar - Apple Glass Style -->
             <div class="sticky top-0 glass-panel px-5 py-4 flex justify-between items-center z-10">
-                <span class="font-bold text-sm tracking-wide text-slate-600 flex items-center space-x-1.5 uppercase">
+                <span class="font-bold text-sm tracking-wide text-slate-600 flex items-center space-x-1.5">
                     <i class="fa-solid fa-file-invoice text-indigo-500"></i>
                     <span>题目预览</span>
                 </span>
-                <span class="glass-badge text-[10px] text-indigo-600 px-2.5 py-1 rounded-full font-bold">LIVE PREVIEW</span>
             </div>
 
             <!-- Beautiful Paper View Card -->
@@ -839,7 +853,6 @@
                     <!-- School Paper Header -->
                     <div class="p-6 text-center border-b border-dashed border-slate-200 bg-slate-50/50">
                         <h4 class="font-extrabold text-base tracking-wide text-slate-800" id="paperHeaderTitle">本地教研系统</h4>
-                        <p class="text-[10px] text-slate-400 mt-1 uppercase font-semibold tracking-widest font-['Outfit']">Mathematics Question Document</p>
                     </div>
 
                     <!-- Question Body inside Document -->
@@ -854,7 +867,7 @@
                         <div class="relative group/copy">
                             <div class="text-sm leading-relaxed text-slate-800 space-y-4 preview-box pb-6" id="paperContent">
                                 <!-- Injected by JS -->
-                                <p class="text-slate-400 italic text-center py-10">输入题干内容后，此处将自动展示为极致精美的数学试卷排版格式。</p>
+                                <p class="text-slate-400 italic text-center py-10">输入题干内容后，此处将展示实时试卷排版效果。</p>
                             </div>
                             <!-- Copy Button -->
                             <button type="button" id="copyContentBtn" onclick="copyPaperContent()" class="absolute bottom-1 right-1 opacity-40 group-hover/copy:opacity-100 hover:scale-105 active:scale-95 bg-white hover:bg-slate-50 border border-slate-200 text-slate-500 hover:text-brand-600 p-1.5 rounded-lg shadow-sm transition-all duration-200 text-xs flex items-center space-x-1" title="复制 LaTeX 题干">

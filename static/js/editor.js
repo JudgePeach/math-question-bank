@@ -1341,7 +1341,7 @@ const PAGE_LIMIT = 20;
                 
                 if (!text.trim()) {
                     previewContainer.innerHTML = '<p class="text-slate-400 italic">在左侧框中输入，此处将实时展示最终排版效果...</p>';
-                    paperContainer.innerHTML = '<p class="text-slate-400 italic text-center py-10">输入题干内容后，此处将自动展示为极致精美的数学试卷排版格式。</p>';
+                    paperContainer.innerHTML = '<p class="text-slate-400 italic text-center py-10">输入题干内容后，此处将展示实时试卷排版效果。</p>';
                     return;
                 }
                 
@@ -1475,9 +1475,9 @@ const PAGE_LIMIT = 20;
                 
                 let seqBadge = '';
                 if (currentSeqNum) {
-                    seqBadge = `<span class="text-[10px] font-bold px-2 py-0.5 rounded-full bg-slate-100 text-slate-700">编号：#${currentSeqNum}</span>`;
+                    seqBadge = `<span class="text-[10px] font-bold px-2 py-0.5 rounded-md bg-slate-100 text-slate-700">编号：#${currentSeqNum}</span>`;
                 } else {
-                    seqBadge = `<span class="text-[10px] font-bold px-2 py-0.5 rounded-full bg-slate-150 text-slate-500">编号：新题目</span>`;
+                    seqBadge = `<span class="text-[10px] font-bold px-2 py-0.5 rounded-md bg-slate-150 text-slate-500">编号：新题目</span>`;
                 }
                 
                 let paperTagsHtml = '';
@@ -1485,14 +1485,14 @@ const PAGE_LIMIT = 20;
                 if (tagsVal) {
                     const tagList = tagsVal.split(/[,，]+/).map(t => t.trim()).filter(t => t.length > 0);
                     tagList.forEach(tag => {
-                        paperTagsHtml += `<span class="text-[10px] font-bold px-2 py-0.5 rounded-full bg-amber-50 text-amber-600 border border-amber-250/60 flex items-center space-x-0.5"><i class="fa-solid fa-tag text-[8px] text-amber-500 mr-1"></i>${tag}</span>`;
+                        paperTagsHtml += `<span class="text-[10px] font-bold px-2 py-0.5 rounded-md bg-amber-50 text-amber-600 border border-amber-250/60 flex items-center space-x-0.5"><i class="fa-solid fa-tag text-[8px] text-amber-500 mr-1"></i>${tag}</span>`;
                     });
                 }
                 
                 badges.innerHTML = `
                     ${seqBadge}
-                    <span class="text-[10px] font-bold px-2 py-0.5 rounded-full bg-brand-50 text-brand-700">题型：${getTypeText(editQType.value)}</span>
-                    <span class="text-[10px] font-bold px-2 py-0.5 rounded-full bg-indigo-50 text-indigo-700">难度：${getDifficultyText(editDifficulty.value)}</span>
+                    <span class="text-[10px] font-bold px-2 py-0.5 rounded-md bg-brand-50 text-brand-700">题型：${getTypeText(editQType.value)}</span>
+                    <span class="text-[10px] font-bold px-2 py-0.5 rounded-md bg-indigo-50 text-indigo-700">难度：${getDifficultyText(editDifficulty.value)}</span>
                     ${paperTagsHtml}
                 `;
                 sourceEl.textContent = `来源: ${editSource.value || '本地教研录入'}`;

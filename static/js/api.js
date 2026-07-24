@@ -1449,6 +1449,67 @@
             closeThemeDropdown();
         };
 
+        // Workspace Dropdown toggle logic
+        window.toggleWorkspaceDropdown = function(event) {
+            event.stopPropagation();
+            const menu = document.getElementById('workspaceDropdownMenu');
+            const arrow = document.getElementById('workspaceDropdownArrow');
+            if (!menu) return;
+            
+            const isOpen = !menu.classList.contains('pointer-events-none');
+            if (isOpen) {
+                closeWorkspaceDropdown();
+            } else {
+                if (typeof closeThemeDropdown === 'function') closeThemeDropdown();
+                menu.classList.remove('scale-90', 'opacity-0', 'pointer-events-none');
+                menu.classList.add('scale-100', 'opacity-100');
+                if (arrow) arrow.classList.add('rotate-180');
+                document.addEventListener('click', closeWorkspaceDropdownOnce);
+            }
+        };
+
+        function closeWorkspaceDropdown() {
+            const menu = document.getElementById('workspaceDropdownMenu');
+            const arrow = document.getElementById('workspaceDropdownArrow');
+            if (!menu) return;
+            menu.classList.add('scale-90', 'opacity-0', 'pointer-events-none');
+            menu.classList.remove('scale-100', 'opacity-100');
+            if (arrow) arrow.classList.remove('rotate-180');
+            document.removeEventListener('click', closeWorkspaceDropdownOnce);
+        }
+
+        function closeWorkspaceDropdownOnce() {
+            closeWorkspaceDropdown();
+        }
+
+        window.selectWorkspace = function(workspaceId, workspaceName) {
+            const currentWorkspaceName = document.getElementById('currentWorkspaceName');
+            if (currentWorkspaceName) {
+                currentWorkspaceName.textContent = workspaceName;
+            }
+
+            const checkBank = document.getElementById('ws-check-bank');
+            const checkPaper = document.getElementById('ws-check-paper');
+            const btnBank = document.getElementById('ws-btn-bank');
+            const btnPaper = document.getElementById('ws-btn-paper');
+
+            if (checkBank && checkPaper) {
+                if (workspaceId === 'bank') {
+                    checkBank.classList.remove('hidden');
+                    checkPaper.classList.add('hidden');
+                    if (btnBank) btnBank.classList.add('font-medium');
+                    if (btnPaper) btnPaper.classList.remove('font-medium');
+                } else {
+                    checkBank.classList.add('hidden');
+                    checkPaper.classList.remove('hidden');
+                    if (btnBank) btnBank.classList.remove('font-medium');
+                    if (btnPaper) btnPaper.classList.add('font-medium');
+                }
+            }
+
+            closeWorkspaceDropdown();
+        };
+
         let isSidebarCollapsed = false;
         let lastSidebarWidth = 320;
         let lastPreviewWidth = 450;
@@ -1476,7 +1537,15 @@
                 sidebar.style.opacity = '0';
                 sidebar.style.pointerEvents = 'none';
                 if (resizer) resizer.style.display = 'none';
-                if (toggleBtn) toggleBtn.classList.add('text-brand-600', 'bg-slate-100/80');
+                if (toggleBtn) {
+                    toggleBtn.classList.add('text-brand-600', 'bg-slate-100/80');
+                    toggleBtn.setAttribute('title', '展开左侧题库栏');
+                }
+                const toggleIcon = document.getElementById('toggleSidebarIcon');
+                if (toggleIcon) {
+                    toggleIcon.classList.remove('fa-angles-left');
+                    toggleIcon.classList.add('fa-angles-right');
+                }
 
                 // Expand preview panel proportionally to 40% window width (60:40 ratio with editor)
                 if (preview) {
@@ -1498,7 +1567,15 @@
                 sidebar.style.opacity = '1';
                 sidebar.style.pointerEvents = 'auto';
                 if (resizer) resizer.style.display = 'block';
-                if (toggleBtn) toggleBtn.classList.remove('text-brand-600', 'bg-slate-100/80');
+                if (toggleBtn) {
+                    toggleBtn.classList.remove('text-brand-600', 'bg-slate-100/80');
+                    toggleBtn.setAttribute('title', '收起左侧题库栏');
+                }
+                const toggleIcon = document.getElementById('toggleSidebarIcon');
+                if (toggleIcon) {
+                    toggleIcon.classList.remove('fa-angles-right');
+                    toggleIcon.classList.add('fa-angles-left');
+                }
 
                 // Restore preview panel to previous width
                 if (preview) {
