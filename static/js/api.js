@@ -739,6 +739,8 @@
                 })
                 .then(data => {
                     categoryTree = data;
+                    window.categoryTree = data;
+                    window.systemMetadata = systemMetadata;
                     populateCategoryDropdowns();
                     populateFilterDropdowns();
                     

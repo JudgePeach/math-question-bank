@@ -31,6 +31,7 @@ class Question(Base):
     _image_paths = Column(Text, default="[]", name="image_paths")  # 以JSON字符串形式存储相对路径列表
     tikz_code = Column(Text, default="")  # TikZ 几何绘图源代码
     tags = Column(Text, default="")  # 自定义标签 (逗号分隔或字符串)
+    usage_count = Column(Integer, default=0, index=True)  # 组卷引用次数
     created_at = Column(DateTime, default=datetime.datetime.utcnow)
 
     @property
@@ -63,6 +64,7 @@ class Question(Base):
             "image_paths": self.image_paths,
             "tikz_code": self.tikz_code,
             "tags": self.tags,
+            "usage_count": self.usage_count or 0,
             "created_at": (self.created_at.isoformat() + "Z") if self.created_at else None
         }
 
@@ -79,6 +81,7 @@ class Question(Base):
             "association_group_id": self.association_group_id,
             "image_paths": self.image_paths,
             "tags": self.tags,
+            "usage_count": self.usage_count or 0,
             "created_at": (self.created_at.isoformat() + "Z") if self.created_at else None
         }
 
@@ -100,6 +103,46 @@ class QuestionCurriculum(Base):
             "compulsory": self.compulsory,
             "chapter": self.chapter,
             "knowledge": self.knowledge
+        }
+
+class Paper(Base):
+    __tablename__ = "papers"
+
+    id = Column(Integer, primary_key=True, index=True)
+    title = Column(String(200), nullable=False)
+    subtitle = Column(String(200), default="")
+    paper_type = Column(String(50), default="exam")  # exam, quiz, handout
+    total_score = Column(Integer, default=150)
+    metadata_json = Column(Text, default="{}")
+    created_at = Column(DateTime, default=datetime.datetime.utcnow)
+
+    def to_dict(self):
+        return {
+            "id": self.id,
+            "title": self.title,
+            "subtitle": self.subtitle,
+            "paper_type": self.paper_type,
+            "total_score": self.total_score,
+            "metadata_json": self.metadata_json,
+            "created_at": (self.created_at.isoformat() + "Z") if self.created_at else None
+        }
+
+class PaperQuestion(Base):
+    __tablename__ = "paper_questions"
+
+    id = Column(Integer, primary_key=True, index=True)
+    paper_id = Column(Integer, index=True, nullable=False)
+    question_id = Column(Integer, index=True, nullable=False)
+    order_index = Column(Integer, default=0)
+    score = Column(Integer, default=5)
+
+    def to_dict(self):
+        return {
+            "id": self.id,
+            "paper_id": self.paper_id,
+            "question_id": self.question_id,
+            "order_index": self.order_index,
+            "score": self.score
         }
 
 # Dependency to get db session
@@ -137,6 +180,10 @@ def init_db():
                 conn.execute(text("ALTER TABLE questions ADD COLUMN tags TEXT DEFAULT ''"))
                 print("Added column 'tags' to questions table successfully.")
                 
+            if "usage_count" not in columns:
+                conn.execute(text("ALTER TABLE questions ADD COLUMN usage_count INTEGER DEFAULT 0"))
+                print("Added column 'usage_count' to questions table successfully.")
+                
             conn.execute(text("CREATE INDEX IF NOT EXISTS idx_questions_category_compulsory ON questions (category_compulsory)"))
             conn.execute(text("CREATE INDEX IF NOT EXISTS idx_questions_category_chapter ON questions (category_chapter)"))
             conn.execute(text("CREATE INDEX IF NOT EXISTS idx_questions_category_knowledge ON questions (category_knowledge)"))
@@ -144,6 +191,7 @@ def init_db():
             conn.execute(text("CREATE INDEX IF NOT EXISTS idx_questions_difficulty ON questions (difficulty)"))
             conn.execute(text("CREATE INDEX IF NOT EXISTS idx_questions_association_group_id ON questions (association_group_id)"))
             conn.execute(text("CREATE INDEX IF NOT EXISTS idx_questions_tags ON questions (tags)"))
+            conn.execute(text("CREATE INDEX IF NOT EXISTS idx_questions_usage_count ON questions (usage_count)"))
 
             # Create indexes on question_curriculums
             conn.execute(text("CREATE INDEX IF NOT EXISTS idx_question_curriculums_lookup ON question_curriculums (version_code, compulsory, chapter, knowledge)"))

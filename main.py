@@ -18,7 +18,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
 from dotenv import load_dotenv
 
-from database import Question, QuestionCurriculum, get_db, init_db
+from database import Question, QuestionCurriculum, Paper, PaperQuestion, get_db, init_db
+from paper_helper import build_latex_document, compile_tex_to_pdf, create_tex_zip_package, collect_referenced_images
 from sync_helper import export_database_to_files
 
 # Load environment variables
@@ -281,7 +282,7 @@ def read_index():
             html_content = f.read()
         
         # Inject dynamic cache-busting version parameter based on file mtime
-        js_files = ["api.js", "editor.js", "ocr.js", "import.js"]
+        js_files = ["api.js", "editor.js", "ocr.js", "import.js", "paper.js"]
         for js in js_files:
             js_path = os.path.join("static", "js", js)
             mtime = int(os.path.getmtime(js_path)) if os.path.exists(js_path) else 0
@@ -4109,6 +4110,184 @@ def clear_temp_crops(payload: dict):
             status_code=500
         )
 
+
+# ----------------- Paper Generation API Endpoints -----------------
+
+@app.get("/api/paper/questions")
+def get_paper_questions(ids: str = "", db: Session = Depends(get_db)):
+    """获取指定 ID 列表的完整题目数据（组卷试题篮批量拉取）"""
+    if not ids:
+        return {"status": "success", "data": []}
+    try:
+        id_list = [int(i.strip()) for i in ids.split(",") if i.strip().isdigit()]
+        if not id_list:
+            return {"status": "success", "data": []}
+        questions = db.query(Question).filter(Question.id.in_(id_list)).all()
+        q_map = {q.id: q.to_dict() for q in questions}
+        result = [q_map[qid] for qid in id_list if qid in q_map]
+        return {"status": "success", "data": result}
+    except Exception as e:
+        return JSONResponse(content={"status": "error", "message": str(e)}, status_code=500)
+
+@app.post("/api/paper/save")
+def save_paper(payload: dict, background_tasks: BackgroundTasks, db: Session = Depends(get_db)):
+    """保存排版好的试卷，自增被选中题目的 usage_count"""
+    try:
+        title = payload.get("title", "未命名试卷").strip()
+        subtitle = payload.get("subtitle", "").strip()
+        paper_type = payload.get("paper_type", "exam")
+        questions_payload = payload.get("questions", [])
+        
+        if not questions_payload:
+            return JSONResponse(content={"status": "error", "message": "试卷中至少需要包含一道题目"}, status_code=400)
+            
+        total_score = sum(int(q.get("score", 5)) for q in questions_payload)
+        
+        paper = Paper(
+            title=title,
+            subtitle=subtitle,
+            paper_type=paper_type,
+            total_score=total_score,
+            metadata_json=json.dumps(payload.get("metadata", {}))
+        )
+        db.add(paper)
+        db.flush()
+        
+        for idx, item in enumerate(questions_payload):
+            qid = int(item.get("id"))
+            score = int(item.get("score", 5))
+            pq = PaperQuestion(
+                paper_id=paper.id,
+                question_id=qid,
+                order_index=idx + 1,
+                score=score
+            )
+            db.add(pq)
+            
+            q = db.query(Question).filter(Question.id == qid).first()
+            if q:
+                q.usage_count = (q.usage_count or 0) + 1
+                
+        db.commit()
+        background_tasks.add_task(export_database_to_files)
+        return {"status": "success", "message": "试卷保存成功！", "paper_id": paper.id}
+    except Exception as e:
+        db.rollback()
+        return JSONResponse(content={"status": "error", "message": f"保存试卷失败: {str(e)}"}, status_code=500)
+
+@app.post("/api/paper/export/tex")
+def export_paper_tex(payload: dict, db: Session = Depends(get_db)):
+    """导出 LaTeX 源码 ZIP 压缩包"""
+    try:
+        title = payload.get("title", "2026年高中数学模拟考试试卷")
+        subtitle = payload.get("subtitle", "")
+        paper_type = payload.get("paper_type", "exam")
+        questions_input = payload.get("questions", [])
+        
+        q_ids = [int(q.get("id")) for q in questions_input if q.get("id")]
+        questions_db = db.query(Question).filter(Question.id.in_(q_ids)).all()
+        q_map = {q.id: q.to_dict() for q in questions_db}
+        
+        questions_data = []
+        for item in questions_input:
+            qid = int(item.get("id"))
+            if qid in q_map:
+                questions_data.append({
+                    "question": q_map[qid],
+                    "score": int(item.get("score", 5))
+                })
+                
+        tex_main = build_latex_document(title, subtitle, paper_type, questions_data, include_answers=False)
+        tex_ans = build_latex_document(title + " (参考答案与解析)", subtitle, paper_type, questions_data, include_answers=True)
+        
+        image_paths = collect_referenced_images(questions_data, UPLOAD_DIR)
+        
+        zip_bytes = create_tex_zip_package(title, tex_main, tex_ans, image_paths)
+        
+        filename = f"paper_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.zip"
+        return Response(content=zip_bytes, media_type="application/zip", headers={
+            "Content-Disposition": f'attachment; filename="{filename}"'
+        })
+    except Exception as e:
+        return JSONResponse(content={"status": "error", "message": f"生成 LaTeX 源码失败: {str(e)}"}, status_code=500)
+
+@app.post("/api/paper/export/pdf")
+def export_paper_pdf(payload: dict, db: Session = Depends(get_db)):
+    """在线静默编译生成高清 PDF"""
+    try:
+        title = payload.get("title", "2026年高中数学模拟考试试卷")
+        subtitle = payload.get("subtitle", "")
+        paper_type = payload.get("paper_type", "exam")
+        include_answers = payload.get("include_answers", False)
+        questions_input = payload.get("questions", [])
+        
+        q_ids = [int(q.get("id")) for q in questions_input if q.get("id")]
+        questions_db = db.query(Question).filter(Question.id.in_(q_ids)).all()
+        q_map = {q.id: q.to_dict() for q in questions_db}
+        
+        questions_data = []
+        for item in questions_input:
+            qid = int(item.get("id"))
+            if qid in q_map:
+                questions_data.append({
+                    "question": q_map[qid],
+                    "score": int(item.get("score", 5))
+                })
+                
+        tex_content = build_latex_document(title, subtitle, paper_type, questions_data, include_answers=include_answers)
+        image_paths = collect_referenced_images(questions_data, UPLOAD_DIR)
+        
+        pdf_bytes, log_or_err = compile_tex_to_pdf(tex_content, image_paths)
+        
+        if pdf_bytes:
+            filename = f"paper_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.pdf"
+            return Response(content=pdf_bytes, media_type="application/pdf", headers={
+                "Content-Disposition": f'inline; filename="{filename}"'
+            })
+        else:
+            return JSONResponse(content={"status": "error", "message": log_or_err}, status_code=400)
+    except Exception as e:
+        return JSONResponse(content={"status": "error", "message": f"编译 PDF 异常: {str(e)}"}, status_code=500)
+
+@app.post("/api/paper/ai-select")
+def ai_select_paper(payload: dict, db: Session = Depends(get_db)):
+    """AI 智能选题：根据 Prompt 和过滤器自动组卷筛选题目"""
+    try:
+        prompt = payload.get("prompt", "").strip()
+        question_type = payload.get("question_type", "")
+        difficulty = payload.get("difficulty", "")
+        compulsory = payload.get("compulsory", "")
+        chapter = payload.get("chapter", "")
+        knowledge = payload.get("knowledge", "")
+        limit = int(payload.get("limit", 5))
+        
+        query = db.query(Question)
+        if question_type:
+            query = query.filter(Question.question_type == question_type)
+        if difficulty:
+            query = query.filter(Question.difficulty == difficulty)
+        if compulsory:
+            query = query.filter(Question.category_compulsory == compulsory)
+        if chapter:
+            query = query.filter(Question.category_chapter == chapter)
+        if knowledge:
+            query = query.filter(Question.category_knowledge == knowledge)
+            
+        if prompt:
+            search_pattern = f"%{prompt}%"
+            query = query.filter(
+                (Question.content.like(search_pattern)) |
+                (Question.category_knowledge.like(search_pattern)) |
+                (Question.tags.like(search_pattern)) |
+                (Question.source.like(search_pattern))
+            )
+            
+        questions = query.order_by(Question.usage_count.asc(), Question.id.desc()).limit(limit).all()
+        result = [q.to_dict() for q in questions]
+        
+        return {"status": "success", "data": result, "count": len(result)}
+    except Exception as e:
+        return JSONResponse(content={"status": "error", "message": f"AI 智能选题失败: {str(e)}"}, status_code=500)
 
 # ----------------- Mount Static Folder last to allow API override -----------------
 app.mount("/static", StaticFiles(directory="static"), name="static")

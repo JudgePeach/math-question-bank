@@ -1617,6 +1617,7 @@ const PAGE_LIMIT = 20;
             
             return tempText;
         }
+        window.preprocessFormulaForKaTeX = preprocessFormulaForKaTeX;
             
         function parseMarkdownWithMath(text) {
             if (!text) return "";

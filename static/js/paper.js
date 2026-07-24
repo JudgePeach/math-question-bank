@@ -1,0 +1,1059 @@
+/**
+ * paper.js - 本地化数学题库组卷系统 (Paper Studio)
+ * 纯 Vanilla JS + 渐进式级联架构
+ * 严禁使用正则后行断言 (?<!...) 和 (?<=...)
+ */
+
+(function () {
+    'use strict';
+
+    // Local Storage Keys
+    const STORAGE_KEY_CART = 'mathbank_paper_cart';
+    const STORAGE_KEY_META = 'mathbank_paper_meta';
+    const STORAGE_KEY_COLLAPSED = 'mathbank_paper_filter_collapsed';
+
+    // Global Store State
+    window.PaperStore = {
+        cart: [], // Array of { id: number, score: number }
+        meta: {
+            title: '2026年高中数学模拟考试试卷',
+            subtitle: '',
+            paper_type: 'exam'
+        },
+        filters: {
+            compulsory: '',
+            chapter: '',
+            knowledge: '',
+            question_type: '',
+            difficulty: '',
+            keyword: '',
+            tab: 'all' // 'all' or 'selected'
+        },
+        isFilterCollapsed: false,
+        bankQuestions: [], // Loaded questions from DB based on filters
+        questionsMap: {}, // qid -> Question Object
+        activeWorkspace: 'bank'
+    };
+
+    // Load State from LocalStorage
+    function loadStateFromStorage() {
+        try {
+            const rawCart = localStorage.getItem(STORAGE_KEY_CART);
+            if (rawCart) {
+                window.PaperStore.cart = JSON.parse(rawCart);
+            }
+        } catch (e) {
+            window.PaperStore.cart = [];
+        }
+
+        try {
+            const rawMeta = localStorage.getItem(STORAGE_KEY_META);
+            if (rawMeta) {
+                window.PaperStore.meta = Object.assign({}, window.PaperStore.meta, JSON.parse(rawMeta));
+            }
+        } catch (e) { }
+
+        try {
+            window.PaperStore.isFilterCollapsed = localStorage.getItem(STORAGE_KEY_COLLAPSED) === 'true';
+        } catch (e) { }
+    }
+
+    function saveCartToStorage() {
+        try {
+            localStorage.setItem(STORAGE_KEY_CART, JSON.stringify(window.PaperStore.cart));
+        } catch (e) { }
+        updateCartBadges();
+    }
+
+    function saveMetaToStorage() {
+        try {
+            localStorage.setItem(STORAGE_KEY_META, JSON.stringify(window.PaperStore.meta));
+        } catch (e) { }
+    }
+
+    // Public Cart Helper Functions
+    window.isInCart = function (qid) {
+        qid = parseInt(qid, 10);
+        return window.PaperStore.cart.some(item => item.id === qid);
+    };
+
+    window.addToCart = function (qid, score = null) {
+        qid = parseInt(qid, 10);
+        if (!window.isInCart(qid)) {
+            const q = window.PaperStore.questionsMap[qid];
+            if (!score && q) {
+                score = q.question_type === 'detailed_answer' ? 12 : 5;
+            } else if (!score) {
+                score = 5;
+            }
+            window.PaperStore.cart.push({ id: qid, score: parseInt(score, 10) || 5 });
+            saveCartToStorage();
+            if (window.showToast) window.showToast(`已将题目 #${qid} 加入试卷`, 'success');
+            
+            if (window.PaperStore.activeWorkspace === 'paper') {
+                renderPart3QuestionStream();
+                window.renderPaperCanvas();
+            }
+        }
+    };
+
+    window.removeFromCart = function (qid) {
+        qid = parseInt(qid, 10);
+        window.PaperStore.cart = window.PaperStore.cart.filter(item => item.id !== qid);
+        saveCartToStorage();
+        if (window.PaperStore.activeWorkspace === 'paper') {
+            renderPart3QuestionStream();
+            window.renderPaperCanvas();
+        }
+        if (window.showToast) window.showToast(`已将题目 #${qid} 移出试卷`, 'info');
+    };
+
+    window.toggleCart = function (qid, score = null) {
+        qid = parseInt(qid, 10);
+        if (window.isInCart(qid)) {
+            window.removeFromCart(qid);
+        } else {
+            window.addToCart(qid, score);
+        }
+    };
+
+    window.clearCart = function () {
+        if (confirm('确定要清空已加入试卷的所有题目吗？')) {
+            window.PaperStore.cart = [];
+            saveCartToStorage();
+            if (window.PaperStore.activeWorkspace === 'paper') {
+                renderPart3QuestionStream();
+                window.renderPaperCanvas();
+            }
+            if (window.showToast) window.showToast('已清空试卷题目', 'info');
+        }
+    };
+
+    function updateCartBadges() {
+        const count = window.PaperStore.cart.length;
+        const badges = document.querySelectorAll('.paper-cart-badge');
+        badges.forEach(b => {
+            b.textContent = count;
+            if (count > 0) {
+                b.classList.remove('hidden');
+            } else {
+                b.classList.add('hidden');
+            }
+        });
+    }
+
+    // Workspace View Switcher
+    const originalSelectWorkspace = window.selectWorkspace;
+    window.selectWorkspace = function (workspaceId, workspaceName) {
+        if (typeof originalSelectWorkspace === 'function') {
+            originalSelectWorkspace(workspaceId, workspaceName);
+        }
+
+        window.PaperStore.activeWorkspace = workspaceId;
+
+        const bankSec = document.getElementById('bankWorkspaceSection');
+        const paperSec = document.getElementById('paperWorkspaceSection');
+
+        if (workspaceId === 'paper') {
+            if (bankSec) bankSec.classList.add('hidden');
+            if (paperSec) {
+                paperSec.classList.remove('hidden');
+                window.renderPaperWorkspace();
+            }
+        } else {
+            if (paperSec) paperSec.classList.add('hidden');
+            if (bankSec) bankSec.classList.remove('hidden');
+        }
+    };
+
+    // Toggle Part 2 Filter Bar Collapsing
+    window.togglePaperFilterBar = function () {
+        window.PaperStore.isFilterCollapsed = !window.PaperStore.isFilterCollapsed;
+        try {
+            localStorage.setItem(STORAGE_KEY_COLLAPSED, window.PaperStore.isFilterCollapsed ? 'true' : 'false');
+        } catch (e) { }
+
+        const filterBox = document.getElementById('paperFilterSection');
+        const toggleIcon = document.getElementById('paperFilterToggleIcon');
+        const toggleTxt = document.getElementById('paperFilterToggleTxt');
+
+        if (!filterBox) return;
+
+        if (window.PaperStore.isFilterCollapsed) {
+            filterBox.style.maxHeight = '0px';
+            filterBox.style.opacity = '0';
+            filterBox.style.overflow = 'hidden';
+            filterBox.style.paddingTop = '0px';
+            filterBox.style.paddingBottom = '0px';
+            filterBox.style.marginTop = '0px';
+            filterBox.style.marginBottom = '0px';
+            if (toggleIcon) toggleIcon.className = 'fa-solid fa-chevron-down text-xs';
+            if (toggleTxt) toggleTxt.textContent = '展开组卷配置与题库筛选';
+        } else {
+            filterBox.style.maxHeight = '700px';
+            filterBox.style.opacity = '1';
+            filterBox.style.overflow = '';
+            filterBox.style.paddingTop = '';
+            filterBox.style.paddingBottom = '';
+            filterBox.style.marginTop = '';
+            filterBox.style.marginBottom = '';
+            if (toggleIcon) toggleIcon.className = 'fa-solid fa-chevron-up text-xs';
+            if (toggleTxt) toggleTxt.textContent = '收起组卷配置栏';
+        }
+    };
+
+    // Move Question Order
+    window.movePaperQuestion = function (index, direction) {
+        const cart = window.PaperStore.cart;
+        if (direction === 'up' && index > 0) {
+            const temp = cart[index];
+            cart[index] = cart[index - 1];
+            cart[index - 1] = temp;
+            saveCartToStorage();
+            renderPart3QuestionStream();
+            window.renderPaperCanvas();
+        } else if (direction === 'down' && index < cart.length - 1) {
+            const temp = cart[index];
+            cart[index] = cart[index + 1];
+            cart[index + 1] = temp;
+            saveCartToStorage();
+            renderPart3QuestionStream();
+            window.renderPaperCanvas();
+        }
+    };
+
+    // Update Score
+    window.updatePaperQuestionScore = function (qid, newScore) {
+        qid = parseInt(qid, 10);
+        newScore = parseInt(newScore, 10) || 5;
+        const item = window.PaperStore.cart.find(it => it.id === qid);
+        if (item) {
+            item.score = newScore;
+            saveCartToStorage();
+            window.renderPaperCanvas();
+        }
+    };
+
+    // Fetch Questions from DB for Question Bank Stream
+    async function fetchBankQuestions() {
+        const f = window.PaperStore.filters;
+        const params = new URLSearchParams();
+        if (f.compulsory) params.append('category_compulsory', f.compulsory);
+        if (f.chapter) params.append('category_chapter', f.chapter);
+        if (f.knowledge) params.append('category_knowledge', f.knowledge);
+        if (f.question_type) params.append('question_type', f.question_type);
+        if (f.difficulty) params.append('difficulty', f.difficulty);
+        if (f.keyword) params.append('search', f.keyword);
+
+        try {
+            const res = await fetch(`/api/questions?${params.toString()}`);
+            const questions = await res.json();
+            if (Array.isArray(questions)) {
+                window.PaperStore.bankQuestions = questions;
+                questions.forEach(q => {
+                    window.PaperStore.questionsMap[q.id] = q;
+                });
+            }
+        } catch (e) {
+            console.error('Fetch bank questions error:', e);
+        }
+    }
+
+    // Render Full Paper Workspace (Part 2, Part 3, Part 4)
+    window.renderPaperWorkspace = async function () {
+        await fetchBankQuestions();
+        renderPart2FilterSection();
+        renderPart3QuestionStream();
+        window.renderPaperCanvas();
+    };
+
+    // Render Part 2: Config & 3-Level Cascade Filter Section
+    function renderPart2FilterSection() {
+        const meta = window.PaperStore.meta;
+        const f = window.PaperStore.filters;
+        const container = document.getElementById('paperFilterSection');
+        if (!container) return;
+
+        const tree = window.categoryTree || {};
+        const metadata = window.systemMetadata || {};
+
+        // 1. Build Compulsory Book options
+        let bookOptions = `<option value="">-- 选择学段 --</option>`;
+        Object.keys(tree).forEach(b => {
+            bookOptions += `<option value="${escapeHtml(b)}" ${f.compulsory === b ? 'selected' : ''}>${escapeHtml(b)}</option>`;
+        });
+
+        // 2. Build Chapter options (Level 2)
+        let chapterOptions = `<option value="">-- 先选学段 --</option>`;
+        let isChapterDisabled = true;
+        if (f.compulsory && tree[f.compulsory]) {
+            isChapterDisabled = false;
+            chapterOptions = `<option value="">-- 所有章节 --</option>`;
+            Object.keys(tree[f.compulsory]).forEach(ch => {
+                chapterOptions += `<option value="${escapeHtml(ch)}" ${f.chapter === ch ? 'selected' : ''}>${escapeHtml(ch)}</option>`;
+            });
+        }
+
+        // 3. Build Knowledge options (Level 3)
+        let knowledgeOptions = `<option value="">-- 先选章节 --</option>`;
+        let isKnowledgeDisabled = true;
+        if (f.compulsory && f.chapter && tree[f.compulsory] && tree[f.compulsory][f.chapter]) {
+            isKnowledgeDisabled = false;
+            knowledgeOptions = `<option value="">-- 所有小节/知识点 --</option>`;
+            const knowList = tree[f.compulsory][f.chapter];
+            if (Array.isArray(knowList)) {
+                knowList.forEach(k => {
+                    knowledgeOptions += `<option value="${escapeHtml(k)}" ${f.knowledge === k ? 'selected' : ''}>${escapeHtml(k)}</option>`;
+                });
+            }
+        }
+
+        // 4. Build Question Type options
+        let qTypeOptions = `<option value="">全部题型</option>`;
+        const qTypes = metadata.question_types || [
+            { value: 'single_choice', label: '单选题' },
+            { value: 'multi_choice', label: '多选题' },
+            { value: 'fill_in_blank', label: '填空题' },
+            { value: 'detailed_answer', label: '解答题' }
+        ];
+        qTypes.forEach(t => {
+            qTypeOptions += `<option value="${escapeHtml(t.value)}" ${f.question_type === t.value ? 'selected' : ''}>${escapeHtml(t.label)}</option>`;
+        });
+
+        // 5. Build Difficulty options
+        let diffOptions = `<option value="">全部难度</option>`;
+        const difficulties = metadata.difficulties || [
+            { value: 'easy', label: '普通题' },
+            { value: 'easy_error', label: '易错题' },
+            { value: 'medium', label: '挑战题' },
+            { value: 'hard', label: '强基题' }
+        ];
+        difficulties.forEach(d => {
+            diffOptions += `<option value="${escapeHtml(d.value)}" ${f.difficulty === d.value ? 'selected' : ''}>${escapeHtml(d.label)}</option>`;
+        });
+
+        container.innerHTML = `
+            <div class="space-y-3 bg-white/80 backdrop-blur-md p-4 rounded-2xl border border-slate-200/70 shadow-sm dark:bg-slate-800/80 dark:border-slate-700/70">
+                <!-- Top Row: Paper Metadata -->
+                <div class="grid grid-cols-1 md:grid-cols-3 gap-3">
+                    <div>
+                        <label class="block text-2xs font-bold text-slate-500 uppercase mb-1">主标题</label>
+                        <input type="text" id="paperMetaTitle" value="${escapeHtml(meta.title)}" 
+                            onchange="updatePaperMeta('title', this.value)"
+                            class="w-full px-3 py-1.5 text-xs rounded-xl border border-slate-200 bg-white focus:ring-2 focus:ring-brand-500 focus:outline-none dark:bg-slate-900/60 dark:border-slate-700 dark:text-slate-200" placeholder="如：2026年高中数学模拟考试试卷">
+                    </div>
+                    <div>
+                        <label class="block text-2xs font-bold text-slate-500 uppercase mb-1">副标题 / 备注</label>
+                        <input type="text" id="paperMetaSubtitle" value="${escapeHtml(meta.subtitle)}" 
+                            onchange="updatePaperMeta('subtitle', this.value)"
+                            class="w-full px-3 py-1.5 text-xs rounded-xl border border-slate-200 bg-white focus:ring-2 focus:ring-brand-500 focus:outline-none dark:bg-slate-900/60 dark:border-slate-700 dark:text-slate-200" placeholder="如：考试时间：120分钟 满分：150分">
+                    </div>
+                    <div>
+                        <label class="block text-2xs font-bold text-slate-500 uppercase mb-1">试卷类型预设</label>
+                        <select id="paperMetaType" onchange="updatePaperMeta('paper_type', this.value)"
+                            class="w-full px-3 py-1.5 text-xs rounded-xl border border-slate-200 bg-white focus:ring-2 focus:ring-brand-500 focus:outline-none dark:bg-slate-900/60 dark:border-slate-700 dark:text-slate-200">
+                            <option value="exam" ${meta.paper_type === 'exam' ? 'selected' : ''}>📄 标准高考卷 (exam-zh 密封线/注意事项)</option>
+                            <option value="quiz" ${meta.paper_type === 'quiz' ? 'selected' : ''}>📝 随堂小练 / 周测 (精简无密封线 1-2页)</option>
+                            <option value="handout" ${meta.paper_type === 'handout' ? 'selected' : ''}>📚 专题讲义 / 例题卡 (ctexart + tcolorbox)</option>
+                        </select>
+                    </div>
+                </div>
+
+                <!-- Middle Row 1: 3-Level Cascade Curriculum Dropdowns (学段 -> 章节 -> 小节/知识点) -->
+                <div class="grid grid-cols-1 sm:grid-cols-3 gap-2 pt-2 border-t border-slate-100 dark:border-slate-700/60">
+                    <div>
+                        <label class="block text-2xs font-semibold text-slate-400 mb-0.5">学段</label>
+                        <select id="paperFilterCompulsory" onchange="onPaperFilterChange('compulsory', this.value)"
+                            class="w-full px-2.5 py-1.5 text-xs rounded-xl border border-slate-200 bg-white focus:ring-2 focus:ring-brand-500 focus:outline-none dark:bg-slate-900 dark:border-slate-700 dark:text-slate-200">
+                            ${bookOptions}
+                        </select>
+                    </div>
+                    <div>
+                        <label class="block text-2xs font-semibold text-slate-400 mb-0.5">章节</label>
+                        <select id="paperFilterChapter" onchange="onPaperFilterChange('chapter', this.value)" ${isChapterDisabled ? 'disabled' : ''}
+                            class="w-full px-2.5 py-1.5 text-xs rounded-xl border border-slate-200 bg-white focus:ring-2 focus:ring-brand-500 focus:outline-none disabled:bg-slate-100 disabled:opacity-60 dark:bg-slate-900 dark:border-slate-700 dark:text-slate-200">
+                            ${chapterOptions}
+                        </select>
+                    </div>
+                    <div>
+                        <label class="block text-2xs font-semibold text-slate-400 mb-0.5">小节 / 知识点</label>
+                        <select id="paperFilterKnowledge" onchange="onPaperFilterChange('knowledge', this.value)" ${isKnowledgeDisabled ? 'disabled' : ''}
+                            class="w-full px-2.5 py-1.5 text-xs rounded-xl border border-slate-200 bg-white focus:ring-2 focus:ring-brand-500 focus:outline-none disabled:bg-slate-100 disabled:opacity-60 dark:bg-slate-900 dark:border-slate-700 dark:text-slate-200">
+                            ${knowledgeOptions}
+                        </select>
+                    </div>
+                </div>
+
+                <!-- Middle Row 2: Question Type, Difficulty & Search Input -->
+                <div class="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                    <div>
+                        <label class="block text-2xs font-semibold text-slate-400 mb-0.5">题型</label>
+                        <select id="paperFilterType" onchange="onPaperFilterChange('question_type', this.value)"
+                            class="w-full px-2.5 py-1.5 text-xs rounded-xl border border-slate-200 bg-white focus:ring-2 focus:ring-brand-500 focus:outline-none dark:bg-slate-900 dark:border-slate-700 dark:text-slate-200">
+                            ${qTypeOptions}
+                        </select>
+                    </div>
+                    <div>
+                        <label class="block text-2xs font-semibold text-slate-400 mb-0.5">难度</label>
+                        <select id="paperFilterDifficulty" onchange="onPaperFilterChange('difficulty', this.value)"
+                            class="w-full px-2.5 py-1.5 text-xs rounded-xl border border-slate-200 bg-white focus:ring-2 focus:ring-brand-500 focus:outline-none dark:bg-slate-900 dark:border-slate-700 dark:text-slate-200">
+                            ${diffOptions}
+                        </select>
+                    </div>
+                    <div class="col-span-2">
+                        <label class="block text-2xs font-semibold text-slate-400 mb-0.5">来源 / 自定义标签 / 关键词</label>
+                        <div class="relative">
+                            <i class="fa-solid fa-magnifying-glass text-slate-400 absolute left-3 top-2.5 text-xs"></i>
+                            <input type="text" id="paperFilterKeyword" value="${escapeHtml(f.keyword)}"
+                                oninput="onPaperFilterChange('keyword', this.value)"
+                                class="w-full pl-8 pr-3 py-1.5 text-xs rounded-xl border border-slate-200 bg-white focus:ring-2 focus:ring-brand-500 focus:outline-none dark:bg-slate-900 dark:border-slate-700 dark:text-slate-200" placeholder="搜索题干内容 / 来源 / 标签 / 批注...">
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Bottom Row: AI Prompt Selection Bar -->
+                <div class="pt-2 border-t border-slate-100 dark:border-slate-700/60 flex items-center space-x-2">
+                    <div class="relative flex-1">
+                        <i class="fa-solid fa-wand-magic-sparkles text-brand-500 absolute left-3 top-2.5 text-xs"></i>
+                        <input type="text" id="paperAiPromptInput" 
+                            class="w-full pl-8 pr-3 py-1.5 text-xs rounded-xl border border-brand-200/80 bg-brand-50/30 focus:ring-2 focus:ring-brand-500 focus:outline-none dark:bg-slate-900/80 dark:border-slate-700 dark:text-slate-200" 
+                            placeholder="🤖 AI 智能一键抽卷：例如“帮我抽 5 道难度中等的函数选择题”"
+                            onkeypress="if(event.key==='Enter') triggerAiPaperSelect()">
+                    </div>
+                    <button onclick="triggerAiPaperSelect()" class="px-3.5 py-1.5 rounded-xl text-xs font-semibold bg-brand-600 text-white shadow-sm hover:bg-brand-700 active:scale-95 transition-all flex items-center space-x-1 shrink-0">
+                        <span>智能抽取</span>
+                    </button>
+                </div>
+            </div>
+        `;
+    }
+
+    let filterDebounceTimer = null;
+    window.onPaperFilterChange = function (key, value) {
+        window.PaperStore.filters[key] = value;
+        
+        // Handle cascade resets
+        if (key === 'compulsory') {
+            window.PaperStore.filters.chapter = '';
+            window.PaperStore.filters.knowledge = '';
+            renderPart2FilterSection();
+        } else if (key === 'chapter') {
+            window.PaperStore.filters.knowledge = '';
+            renderPart2FilterSection();
+        }
+
+        if (key === 'keyword') {
+            clearTimeout(filterDebounceTimer);
+            filterDebounceTimer = setTimeout(async () => {
+                await fetchBankQuestions();
+                renderPart3QuestionStream();
+            }, 300);
+        } else {
+            fetchBankQuestions().then(() => {
+                renderPart3QuestionStream();
+            });
+        }
+    };
+
+    window.updatePaperMeta = function (key, value) {
+        window.PaperStore.meta[key] = value;
+        saveMetaToStorage();
+        window.renderPaperCanvas();
+    };
+
+    window.triggerAiPaperSelect = async function () {
+        const input = document.getElementById('paperAiPromptInput');
+        if (!input || !input.value.trim()) {
+            if (window.showToast) window.showToast('请先输入智能抽卷要求', 'warning');
+            return;
+        }
+        const promptText = input.value.trim();
+
+        try {
+            if (window.showToast) window.showToast('正在根据要求智能筛选试题...', 'info');
+            const f = window.PaperStore.filters;
+            const res = await fetch('/api/paper/ai-select', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    prompt: promptText,
+                    limit: 5,
+                    compulsory: f.compulsory,
+                    chapter: f.chapter,
+                    knowledge: f.knowledge,
+                    question_type: f.question_type,
+                    difficulty: f.difficulty
+                })
+            });
+            const data = await res.json();
+            if (data.status === 'success' && Array.isArray(data.data)) {
+                let addedCount = 0;
+                data.data.forEach(q => {
+                    if (!window.isInCart(q.id)) {
+                        window.PaperStore.cart.push({ id: q.id, score: q.question_type === 'detailed_answer' ? 12 : 5 });
+                        window.PaperStore.questionsMap[q.id] = q;
+                        addedCount++;
+                    }
+                });
+                saveCartToStorage();
+                renderPart3QuestionStream();
+                window.renderPaperCanvas();
+                if (window.showToast) window.showToast(`AI 成功挑选并加入了 ${addedCount} 道试题`, 'success');
+            } else {
+                if (window.showToast) window.showToast(data.message || '抽选试题无结果', 'warning');
+            }
+        } catch (e) {
+            if (window.showToast) window.showToast('AI 抽题请求异常', 'error');
+        }
+    };
+
+    // Switch Part 3 Tab ('all' or 'selected')
+    window.switchPaperStreamTab = function (tabName) {
+        window.PaperStore.filters.tab = tabName;
+        renderPart3QuestionStream();
+    };
+
+    // Render Part 3: Full-Width Question Stream
+    function renderPart3QuestionStream() {
+        const container = document.getElementById('paperQuestionStream');
+        if (!container) return;
+
+        const cart = window.PaperStore.cart;
+        const bankQuestions = window.PaperStore.bankQuestions;
+        const currentTab = window.PaperStore.filters.tab || 'all';
+
+        // Prepare list based on tab
+        let displayList = [];
+        if (currentTab === 'selected') {
+            displayList = cart.map(item => window.PaperStore.questionsMap[item.id]).filter(Boolean);
+        } else {
+            displayList = bankQuestions;
+        }
+
+        let html = `
+            <!-- Part 3 Stream Header Bar -->
+            <div class="flex items-center justify-between pb-3 mb-4 border-b border-slate-200/60 dark:border-slate-700/60">
+                <div class="flex items-center space-x-1.5 bg-slate-200/60 p-1 rounded-xl dark:bg-slate-800">
+                    <button onclick="switchPaperStreamTab('all')" 
+                        class="px-3 py-1 rounded-lg text-xs font-bold transition-all ${currentTab === 'all' ? 'bg-white text-brand-600 shadow-sm dark:bg-slate-700 dark:text-brand-300' : 'text-slate-500 hover:text-slate-800 dark:text-slate-400'}">
+                        📚 题库全部试题 (${bankQuestions.length})
+                    </button>
+                    <button onclick="switchPaperStreamTab('selected')" 
+                        class="px-3 py-1 rounded-lg text-xs font-bold transition-all ${currentTab === 'selected' ? 'bg-white text-brand-600 shadow-sm dark:bg-slate-700 dark:text-brand-300' : 'text-slate-500 hover:text-slate-800 dark:text-slate-400'}">
+                        📄 已选组卷试题 (${cart.length})
+                    </button>
+                </div>
+
+                ${cart.length > 0 ? `
+                    <button onclick="window.clearCart()" class="text-xs font-medium text-slate-400 hover:text-rose-500 transition-colors flex items-center space-x-1">
+                        <i class="fa-solid fa-trash-can text-2xs"></i>
+                        <span>清空卷面 (${cart.length})</span>
+                    </button>
+                ` : ''}
+            </div>
+        `;
+
+        if (displayList.length === 0) {
+            html += `
+                <div class="flex flex-col items-center justify-center py-20 bg-white/50 backdrop-blur-md rounded-2xl border border-dashed border-slate-300 dark:bg-slate-800/40 dark:border-slate-700">
+                    <div class="w-12 h-12 rounded-2xl bg-brand-50 text-brand-500 flex items-center justify-center text-xl mb-3 dark:bg-slate-800">
+                        <i class="fa-solid fa-folder-open"></i>
+                    </div>
+                    <h4 class="font-semibold text-slate-700 dark:text-slate-200 mb-1">未找到符合条件的题目</h4>
+                    <p class="text-xs text-slate-500 max-w-xs text-center">请在上方调节学段、章节、题型、难度或搜索条件。</p>
+                </div>
+            `;
+            container.innerHTML = html;
+            return;
+        }
+
+        html += `<div class="space-y-4">`;
+
+        displayList.forEach((q, index) => {
+            const inCart = window.isInCart(q.id);
+            const cartItem = cart.find(it => it.id === q.id);
+            const currentScore = cartItem ? cartItem.score : (q.question_type === 'detailed_answer' ? 12 : 5);
+            const qTypeLabel = getQuestionTypeCn(q.question_type);
+            const diffTag = getDifficultyBadge(q.difficulty);
+            const usageCount = q.usage_count || 0;
+
+            const cardBorderClass = inCart 
+                ? 'border-brand-500 ring-2 ring-brand-500/20 bg-brand-50/10 dark:border-brand-500/60 dark:bg-brand-950/20' 
+                : 'border-slate-200/80 hover:border-brand-300/80 bg-white/80 dark:bg-slate-800/80 dark:border-slate-700/70';
+
+            html += `
+                <div class="p-5 rounded-2xl border ${cardBorderClass} shadow-sm hover:shadow-md transition-all">
+                    <!-- Card Top Controls Bar -->
+                    <div class="flex items-center justify-between pb-3 mb-3 border-b border-slate-100 dark:border-slate-700/60">
+                        <div class="flex items-center space-x-2 flex-wrap gap-y-1">
+                            <span class="font-bold text-slate-800 dark:text-slate-100 text-sm">#${q.id}</span>
+                            <span class="px-2 py-0.5 rounded-lg text-xs font-semibold bg-brand-50 text-brand-600 border border-brand-200/50 dark:bg-brand-900/30 dark:text-brand-300 dark:border-brand-800/50">${qTypeLabel}</span>
+                            ${diffTag}
+                            ${q.category_compulsory ? `<span class="px-2 py-0.5 rounded-lg text-xs font-medium bg-slate-100 text-slate-600 dark:bg-slate-700 dark:text-slate-300">${escapeHtml(q.category_compulsory)}</span>` : ''}
+                            ${q.category_chapter ? `<span class="px-2 py-0.5 rounded-lg text-xs font-medium bg-slate-100 text-slate-500 dark:bg-slate-700/50 dark:text-slate-400">${escapeHtml(q.category_chapter)}</span>` : ''}
+                            <span class="px-2 py-0.5 rounded-lg text-xs font-medium bg-slate-100 text-slate-500 dark:bg-slate-700/50 dark:text-slate-400" title="引用次数">🔥 ${usageCount}次</span>
+                        </div>
+
+                        <div class="flex items-center space-x-2">
+                            ${inCart ? `
+                                <!-- Score Selector -->
+                                <div class="flex items-center space-x-1 bg-slate-100/80 px-2 py-1 rounded-xl dark:bg-slate-700/50">
+                                    <span class="text-xs text-slate-500 font-medium">分值:</span>
+                                    <input type="number" min="1" max="100" value="${currentScore}" 
+                                        onchange="window.updatePaperQuestionScore(${q.id}, this.value)"
+                                        class="w-12 text-center text-xs font-bold bg-white rounded-lg border border-slate-200 focus:outline-none dark:bg-slate-800 dark:border-slate-600 dark:text-slate-200">
+                                    <span class="text-xs text-slate-500 font-medium">分</span>
+                                </div>
+
+                                <!-- Move Up / Move Down -->
+                                ${currentTab === 'selected' ? `
+                                    <button onclick="window.movePaperQuestion(${index}, 'up')" ${index === 0 ? 'disabled' : ''} 
+                                        class="p-1.5 rounded-lg text-slate-500 hover:bg-slate-100 hover:text-slate-800 disabled:opacity-30 dark:hover:bg-slate-700" title="上移">
+                                        <i class="fa-solid fa-arrow-up text-xs"></i>
+                                    </button>
+                                    <button onclick="window.movePaperQuestion(${index}, 'down')" ${index === displayList.length - 1 ? 'disabled' : ''} 
+                                        class="p-1.5 rounded-lg text-slate-500 hover:bg-slate-100 hover:text-slate-800 disabled:opacity-30 dark:hover:bg-slate-700" title="下移">
+                                        <i class="fa-solid fa-arrow-down text-xs"></i>
+                                    </button>
+                                ` : ''}
+
+                                <!-- Remove Button -->
+                                <button onclick="window.removeFromCart(${q.id})" 
+                                    class="px-3 py-1.5 rounded-xl text-xs font-semibold bg-emerald-500 text-white shadow-sm hover:bg-rose-600 active:scale-95 transition-all flex items-center space-x-1" title="点击移出试卷">
+                                    <i class="fa-solid fa-check text-xs"></i>
+                                    <span>已入卷</span>
+                                </button>
+                            ` : `
+                                <!-- Add Button -->
+                                <button onclick="window.addToCart(${q.id})" 
+                                    class="px-3 py-1.5 rounded-xl text-xs font-semibold bg-brand-600 text-white shadow-sm hover:bg-brand-700 active:scale-95 transition-all flex items-center space-x-1">
+                                    <i class="fa-solid fa-plus text-xs"></i>
+                                    <span>加入试卷</span>
+                                </button>
+                            `}
+                        </div>
+                    </div>
+
+                    <!-- Full Question Render Content -->
+                    <div class="question-full-render-box text-sm leading-relaxed text-slate-800 dark:text-slate-100 overflow-x-auto select-text" id="paper-q-render-${q.id}">
+                        ${formatQuestionContentHtml(q.content)}
+                    </div>
+                </div>
+            `;
+        });
+
+        html += `</div>`;
+        container.innerHTML = html;
+
+        // Render math formulas for Part 3 question cards
+        displayList.forEach(q => {
+            const el = document.getElementById(`paper-q-render-${q.id}`);
+            if (el && typeof renderMathInElement === 'function') {
+                try {
+                    renderMathInElement(el, {
+                        delimiters: [
+                            { left: '$$', right: '$$', display: true },
+                            { left: '$', right: '$', display: false },
+                            { left: '\\(', right: '\\)', display: false },
+                            { left: '\\[', right: '\\]', display: true }
+                        ],
+                        throwOnError: false
+                    });
+                } catch (e) { }
+            }
+        });
+    }
+
+    // Render Part 4: Right A4 Canvas & Action Bar
+    window.renderPaperCanvas = function () {
+        const container = document.getElementById('paperCanvasSection');
+        if (!container) return;
+
+        const cart = window.PaperStore.cart;
+        const meta = window.PaperStore.meta;
+
+        const totalScore = cart.reduce((sum, item) => sum + (parseInt(item.score, 10) || 5), 0);
+        const totalCount = cart.length;
+
+        // Calculate difficulty ratio
+        let easyCount = 0, medCount = 0, hardCount = 0;
+        cart.forEach(item => {
+            const q = window.PaperStore.questionsMap[item.id];
+            if (q) {
+                if (q.difficulty === 'easy' || q.difficulty === 'normal') easyCount++;
+                else if (q.difficulty === 'hard' || q.difficulty === 'qiangji') hardCount++;
+                else medCount++;
+            }
+        });
+        const easyPct = totalCount > 0 ? Math.round((easyCount / totalCount) * 100) : 0;
+        const medPct = totalCount > 0 ? Math.round((medCount / totalCount) * 100) : 0;
+        const hardPct = totalCount > 0 ? Math.max(0, 100 - easyPct - medPct) : 0;
+
+        container.innerHTML = `
+            <!-- Top Studio Action Bar -->
+            <div class="bg-white/80 backdrop-blur-md p-3 rounded-2xl border border-slate-200/70 shadow-sm mb-4 flex items-center justify-between flex-wrap gap-2 dark:bg-slate-800/80 dark:border-slate-700/70">
+                <div class="flex items-center space-x-3">
+                    <div class="flex items-center space-x-1.5 px-3 py-1 rounded-xl bg-brand-50 text-brand-700 font-bold text-xs border border-brand-200/60 dark:bg-brand-900/40 dark:text-brand-300 dark:border-brand-800">
+                        <span>总分: ${totalScore} 分</span>
+                        <span class="text-slate-400 font-normal">|</span>
+                        <span>${totalCount} 题</span>
+                    </div>
+                    <!-- Difficulty ratio bar -->
+                    <div class="hidden lg:flex items-center space-x-1 text-xs">
+                        <span class="text-slate-400 font-medium">难度比:</span>
+                        <div class="w-24 h-2 rounded-full bg-slate-200 overflow-hidden flex dark:bg-slate-700" title="普通题: ${easyPct}% | 挑战题: ${medPct}% | 强基题: ${hardPct}%">
+                            <div class="bg-emerald-500 h-full" style="width: ${easyPct}%"></div>
+                            <div class="bg-amber-500 h-full" style="width: ${medPct}%"></div>
+                            <div class="bg-rose-500 h-full" style="width: ${hardPct}%"></div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="flex items-center space-x-2">
+                    <button onclick="exportPaperPdf()" class="px-3 py-1.5 rounded-xl text-xs font-semibold bg-emerald-600 text-white shadow-sm hover:bg-emerald-700 active:scale-95 transition-all flex items-center space-x-1.5">
+                        <i class="fa-solid fa-file-pdf"></i>
+                        <span>编译高清 PDF</span>
+                    </button>
+                    <button onclick="exportPaperTex()" class="px-3 py-1.5 rounded-xl text-xs font-semibold bg-slate-700 text-white shadow-sm hover:bg-slate-800 active:scale-95 transition-all flex items-center space-x-1.5 dark:bg-slate-700 dark:hover:bg-slate-600">
+                        <i class="fa-solid fa-file-zipper"></i>
+                        <span>导出 LaTeX 源码</span>
+                    </button>
+                    <button onclick="savePaperToDb()" class="px-3 py-1.5 rounded-xl text-xs font-semibold bg-brand-600 text-white shadow-sm hover:bg-brand-700 active:scale-95 transition-all flex items-center space-x-1.5">
+                        <i class="fa-solid fa-floppy-disk"></i>
+                        <span>保存试卷</span>
+                    </button>
+                </div>
+            </div>
+
+            <!-- A4 Desk Canvas Paper Sheet (Density matching LaTeX exam-zh template) -->
+            <div class="flex justify-center pb-10">
+                <div class="w-full max-w-[794px] min-h-[1123px] bg-white text-slate-900 px-8 py-10 sm:px-12 sm:py-12 shadow-2xl rounded-sm border border-slate-300 font-serif leading-relaxed relative overflow-hidden select-none dark:bg-white dark:text-slate-900" id="a4PaperPreviewSheet">
+                    <!-- Top Secret Mark Bar -->
+                    ${meta.paper_type === 'exam' ? `
+                        <div class="flex justify-between items-center mb-3 text-xs font-serif font-bold text-slate-800 pb-1">
+                            <span>绝密★启用前</span>
+                        </div>
+                    ` : ''}
+
+                    <!-- Exam Header Title -->
+                    <div class="text-center mb-3">
+                        <h1 class="text-xl font-bold tracking-normal text-slate-900 font-serif mb-1">${escapeHtml(meta.title)}</h1>
+                        ${meta.subtitle ? `<div class="text-xs font-semibold text-slate-700">${escapeHtml(meta.subtitle)}</div>` : ''}
+                    </div>
+
+                    ${meta.paper_type === 'exam' ? `
+                        <div class="text-[12px] text-center font-serif text-slate-800 mb-3">
+                            本试卷共 ${totalCount} 题。全卷满分 ${totalScore} 分。考试用时 120 分钟。
+                        </div>
+
+                        <!-- Standard LaTeX Notice Box -->
+                        <div class="border border-slate-900 p-3 mb-5 text-[11.5px] leading-relaxed font-serif bg-slate-50/40">
+                            <div class="font-bold mb-1">【注意事项】</div>
+                            <ol class="list-decimal list-inside space-y-0.5 text-slate-800">
+                                <li>答题前，先将自己的姓名、准考证号、考场号、座位号填写在试卷和答题卡上，并将准考证号条形码粘贴在答题卡上的指定位置。</li>
+                                <li>选择题的作答：每小题选出答案后，用 2B 铅笔把答题卡上对应题目的答案标号涂黑。写在试卷、草稿纸和答题卡上的非答题区域均无效。</li>
+                                <li>填空题和解答题的作答：用黑色签字笔直接答在答题卡上对应的答题区域内。写在试卷、草稿纸和答题卡上的非答题区域均无效。</li>
+                                <li>考试结束后，请将本试卷和答题卡一并上交。</li>
+                            </ol>
+                        </div>
+                    ` : ''}
+
+                    <!-- Canvas Body Sections -->
+                    <div id="a4PaperBodyContent" class="space-y-5 text-[13px]">
+                        ${generateA4PaperBodyHtml(cart)}
+                    </div>
+                </div>
+            </div>
+        `;
+
+        // Render math in A4 sheet
+        const sheet = document.getElementById('a4PaperPreviewSheet');
+        if (sheet && typeof renderMathInElement === 'function') {
+            try {
+                renderMathInElement(sheet, {
+                    delimiters: [
+                        { left: '$$', right: '$$', display: true },
+                        { left: '$', right: '$', display: false },
+                        { left: '\\(', right: '\\)', display: false },
+                        { left: '\\[', right: '\\]', display: true }
+                    ],
+                    throwOnError: false
+                });
+            } catch (e) { }
+        }
+    };
+
+    function generateA4PaperBodyHtml(cart) {
+        if (cart.length === 0) {
+            return `<div class="text-center py-20 text-slate-400 font-sans text-xs">暂无试题数据，请在左侧点击“加入试卷”添加题目</div>`;
+        }
+
+        const typeOrder = ['single_choice', 'multi_choice', 'fill_in_blank', 'detailed_answer'];
+        const grouped = {};
+
+        cart.forEach(item => {
+            const q = window.PaperStore.questionsMap[item.id];
+            const qType = q ? q.question_type : 'single_choice';
+            if (!grouped[qType]) grouped[qType] = [];
+            grouped[qType].push(item);
+        });
+
+        let html = '';
+        const secNums = ['一', '二', '三', '四', '五'];
+        let secIdx = 0;
+        let globalQIndex = 1;
+
+        typeOrder.forEach(qType => {
+            const items = grouped[qType];
+            if (!items || items.length === 0) return;
+
+            const secNum = secNums[secIdx] || (secIdx + 1);
+            secIdx++;
+
+            const count = items.length;
+            const secScore = items.reduce((s, it) => s + (parseInt(it.score, 10) || 5), 0);
+            const unitScore = items[0] ? (parseInt(items[0].score, 10) || 5) : 5;
+
+            let secHeaderText = '';
+            if (qType === 'single_choice') {
+                secHeaderText = `${secNum}、选择题：本题共 ${count} 小题，每小题 ${unitScore} 分，共 ${secScore} 分。在每小题给出的四个选项中，只有一项是符合题目要求的。`;
+            } else if (qType === 'multi_choice') {
+                secHeaderText = `${secNum}、选择题：本题共 ${count} 小题，每小题 ${unitScore} 分，共 ${secScore} 分。在每小题给出的选项中，有多项符合题目要求的。全部选对的得 ${unitScore} 分，部分选择的得部分分，有选错的得 0 分。`;
+            } else if (qType === 'fill_in_blank') {
+                secHeaderText = `${secNum}、填空题：本题共 ${count} 小题，每小题 ${unitScore} 分，共 ${secScore} 分。`;
+            } else {
+                secHeaderText = `${secNum}、解答题：本题共 ${count} 小题，共 ${secScore} 分。解答应写出文字说明、证明过程或者演算步骤。`;
+            }
+
+            html += `
+                <div class="paper-sec-block mb-4">
+                    <h3 class="font-bold text-[13.5px] font-serif mb-2.5 text-slate-900 leading-snug">
+                        ${secHeaderText}
+                    </h3>
+                    <div class="space-y-3.5">
+            `;
+
+            items.forEach(item => {
+                const q = window.PaperStore.questionsMap[item.id];
+                let contentHtml = q ? formatQuestionContentHtml(q.content) : '';
+                
+                // For choice questions, ensure \paren parentheses space is rendered naturally if choices grid exists
+                if (qType === 'single_choice' || qType === 'multi_choice') {
+                    if (!contentHtml.includes('(') && !contentHtml.includes('（') && !contentHtml.includes('paren')) {
+                        if (contentHtml.includes('choices-grid') || contentHtml.includes('katex-choices-grid')) {
+                            contentHtml = contentHtml.replace(/(<(?:div|p)[^>]*class="[^"]*(?:choices-grid|katex-choices-grid)")/i, '<span class="float-right font-serif">（ &nbsp; ）</span>$1');
+                        } else {
+                            contentHtml += '<span class="float-right font-serif">（ &nbsp; ）</span>';
+                        }
+                    }
+                }
+
+                html += `
+                    <div class="paper-q-item text-[13px] leading-normal font-serif pl-1">
+                        <span class="font-bold mr-1 text-slate-900">${globalQIndex}.</span>
+                        <div class="inline">${contentHtml}</div>
+                    </div>
+                `;
+                globalQIndex++;
+            });
+
+            html += `
+                    </div>
+                </div>
+            `;
+        });
+
+        return html;
+    }
+
+    // Export PDF, Tex, and Save Handlers
+    window.exportPaperPdf = async function () {
+        const cart = window.PaperStore.cart;
+        if (cart.length === 0) {
+            if (window.showToast) window.showToast('卷面为空，无法导出 PDF', 'warning');
+            return;
+        }
+
+        try {
+            if (window.showToast) window.showToast('正在静默调用 LaTeX 编译器生成 PDF...', 'info');
+
+            const payload = {
+                title: window.PaperStore.meta.title,
+                subtitle: window.PaperStore.meta.subtitle,
+                paper_type: window.PaperStore.meta.paper_type,
+                questions: cart
+            };
+
+            const res = await fetch('/api/paper/export/pdf', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload)
+            });
+
+            if (res.ok && res.headers.get('content-type')?.includes('application/pdf')) {
+                const blob = await res.blob();
+                const url = URL.createObjectURL(blob);
+                window.open(url, '_blank');
+                if (window.showToast) window.showToast('PDF 生成成功！已在新窗口打开', 'success');
+            } else {
+                const errData = await res.json();
+                if (window.showToast) window.showToast(errData.message || 'PDF 编译失败', 'error');
+            }
+        } catch (e) {
+            if (window.showToast) window.showToast('PDF 请求编译异常', 'error');
+        }
+    };
+
+    window.exportPaperTex = async function () {
+        const cart = window.PaperStore.cart;
+        if (cart.length === 0) {
+            if (window.showToast) window.showToast('卷面为空，无法导出 LaTeX 源码', 'warning');
+            return;
+        }
+
+        try {
+            if (window.showToast) window.showToast('正在打包 LaTeX 源码与图片...', 'info');
+
+            const payload = {
+                title: window.PaperStore.meta.title,
+                subtitle: window.PaperStore.meta.subtitle,
+                paper_type: window.PaperStore.meta.paper_type,
+                questions: cart
+            };
+
+            const res = await fetch('/api/paper/export/tex', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload)
+            });
+
+            if (res.ok) {
+                const blob = await res.blob();
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = `paper_${Date.now()}.zip`;
+                a.click();
+                URL.revokeObjectURL(url);
+                if (window.showToast) window.showToast('LaTeX 源码包导出成功！', 'success');
+            } else {
+                const errData = await res.json();
+                if (window.showToast) window.showToast(errData.message || '导出失败', 'error');
+            }
+        } catch (e) {
+            if (window.showToast) window.showToast('LaTeX 打包请求异常', 'error');
+        }
+    };
+
+    window.savePaperToDb = async function () {
+        const cart = window.PaperStore.cart;
+        if (cart.length === 0) {
+            if (window.showToast) window.showToast('卷面为空，无法保存试卷', 'warning');
+            return;
+        }
+
+        try {
+            const payload = {
+                title: window.PaperStore.meta.title,
+                subtitle: window.PaperStore.meta.subtitle,
+                paper_type: window.PaperStore.meta.paper_type,
+                questions: cart
+            };
+
+            const res = await fetch('/api/paper/save', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload)
+            });
+
+            const data = await res.json();
+            if (data.status === 'success') {
+                if (window.showToast) window.showToast('试卷已保存到数据库，题目引用次数已自动更新！', 'success');
+            } else {
+                if (window.showToast) window.showToast(data.message || '保存失败', 'error');
+            }
+        } catch (e) {
+            if (window.showToast) window.showToast('保存试卷请求异常', 'error');
+        }
+    };
+
+    // Dynamic Helper utilities
+    function escapeHtml(str) {
+        if (!str) return '';
+        return String(str)
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;');
+    }
+
+    function getQuestionTypeCn(type) {
+        if (!type) return '题目';
+        if (window.systemMetadata && Array.isArray(window.systemMetadata.question_types)) {
+            const found = window.systemMetadata.question_types.find(t => t.value === type);
+            if (found) return found.label;
+        }
+        const map = {
+            single_choice: '单选题',
+            multi_choice: '多选题',
+            fill_in_blank: '填空题',
+            detailed_answer: '解答题'
+        };
+        return map[type] || type;
+    }
+
+    function getDifficultyBadge(diff) {
+        if (!diff) return '';
+        let label = diff;
+        if (window.systemMetadata && Array.isArray(window.systemMetadata.difficulties)) {
+            const found = window.systemMetadata.difficulties.find(d => d.value === diff);
+            if (found) label = found.label;
+        } else {
+            const fallbackMap = {
+                easy: '普通题',
+                easy_error: '易错题',
+                medium: '挑战题',
+                challenge: '挑战题',
+                hard: '强基题',
+                qiangji: '强基题'
+            };
+            label = fallbackMap[diff] || diff;
+        }
+
+        let badgeClass = 'bg-amber-50 text-amber-600 border-amber-200/50 dark:bg-amber-900/30 dark:text-amber-300';
+        if (diff === 'easy' || diff === 'normal') {
+            badgeClass = 'bg-emerald-50 text-emerald-600 border-emerald-200/50 dark:bg-emerald-900/30 dark:text-emerald-300';
+        } else if (diff === 'easy_error') {
+            badgeClass = 'bg-cyan-50 text-cyan-600 border-cyan-200/50 dark:bg-cyan-900/30 dark:text-cyan-300';
+        } else if (diff === 'hard' || diff === 'qiangji') {
+            badgeClass = 'bg-rose-50 text-rose-600 border-rose-200/50 dark:bg-rose-900/30 dark:text-rose-300';
+        }
+
+        return `<span class="px-2 py-0.5 rounded-lg text-xs font-semibold ${badgeClass} border">${escapeHtml(label)}</span>`;
+    }
+
+    function formatQuestionContentHtml(raw) {
+        if (!raw) return '';
+        let html = raw.trim();
+        
+        // 1. Process LaTeX formulas, \underline, choices environment via preprocessFormulaForKaTeX
+        if (typeof window.preprocessFormulaForKaTeX === 'function') {
+            html = window.preprocessFormulaForKaTeX(html);
+        }
+
+        // 2. Convert Markdown image syntax ![](/static/uploads/xxx.png) to <img>
+        html = html.replace(/!\[.*?\]\(([^)]+)\)/g, '<div class="my-2 text-center"><img src="$1" class="max-h-48 inline-block rounded-lg shadow-sm"></div>');
+        
+        // 3. Handle double line breaks outside math blocks for clean paragraph rendering
+        html = html.replace(/\n\n/g, '<br><br>').replace(/\n/g, '<br>');
+        
+        return html;
+    }
+
+    // Init on DOMContentLoaded
+    document.addEventListener('DOMContentLoaded', function () {
+        loadStateFromStorage();
+        updateCartBadges();
+    });
+
+})();

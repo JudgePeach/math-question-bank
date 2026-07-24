@@ -175,8 +175,10 @@
     <!-- Main Content Container -->
     <main class="flex-1 flex overflow-hidden h-[calc(100vh-4rem)]">
         
-        <!-- Left Panel: Sidebar & Questions List - Apple Glass Style -->
-        <section id="sidebarSection" class="glass-sidebar flex flex-col h-full shrink-0 overflow-hidden" style="width: 320px; min-width: 0px;">
+        <!-- Workspace 1: Bank研讨工作台 (3-Column Layout) -->
+        <div id="bankWorkspaceSection" class="w-full h-full flex overflow-hidden">
+            <!-- Left Panel: Sidebar & Questions List - Apple Glass Style -->
+            <section id="sidebarSection" class="glass-sidebar flex flex-col h-full shrink-0 overflow-hidden" style="width: 320px; min-width: 0px;">
             <!-- Sidebar Top Panel: Search, Buttons, Tabs -->
             <div id="sidebarTopPanel" class="flex flex-col shrink-0 overflow-y-auto overflow-x-hidden custom-scrollbar">
                 <!-- Search & Filters -->
@@ -843,6 +845,10 @@
                     <i class="fa-solid fa-file-invoice text-indigo-500"></i>
                     <span>题目预览</span>
                 </span>
+                <button type="button" id="detailPreviewCartBtn" onclick="if(window.currentEditingQuestionId) toggleCart(window.currentEditingQuestionId)" class="px-3 py-1.5 rounded-xl text-xs font-semibold bg-brand-600 text-white shadow-sm hover:bg-brand-700 active:scale-95 transition-all flex items-center space-x-1.5" title="将此题加入试题篮">
+                    <i class="fa-solid fa-plus text-xs"></i>
+                    <span>加入试题篮</span>
+                </button>
             </div>
 
             <!-- Beautiful Paper View Card -->
@@ -932,7 +938,39 @@
                     </div>
                 </div>
             </div>
-        </section>
+        </div>
+        <!-- End of Bank Workspace Section -->
+
+        <!-- Workspace 2: Standalone 4-Part Paper Studio Workspace Section -->
+        <div id="paperWorkspaceSection" class="w-full h-full flex overflow-hidden hidden">
+            <!-- Left Side: Parts ② & ③ (60% width) -->
+            <div class="w-[60%] flex flex-col h-full border-r border-slate-200/80 dark:border-slate-800 shrink-0">
+                <!-- Part ②: Collapsible Control Bar -->
+                <div id="paperFilterSection" class="p-4 transition-all duration-300 shrink-0">
+                    <!-- Rendered by paper.js -->
+                </div>
+
+                <!-- Part ② & ③ Boundary Collapse Toggle Bar -->
+                <div class="px-4 py-1.5 bg-slate-100/70 border-y border-slate-200/60 dark:bg-slate-800/50 dark:border-slate-700/60 flex items-center justify-between shrink-0">
+                    <button onclick="togglePaperFilterBar()" id="togglePaperFilterBtn" class="text-2xs font-semibold text-slate-500 hover:text-brand-600 flex items-center space-x-1.5 transition-colors">
+                        <i id="paperFilterToggleIcon" class="fa-solid fa-chevron-up text-xs"></i>
+                        <span id="paperFilterToggleTxt">收起组卷配置栏</span>
+                    </button>
+                    <span class="text-2xs text-slate-400">纵向滚动查看试题全貌 · 拖拽重新排序</span>
+                </div>
+
+                <!-- Part ③: Full-Width Question Stream -->
+                <div id="paperQuestionStream" class="flex-1 p-4 overflow-y-auto custom-scrollbar">
+                    <!-- Rendered by paper.js -->
+                </div>
+            </div>
+
+            <!-- Right Side: Part ④ (40% width) -->
+            <div class="w-[40%] flex flex-col h-full bg-slate-100/60 dark:bg-slate-900/60 p-4 overflow-y-auto custom-scrollbar shrink-0" id="paperCanvasSection">
+                <!-- Rendered by paper.js -->
+            </div>
+        </div>
+        <!-- End of Paper Workspace Section -->
 
     </main>
 
@@ -1620,6 +1658,7 @@
     <script src="/static/js/editor.js?v=1.0.1"></script>
     <script src="/static/js/ocr.js?v=1.0.1"></script>
     <script src="/static/js/import.js?v=1.0.1"></script>
+    <script src="/static/js/paper.js?v=1.0.1"></script>
     
     <!-- PDF PAGE VIEWER & MANUAL CROP LIGHTBOX MODAL - Apple Glass Style -->
     <div id="pdfCropModal" class="fixed inset-0 glass-modal-overlay z-50 flex items-center justify-center hidden opacity-0 transition-opacity duration-300">
