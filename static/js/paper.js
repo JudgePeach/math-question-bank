@@ -747,11 +747,8 @@
                             </span>
                             <select onchange="window.updateGlobalSolutionSpace(this.value)"
                                 class="px-2 py-1 text-xs rounded-xl border border-brand-200/80 bg-brand-50/60 text-brand-900 font-bold focus:ring-2 focus:ring-brand-500 focus:outline-none dark:bg-brand-950/50 dark:border-brand-800 dark:text-brand-200">
-                                <option value="3.0" ${(parseFloat(meta.solution_space_default || '7.0') === 3.0) ? 'selected' : ''}>3 cm (紧凑)</option>
-                                <option value="5.0" ${(parseFloat(meta.solution_space_default || '7.0') === 5.0) ? 'selected' : ''}>5 cm (适中)</option>
-                                <option value="7.0" ${(parseFloat(meta.solution_space_default || '7.0') === 7.0) ? 'selected' : ''}>7 cm (标准)</option>
-                                <option value="9.0" ${(parseFloat(meta.solution_space_default || '7.0') === 9.0) ? 'selected' : ''}>9 cm (宽敞)</option>
-                                <option value="11.0" ${(parseFloat(meta.solution_space_default || '7.0') === 11.0) ? 'selected' : ''}>11 cm (超大)</option>
+                                <option value="0.0" ${(parseFloat(meta.solution_space_default || '7.0') === 0.0) ? 'selected' : ''}>0 cm (不留白)</option>
+                                <option value="7.0" ${(parseFloat(meta.solution_space_default || '7.0') === 7.0) ? 'selected' : ''}>7 cm (标准留白)</option>
                             </select>
                         </div>
                         ` : ''}
@@ -1410,7 +1407,7 @@
         let currentSpace = parseFloat(item.solution_space !== undefined ? item.solution_space : defaultSpace);
         if (isNaN(currentSpace)) currentSpace = 7.0;
         
-        let newSpace = Math.max(1.0, Math.min(15.0, Math.round((currentSpace + delta) * 10) / 10));
+        let newSpace = Math.max(0.0, Math.min(15.0, Math.round((currentSpace + delta) * 10) / 10));
         item.solution_space = newSpace.toFixed(1);
         saveCartToStorage();
         window.renderPaperCanvas();
