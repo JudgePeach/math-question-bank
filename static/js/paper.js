@@ -195,7 +195,7 @@
             filterBox.style.marginTop = '0px';
             filterBox.style.marginBottom = '0px';
             if (toggleIcon) toggleIcon.className = 'fa-solid fa-chevron-down text-xs';
-            if (toggleTxt) toggleTxt.textContent = '展开组卷配置与题库筛选';
+            if (toggleTxt) toggleTxt.textContent = '展开组卷配置栏';
         } else {
             filterBox.style.maxHeight = '700px';
             filterBox.style.opacity = '1';
