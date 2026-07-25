@@ -19,7 +19,7 @@
             title: '2026年高中数学模拟考试试卷',
             subtitle: '',
             paper_type: 'exam_19',
-            solution_space_default: '5.0'
+            solution_space_default: '7.0'
         },
         filters: {
             compulsory: '',
@@ -360,7 +360,7 @@
         container.innerHTML = `
             <div class="space-y-3 bg-white/80 backdrop-blur-md p-4 rounded-2xl border border-slate-200/70 shadow-sm dark:bg-slate-800/80 dark:border-slate-700/70">
                 <!-- Top Row: Paper Metadata -->
-                <div class="grid grid-cols-1 ${meta.paper_type === 'exam_19' ? 'md:grid-cols-3' : 'md:grid-cols-4'} gap-3">
+                <div class="grid grid-cols-1 md:grid-cols-3 gap-3">
                     <div>
                         <label class="block text-2xs font-semibold text-slate-500 mb-1">主标题</label>
                         <input type="text" id="paperMetaTitle" value="${escapeHtml(meta.title)}" 
@@ -382,21 +382,6 @@
                             <option value="quiz" ${meta.paper_type === 'quiz' ? 'selected' : ''}>📝 小练</option>
                         </select>
                     </div>
-                    ${meta.paper_type !== 'exam_19' ? `
-                    <div>
-                        <label class="block text-2xs font-semibold text-brand-600 dark:text-brand-400 mb-1 flex items-center space-x-1">
-                            <i class="fa-solid fa-arrows-up-down text-brand-500"></i>
-                            <span>解答题全局留白</span>
-                        </label>
-                        <select onchange="window.updateGlobalSolutionSpace(this.value)"
-                            class="w-full px-3 py-1.5 text-xs rounded-xl border border-brand-200 bg-brand-50/50 text-brand-900 font-semibold focus:ring-2 focus:ring-brand-500 focus:outline-none dark:bg-brand-950/40 dark:border-brand-800 dark:text-brand-200">
-                            <option value="3.0" ${(parseFloat(meta.solution_space_default || '5.0') === 3.0) ? 'selected' : ''}>3.0 cm (紧凑)</option>
-                            <option value="5.0" ${(parseFloat(meta.solution_space_default || '5.0') === 5.0) ? 'selected' : ''}>5.0 cm (标准)</option>
-                            <option value="7.0" ${(parseFloat(meta.solution_space_default || '5.0') === 7.0) ? 'selected' : ''}>7.0 cm (宽敞)</option>
-                            <option value="9.0" ${(parseFloat(meta.solution_space_default || '5.0') === 9.0) ? 'selected' : ''}>9.0 cm (超大)</option>
-                        </select>
-                    </div>
-                    ` : ''}
                 </div>
 
                 <!-- Middle Row 1: 3-Level Cascade Curriculum Dropdowns (学段 -> 章节 -> 小节/知识点) -->
@@ -742,14 +727,31 @@
                             <span>${totalCount} 题</span>
                         </div>
                         <!-- Difficulty ratio bar -->
-                        <div class="hidden lg:flex items-center space-x-1.5 text-xs">
+                        <div class="hidden xl:flex items-center space-x-1.5 text-xs">
                             <span class="text-slate-400 font-medium">难度比:</span>
-                            <div class="w-28 h-2 rounded-full bg-slate-200 overflow-hidden flex dark:bg-slate-700" title="普通题: ${easyPct}% | 挑战题: ${medPct}% | 强基题: ${hardPct}%">
+                            <div class="w-20 h-2 rounded-full bg-slate-200 overflow-hidden flex dark:bg-slate-700" title="普通题: ${easyPct}% | 挑战题: ${medPct}% | 强基题: ${hardPct}%">
                                 <div class="bg-emerald-500 h-full" style="width: ${easyPct}%"></div>
                                 <div class="bg-amber-500 h-full" style="width: ${medPct}%"></div>
                                 <div class="bg-rose-500 h-full" style="width: ${hardPct}%"></div>
                             </div>
                         </div>
+                        ${meta.paper_type !== 'exam_19' ? `
+                        <!-- Solution Space Selector (Right of Difficulty Ratio) -->
+                        <div class="flex items-center space-x-1 text-xs">
+                            <span class="text-slate-500 font-semibold dark:text-slate-300 flex items-center space-x-1">
+                                <i class="fa-solid fa-arrows-up-down text-brand-500"></i>
+                                <span>留白:</span>
+                            </span>
+                            <select onchange="window.updateGlobalSolutionSpace(this.value)"
+                                class="px-2 py-1 text-xs rounded-xl border border-brand-200/80 bg-brand-50/60 text-brand-900 font-bold focus:ring-2 focus:ring-brand-500 focus:outline-none dark:bg-brand-950/50 dark:border-brand-800 dark:text-brand-200">
+                                <option value="3.0" ${(parseFloat(meta.solution_space_default || '7.0') === 3.0) ? 'selected' : ''}>3 cm (紧凑)</option>
+                                <option value="5.0" ${(parseFloat(meta.solution_space_default || '7.0') === 5.0) ? 'selected' : ''}>5 cm (标准)</option>
+                                <option value="7.0" ${(parseFloat(meta.solution_space_default || '7.0') === 7.0) ? 'selected' : ''}>7 cm (推荐)</option>
+                                <option value="9.0" ${(parseFloat(meta.solution_space_default || '7.0') === 9.0) ? 'selected' : ''}>9 cm (宽敞)</option>
+                                <option value="11.0" ${(parseFloat(meta.solution_space_default || '7.0') === 11.0) ? 'selected' : ''}>11 cm (双倍)</option>
+                            </select>
+                        </div>
+                        ` : ''}
                     </div>
 
                     <!-- Right Paper Management Actions -->
