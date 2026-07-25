@@ -328,9 +328,11 @@ def compile_tex_to_pdf(tex_content: str, image_paths: list = None) -> tuple:
             result = _PDF_CACHE.pop(cache_key)
             _PDF_CACHE[cache_key] = result
             if result[0] is not None:
+                print(f"[PDF_CACHE_HIT] 🚀 Reusing cached PDF! Key: {cache_key[:10]}... (Total Cached: {len(_PDF_CACHE)})", flush=True)
                 return result
 
     # 3. Cache Miss: Perform xelatex compilation
+    print(f"[PDF_CACHE_MISS] ⚡ Compiling TeX via xelatex... Key: {cache_key[:10]}...", flush=True)
     with tempfile.TemporaryDirectory() as temp_dir:
         tex_path = os.path.join(temp_dir, "paper.tex")
         with open(tex_path, "w", encoding="utf-8") as f:

@@ -4387,8 +4387,11 @@ def export_paper_pdf(payload: dict, db: Session = Depends(get_db)):
         for item in questions_input:
             qid = int(item.get("id"))
             if qid in q_map:
+                q_dict = dict(q_map[qid])
+                if item.get("figure_align"):
+                    q_dict["figure_align"] = item.get("figure_align")
                 questions_data.append({
-                    "question": q_map[qid],
+                    "question": q_dict,
                     "score": int(item.get("score", 5))
                 })
                 
