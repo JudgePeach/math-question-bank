@@ -31,7 +31,7 @@
   - **多模式支持**：题目插图在后端存储 `figure_align` 属性（支持 `right` 题干右侧默认、`center` 下方居中、`bottom_right` 下方居右）。
   - **实时预览同步**：前端 A4 试卷工作台 Live Preview 默认并实时根据 `figure_align` 排版（`right` 模式下文字与插图呈 flex 左右双栏排版）。
   - **交互弹窗切换**：用户在试卷预览框或题卡中点击或右击插图（及位置指示按钮）时，会弹出定制的气泡菜单允许实时切换这三种排版位置，并通过 `POST /api/questions/{qid}/figure_align` 实时持久化保存至数据库。
-  - **PDF 编译精准反馈与高考预设题号跳跃**：后端 `build_latex_document` 编译试卷时读取 `figure_align`，`right` 采用顶部对齐的 `minipage` 双栏（配合 `\vspace{-2.0em}` 实现顶端精准对齐），`center` 与 `bottom_right` 采用对应的 `center` / `flushright` LaTeX 环境。同时针对 `exam_19` (19题高考卷含答题卡预设)，通过设置 `exam-zh` 的 LaTeX3 全局整数变量 `\g__examzh_question_index_int`，使编译出的 PDF 题号按大型高考规范精准跳跃（单选为 1、多选为 9、填空为 12、解答为 15），与前端 A4 Live Preview 及 A3 答题卡完美联动。
+  - **PDF 编译 LRU 哈希缓存与高考预设题号跳跃**：后端 `compile_tex_to_pdf` 内置基于全套 LaTeX 源码 MD5 哈希与关联插图修改时间戳的线程安全 LRU 内存缓存（容量 50）。在组卷预览与合并导出时，若 LaTeX 源码与配图未发生任何变动，直接 0ms 瞬间从内存复用已编译的 PDF 字节流，大幅降低 CPU 负载并提升合并导出响应速度。同时针对 `exam_19` (19题高考卷含答题卡预设)，通过设置 `exam-zh` 的 LaTeX3 全局整数变量 `\g__examzh_question_index_int`，使编译出的 PDF 题号按大型高考规范精准跳跃（单选为 1、多选为 9、填空为 12、解答为 15），与前端 A4 Live Preview 及 A3 答题卡完美联动。
 - **选择题 choices 环境规范**：所有选择题在入库和存储时，选项部分必须统一格式化为 LaTeX 的 `choices` 环境（使用 `\begin{choices}` 和 `\item` 包裹，且剥离原本的 A., B., C., D. 等标号前缀）。
   - **前端渲染**：前端将自动依据选项最长字符数 `maxLen` 自适应网格排版（小于等于 10 字为 1行4列，大于 10 且小于等于 24 字为 2行2列，大于 24 字为 1行1列），并自动补全 `A.`, `B.`, `C.`, `D.` 标号。
   - **AI 题库转换**：后端导出 AI 专属只读题库时，会自动将此 `choices` 环境清洗为 Markdown 标准列表 `- A.` / `- B.` 形式，防止干扰大模型。
