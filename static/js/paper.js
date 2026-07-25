@@ -743,23 +743,23 @@
                     ${meta.paper_type === 'exam_19' ? `
                         <button onclick="exportPaperPdf('paper')" class="px-3 py-1.5 rounded-xl text-xs font-semibold bg-emerald-600 text-white shadow-sm hover:bg-emerald-700 active:scale-95 transition-all flex items-center space-x-1.5" title="编译并打开试卷 PDF 预览">
                             <i class="fa-solid fa-file-pdf"></i>
-                            <span>编译试卷 PDF</span>
+                            <span>试卷 PDF 预览</span>
                         </button>
                         <button onclick="exportPaperPdf('sheet')" class="px-3 py-1.5 rounded-xl text-xs font-semibold bg-teal-600 text-white shadow-sm hover:bg-teal-700 active:scale-95 transition-all flex items-center space-x-1.5" title="编译并打开 A3 双面答题卡 PDF 预览">
                             <i class="fa-solid fa-file-lines"></i>
-                            <span>编译答题卡 PDF</span>
+                            <span>答题卡 PDF 预览</span>
                         </button>
                     ` : `
-                        <button onclick="exportPaperPdf('paper')" class="px-3 py-1.5 rounded-xl text-xs font-semibold bg-emerald-600 text-white shadow-sm hover:bg-emerald-700 active:scale-95 transition-all flex items-center space-x-1.5">
+                        <button onclick="exportPaperPdf('paper')" class="px-3 py-1.5 rounded-xl text-xs font-semibold bg-emerald-600 text-white shadow-sm hover:bg-emerald-700 active:scale-95 transition-all flex items-center space-x-1.5" title="编译并打开高清 PDF 预览">
                             <i class="fa-solid fa-file-pdf"></i>
-                            <span>编译高清 PDF</span>
+                            <span>PDF 预览</span>
                         </button>
                     `}
-                    <button onclick="exportPaperTex()" class="px-3 py-1.5 rounded-xl text-xs font-semibold bg-slate-700 text-white shadow-sm hover:bg-slate-800 active:scale-95 transition-all flex items-center space-x-1.5 dark:bg-slate-700 dark:hover:bg-slate-600">
+                    <button onclick="exportPaperTex()" class="px-3 py-1.5 rounded-xl text-xs font-semibold bg-slate-700 text-white shadow-sm hover:bg-slate-800 active:scale-95 transition-all flex items-center space-x-1.5 dark:bg-slate-700 dark:hover:bg-slate-600" title="打包导出完整的 LaTeX 源码与关联插图 Zip 压缩包">
                         <i class="fa-solid fa-file-zipper"></i>
-                        <span>导出 LaTeX 源码</span>
+                        <span>LaTeX 导出</span>
                     </button>
-                    <button onclick="savePaperToDb()" class="px-3 py-1.5 rounded-xl text-xs font-semibold bg-brand-600 text-white shadow-sm hover:bg-brand-700 active:scale-95 transition-all flex items-center space-x-1.5">
+                    <button onclick="savePaperToDb()" class="px-3 py-1.5 rounded-xl text-xs font-semibold bg-brand-600 text-white shadow-sm hover:bg-brand-700 active:scale-95 transition-all flex items-center space-x-1.5" title="将此试卷归档保存至系统数据库，并自动更新题目的引用使用次数">
                         <i class="fa-solid fa-floppy-disk"></i>
                         <span>保存试卷</span>
                     </button>
