@@ -131,6 +131,7 @@ def build_latex_document(title: str, subtitle: str, paper_type: str, questions_d
     lines.append(r"\subject{数学}")
     lines.append("")
     lines.append(r"\begin{document}")
+    lines.append(r"\raggedbottom")
     lines.append("")
     
     is_exam_style = (paper_type == "exam" or paper_type == "exam_19")
