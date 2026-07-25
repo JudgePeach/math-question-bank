@@ -810,17 +810,60 @@
         }
     };
 
-    // Real-Time Dynamic Drag and Drop for A4 Paper Canvas Items
+    // Reorder Items strictly within the same Question Type section
+    function reorderItemsWithinType(cart, qType, fromSubIdx, toSubIdx) {
+        const itemsOfType = [];
+        cart.forEach((item) => {
+            const q = window.PaperStore.questionsMap[item.id];
+            const t = q ? q.question_type : 'single_choice';
+            if (t === qType) {
+                itemsOfType.push(item);
+            }
+        });
+
+        if (fromSubIdx < 0 || fromSubIdx >= itemsOfType.length || toSubIdx < 0 || toSubIdx >= itemsOfType.length) {
+            return cart;
+        }
+
+        const moved = itemsOfType.splice(fromSubIdx, 1)[0];
+        itemsOfType.splice(toSubIdx, 0, moved);
+
+        const newCart = [...cart];
+        let subIdx = 0;
+        cart.forEach((item, idx) => {
+            const q = window.PaperStore.questionsMap[item.id];
+            const t = q ? q.question_type : 'single_choice';
+            if (t === qType) {
+                newCart[idx] = itemsOfType[subIdx];
+                subIdx++;
+            }
+        });
+
+        return newCart;
+    }
+
+    // Move Question Order within same question type
+    window.movePaperQuestionWithinType = function (qType, subIndex, direction) {
+        const cart = window.PaperStore.cart;
+        const targetSubIdx = direction === 'up' ? subIndex - 1 : subIndex + 1;
+        window.PaperStore.cart = reorderItemsWithinType(cart, qType, subIndex, targetSubIdx);
+        saveCartToStorage();
+        renderPart3QuestionStream();
+        window.renderPaperCanvas();
+    };
+
+    // Real-Time Dynamic Drag and Drop for A4 Paper Canvas Items (Restricted to same question type)
     let draggedItemData = null;
     let dragPlaceholder = null;
 
-    window.onPaperCanvasDragStart = function (e, qid, cartIndex) {
+    window.onPaperCanvasDragStart = function (e, qid, subIndex, qType) {
         const card = e.currentTarget.closest('.paper-q-item');
         if (!card) return;
 
         draggedItemData = { 
             qid: parseInt(qid, 10), 
-            fromIndex: parseInt(cartIndex, 10),
+            fromSubIndex: parseInt(subIndex, 10),
+            qType: qType,
             element: card
         };
 
@@ -832,7 +875,7 @@
             dragPlaceholder = document.createElement('div');
             dragPlaceholder.className = 'paper-drag-placeholder border-2 border-dashed border-brand-400 bg-brand-50/70 rounded-xl my-2 flex items-center justify-center text-xs font-semibold text-brand-600 shadow-inner transition-all duration-200 select-none';
             dragPlaceholder.style.height = `${Math.max(48, card.offsetHeight - 8)}px`;
-            dragPlaceholder.innerHTML = '<span class="flex items-center space-x-1.5"><i class="fa-solid fa-arrow-down-long text-brand-500 animate-bounce"></i> <span>释放在此插入试题</span></span>';
+            dragPlaceholder.innerHTML = '<span class="flex items-center space-x-1.5"><i class="fa-solid fa-arrow-down-long text-brand-500 animate-bounce"></i> <span>释放在同题型内插入试题</span></span>';
         }
 
         // Apply drag style to current card after browser creates drag ghost image
@@ -848,21 +891,28 @@
 
     window.onPaperCanvasDragOver = function (e) {
         e.preventDefault();
-        e.dataTransfer.dropEffect = 'move';
+        if (!draggedItemData || !dragPlaceholder) return;
 
         const targetCard = e.target.closest('.paper-q-item');
-        if (!targetCard || !dragPlaceholder || targetCard === draggedItemData?.element) return;
+        if (!targetCard || targetCard === draggedItemData.element) return;
 
+        // Strict boundary: check if targetCard belongs to the SAME question type section!
+        const targetQType = targetCard.dataset.qtype;
+        if (targetQType !== draggedItemData.qType) {
+            // Different question type section! Disallow drag placeholder insertion
+            e.dataTransfer.dropEffect = 'none';
+            return;
+        }
+
+        e.dataTransfer.dropEffect = 'move';
         const rect = targetCard.getBoundingClientRect();
         const midY = rect.top + rect.height / 2;
 
         if (e.clientY < midY) {
-            // Mouse in top half -> place indicator above target
             if (targetCard.previousElementSibling !== dragPlaceholder) {
                 targetCard.parentNode.insertBefore(dragPlaceholder, targetCard);
             }
         } else {
-            // Mouse in bottom half -> place indicator below target
             if (targetCard.nextElementSibling !== dragPlaceholder) {
                 targetCard.parentNode.insertBefore(dragPlaceholder, targetCard.nextElementSibling);
             }
@@ -883,34 +933,31 @@
             card.classList.remove('opacity-30', 'scale-[0.98]', 'bg-slate-100');
         }
 
-        // Find new index based on dragPlaceholder's location in DOM
+        // Find new index within the SAME question type section
         if (dragPlaceholder && dragPlaceholder.parentNode && draggedItemData) {
             const container = dragPlaceholder.parentNode;
             const allItems = Array.from(container.children);
             
-            // Calculate placeholder position among question items
-            let newIndex = 0;
+            let newSubIndex = 0;
             for (let i = 0; i < allItems.length; i++) {
                 const child = allItems[i];
                 if (child === dragPlaceholder) {
                     break;
                 }
                 if (child.classList && child.classList.contains('paper-q-item') && child !== draggedItemData.element) {
-                    newIndex++;
+                    newSubIndex++;
                 }
             }
 
-            const fromIndex = draggedItemData.fromIndex;
+            const fromSubIndex = draggedItemData.fromSubIndex;
+            const qType = draggedItemData.qType;
             
             if (dragPlaceholder.parentNode) {
                 dragPlaceholder.parentNode.removeChild(dragPlaceholder);
             }
 
-            if (fromIndex !== newIndex && fromIndex >= 0 && newIndex >= 0 && fromIndex < window.PaperStore.cart.length) {
-                const cart = window.PaperStore.cart;
-                const movedItem = cart.splice(fromIndex, 1)[0];
-                const targetIdx = Math.min(newIndex, cart.length);
-                cart.splice(targetIdx, 0, movedItem);
+            if (fromSubIndex !== newSubIndex && fromSubIndex >= 0 && newSubIndex >= 0) {
+                window.PaperStore.cart = reorderItemsWithinType(window.PaperStore.cart, qType, fromSubIndex, newSubIndex);
 
                 saveCartToStorage();
                 renderPart3QuestionStream();
@@ -978,17 +1025,16 @@
             }
 
             html += `
-                <div class="paper-sec-block mb-4">
+                <div class="paper-sec-block mb-4" data-qtype="${qType}">
                     <h3 class="font-bold text-[13.5px] font-serif mb-2.5 text-slate-900 leading-snug">
                         ${secHeaderText}
                     </h3>
                     <div class="space-y-2 relative transition-all duration-200">
             `;
 
-            items.forEach(item => {
+            items.forEach((item, subIdx) => {
                 const q = window.PaperStore.questionsMap[item.id];
                 let contentHtml = q ? formatQuestionContentHtml(q.content) : '';
-                const cIdx = item.cartIndex;
 
                 if (qType === 'single_choice' || qType === 'multi_choice') {
                     if (!contentHtml.includes('(') && !contentHtml.includes('（') && !contentHtml.includes('paren')) {
@@ -1004,21 +1050,22 @@
                     <div class="paper-q-item group relative text-[13px] leading-normal font-serif p-2 rounded-xl border border-transparent hover:border-brand-300 hover:bg-brand-50/30 transition-all duration-200 cursor-grab active:cursor-grabbing"
                         draggable="true"
                         data-qid="${q ? q.id : ''}"
-                        data-cart-index="${cIdx}"
-                        ondragstart="onPaperCanvasDragStart(event, ${q ? q.id : 0}, ${cIdx})"
+                        data-qtype="${qType}"
+                        data-sub-index="${subIdx}"
+                        ondragstart="onPaperCanvasDragStart(event, ${q ? q.id : 0}, ${subIdx}, '${qType}')"
                         ondragover="onPaperCanvasDragOver(event)"
                         ondragenter="onPaperCanvasDragEnter(event)"
                         ondragleave="onPaperCanvasDragLeave(event)"
                         ondragend="onPaperCanvasDragEnd(event)"
-                        ondrop="onPaperCanvasDrop(event, ${q ? q.id : 0}, ${cIdx})">
+                        ondrop="onPaperCanvasDrop(event)">
 
                         <!-- Hover Action Bar: Drag Handle & Quick Move/Remove Buttons -->
                         <div class="absolute right-2 top-2 opacity-0 group-hover:opacity-100 transition-opacity flex items-center space-x-1 bg-white/95 backdrop-blur-sm px-2 py-0.5 rounded-lg border border-slate-200 shadow-xs text-2xs font-sans select-none z-10">
                             <span class="text-slate-400 font-medium mr-1"><i class="fa-solid fa-grip-vertical"></i> 按住拖拽排序</span>
-                            <button onclick="event.stopPropagation(); window.movePaperQuestion(${cIdx}, 'up')" ${cIdx === 0 ? 'disabled' : ''} class="p-0.5 text-slate-500 hover:text-brand-600 disabled:opacity-30" title="上移">
+                            <button onclick="event.stopPropagation(); window.movePaperQuestionWithinType('${qType}', ${subIdx}, 'up')" ${subIdx === 0 ? 'disabled' : ''} class="p-0.5 text-slate-500 hover:text-brand-600 disabled:opacity-30" title="上移">
                                 <i class="fa-solid fa-chevron-up"></i>
                             </button>
-                            <button onclick="event.stopPropagation(); window.movePaperQuestion(${cIdx}, 'down')" ${cIdx === cart.length - 1 ? 'disabled' : ''} class="p-0.5 text-slate-500 hover:text-brand-600 disabled:opacity-30" title="下移">
+                            <button onclick="event.stopPropagation(); window.movePaperQuestionWithinType('${qType}', ${subIdx}, 'down')" ${subIdx === items.length - 1 ? 'disabled' : ''} class="p-0.5 text-slate-500 hover:text-brand-600 disabled:opacity-30" title="下移">
                                 <i class="fa-solid fa-chevron-down"></i>
                             </button>
                             <button onclick="event.stopPropagation(); window.removeFromCart(${q ? q.id : 0})" class="p-0.5 text-slate-400 hover:text-rose-600" title="移出试卷">
