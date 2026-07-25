@@ -373,9 +373,8 @@
                         <label class="block text-2xs font-bold text-slate-500 uppercase mb-1">试卷类型预设</label>
                         <select id="paperMetaType" onchange="updatePaperMeta('paper_type', this.value)"
                             class="w-full px-3 py-1.5 text-xs rounded-xl border border-slate-200 bg-white focus:ring-2 focus:ring-brand-500 focus:outline-none dark:bg-slate-900/60 dark:border-slate-700 dark:text-slate-200">
-                            <option value="exam" ${meta.paper_type === 'exam' ? 'selected' : ''}>📄 标准高考卷 (exam-zh 密封线/注意事项)</option>
-                            <option value="quiz" ${meta.paper_type === 'quiz' ? 'selected' : ''}>📝 随堂小练 / 周测 (精简无密封线 1-2页)</option>
-                            <option value="handout" ${meta.paper_type === 'handout' ? 'selected' : ''}>📚 专题讲义 / 例题卡 (ctexart + tcolorbox)</option>
+                            <option value="exam" ${meta.paper_type === 'exam' ? 'selected' : ''}>📄 试卷</option>
+                            <option value="quiz" ${meta.paper_type === 'quiz' ? 'selected' : ''}>📝 小练</option>
                         </select>
                     </div>
                 </div>
