@@ -1338,12 +1338,21 @@
                 window.showToast(`正在静默编译 ${targetName} PDF...`, 'info');
             }
 
+            const cartQuestions = cart.map(item => {
+                const q = window.PaperStore.questionsMap[item.id] || {};
+                return {
+                    id: item.id,
+                    score: item.score,
+                    figure_align: q.figure_align || 'right'
+                };
+            });
+
             const payload = {
                 title: window.PaperStore.meta.title,
                 subtitle: window.PaperStore.meta.subtitle,
                 paper_type: window.PaperStore.meta.paper_type,
                 target: target,
-                questions: cart
+                questions: cartQuestions
             };
 
             const res = await fetch('/api/paper/export/pdf', {
@@ -1464,11 +1473,20 @@
         try {
             if (window.showToast) window.showToast('正在打包 LaTeX 源码与图片...', 'info');
 
+            const cartQuestions = cart.map(item => {
+                const q = window.PaperStore.questionsMap[item.id] || {};
+                return {
+                    id: item.id,
+                    score: item.score,
+                    figure_align: q.figure_align || 'right'
+                };
+            });
+
             const payload = {
                 title: window.PaperStore.meta.title,
                 subtitle: window.PaperStore.meta.subtitle,
                 paper_type: window.PaperStore.meta.paper_type,
-                questions: cart
+                questions: cartQuestions
             };
 
             const res = await fetch('/api/paper/export/tex', {
@@ -1586,7 +1604,7 @@
         qid = parseInt(qid, 10);
         if (!qid) return;
 
-        // Update local memory store
+        // 1. Optimistically update local memory store
         if (window.PaperStore.questionsMap[qid]) {
             window.PaperStore.questionsMap[qid].figure_align = alignVal;
         }
@@ -1595,15 +1613,20 @@
         const existingPopover = document.getElementById('figureAlignPopoverMenu');
         if (existingPopover) existingPopover.remove();
 
-        // Send POST API request to persist in DB
+        // 2. Optimistically re-render UI IMMEDIATELY for instant visual feedback!
+        if (typeof window.renderPart3QuestionStream === 'function') {
+            window.renderPart3QuestionStream();
+        }
+        if (typeof window.renderPaperCanvas === 'function') {
+            window.renderPaperCanvas();
+        }
+
+        // 3. Send POST API request to persist in DB (api.js monkey-patch automatically attaches X-Local-Token)
         const formData = new FormData();
         formData.append('figure_align', alignVal);
 
         fetch(`/api/questions/${qid}/figure_align`, {
             method: 'POST',
-            headers: {
-                'X-Local-Token': window.LOCAL_TOKEN || ''
-            },
             body: formData
         })
         .then(res => res.json())
@@ -1611,14 +1634,6 @@
             if (data.status === 'success') {
                 const labelMap = { 'right': '题干右侧', 'center': '下方居中', 'bottom_right': '下方居右' };
                 if (window.showToast) window.showToast(`已调整题目 #${qid} 插图排版为：${labelMap[alignVal] || alignVal}`, 'success');
-
-                // Re-render UI
-                if (typeof window.renderPart3QuestionStream === 'function') {
-                    window.renderPart3QuestionStream();
-                }
-                if (typeof window.renderPaperCanvas === 'function') {
-                    window.renderPaperCanvas();
-                }
             }
         })
         .catch(err => {
@@ -1690,20 +1705,23 @@
         if (!raw) return '';
         let html = raw.trim();
         figAlign = figAlign || 'right';
+
+        // 1. Extract Markdown image syntax ![](/static/uploads/xxx.png) BEFORE KaTeX processing to avoid corruption
+        let imgSrc = null;
+        const imgMatch = html.match(/!\[.*?\]\(([^)]+)\)/);
+        if (imgMatch) {
+            imgSrc = imgMatch[1];
+            html = html.replace(/!\[.*?\]\(([^)]+)\)/g, '').trim();
+        }
         
-        // 1. Process LaTeX formulas, \underline, choices environment via preprocessFormulaForKaTeX
+        // 2. Process LaTeX formulas, \underline, choices environment via preprocessFormulaForKaTeX
         if (typeof window.preprocessFormulaForKaTeX === 'function') {
             html = window.preprocessFormulaForKaTeX(html);
         }
 
-        // 2. Check if Markdown image syntax ![](/static/uploads/xxx.png) exists
-        const imgMatch = html.match(/!\[.*?\]\(([^)]+)\)/);
-        if (imgMatch) {
-            const imgSrc = imgMatch[1];
-            // Remove the markdown tag from stem text
-            const stemText = html.replace(/!\[.*?\]\(([^)]+)\)/g, '').trim()
-                                .replace(/\n\n/g, '<br><br>').replace(/\n/g, '<br>');
-            
+        const stemText = html.replace(/\n\n/g, '<br><br>').replace(/\n/g, '<br>');
+
+        if (imgSrc) {
             const alignLabelMap = {
                 'right': '题干右侧',
                 'center': '下方居中',
@@ -1741,10 +1759,7 @@
             }
         }
         
-        // 3. Handle double line breaks outside math blocks for clean paragraph rendering
-        html = html.replace(/\n\n/g, '<br><br>').replace(/\n/g, '<br>');
-        
-        return html;
+        return stemText;
     }
 
     // Init on DOMContentLoaded
