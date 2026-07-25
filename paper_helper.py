@@ -266,7 +266,6 @@ def build_latex_document(title: str, subtitle: str, paper_type: str, questions_d
                     lines.append(choices_part)
             else:
                 lines.append(cleaned_content)
-            lines.append(f"\\end{{{env_name}}}")
             
             # Inject solution space for detailed_answer questions on papers without answer sheets
             if q_type == "detailed_answer" and paper_type != "exam_19" and not include_answers:
@@ -277,6 +276,8 @@ def build_latex_document(title: str, subtitle: str, paper_type: str, questions_d
                     space_val = 7.0
                 if space_val > 0:
                     lines.append(f"\\vspace*{{{space_val:.1f}cm}}")
+
+            lines.append(f"\\end{{{env_name}}}")
 
             if include_answers:
                 ans_text = q.get("answer_markdown", "").strip()
