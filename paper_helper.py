@@ -92,6 +92,7 @@ def build_latex_document(title: str, subtitle: str, paper_type: str, questions_d
     lines.append(r"\usepackage{diagbox}")
     lines.append(r"\usepackage{lastpage}")
     lines.append(r"\usepackage{caption}")
+    lines.append(r"\usepackage{wrapfig}")
     lines.append(r"\usepackage{graphicx}")
     lines.append(r"\usepackage{amsmath,amssymb}")
     lines.append(r"\usepackage{adjustbox}")
@@ -230,13 +231,16 @@ def build_latex_document(title: str, subtitle: str, paper_type: str, questions_d
                 else:
                     stem_text = cleaned_content
 
-                lines.append(r"\begin{minipage}[t]{\dimexpr\linewidth-5.6cm\relax}")
-                lines.append(stem_text)
+                lines.append(r"\vspace{-1.4em}")
+                lines.append(r"\begin{minipage}[t]{\dimexpr\linewidth-5.8cm\relax}")
+                lines.append(r"  \vspace{0pt}")
+                lines.append(f"  {stem_text}")
                 lines.append(r"\end{minipage}%")
                 lines.append(r"\hfill")
                 lines.append(r"\begin{minipage}[t]{5.2cm}")
+                lines.append(r"  \vspace{-1.4em}")
                 lines.append(r"  \raggedleft")
-                lines.append(f"  {fig_body}")
+                lines.append(f"  \\adjustbox{{valign=t}}{{{fig_body}}}")
                 lines.append(r"\end{minipage}")
                 if choices_part:
                     lines.append(choices_part)
