@@ -1,12 +1,20 @@
+import hashlib
 import os
 import re
 import shutil
 import subprocess
 import tempfile
+import threading
 import zipfile
+from collections import OrderedDict
 from io import BytesIO
 from sqlalchemy.orm import Session
 from database import Question, Paper, PaperQuestion, QuestionCurriculum
+
+# In-memory LRU cache for compiled PDF bytes
+_PDF_CACHE_LOCK = threading.Lock()
+_PDF_CACHE = OrderedDict()  # key -> (pdf_bytes, log_or_err)
+_MAX_PDF_CACHE_SIZE = 50
 
 # Constants for question type labels
 TYPE_LABELS = {
@@ -296,11 +304,33 @@ def collect_referenced_images(questions_data: list, uploads_dir: str) -> list:
 
     return image_paths
 
-def compile_tex_to_pdf(tex_content: str, image_paths: list) -> tuple:
+def compile_tex_to_pdf(tex_content: str, image_paths: list = None) -> tuple:
     """
     Compiles LaTeX string into PDF using system xelatex.
+    Features an in-memory LRU cache based on TeX content and image mtime hashes.
     Returns (pdf_bytes, log_output_or_error).
     """
+    if image_paths is None:
+        image_paths = []
+
+    # 1. Compute MD5 Cache Key from TeX content & image modification times
+    img_signatures = []
+    for img_p in image_paths:
+        if os.path.exists(img_p):
+            img_signatures.append(f"{img_p}:{os.path.getmtime(img_p)}")
+    
+    cache_raw_str = f"{tex_content}||{'|'.join(img_signatures)}"
+    cache_key = hashlib.md5(cache_raw_str.encode("utf-8")).hexdigest()
+
+    # 2. Check LRU Cache
+    with _PDF_CACHE_LOCK:
+        if cache_key in _PDF_CACHE:
+            result = _PDF_CACHE.pop(cache_key)
+            _PDF_CACHE[cache_key] = result
+            if result[0] is not None:
+                return result
+
+    # 3. Cache Miss: Perform xelatex compilation
     with tempfile.TemporaryDirectory() as temp_dir:
         tex_path = os.path.join(temp_dir, "paper.tex")
         with open(tex_path, "w", encoding="utf-8") as f:
@@ -326,6 +356,15 @@ def compile_tex_to_pdf(tex_content: str, image_paths: list) -> tuple:
             if os.path.exists(pdf_path):
                 with open(pdf_path, "rb") as pf:
                     pdf_bytes = pf.read()
+                
+                # Save to LRU Cache on success
+                with _PDF_CACHE_LOCK:
+                    if cache_key in _PDF_CACHE:
+                        _PDF_CACHE.pop(cache_key)
+                    _PDF_CACHE[cache_key] = (pdf_bytes, proc.stdout)
+                    while len(_PDF_CACHE) > _MAX_PDF_CACHE_SIZE:
+                        _PDF_CACHE.popitem(last=False)
+
                 return (pdf_bytes, proc.stdout)
             else:
                 log_path = os.path.join(temp_dir, "paper.log")
