@@ -755,8 +755,8 @@
                     </div>
                 </div>
 
-                <!-- Row 2: Preview & Export Options -->
-                <div class="flex items-center justify-end space-x-2">
+                <!-- Row 2: Preview & Export Options (Left-Aligned) -->
+                <div class="flex items-center space-x-2">
                     ${meta.paper_type === 'exam_19' ? `
                         <button onclick="exportPaperPdf('paper')" class="px-3 py-1.5 rounded-xl text-xs font-semibold bg-emerald-600 text-white shadow-sm hover:bg-emerald-700 active:scale-95 transition-all flex items-center space-x-1.5" title="编译并打开试卷 PDF 预览">
                             <i class="fa-solid fa-file-pdf"></i>
