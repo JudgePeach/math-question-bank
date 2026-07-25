@@ -231,14 +231,12 @@ def build_latex_document(title: str, subtitle: str, paper_type: str, questions_d
                 else:
                     stem_text = cleaned_content
 
-                lines.append(r"\vspace{-1.4em}")
                 lines.append(r"\begin{minipage}[t]{\dimexpr\linewidth-5.8cm\relax}")
-                lines.append(r"  \vspace{0pt}")
                 lines.append(f"  {stem_text}")
                 lines.append(r"\end{minipage}%")
                 lines.append(r"\hfill")
                 lines.append(r"\begin{minipage}[t]{5.2cm}")
-                lines.append(r"  \vspace{-1.4em}")
+                lines.append(r"  \vspace{-0.4em}")
                 lines.append(r"  \raggedleft")
                 lines.append(f"  \\adjustbox{{valign=t}}{{{fig_body}}}")
                 lines.append(r"\end{minipage}")
