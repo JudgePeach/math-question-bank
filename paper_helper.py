@@ -28,9 +28,9 @@ def clean_content_for_latex(content: str, q_type: str = "") -> str:
     
     text = content.strip()
     
-    # If TikZ code is present in text, remove any duplicate markdown image tags referencing tikz previews (e.g. tikz_*.png)
+    # If TikZ code is present in text, remove ANY markdown image tags ![](...) to avoid duplicate image rendering
     if r"\begin{tikzpicture}" in text:
-        text = re.sub(r'!\[.*?\]\([^)]*tikz_[^)]*\)', '', text)
+        text = re.sub(r'!\[.*?\]\([^)]+\)', '', text)
 
     # Convert Markdown images ![](/static/uploads/xxx.png) or ![](uploads/xxx.png) to \includegraphics{...}
     def replace_img(match):
@@ -194,25 +194,37 @@ def build_latex_document(title: str, subtitle: str, paper_type: str, questions_d
             q = item.get("question", {})
             raw_content = q.get("content", "")
             q_score = item.get("score", 5)
-            
-            cleaned_content = clean_content_for_latex(raw_content, q_type=q_type)
-            
-            if q_type == "detailed_answer":
-                lines.append(f"\\begin{{problem}}[points = {q_score}]")
-                lines.append(cleaned_content)
-                lines.append(r"\end{problem}")
-            else:
-                lines.append(r"\begin{question}")
-                lines.append(cleaned_content)
-                lines.append(r"\end{question}")
-            
-            # If TikZ code exists and not in content
             tikz = q.get("tikz_code", "").strip()
-            if tikz and "\\begin{tikzpicture}" not in cleaned_content:
-                lines.append(r"\begin{center}")
-                lines.append(tikz)
-                lines.append(r"\end{center}")
-                
+
+            if tikz and r"\begin{tikzpicture}" not in raw_content:
+                # Strip markdown image preview tags to prevent duplicate image blocks in LaTeX PDF export
+                cleaned_raw = re.sub(r'!\[.*?\]\([^)]+\)', '', raw_content)
+                cleaned_content = clean_content_for_latex(cleaned_raw, q_type=q_type)
+                if q_type == "detailed_answer":
+                    lines.append(f"\\begin{{problem}}[points = {q_score}]")
+                    lines.append(cleaned_content)
+                    lines.append(r"\begin{center}")
+                    lines.append(tikz)
+                    lines.append(r"\end{center}")
+                    lines.append(r"\end{problem}")
+                else:
+                    lines.append(r"\begin{question}")
+                    lines.append(cleaned_content)
+                    lines.append(r"\begin{center}")
+                    lines.append(tikz)
+                    lines.append(r"\end{center}")
+                    lines.append(r"\end{question}")
+            else:
+                cleaned_content = clean_content_for_latex(raw_content, q_type=q_type)
+                if q_type == "detailed_answer":
+                    lines.append(f"\\begin{{problem}}[points = {q_score}]")
+                    lines.append(cleaned_content)
+                    lines.append(r"\end{problem}")
+                else:
+                    lines.append(r"\begin{question}")
+                    lines.append(cleaned_content)
+                    lines.append(r"\end{question}")
+            
             if include_answers:
                 ans_text = q.get("answer_markdown", "").strip()
                 if ans_text:
@@ -303,16 +315,17 @@ def extract_figures_for_answer_sheet(content: str) -> str:
     tikz_blocks = re.findall(r'(\\begin\{tikzpicture\}[\s\S]*?\\end\{tikzpicture\})', content)
     for t in tikz_blocks:
         figs.append(t)
-    # 2. Markdown image ![...](path)
-    img_matches = re.findall(r'!\[.*?\]\((?:/static/uploads/|static/uploads/|/uploads/|uploads/)?([^)]+)\)', content)
-    for img_name in img_matches:
-        base_n = os.path.basename(img_name)
-        figs.append(f"\\includegraphics[max width=4.5cm]{{{base_n}}}")
-    # 3. Direct \includegraphics
-    direct_imgs = re.findall(r'(\\includegraphics(?:\[.*?\])?\{.*?\})', content)
-    for d in direct_imgs:
-        if d not in figs:
-            figs.append(d)
+    # 2. Markdown image ![...](path) - ONLY include if NO tikz_blocks present to prevent duplicates
+    if not tikz_blocks:
+        img_matches = re.findall(r'!\[.*?\]\((?:/static/uploads/|static/uploads/|/uploads/|uploads/)?([^)]+)\)', content)
+        for img_name in img_matches:
+            base_n = os.path.basename(img_name)
+            figs.append(f"\\includegraphics[max width=3.4cm]{{{base_n}}}")
+        # 3. Direct \includegraphics
+        direct_imgs = re.findall(r'(\\includegraphics(?:\[.*?\])?\{.*?\})', content)
+        for d in direct_imgs:
+            if d not in figs:
+                figs.append(d)
     return "\n".join(figs)
 
 def build_answer_sheet_latex(title: str, subtitle: str, questions_data: list) -> str:
@@ -494,7 +507,6 @@ def build_answer_sheet_latex(title: str, subtitle: str, questions_data: list) ->
 \end{document}
 """
 
-    # Clean un-commented header text before \documentclass
     lines = content.splitlines()
     cleaned_lines = []
     for line in lines:
@@ -508,20 +520,19 @@ def build_answer_sheet_latex(title: str, subtitle: str, questions_data: list) ->
     paper_title = title.strip() or "2026年普通高等学校招生全国统一考试"
     tex_str = re.sub(r'202\d年普通高等学校招生全国统一考试', paper_title, tex_str)
 
-    # Extract detailed answer questions
     detailed_questions = []
     for item in questions_data:
         q = item.get("question", {})
         if q.get("question_type") == "detailed_answer":
             detailed_questions.append(item)
 
-    # Map for Q15..Q19 (full node line, template line, figure anchor coordinates)
+    # Map for Q15..Q19 (full node line, template line, figure anchor coordinates shifted inside the box)
     coords_map = [
-        ("15", r"\node at (\exx,\exy) {15.（13分）};", r"\node at (\exx,\exy) {{15.（{score}分）}};", "12.2, 10.2"),
-        ("16", r"\node at (\exx,\exy-0.25*\ebh) {16.（15分）};", r"\node at (\exx,\exy-0.25*\ebh) {{16.（{score}分）}};", "25.4, 20.0"),
-        ("17", r"\node at (\exx,\exy) {17.（15分）};", r"\node at (\exx,\exy) {{17.（{score}分）}};", "38.6, 26.3"),
-        ("18", r"\node at (\exx,\exy) {18.（17分）};", r"\node at (\exx,\exy) {{18.（{score}分）}};", "12.2, 26.3"),
-        ("19", r"\node at (\exx,\exy-0.5*\ebh) {19.（17分）};", r"\node at (\exx,\exy-0.5*\ebh) {{19.（{score}分）}};", "25.4, 13.5"),
+        ("15", r"\node at (\exx,\exy) {15.（13分）};", r"\node at (\exx,\exy) {{15.（{score}分）}};", "12.0, 10.2"),
+        ("16", r"\node at (\exx,\exy-0.25*\ebh) {16.（15分）};", r"\node at (\exx,\exy-0.25*\ebh) {{16.（{score}分）}};", "24.7, 20.0"),
+        ("17", r"\node at (\exx,\exy) {17.（15分）};", r"\node at (\exx,\exy) {{17.（{score}分）}};", "37.9, 26.3"),
+        ("18", r"\node at (\exx,\exy) {18.（17分）};", r"\node at (\exx,\exy) {{18.（{score}分）}};", "12.0, 26.3"),
+        ("19", r"\node at (\exx,\exy-0.5*\ebh) {19.（17分）};", r"\node at (\exx,\exy-0.5*\ebh) {{19.（{score}分）}};", "24.7, 13.5"),
     ]
 
     for idx in range(min(5, len(detailed_questions))):
@@ -534,9 +545,11 @@ def build_answer_sheet_latex(title: str, subtitle: str, questions_data: list) ->
 
         # Check for figures
         q_content = q.get("content", "")
-        fig_code = extract_figures_for_answer_sheet(q_content)
+        tikz_code = q.get("tikz_code", "").strip()
+        full_content = q_content + ("\n" + tikz_code if tikz_code else "")
+        fig_code = extract_figures_for_answer_sheet(full_content)
         if fig_code:
-            fig_node = f"\\node[anchor=north east] at ({fig_coords}) {{\\resizebox{{4.2cm}}{{!}}{{\\begin{{minipage}}{{4.2cm}}\\centering {fig_code}\\end{{minipage}}}}}};"
+            fig_node = f"\\node[anchor=north east] at ({fig_coords}) {{\\resizebox{{3.4cm}}{{!}}{{\\begin{{minipage}}{{3.4cm}}\\centering {fig_code}\\end{{minipage}}}}}};"
             replacement = f"{new_line}\n    {fig_node}"
         else:
             replacement = new_line
