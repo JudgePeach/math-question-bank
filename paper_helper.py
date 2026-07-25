@@ -28,6 +28,10 @@ def clean_content_for_latex(content: str, q_type: str = "") -> str:
     
     text = content.strip()
     
+    # If TikZ code is present in text, remove any duplicate markdown image tags referencing tikz previews (e.g. tikz_*.png)
+    if r"\begin{tikzpicture}" in text:
+        text = re.sub(r'!\[.*?\]\([^)]*tikz_[^)]*\)', '', text)
+
     # Convert Markdown images ![](/static/uploads/xxx.png) or ![](uploads/xxx.png) to \includegraphics{...}
     def replace_img(match):
         img_path = match.group(1) or match.group(2)
@@ -511,31 +515,33 @@ def build_answer_sheet_latex(title: str, subtitle: str, questions_data: list) ->
         if q.get("question_type") == "detailed_answer":
             detailed_questions.append(item)
 
-    # Map for Q15..Q19
+    # Map for Q15..Q19 (full node line, template line, figure anchor coordinates)
     coords_map = [
-        ("15", r"15.（13分）", "12.2, 10.2"),
-        ("16", r"16.（15分）", "25.4, 20.0"),
-        ("17", r"17.（15分）", "38.6, 26.3"),
-        ("18", r"18.（17分）", "12.2, 26.3"),
-        ("19", r"19.（17分）", "25.4, 13.5"),
+        ("15", r"\node at (\exx,\exy) {15.（13分）};", r"\node at (\exx,\exy) {{15.（{score}分）}};", "12.2, 10.2"),
+        ("16", r"\node at (\exx,\exy-0.25*\ebh) {16.（15分）};", r"\node at (\exx,\exy-0.25*\ebh) {{16.（{score}分）}};", "25.4, 20.0"),
+        ("17", r"\node at (\exx,\exy) {17.（15分）};", r"\node at (\exx,\exy) {{17.（{score}分）}};", "38.6, 26.3"),
+        ("18", r"\node at (\exx,\exy) {18.（17分）};", r"\node at (\exx,\exy) {{18.（{score}分）}};", "12.2, 26.3"),
+        ("19", r"\node at (\exx,\exy-0.5*\ebh) {19.（17分）};", r"\node at (\exx,\exy-0.5*\ebh) {{19.（{score}分）}};", "25.4, 13.5"),
     ]
 
     for idx in range(min(5, len(detailed_questions))):
         item = detailed_questions[idx]
         q = item.get("question", {})
         score = item.get("score", 15)
-        q_num, default_header, fig_coords = coords_map[idx]
+        q_num, default_line, new_line_tmpl, fig_coords = coords_map[idx]
 
-        # Update score header
-        new_header = f"{q_num}.（{score}分）"
-        tex_str = tex_str.replace(default_header, new_header)
+        new_line = new_line_tmpl.format(score=score)
 
         # Check for figures
         q_content = q.get("content", "")
         fig_code = extract_figures_for_answer_sheet(q_content)
         if fig_code:
             fig_node = f"\\node[anchor=north east] at ({fig_coords}) {{\\resizebox{{4.2cm}}{{!}}{{\\begin{{minipage}}{{4.2cm}}\\centering {fig_code}\\end{{minipage}}}}}};"
-            tex_str = tex_str.replace(new_header, f"{new_header}\n    {fig_node}")
+            replacement = f"{new_line}\n    {fig_node}"
+        else:
+            replacement = new_line
+
+        tex_str = tex_str.replace(default_line, replacement)
 
     return tex_str
 
