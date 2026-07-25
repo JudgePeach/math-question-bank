@@ -1435,6 +1435,22 @@
         }
     };
 
+    // Helper: build cart questions payload with solution_space
+    function buildCartQuestionsPayload() {
+        const cart = window.PaperStore.cart;
+        const defaultSpace = (window.PaperStore.meta.solution_space_default || '7.0').toString();
+        return cart.map((item, idx) => {
+            const q = window.PaperStore.questionsMap[item.id] || {};
+            return {
+                id: item.id,
+                score: item.score,
+                order: idx + 1,
+                figure_align: q.figure_align || 'right',
+                solution_space: item.solution_space !== undefined ? item.solution_space.toString() : defaultSpace
+            };
+        });
+    }
+
     // Export PDF, Tex, and Save Handlers
     window.exportPaperPdf = async function (target = 'paper') {
         const cart = window.PaperStore.cart;
