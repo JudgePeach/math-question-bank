@@ -768,7 +768,7 @@
                         </button>
                         <button onclick="exportPaperTex()" class="px-3 py-1.5 rounded-xl text-xs font-semibold bg-slate-100 text-slate-700 border border-slate-200 hover:bg-slate-200/80 active:scale-95 transition-all flex items-center space-x-1.5 whitespace-nowrap dark:bg-slate-800 dark:text-slate-200 dark:border-slate-700 dark:hover:bg-slate-700" title="打包导出完整的 LaTeX 源码与关联插图 Zip 压缩包">
                             <i class="fa-solid fa-file-zipper"></i>
-                            <span>LaTeX 源码包</span>
+                            <span>LaTeX 导出</span>
                         </button>
                         <button onclick="exportPaperBundle()" class="px-3 py-1.5 rounded-xl text-xs font-semibold bg-slate-100 text-slate-700 border border-slate-200 hover:bg-slate-200/80 active:scale-95 transition-all flex items-center space-x-1.5 whitespace-nowrap dark:bg-slate-800 dark:text-slate-200 dark:border-slate-700 dark:hover:bg-slate-700" title="LaTeX与PDF合并打包">
                             <i class="fa-solid fa-box-archive"></i>
@@ -781,7 +781,7 @@
                         </button>
                         <button onclick="exportPaperTex()" class="w-28 sm:w-32 py-1.5 justify-center rounded-xl text-xs font-semibold bg-slate-100 text-slate-700 border border-slate-200 hover:bg-slate-200/80 active:scale-95 transition-all flex items-center space-x-1.5 whitespace-nowrap dark:bg-slate-800 dark:text-slate-200 dark:border-slate-700 dark:hover:bg-slate-700" title="打包导出完整的 LaTeX 源码与关联插图 Zip 压缩包">
                             <i class="fa-solid fa-file-zipper"></i>
-                            <span>LaTeX 源码包</span>
+                            <span>LaTeX 导出</span>
                         </button>
                         <button onclick="exportPaperBundle()" class="w-28 sm:w-32 py-1.5 justify-center rounded-xl text-xs font-semibold bg-slate-100 text-slate-700 border border-slate-200 hover:bg-slate-200/80 active:scale-95 transition-all flex items-center space-x-1.5 whitespace-nowrap dark:bg-slate-800 dark:text-slate-200 dark:border-slate-700 dark:hover:bg-slate-700" title="LaTeX与PDF合并打包">
                             <i class="fa-solid fa-box-archive"></i>
