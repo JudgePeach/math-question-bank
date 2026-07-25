@@ -528,11 +528,11 @@ def build_answer_sheet_latex(title: str, subtitle: str, questions_data: list) ->
 
     # Map for Q15..Q19 (full node line, template line, figure anchor coordinates shifted inside the box)
     coords_map = [
-        ("15", r"\node at (\exx,\exy) {15.（13分）};", r"\node at (\exx,\exy) {{15.（{score}分）}};", "12.0, 10.2"),
-        ("16", r"\node at (\exx,\exy-0.25*\ebh) {16.（15分）};", r"\node at (\exx,\exy-0.25*\ebh) {{16.（{score}分）}};", "24.7, 20.0"),
-        ("17", r"\node at (\exx,\exy) {17.（15分）};", r"\node at (\exx,\exy) {{17.（{score}分）}};", "37.9, 26.3"),
-        ("18", r"\node at (\exx,\exy) {18.（17分）};", r"\node at (\exx,\exy) {{18.（{score}分）}};", "12.0, 26.3"),
-        ("19", r"\node at (\exx,\exy-0.5*\ebh) {19.（17分）};", r"\node at (\exx,\exy-0.5*\ebh) {{19.（{score}分）}};", "24.7, 13.5"),
+        ("15", r"\node at (\exx,\exy) {15.（13分）};", r"\node at (\exx,\exy) {{15.（{score}分）}};", "11.2, 9.8"),
+        ("16", r"\node at (\exx,\exy-0.25*\ebh) {16.（15分）};", r"\node at (\exx,\exy-0.25*\ebh) {{16.（{score}分）}};", "23.8, 19.8"),
+        ("17", r"\node at (\exx,\exy) {17.（15分）};", r"\node at (\exx,\exy) {{17.（{score}分）}};", "37.0, 26.0"),
+        ("18", r"\node at (\exx,\exy) {18.（17分）};", r"\node at (\exx,\exy) {{18.（{score}分）}};", "11.2, 26.0"),
+        ("19", r"\node at (\exx,\exy-0.5*\ebh) {19.（17分）};", r"\node at (\exx,\exy-0.5*\ebh) {{19.（{score}分）}};", "23.8, 13.2"),
     ]
 
     for idx in range(min(5, len(detailed_questions))):
@@ -549,7 +549,7 @@ def build_answer_sheet_latex(title: str, subtitle: str, questions_data: list) ->
         full_content = q_content + ("\n" + tikz_code if tikz_code else "")
         fig_code = extract_figures_for_answer_sheet(full_content)
         if fig_code:
-            fig_node = f"\\node[anchor=north east] at ({fig_coords}) {{\\resizebox{{3.4cm}}{{!}}{{\\begin{{minipage}}{{3.4cm}}\\centering {fig_code}\\end{{minipage}}}}}};"
+            fig_node = f"\\node[anchor=north east, inner sep=0pt, outer sep=0pt] at ({fig_coords}) {{\\resizebox{{2.8cm}}{{!}}{{\\begin{{minipage}}{{2.8cm}}\\centering {fig_code}\\end{{minipage}}}}}};"
             replacement = f"{new_line}\n    {fig_node}"
         else:
             replacement = new_line
