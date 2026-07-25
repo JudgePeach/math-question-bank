@@ -1426,7 +1426,13 @@
         saveMetaToStorage();
         saveCartToStorage();
         window.renderPaperCanvas();
-        if (window.showToast) window.showToast(`解答题全局留白设为 ${spaceVal} cm`, 'success');
+        if (window.showToast) {
+            if (window.PaperStore.meta.paper_type === 'exam_19') {
+                window.showToast(`提示：当前为高考含答题卡模式（不留白），切换为「试卷」或「小练」即可生效`, 'warning');
+            } else {
+                window.showToast(`解答题全局留白设为 ${spaceVal} cm（点击 PDF 预览可即时生效）`, 'success');
+            }
+        }
     };
 
     // Export PDF, Tex, and Save Handlers
