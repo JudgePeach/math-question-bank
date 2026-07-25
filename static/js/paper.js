@@ -60,7 +60,11 @@
 
     function saveCartToStorage() {
         try {
-            localStorage.setItem(STORAGE_KEY_CART, JSON.stringify(window.PaperStore.cart));
+            if (window.PaperStore.cart.length === 0) {
+                localStorage.removeItem(STORAGE_KEY_CART);
+            } else {
+                localStorage.setItem(STORAGE_KEY_CART, JSON.stringify(window.PaperStore.cart));
+            }
         } catch (e) { }
         updateCartBadges();
     }
@@ -710,6 +714,12 @@
                 </div>
 
                 <div class="flex items-center space-x-2">
+                    ${totalCount > 0 ? `
+                        <button onclick="clearCart()" class="px-3 py-1.5 rounded-xl text-xs font-semibold bg-rose-50 text-rose-600 border border-rose-200 hover:bg-rose-100 active:scale-95 transition-all flex items-center space-x-1.5 dark:bg-rose-950/40 dark:border-rose-800 dark:text-rose-300" title="清空当前试卷中的所有已选题目">
+                            <i class="fa-solid fa-trash-can"></i>
+                            <span>清空卷面</span>
+                        </button>
+                    ` : ''}
                     <button onclick="exportPaperPdf()" class="px-3 py-1.5 rounded-xl text-xs font-semibold bg-emerald-600 text-white shadow-sm hover:bg-emerald-700 active:scale-95 transition-all flex items-center space-x-1.5">
                         <i class="fa-solid fa-file-pdf"></i>
                         <span>编译高清 PDF</span>
