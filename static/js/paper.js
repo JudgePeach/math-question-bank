@@ -777,10 +777,9 @@
                         <div class="border border-slate-900 p-3 mb-5 text-[11.5px] leading-relaxed font-serif bg-slate-50/40">
                             <div class="font-bold mb-1">【注意事项】</div>
                             <ol class="list-decimal list-inside space-y-0.5 text-slate-800">
-                                <li>答题前，先将自己的姓名、准考证号、考场号、座位号填写在试卷和答题卡上，并将准考证号条形码粘贴在答题卡上的指定位置。</li>
-                                <li>选择题的作答：每小题选出答案后，用 2B 铅笔把答题卡上对应题目的答案标号涂黑。写在试卷、草稿纸和答题卡上的非答题区域均无效。</li>
-                                <li>填空题和解答题的作答：用黑色签字笔直接答在答题卡上对应的答题区域内。写在试卷、草稿纸和答题卡上的非答题区域均无效。</li>
-                                <li>考试结束后，请将本试卷和答题卡一并上交。</li>
+                                <li>答卷前，考生务必将自己的姓名、考生号、考场号、座位号填写在答题卡上。</li>
+                                <li>回答选择题时，选出每小题答案后，用铅笔把答题卡上对应题目的答案标号涂黑，如需改动，用橡皮擦干净后，再选涂其他答案标号。回答非选择题时，将答案写在答题卡上。写在本试卷上无效。</li>
+                                <li>考试结束后，将本试卷和答题卡一并交回。</li>
                             </ol>
                         </div>
                     ` : ''}
@@ -1017,11 +1016,11 @@
             if (qType === 'single_choice') {
                 secHeaderText = `${secNum}、选择题：本题共 ${count} 小题，每小题 ${unitScore} 分，共 ${secScore} 分。在每小题给出的四个选项中，只有一项是符合题目要求的。`;
             } else if (qType === 'multi_choice') {
-                secHeaderText = `${secNum}、选择题：本题共 ${count} 小题，每小题 ${unitScore} 分，共 ${secScore} 分。在每小题给出的选项中，有多项符合题目要求的。全部选对的得 ${unitScore} 分，部分选择的得部分分，有选错的得 0 分。`;
+                secHeaderText = `${secNum}、多选题：本题共 ${count} 小题，每小题 ${unitScore} 分，共 ${secScore} 分。在每小题给出的四个选项中，有多项符合题目要求。全部选对的得 ${unitScore} 分，部分选对的得部分分，有选错的得 0 分。`;
             } else if (qType === 'fill_in_blank') {
                 secHeaderText = `${secNum}、填空题：本题共 ${count} 小题，每小题 ${unitScore} 分，共 ${secScore} 分。`;
             } else {
-                secHeaderText = `${secNum}、解答题：本题共 ${count} 小题，共 ${secScore} 分。解答应写出文字说明、证明过程或者演算步骤。`;
+                secHeaderText = `${secNum}、解答题：本题共 ${count} 小题，共 ${secScore} 分。解答应写出文字说明、证明过程或演算步骤。`;
             }
 
             html += `

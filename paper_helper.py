@@ -135,13 +135,9 @@ def build_latex_document(title: str, subtitle: str, paper_type: str, questions_d
         lines.append(r"\end{center}")
         lines.append("")
         lines.append(r"\begin{notice}")
-        lines.append(r"  \item 答题前，先将自己的姓名、准考证号、考场号、座位号填写在试卷和答题卡上，")
-        lines.append(r"    并将准考证号条形码粘贴在答题卡上的指定位置。")
-        lines.append(r"  \item 选择题的作答：每小题选出答案后，用 2B 铅笔把答题卡上对应题目的答案标号涂黑。")
-        lines.append(r"    写在试卷、草稿纸和答题卡上的非答题区域均无效。")
-        lines.append(r"  \item 填空题和解答题的作答：用黑色签字笔直接答在答题卡上对应的答题区域内。")
-        lines.append(r"    写在试卷、草稿纸和答题卡上的非答题区域均无效。")
-        lines.append(r"  \item 考试结束后，请将本试卷和答题卡一并上交。")
+        lines.append(r"  \item 答卷前，考生务必将自己的姓名、考生号、考场号、座位号填写在答题卡上。")
+        lines.append(r"  \item 回答选择题时，选出每小题答案后，用铅笔把答题卡上对应题目的答案标号涂黑，如需改动，用橡皮擦干净后，再选涂其他答案标号。回答非选择题时，将答案写在答题卡上。写在本试卷上无效。")
+        lines.append(r"  \item 考试结束后，将本试卷和答题卡一并交回。")
         lines.append(r"\end{notice}")
         lines.append("")
 
@@ -165,11 +161,11 @@ def build_latex_document(title: str, subtitle: str, paper_type: str, questions_d
         if q_type == "single_choice":
             section_header = f"选择题：本题共 {count} 小题，每小题 {unit_score} 分，共 {sec_score} 分。\n  在每小题给出的四个选项中，只有一项是符合题目要求的。"
         elif q_type == "multi_choice":
-            section_header = f"选择题：本题共 {count} 小题，每小题 {unit_score} 分，共 {sec_score} 分。\n  在每小题给出的选项中，有多项符合题目要求的。\n  全部选对的得 {unit_score} 分，部分选择的得部分分，有选错的得 0 分。"
+            section_header = f"多选题：本题共 {count} 小题，每小题 {unit_score} 分，共 {sec_score} 分。\n  在每小题给出的四个选项中，有多项符合题目要求。\n  全部选对的得 {unit_score} 分，部分选对的得部分分，有选错的得 0 分。"
         elif q_type == "fill_in_blank":
             section_header = f"填空题：本题共 {count} 小题，每小题 {unit_score} 分，共 {sec_score} 分。"
         else:
-            section_header = f"解答题：本题共 {count} 小题，共 {sec_score} 分。解答应写出文字说明、证明过程或者演算步骤。"
+            section_header = f"解答题：本题共 {count} 小题，共 {sec_score} 分。解答应写出文字说明、证明过程或演算步骤。"
             
         lines.append(f"\\section{{\n  {section_header}\n}}")
         lines.append("")
