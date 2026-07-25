@@ -756,36 +756,30 @@
                 </div>
 
                 <!-- Row 2: Preview & Export Options -->
-                <div class="flex items-center justify-between flex-wrap gap-2">
-                    <div class="text-xs font-bold text-slate-400 flex items-center space-x-1.5">
-                        <i class="fa-solid fa-cloud-arrow-down text-brand-500"></i>
-                        <span>预览与导出模式：</span>
-                    </div>
-                    <div class="flex items-center space-x-2">
-                        ${meta.paper_type === 'exam_19' ? `
-                            <button onclick="exportPaperPdf('paper')" class="px-3 py-1.5 rounded-xl text-xs font-semibold bg-emerald-600 text-white shadow-sm hover:bg-emerald-700 active:scale-95 transition-all flex items-center space-x-1.5" title="编译并打开试卷 PDF 预览">
-                                <i class="fa-solid fa-file-pdf"></i>
-                                <span>试卷 PDF 预览</span>
-                            </button>
-                            <button onclick="exportPaperPdf('sheet')" class="px-3 py-1.5 rounded-xl text-xs font-semibold bg-teal-600 text-white shadow-sm hover:bg-teal-700 active:scale-95 transition-all flex items-center space-x-1.5" title="编译并打开 A3 双面答题卡 PDF 预览">
-                                <i class="fa-solid fa-file-lines"></i>
-                                <span>答题卡 PDF 预览</span>
-                            </button>
-                        ` : `
-                            <button onclick="exportPaperPdf('paper')" class="px-3 py-1.5 rounded-xl text-xs font-semibold bg-emerald-600 text-white shadow-sm hover:bg-emerald-700 active:scale-95 transition-all flex items-center space-x-1.5" title="编译并打开高清 PDF 预览">
-                                <i class="fa-solid fa-file-pdf"></i>
-                                <span>PDF 预览</span>
-                            </button>
-                        `}
-                        <button onclick="exportPaperTex()" class="px-3 py-1.5 rounded-xl text-xs font-semibold bg-slate-700 text-white shadow-sm hover:bg-slate-800 active:scale-95 transition-all flex items-center space-x-1.5 dark:bg-slate-700 dark:hover:bg-slate-600" title="打包导出完整的 LaTeX 源码与关联插图 Zip 压缩包">
-                            <i class="fa-solid fa-file-zipper"></i>
-                            <span>LaTeX 源码包</span>
+                <div class="flex items-center justify-end space-x-2">
+                    ${meta.paper_type === 'exam_19' ? `
+                        <button onclick="exportPaperPdf('paper')" class="px-3 py-1.5 rounded-xl text-xs font-semibold bg-emerald-600 text-white shadow-sm hover:bg-emerald-700 active:scale-95 transition-all flex items-center space-x-1.5" title="编译并打开试卷 PDF 预览">
+                            <i class="fa-solid fa-file-pdf"></i>
+                            <span>试卷 PDF 预览</span>
                         </button>
-                        <button onclick="exportPaperBundle()" class="px-3.5 py-1.5 rounded-xl text-xs font-bold bg-gradient-to-r from-purple-600 to-indigo-600 text-white shadow-md hover:from-purple-700 hover:to-indigo-700 active:scale-95 transition-all flex items-center space-x-1.5" title="一键打包导出包含 LaTeX 源码、相关插图以及已编译好的全套 PDF">
-                            <i class="fa-solid fa-box-archive"></i>
-                            <span>合并全套导出 (TeX+PDF)</span>
+                        <button onclick="exportPaperPdf('sheet')" class="px-3 py-1.5 rounded-xl text-xs font-semibold bg-teal-600 text-white shadow-sm hover:bg-teal-700 active:scale-95 transition-all flex items-center space-x-1.5" title="编译并打开 A3 双面答题卡 PDF 预览">
+                            <i class="fa-solid fa-file-lines"></i>
+                            <span>答题卡 PDF 预览</span>
                         </button>
-                    </div>
+                    ` : `
+                        <button onclick="exportPaperPdf('paper')" class="px-3 py-1.5 rounded-xl text-xs font-semibold bg-emerald-600 text-white shadow-sm hover:bg-emerald-700 active:scale-95 transition-all flex items-center space-x-1.5" title="编译并打开高清 PDF 预览">
+                            <i class="fa-solid fa-file-pdf"></i>
+                            <span>PDF 预览</span>
+                        </button>
+                    `}
+                    <button onclick="exportPaperTex()" class="px-3 py-1.5 rounded-xl text-xs font-semibold bg-slate-700 text-white shadow-sm hover:bg-slate-800 active:scale-95 transition-all flex items-center space-x-1.5 dark:bg-slate-700 dark:hover:bg-slate-600" title="打包导出完整的 LaTeX 源码与关联插图 Zip 压缩包">
+                        <i class="fa-solid fa-file-zipper"></i>
+                        <span>LaTeX 源码包</span>
+                    </button>
+                    <button onclick="exportPaperBundle()" class="px-3 py-1.5 rounded-xl text-xs font-semibold bg-indigo-600 text-white shadow-sm hover:bg-indigo-700 active:scale-95 transition-all flex items-center space-x-1.5" title="LaTeX与PDF合并打包">
+                        <i class="fa-solid fa-box-archive"></i>
+                        <span>合并导出</span>
+                    </button>
                 </div>
             </div>
 
