@@ -4282,10 +4282,16 @@ def export_paper_tex(payload: dict, db: Session = Depends(get_db)):
         for item in questions_input:
             qid = int(item.get("id"))
             if qid in q_map:
-                questions_data.append({
-                    "question": q_map[qid],
+                q_dict = dict(q_map[qid])
+                if item.get("figure_align"):
+                    q_dict["figure_align"] = item.get("figure_align")
+                q_item = {
+                    "question": q_dict,
                     "score": int(item.get("score", 5))
-                })
+                }
+                if item.get("solution_space"):
+                    q_item["solution_space"] = item.get("solution_space")
+                questions_data.append(q_item)
                 
         tex_main = build_latex_document(title, subtitle, paper_type, questions_data, include_answers=False)
         tex_ans = build_latex_document(title + " (参考答案与解析)", subtitle, paper_type, questions_data, include_answers=True)
@@ -4327,10 +4333,13 @@ def export_paper_bundle(payload: dict, db: Session = Depends(get_db)):
                 q_dict = dict(q_map[qid])
                 if item.get("figure_align"):
                     q_dict["figure_align"] = item.get("figure_align")
-                questions_data.append({
+                q_item = {
                     "question": q_dict,
                     "score": int(item.get("score", 5))
-                })
+                }
+                if item.get("solution_space"):
+                    q_item["solution_space"] = item.get("solution_space")
+                questions_data.append(q_item)
                 
         tex_main = build_latex_document(title, subtitle, paper_type, questions_data, include_answers=False)
         tex_ans = build_latex_document(title + " (参考答案与解析)", subtitle, paper_type, questions_data, include_answers=True)
@@ -4390,10 +4399,13 @@ def export_paper_pdf(payload: dict, db: Session = Depends(get_db)):
                 q_dict = dict(q_map[qid])
                 if item.get("figure_align"):
                     q_dict["figure_align"] = item.get("figure_align")
-                questions_data.append({
+                q_item = {
                     "question": q_dict,
                     "score": int(item.get("score", 5))
-                })
+                }
+                if item.get("solution_space"):
+                    q_item["solution_space"] = item.get("solution_space")
+                questions_data.append(q_item)
                 
         if target == "sheet":
             tex_content = build_answer_sheet_latex(title, subtitle, questions_data)

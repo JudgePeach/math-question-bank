@@ -18,7 +18,8 @@
         meta: {
             title: '2026年高中数学模拟考试试卷',
             subtitle: '',
-            paper_type: 'exam_19'
+            paper_type: 'exam_19',
+            solution_space_default: '5.0'
         },
         filters: {
             compulsory: '',
@@ -359,7 +360,7 @@
         container.innerHTML = `
             <div class="space-y-3 bg-white/80 backdrop-blur-md p-4 rounded-2xl border border-slate-200/70 shadow-sm dark:bg-slate-800/80 dark:border-slate-700/70">
                 <!-- Top Row: Paper Metadata -->
-                <div class="grid grid-cols-1 md:grid-cols-3 gap-3">
+                <div class="grid grid-cols-1 ${meta.paper_type === 'exam_19' ? 'md:grid-cols-3' : 'md:grid-cols-4'} gap-3">
                     <div>
                         <label class="block text-2xs font-semibold text-slate-500 mb-1">主标题</label>
                         <input type="text" id="paperMetaTitle" value="${escapeHtml(meta.title)}" 
@@ -381,6 +382,21 @@
                             <option value="quiz" ${meta.paper_type === 'quiz' ? 'selected' : ''}>📝 小练</option>
                         </select>
                     </div>
+                    ${meta.paper_type !== 'exam_19' ? `
+                    <div>
+                        <label class="block text-2xs font-semibold text-brand-600 dark:text-brand-400 mb-1 flex items-center space-x-1">
+                            <i class="fa-solid fa-arrows-up-down text-brand-500"></i>
+                            <span>解答题全局留白</span>
+                        </label>
+                        <select onchange="window.updateGlobalSolutionSpace(this.value)"
+                            class="w-full px-3 py-1.5 text-xs rounded-xl border border-brand-200 bg-brand-50/50 text-brand-900 font-semibold focus:ring-2 focus:ring-brand-500 focus:outline-none dark:bg-brand-950/40 dark:border-brand-800 dark:text-brand-200">
+                            <option value="3.0" ${(parseFloat(meta.solution_space_default || '5.0') === 3.0) ? 'selected' : ''}>3.0 cm (紧凑)</option>
+                            <option value="5.0" ${(parseFloat(meta.solution_space_default || '5.0') === 5.0) ? 'selected' : ''}>5.0 cm (标准)</option>
+                            <option value="7.0" ${(parseFloat(meta.solution_space_default || '5.0') === 7.0) ? 'selected' : ''}>7.0 cm (宽敞)</option>
+                            <option value="9.0" ${(parseFloat(meta.solution_space_default || '5.0') === 9.0) ? 'selected' : ''}>9.0 cm (超大)</option>
+                        </select>
+                    </div>
+                    ` : ''}
                 </div>
 
                 <!-- Middle Row 1: 3-Level Cascade Curriculum Dropdowns (学段 -> 章节 -> 小节/知识点) -->
@@ -944,8 +960,40 @@
                         </div>
                         ${choicesGrid}
                     `;
-                } else {
-                    stemLine = contentHtml;
+                let solutionBlankHtml = '';
+                let solSpaceCm = 0;
+                if (qType === 'detailed_answer' && meta.paper_type !== 'exam_19') {
+                    const defaultSpace = parseFloat(meta.solution_space_default || '5.0');
+                    solSpaceCm = parseFloat(item.solution_space !== undefined ? item.solution_space : defaultSpace);
+                    if (isNaN(solSpaceCm)) solSpaceCm = 5.0;
+                    
+                    const spacePx = Math.round(solSpaceCm * 35);
+                    solutionBlankHtml = `
+                        <div class="solution-space-zone relative mt-3 mb-1 rounded-lg border border-dashed border-sky-300/80 bg-sky-50/20 group/blank transition-all" style="height: ${spacePx}px;">
+                            <div class="absolute inset-0 flex items-center justify-center pointer-events-none opacity-40 group-hover/blank:opacity-80 transition-opacity">
+                                <span class="text-2xs font-sans text-sky-700 font-medium tracking-wider select-none">
+                                    <i class="fa-solid fa-pen-ruler mr-1"></i> 解答题留白区域 (${solSpaceCm.toFixed(1)} cm)
+                                </span>
+                            </div>
+                            <!-- Inline Controls -->
+                            <div class="absolute right-2 bottom-2 opacity-0 group-hover/blank:opacity-100 transition-opacity flex items-center space-x-1 bg-white/95 backdrop-blur-sm px-2 py-1 rounded-lg border border-slate-200 shadow-xs text-2xs font-sans select-none z-20">
+                                <span class="text-slate-400 mr-1 font-medium">留白微调:</span>
+                                <button onclick="event.stopPropagation(); window.updateQuestionSolutionSpace(${q ? q.id : 0}, -1.0)" class="px-1.5 py-0.5 rounded bg-slate-100 text-slate-700 hover:bg-brand-100 hover:text-brand-700 font-bold transition-all" title="减少 1cm 留白">
+                                    - 1cm
+                                </button>
+                                <button onclick="event.stopPropagation(); window.updateQuestionSolutionSpace(${q ? q.id : 0}, -0.5)" class="px-1.5 py-0.5 rounded bg-slate-100 text-slate-700 hover:bg-brand-100 hover:text-brand-700 font-bold transition-all" title="减少 0.5cm 留白">
+                                    - 0.5
+                                </button>
+                                <span class="px-1.5 font-bold text-brand-600">${solSpaceCm.toFixed(1)} cm</span>
+                                <button onclick="event.stopPropagation(); window.updateQuestionSolutionSpace(${q ? q.id : 0}, 0.5)" class="px-1.5 py-0.5 rounded bg-slate-100 text-slate-700 hover:bg-brand-100 hover:text-brand-700 font-bold transition-all" title="增加 0.5cm 留白">
+                                    + 0.5
+                                </button>
+                                <button onclick="event.stopPropagation(); window.updateQuestionSolutionSpace(${q ? q.id : 0}, 1.0)" class="px-1.5 py-0.5 rounded bg-slate-100 text-slate-700 hover:bg-brand-100 hover:text-brand-700 font-bold transition-all" title="增加 1cm 留白">
+                                    + 1cm
+                                </button>
+                            </div>
+                        </div>
+                    `;
                 }
 
                 const itemHtml = `
@@ -977,13 +1025,16 @@
 
                         <div class="flex items-start">
                             <span class="font-bold mr-1 text-slate-900 shrink-0">${globalQIndex}.</span>
-                            <div class="inline flex-1">${stemLine}</div>
+                            <div class="inline flex-1">
+                                ${stemLine}
+                                ${solutionBlankHtml}
+                            </div>
                         </div>
                     </div>
                 `;
 
                 let estH = 75;
-                if (qType === 'detailed_answer') estH = 170;
+                if (qType === 'detailed_answer') estH = 120 + Math.round(solSpaceCm * 35);
                 if (rawContent.length > 200) estH += 60;
 
                 blocks.push({
@@ -1496,12 +1547,14 @@
         try {
             if (window.showToast) window.showToast('正在打包 LaTeX 源码与图片...', 'info');
 
+            const defaultSpace = parseFloat(window.PaperStore.meta.solution_space_default || '5.0').toFixed(1);
             const cartQuestions = cart.map(item => {
                 const q = window.PaperStore.questionsMap[item.id] || {};
                 return {
                     id: item.id,
                     score: item.score,
-                    figure_align: q.figure_align || 'right'
+                    figure_align: q.figure_align || 'right',
+                    solution_space: item.solution_space !== undefined ? item.solution_space : defaultSpace
                 };
             });
 

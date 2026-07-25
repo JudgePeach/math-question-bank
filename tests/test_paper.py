@@ -124,3 +124,25 @@ def test_exam_19_and_answer_sheet_generation(client):
     sheet_pdf_res = client.post("/api/paper/export/pdf", json=pdf_sheet_payload, headers=headers)
     assert sheet_pdf_res.status_code == 200
     assert sheet_pdf_res.headers.get("content-type") == "application/pdf"
+
+def test_solution_space_latex_generation():
+    from paper_helper import build_latex_document
+    questions_data = [{
+        "question": {
+            "id": 99,
+            "question_type": "detailed_answer",
+            "content": "已知函数 $f(x) = ax^2 + bx + c$，求导数 $f'(x)$。",
+            "figure_align": "right"
+        },
+        "score": 12,
+        "solution_space": "6.5"
+    }]
+    
+    # 1. Non-exam_19 paper mode -> should inject \vspace*{6.5cm}
+    tex = build_latex_document("单元测试", "试卷", "exam", questions_data, include_answers=False)
+    assert r"\vspace*{6.5cm}" in tex
+    
+    # 2. exam_19 paper mode -> answer sheet present, no solution space \vspace
+    tex_19 = build_latex_document("高考模拟", "试卷", "exam_19", questions_data, include_answers=False)
+    assert r"\vspace*{6.5cm}" not in tex_19
+
