@@ -736,33 +736,33 @@
                         </div>
                     </div>
 
-                    <!-- Right Paper Management Actions -->
-                    <div class="flex items-center space-x-2">
+                    <!-- Right Paper Management Actions (Synchronized Spacing) -->
+                    <div class="flex items-center ${meta.paper_type === 'exam_19' ? 'space-x-4 sm:space-x-6' : 'space-x-8 sm:space-x-12'}">
                         ${totalCount > 0 ? `
-                            <button onclick="clearCart()" class="px-3 py-1.5 rounded-xl text-xs font-semibold bg-rose-50 text-rose-600 border border-rose-200 hover:bg-rose-100 active:scale-95 transition-all flex items-center space-x-1.5 dark:bg-rose-950/40 dark:border-rose-800 dark:text-rose-300" title="清空当前试卷中的所有已选题目">
+                            <button onclick="clearCart()" class="px-4 py-2 rounded-xl text-xs font-semibold bg-rose-50 text-rose-600 border border-rose-200 hover:bg-rose-100 active:scale-95 transition-all flex items-center space-x-2 dark:bg-rose-950/40 dark:border-rose-800 dark:text-rose-300" title="清空当前试卷中的所有已选题目">
                                 <i class="fa-solid fa-trash-can"></i>
                                 <span>清空卷面</span>
                             </button>
                         ` : ''}
-                        <button onclick="savePaperToDb()" class="px-3 py-1.5 rounded-xl text-xs font-semibold bg-brand-600 text-white shadow-sm hover:bg-brand-700 active:scale-95 transition-all flex items-center space-x-1.5" title="将此试卷归档保存至系统数据库，并自动更新题目的引用使用次数">
+                        <button onclick="savePaperToDb()" class="px-4 py-2 rounded-xl text-xs font-semibold bg-brand-600 text-white shadow-sm hover:bg-brand-700 active:scale-95 transition-all flex items-center space-x-2" title="将此试卷归档保存至系统数据库，并自动更新题目的引用使用次数">
                             <i class="fa-solid fa-floppy-disk"></i>
                             <span>保存试卷</span>
                         </button>
-                        <button onclick="openSavedPapersModal()" class="px-3 py-1.5 rounded-xl text-xs font-semibold bg-amber-500 text-white shadow-sm hover:bg-amber-600 active:scale-95 transition-all flex items-center space-x-1.5" title="打开历史试卷归档库，查阅、删除或一键载入重新导出">
+                        <button onclick="openSavedPapersModal()" class="px-4 py-2 rounded-xl text-xs font-semibold bg-amber-500 text-white shadow-sm hover:bg-amber-600 active:scale-95 transition-all flex items-center space-x-2" title="打开历史试卷归档库，查阅、删除或一键载入重新导出">
                             <i class="fa-solid fa-folder-open"></i>
                             <span>历史试卷库</span>
                         </button>
                     </div>
                 </div>
 
-                <!-- Row 2: Preview & Export Options (Balanced Spacing) -->
-                <div class="flex items-center ${meta.paper_type === 'exam_19' ? 'space-x-3 sm:space-x-4' : 'space-x-6 sm:space-x-8'}">
+                <!-- Row 2: Preview & Export Options (Synchronized Spacing) -->
+                <div class="flex items-center ${meta.paper_type === 'exam_19' ? 'space-x-4 sm:space-x-6' : 'space-x-8 sm:space-x-12'}">
                     ${meta.paper_type === 'exam_19' ? `
-                        <button onclick="exportPaperPdf('paper')" class="px-3.5 py-2 rounded-xl text-xs font-semibold bg-emerald-600 text-white shadow-sm hover:bg-emerald-700 active:scale-95 transition-all flex items-center space-x-1.5" title="编译并打开试卷 PDF 预览">
+                        <button onclick="exportPaperPdf('paper')" class="px-4 py-2 rounded-xl text-xs font-semibold bg-emerald-600 text-white shadow-sm hover:bg-emerald-700 active:scale-95 transition-all flex items-center space-x-2" title="编译并打开试卷 PDF 预览">
                             <i class="fa-solid fa-file-pdf"></i>
                             <span>试卷 PDF 预览</span>
                         </button>
-                        <button onclick="exportPaperPdf('sheet')" class="px-3.5 py-2 rounded-xl text-xs font-semibold bg-teal-600 text-white shadow-sm hover:bg-teal-700 active:scale-95 transition-all flex items-center space-x-1.5" title="编译并打开 A3 双面答题卡 PDF 预览">
+                        <button onclick="exportPaperPdf('sheet')" class="px-4 py-2 rounded-xl text-xs font-semibold bg-teal-600 text-white shadow-sm hover:bg-teal-700 active:scale-95 transition-all flex items-center space-x-2" title="编译并打开 A3 双面答题卡 PDF 预览">
                             <i class="fa-solid fa-file-lines"></i>
                             <span>答题卡 PDF 预览</span>
                         </button>
