@@ -120,7 +120,8 @@ def build_latex_document(title: str, subtitle: str, paper_type: str, questions_d
     lines.append(r"\begin{document}")
     lines.append("")
     
-    if paper_type == "exam":
+    is_exam_style = (paper_type == "exam" or paper_type == "exam_19")
+    if is_exam_style:
         lines.append(r"\secret")
         lines.append("")
     
@@ -129,7 +130,7 @@ def build_latex_document(title: str, subtitle: str, paper_type: str, questions_d
     if sub_title:
         lines.append(rf"\begin{{center}}\large\bfseries {sub_title}\end{{center}}")
         
-    if paper_type == "exam":
+    if is_exam_style:
         lines.append(r"\begin{center}")
         lines.append(f"    本试卷共 \\pageref{{LastPage}} 页，{total_q_count} 题。全卷满分 {total_score_sum} 分。考试用时 120 分钟。")
         lines.append(r"\end{center}")
@@ -158,6 +159,21 @@ def build_latex_document(title: str, subtitle: str, paper_type: str, questions_d
         sec_score = sum(it.get("score", 5) for it in items)
         unit_score = items[0].get("score", 5) if count > 0 else 5
         
+        # For exam_19, set fixed starting question number according to Gaokao layout:
+        # 单选: 1 (problem counter 0)
+        # 多选: 9 (problem counter 8)
+        # 填空: 12 (problem counter 11)
+        # 解答: 15 (problem counter 14)
+        if paper_type == "exam_19":
+            if q_type == "single_choice":
+                lines.append(r"\setcounter{problem}{0}")
+            elif q_type == "multi_choice":
+                lines.append(r"\setcounter{problem}{8}")
+            elif q_type == "fill_in_blank":
+                lines.append(r"\setcounter{problem}{11}")
+            elif q_type == "detailed_answer":
+                lines.append(r"\setcounter{problem}{14}")
+
         if q_type == "single_choice":
             section_header = f"选择题：本题共 {count} 小题，每小题 {unit_score} 分，共 {sec_score} 分。\n  在每小题给出的四个选项中，只有一项是符合题目要求的。"
         elif q_type == "multi_choice":

@@ -92,3 +92,14 @@ def test_exam_19_and_answer_sheet_generation(client):
     export_res = client.post("/api/paper/export/tex", json=paper_payload, headers=headers)
     assert export_res.status_code == 200
     assert export_res.headers.get("content-type") == "application/zip"
+
+    pdf_sheet_payload = {
+        "title": "2026年高考模拟试卷",
+        "subtitle": "数学",
+        "paper_type": "exam_19",
+        "target": "sheet",
+        "questions": []
+    }
+    sheet_pdf_res = client.post("/api/paper/export/pdf", json=pdf_sheet_payload, headers=headers)
+    assert sheet_pdf_res.status_code == 200
+    assert sheet_pdf_res.headers.get("content-type") == "application/pdf"

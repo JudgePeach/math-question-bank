@@ -4233,6 +4233,7 @@ def export_paper_pdf(payload: dict, db: Session = Depends(get_db)):
         title = payload.get("title", "2026年高中数学模拟考试试卷")
         subtitle = payload.get("subtitle", "")
         paper_type = payload.get("paper_type", "exam_19")
+        target = payload.get("target", "paper")  # "paper" or "sheet"
         include_answers = payload.get("include_answers", False)
         questions_input = payload.get("questions", [])
         
@@ -4249,26 +4250,16 @@ def export_paper_pdf(payload: dict, db: Session = Depends(get_db)):
                     "score": int(item.get("score", 5))
                 })
                 
-        tex_content = build_latex_document(title, subtitle, paper_type, questions_data, include_answers=include_answers)
+        if target == "sheet":
+            tex_content = build_answer_sheet_latex(title, subtitle, questions_data)
+        else:
+            tex_content = build_latex_document(title, subtitle, paper_type, questions_data, include_answers=include_answers)
+
         image_paths = collect_referenced_images(questions_data, UPLOAD_DIR)
-        
         pdf_bytes, log_or_err = compile_tex_to_pdf(tex_content, image_paths)
         
-        if paper_type == "exam_19" and pdf_bytes:
-            tex_sheet = build_answer_sheet_latex(title, subtitle, questions_data)
-            sheet_pdf_bytes, _ = compile_tex_to_pdf(tex_sheet, image_paths)
-            if sheet_pdf_bytes:
-                zip_buf = io.BytesIO()
-                with zipfile.ZipFile(zip_buf, "w", zipfile.ZIP_DEFLATED) as zf:
-                    zf.writestr(f"{title}_试卷.pdf", pdf_bytes)
-                    zf.writestr(f"{title}_答题卡.pdf", sheet_pdf_bytes)
-                filename = f"paper_pkg_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.zip"
-                return Response(content=zip_buf.getvalue(), media_type="application/zip", headers={
-                    "Content-Disposition": f'attachment; filename="{filename}"'
-                })
-
         if pdf_bytes:
-            filename = f"paper_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.pdf"
+            filename = f"sheet_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.pdf" if target == "sheet" else f"paper_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.pdf"
             return Response(content=pdf_bytes, media_type="application/pdf", headers={
                 "Content-Disposition": f'inline; filename="{filename}"'
             })
