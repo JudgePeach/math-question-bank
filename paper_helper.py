@@ -196,34 +196,53 @@ def build_latex_document(title: str, subtitle: str, paper_type: str, questions_d
             q_score = item.get("score", 5)
             tikz = q.get("tikz_code", "").strip()
 
-            if tikz and r"\begin{tikzpicture}" not in raw_content:
-                # Strip markdown image preview tags to prevent duplicate image blocks in LaTeX PDF export
-                cleaned_raw = re.sub(r'!\[.*?\]\([^)]+\)', '', raw_content)
-                cleaned_content = clean_content_for_latex(cleaned_raw, q_type=q_type)
-                if q_type == "detailed_answer":
-                    lines.append(f"\\begin{{problem}}[points = {q_score}]")
-                    lines.append(cleaned_content)
-                    lines.append(r"\begin{center}")
-                    lines.append(tikz)
-                    lines.append(r"\end{center}")
-                    lines.append(r"\end{problem}")
+            fig_body = ""
+            cleaned_raw = raw_content
+
+            if tikz or r"\begin{tikzpicture}" in raw_content:
+                tikz_code = tikz
+                if not tikz_code and r"\begin{tikzpicture}" in raw_content:
+                    m = re.search(r'(\\begin\{tikzpicture\}[\s\S]*?\\end\{tikzpicture\})', raw_content)
+                    if m:
+                        tikz_code = m.group(1)
+                        cleaned_raw = cleaned_raw.replace(tikz_code, '').strip()
+                
+                cleaned_raw = re.sub(r'!\[.*?\]\([^)]+\)', '', cleaned_raw).strip()
+                fig_body = f"\\resizebox{{5.0cm}}{{!}}{{{tikz_code}}}"
+            elif re.search(r'!\[.*?\]\((?:/static/uploads/|static/uploads/|/uploads/|uploads/)?([^)]+)\)', raw_content):
+                m_img = re.search(r'!\[.*?\]\((?:/static/uploads/|static/uploads/|/uploads/|uploads/)?([^)]+)\)', raw_content)
+                if m_img:
+                    img_filename = os.path.basename(m_img.group(1))
+                    fig_body = f"\\includegraphics[width=5.0cm]{{{img_filename}}}"
+                    cleaned_raw = re.sub(r'!\[.*?\]\([^)]+\)', '', raw_content).strip()
+
+            cleaned_content = clean_content_for_latex(cleaned_raw, q_type=q_type)
+            env_name = "problem" if q_type == "detailed_answer" else "question"
+            points_arg = f"[points = {q_score}]" if q_type == "detailed_answer" else ""
+
+            lines.append(f"\\begin{{{env_name}}}{points_arg}")
+            if fig_body:
+                choices_part = ""
+                if r"\begin{choices}" in cleaned_content:
+                    parts = cleaned_content.split(r"\begin{choices}", 1)
+                    stem_text = parts[0].strip()
+                    choices_part = r"\begin{choices}" + parts[1]
                 else:
-                    lines.append(r"\begin{question}")
-                    lines.append(cleaned_content)
-                    lines.append(r"\begin{center}")
-                    lines.append(tikz)
-                    lines.append(r"\end{center}")
-                    lines.append(r"\end{question}")
+                    stem_text = cleaned_content
+
+                lines.append(r"\begin{minipage}[t]{\dimexpr\linewidth-5.6cm\relax}")
+                lines.append(stem_text)
+                lines.append(r"\end{minipage}%")
+                lines.append(r"\hfill")
+                lines.append(r"\begin{minipage}[t]{5.2cm}")
+                lines.append(r"  \raggedleft")
+                lines.append(f"  {fig_body}")
+                lines.append(r"\end{minipage}")
+                if choices_part:
+                    lines.append(choices_part)
             else:
-                cleaned_content = clean_content_for_latex(raw_content, q_type=q_type)
-                if q_type == "detailed_answer":
-                    lines.append(f"\\begin{{problem}}[points = {q_score}]")
-                    lines.append(cleaned_content)
-                    lines.append(r"\end{problem}")
-                else:
-                    lines.append(r"\begin{question}")
-                    lines.append(cleaned_content)
-                    lines.append(r"\end{question}")
+                lines.append(cleaned_content)
+            lines.append(f"\\end{{{env_name}}}")
             
             if include_answers:
                 ans_text = q.get("answer_markdown", "").strip()
