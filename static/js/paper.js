@@ -763,6 +763,10 @@
                         <i class="fa-solid fa-floppy-disk"></i>
                         <span>保存试卷</span>
                     </button>
+                    <button onclick="openSavedPapersModal()" class="px-3 py-1.5 rounded-xl text-xs font-semibold bg-amber-500 text-white shadow-sm hover:bg-amber-600 active:scale-95 transition-all flex items-center space-x-1.5" title="打开历史试卷归档库，查阅、删除或一键载入重新导出">
+                        <i class="fa-solid fa-folder-open"></i>
+                        <span>历史试卷库</span>
+                    </button>
                 </div>
             </div>
 
@@ -1540,6 +1544,233 @@
             }
         } catch (e) {
             if (window.showToast) window.showToast('保存试卷请求异常', 'error');
+        }
+    };
+
+    // ----------------- Saved Papers Archive Library Modal -----------------
+    window.openSavedPapersModal = async function () {
+        let modal = document.getElementById('savedPapersModal');
+        if (modal) modal.remove();
+
+        modal = document.createElement('div');
+        modal.id = 'savedPapersModal';
+        modal.className = 'fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-md flex items-center justify-center p-4 animate-in fade-in duration-200';
+        modal.innerHTML = `
+            <div class="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl shadow-2xl w-full max-w-3xl max-h-[85vh] flex flex-col overflow-hidden font-sans">
+                <!-- Header -->
+                <div class="px-6 py-4 border-b border-slate-100 dark:border-slate-800 flex items-center justify-between bg-slate-50/50 dark:bg-slate-800/50">
+                    <div class="flex items-center space-x-2.5">
+                        <div class="w-9 h-9 rounded-2xl bg-amber-500/10 text-amber-600 dark:text-amber-400 flex items-center justify-center font-bold text-lg">
+                            <i class="fa-solid fa-folder-open"></i>
+                        </div>
+                        <div>
+                            <h3 class="font-bold text-slate-800 dark:text-slate-100 text-base">历史试卷归档库</h3>
+                            <p class="text-xs text-slate-400">查看、一键载入还原或删除已保存的历史试卷记录</p>
+                        </div>
+                    </div>
+                    <button onclick="document.getElementById('savedPapersModal').remove()" class="w-8 h-8 rounded-full hover:bg-slate-200/60 dark:hover:bg-slate-700 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 flex items-center justify-center transition-colors">
+                        <i class="fa-solid fa-xmark text-sm"></i>
+                    </button>
+                </div>
+
+                <!-- Body (Scrollable List) -->
+                <div class="p-6 overflow-y-auto flex-1 space-y-3" id="savedPapersListContainer">
+                    <div class="text-center py-12 text-slate-400 font-sans text-xs">
+                        <i class="fa-solid fa-spinner fa-spin text-xl text-brand-500 mb-2 block"></i>
+                        正在获取历史试卷列表...
+                    </div>
+                </div>
+
+                <!-- Footer -->
+                <div class="px-6 py-3.5 border-t border-slate-100 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-800/50 flex items-center justify-between text-xs text-slate-400">
+                    <span>共保存 <strong id="savedPaperTotalCount" class="text-slate-700 dark:text-slate-200">0</strong> 份历史试卷</span>
+                    <button onclick="document.getElementById('savedPapersModal').remove()" class="px-4 py-1.5 rounded-xl bg-slate-200 text-slate-700 hover:bg-slate-300 font-medium transition-colors dark:bg-slate-800 dark:text-slate-200 dark:hover:bg-slate-700">
+                        关闭窗口
+                    </button>
+                </div>
+            </div>
+        `;
+        document.body.appendChild(modal);
+
+        try {
+            const res = await fetch('/api/papers');
+            const data = await res.json();
+            const container = document.getElementById('savedPapersListContainer');
+            const countEl = document.getElementById('savedPaperTotalCount');
+
+            if (data.status === 'success' && data.data) {
+                const papers = data.data;
+                if (countEl) countEl.textContent = papers.length;
+
+                if (papers.length === 0) {
+                    container.innerHTML = `
+                        <div class="text-center py-16">
+                            <div class="w-14 h-14 mx-auto rounded-3xl bg-slate-100 dark:bg-slate-800 text-slate-300 dark:text-slate-600 flex items-center justify-center text-2xl mb-3">
+                                <i class="fa-solid fa-box-open"></i>
+                            </div>
+                            <p class="text-sm font-semibold text-slate-500 dark:text-slate-400">暂无保存的历史试卷</p>
+                            <p class="text-xs text-slate-400 mt-1">在组卷工作台中挑选题目后点击“保存试卷”即可归档在此处</p>
+                        </div>
+                    `;
+                    return;
+                }
+
+                const paperTypeMap = {
+                    'exam_19': { label: '19题高考卷', color: 'bg-indigo-50 text-indigo-600 border-indigo-200 dark:bg-indigo-950/40 dark:border-indigo-800 dark:text-indigo-300' },
+                    'exam': { label: '标准卷', color: 'bg-emerald-50 text-emerald-600 border-emerald-200 dark:bg-emerald-950/40 dark:border-emerald-800 dark:text-emerald-300' },
+                    'quiz': { label: '小练/周测', color: 'bg-amber-50 text-amber-600 border-amber-200 dark:bg-amber-950/40 dark:border-amber-800 dark:text-amber-300' },
+                    'handout': { label: '讲义/教案', color: 'bg-rose-50 text-rose-600 border-rose-200 dark:bg-rose-950/40 dark:border-rose-800 dark:text-rose-300' }
+                };
+
+                container.innerHTML = papers.map(p => {
+                    const typeInfo = paperTypeMap[p.paper_type] || { label: '试卷', color: 'bg-slate-100 text-slate-600' };
+                    const dateStr = p.created_at ? new Date(p.created_at).toLocaleString('zh-CN', { year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' }) : '未知时间';
+
+                    return `
+                        <div class="bg-slate-50/70 dark:bg-slate-800/40 border border-slate-200/80 dark:border-slate-700/60 rounded-2xl p-4 flex items-center justify-between hover:border-brand-300 dark:hover:border-brand-600 hover:shadow-md transition-all group">
+                            <div class="flex-1 min-w-0 pr-4">
+                                <div class="flex items-center space-x-2 mb-1">
+                                    <span class="inline-flex items-center text-[10px] font-semibold px-2 py-0.5 rounded-full border ${typeInfo.color}">
+                                        ${typeInfo.label}
+                                    </span>
+                                    <h4 class="font-bold text-slate-800 dark:text-slate-100 text-sm truncate group-hover:text-brand-600 transition-colors">${escapeHtml(p.title)}</h4>
+                                </div>
+                                <div class="flex items-center space-x-4 text-xs text-slate-400">
+                                    <span><i class="fa-solid fa-calculator text-[10px] mr-1 text-slate-400"></i>总分: <strong class="text-slate-600 dark:text-slate-300">${p.total_score}分</strong></span>
+                                    <span><i class="fa-solid fa-list-check text-[10px] mr-1 text-slate-400"></i>题目数: <strong class="text-slate-600 dark:text-slate-300">${p.question_count}题</strong></span>
+                                    <span><i class="fa-regular fa-clock text-[10px] mr-1 text-slate-400"></i>${dateStr}</span>
+                                </div>
+                                ${p.subtitle ? `<p class="text-xs text-slate-400 mt-1 truncate italic">备注: ${escapeHtml(p.subtitle)}</p>` : ''}
+                            </div>
+                            <div class="flex items-center space-x-2 shrink-0">
+                                <button onclick="loadSavedPaper(${p.id})" class="px-3 py-1.5 rounded-xl bg-brand-500 hover:bg-brand-600 active:scale-95 text-white text-xs font-semibold shadow-xs transition-all flex items-center space-x-1" title="将此试卷一键载入到组卷工作台">
+                                    <i class="fa-solid fa-arrow-right-to-bracket text-[11px]"></i>
+                                    <span>载入试卷</span>
+                                </button>
+                                <button onclick="quickExportPaperPdf(${p.id})" class="px-3 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 active:scale-95 text-white text-xs font-semibold shadow-xs transition-all flex items-center space-x-1" title="快速编译 PDF">
+                                    <i class="fa-solid fa-file-pdf text-[11px]"></i>
+                                    <span>PDF</span>
+                                </button>
+                                <button onclick="deleteSavedPaper(${p.id})" class="p-1.5 rounded-xl text-slate-400 hover:text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-950/40 transition-colors" title="删除此保存试卷">
+                                    <i class="fa-solid fa-trash-can text-xs"></i>
+                                </button>
+                            </div>
+                        </div>
+                    `;
+                }).join('');
+            }
+        } catch (e) {
+            console.error(e);
+            const container = document.getElementById('savedPapersListContainer');
+            if (container) {
+                container.innerHTML = `<div class="text-center py-12 text-rose-500 text-xs">加载历史试卷失败: ${e.message}</div>`;
+            }
+        }
+    };
+
+    window.loadSavedPaper = async function (paperId) {
+        try {
+            if (window.showToast) window.showToast('正在载入试卷数据...', 'info');
+
+            const res = await fetch(`/api/papers/${paperId}`);
+            const data = await res.json();
+            if (data.status === 'success' && data.data) {
+                const paper = data.data;
+
+                // Update metadata
+                window.PaperStore.meta.title = paper.title || '未命名试卷';
+                window.PaperStore.meta.subtitle = paper.subtitle || '';
+                window.PaperStore.meta.paper_type = paper.paper_type || 'exam';
+
+                // Rebuild cart & questionsMap
+                window.PaperStore.cart = [];
+                if (paper.questions && paper.questions.length > 0) {
+                    paper.questions.forEach(item => {
+                        const qObj = item.question;
+                        window.PaperStore.questionsMap[qObj.id] = qObj;
+                        window.PaperStore.cart.push({
+                            id: qObj.id,
+                            score: item.score || 5
+                        });
+                    });
+                }
+
+                // Close modal
+                const modal = document.getElementById('savedPapersModal');
+                if (modal) modal.remove();
+
+                // Re-render UI
+                if (typeof window.renderPaperWorkspace === 'function') {
+                    window.renderPaperWorkspace();
+                }
+                if (window.showToast) window.showToast(`已成功载入试卷: 《${paper.title}》`, 'success');
+            } else {
+                if (window.showToast) window.showToast(data.message || '载入试卷失败', 'error');
+            }
+        } catch (e) {
+            console.error('Load paper failed:', e);
+            if (window.showToast) window.showToast('载入试卷请求失败', 'error');
+        }
+    };
+
+    window.deleteSavedPaper = async function (paperId) {
+        if (!confirm('确定要删除这份历史试卷记录吗？（不会影响题库中的题目数据）')) return;
+
+        try {
+            const res = await fetch(`/api/papers/${paperId}`, { method: 'DELETE' });
+            const data = await res.json();
+            if (data.status === 'success') {
+                if (window.showToast) window.showToast('历史试卷已删除', 'success');
+                window.openSavedPapersModal();
+            } else {
+                if (window.showToast) window.showToast(data.message || '删除失败', 'error');
+            }
+        } catch (e) {
+            console.error('Delete paper failed:', e);
+            if (window.showToast) window.showToast('删除试卷请求失败', 'error');
+        }
+    };
+
+    window.quickExportPaperPdf = async function (paperId) {
+        try {
+            const res = await fetch(`/api/papers/${paperId}`);
+            const data = await res.json();
+            if (data.status === 'success' && data.data) {
+                const paper = data.data;
+                const cartQuestions = (paper.questions || []).map(item => ({
+                    id: item.id,
+                    score: item.score,
+                    figure_align: (item.question || {}).figure_align || 'right'
+                }));
+
+                const tab = window.open('', '_blank');
+                setPdfTabLoadingState(tab, '📄 试卷 PDF 编译中', '📄', `正在在线静默编译《${paper.title}》高清 PDF...`);
+
+                const pdfRes = await fetch('/api/paper/export/pdf', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        title: paper.title,
+                        subtitle: paper.subtitle,
+                        paper_type: paper.paper_type,
+                        target: 'paper',
+                        questions: cartQuestions
+                    })
+                });
+
+                if (pdfRes.ok && pdfRes.headers.get('content-type')?.includes('application/pdf')) {
+                    const blob = await pdfRes.blob();
+                    const url = URL.createObjectURL(blob);
+                    if (tab && !tab.closed) {
+                        tab.location.href = url;
+                    }
+                } else {
+                    if (tab && !tab.closed) tab.close();
+                    if (window.showToast) window.showToast('编译 PDF 失败', 'error');
+                }
+            }
+        } catch (e) {
+            console.error('Quick export PDF failed:', e);
         }
     };
 

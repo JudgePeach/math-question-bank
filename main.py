@@ -4207,6 +4207,64 @@ def save_paper(payload: dict, background_tasks: BackgroundTasks, db: Session = D
         db.rollback()
         return JSONResponse(content={"status": "error", "message": f"保存试卷失败: {str(e)}"}, status_code=500)
 
+@app.get("/api/papers")
+def list_papers(db: Session = Depends(get_db)):
+    """获取所有历史试卷列表"""
+    try:
+        papers = db.query(Paper).order_by(Paper.created_at.desc()).all()
+        result = []
+        for p in papers:
+            q_count = db.query(PaperQuestion).filter(PaperQuestion.paper_id == p.id).count()
+            d = p.to_dict()
+            d["question_count"] = q_count
+            result.append(d)
+        return {"status": "success", "data": result}
+    except Exception as e:
+        return JSONResponse(content={"status": "error", "message": str(e)}, status_code=500)
+
+@app.get("/api/papers/{paper_id}")
+def get_paper_detail(paper_id: int, db: Session = Depends(get_db)):
+    """获取单张试卷的详细信息及关联题目列表（用于一键载入）"""
+    try:
+        paper = db.query(Paper).filter(Paper.id == paper_id).first()
+        if not paper:
+            return JSONResponse(content={"status": "error", "message": "试卷不存在"}, status_code=404)
+        
+        pqs = db.query(PaperQuestion).filter(PaperQuestion.paper_id == paper_id).order_by(PaperQuestion.order_index.asc()).all()
+        
+        questions_list = []
+        for pq in pqs:
+            q = db.query(Question).filter(Question.id == pq.question_id).first()
+            if q:
+                questions_list.append({
+                    "id": q.id,
+                    "score": pq.score,
+                    "question": q.to_dict()
+                })
+                
+        result = paper.to_dict()
+        result["questions"] = questions_list
+        return {"status": "success", "data": result}
+    except Exception as e:
+        return JSONResponse(content={"status": "error", "message": str(e)}, status_code=500)
+
+@app.delete("/api/papers/{paper_id}")
+def delete_paper(paper_id: int, background_tasks: BackgroundTasks, db: Session = Depends(get_db)):
+    """删除指定的历史试卷"""
+    try:
+        paper = db.query(Paper).filter(Paper.id == paper_id).first()
+        if not paper:
+            return JSONResponse(content={"status": "error", "message": "试卷不存在"}, status_code=404)
+            
+        db.query(PaperQuestion).filter(PaperQuestion.paper_id == paper_id).delete()
+        db.delete(paper)
+        db.commit()
+        background_tasks.add_task(export_database_to_files)
+        return {"status": "success", "message": "试卷记录已成功删除"}
+    except Exception as e:
+        db.rollback()
+        return JSONResponse(content={"status": "error", "message": str(e)}, status_code=500)
+
 @app.post("/api/paper/export/tex")
 def export_paper_tex(payload: dict, db: Session = Depends(get_db)):
     """导出 LaTeX 源码 ZIP 压缩包"""

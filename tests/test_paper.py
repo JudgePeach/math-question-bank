@@ -59,6 +59,22 @@ def test_paper_api_flow(client):
     assert ai_res.json()["status"] == "success"
     assert len(ai_res.json()["data"]) >= 1
 
+    # 6. Saved Papers List & Detail & Delete
+    list_res = client.get("/api/papers")
+    assert list_res.status_code == 200
+    papers_list = list_res.json()["data"]
+    assert len(papers_list) >= 1
+    paper_id = papers_list[0]["id"]
+
+    detail_res = client.get(f"/api/papers/{paper_id}")
+    assert detail_res.status_code == 200
+    assert detail_res.json()["data"]["title"] == "测试高中数学单元测试卷"
+    assert len(detail_res.json()["data"]["questions"]) == 1
+
+    del_res = client.delete(f"/api/papers/{paper_id}", headers=headers)
+    assert del_res.status_code == 200
+    assert del_res.json()["status"] == "success"
+
 def test_exam_19_and_answer_sheet_generation(client):
     headers = {"X-Local-Token": LOCAL_TOKEN}
     
