@@ -528,11 +528,11 @@ def build_answer_sheet_latex(title: str, subtitle: str, questions_data: list) ->
 
     # Map for Q15..Q19 (full node line, template line, figure top-right anchor coordinates locked inside right border)
     coords_map = [
-        ("15", r"\node at (\exx,\exy) {15.（13分）};", r"\node at (\exx,\exy) {{15.（{score}分）}};", "10.5, 10.2"),
-        ("16", r"\node at (\exx,\exy-0.25*\ebh) {16.（15分）};", r"\node at (\exx,\exy-0.25*\ebh) {{16.（{score}分）}};", "23.5, 20.0"),
-        ("17", r"\node at (\exx,\exy) {17.（15分）};", r"\node at (\exx,\exy) {{17.（{score}分）}};", "36.7, 26.3"),
-        ("18", r"\node at (\exx,\exy) {18.（17分）};", r"\node at (\exx,\exy) {{18.（{score}分）}};", "10.5, 26.3"),
-        ("19", r"\node at (\exx,\exy-0.5*\ebh) {19.（17分）};", r"\node at (\exx,\exy-0.5*\ebh) {{19.（{score}分）}};", "23.5, 13.5"),
+        ("15", r"\node at (\exx,\exy) {15.（13分）};", r"\node at (\exx,\exy) {{15.（{score}分）}};", "11.3, 10.2"),
+        ("16", r"\node at (\exx,\exy-0.25*\ebh) {16.（15分）};", r"\node at (\exx,\exy-0.25*\ebh) {{16.（{score}分）}};", "24.5, 20.0"),
+        ("17", r"\node at (\exx,\exy) {17.（15分）};", r"\node at (\exx,\exy) {{17.（{score}分）}};", "37.7, 26.3"),
+        ("18", r"\node at (\exx,\exy) {18.（17分）};", r"\node at (\exx,\exy) {{18.（{score}分）}};", "11.3, 26.3"),
+        ("19", r"\node at (\exx,\exy-0.5*\ebh) {19.（17分）};", r"\node at (\exx,\exy-0.5*\ebh) {{19.（{score}分）}};", "24.5, 13.5"),
     ]
 
     for idx in range(min(5, len(detailed_questions))):
@@ -549,7 +549,7 @@ def build_answer_sheet_latex(title: str, subtitle: str, questions_data: list) ->
         full_content = q_content + ("\n" + tikz_code if tikz_code else "")
         fig_code = extract_figures_for_answer_sheet(full_content)
         if fig_code:
-            fig_node = f"\\node[anchor=north east, inner sep=0pt, outer sep=0pt] at ({fig_coords}) {{\\resizebox{{3.0cm}}{{!}}{{{fig_code}}}}};"
+            fig_node = f"\\node[anchor=north east, inner sep=0pt, outer sep=0pt] at ({fig_coords}) {{\\resizebox{{4.2cm}}{{!}}{{{fig_code}}}}};"
             replacement = f"{new_line}\n    {fig_node}"
         else:
             replacement = new_line
