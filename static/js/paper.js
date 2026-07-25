@@ -1499,17 +1499,39 @@
 
             if (res.ok) {
                 const blob = await res.blob();
+                const rawTitle = (window.PaperStore.meta.title || '试卷').trim();
+                const safeTitle = rawTitle.replace(/[/\\?%*:|"<>]/g, '_') || '试卷';
+                const filename = `${safeTitle}.zip`;
+
+                // 1. Try modern Web File System Access API (Pops up native "Save As" / "另存为" file picker)
+                if (typeof window.showSaveFilePicker === 'function') {
+                    try {
+                        const handle = await window.showSaveFilePicker({
+                            suggestedName: filename,
+                            types: [{
+                                description: 'Zip Archive',
+                                accept: { 'application/zip': ['.zip'] }
+                            }]
+                        });
+                        const writable = await handle.createWritable();
+                        await writable.write(blob);
+                        await writable.close();
+                        if (window.showToast) window.showToast(`LaTeX 源码包已保存至指定目录`, 'success');
+                        return;
+                    } catch (err) {
+                        // User clicked cancel in native Save As dialog
+                        if (err && err.name === 'AbortError') return;
+                    }
+                }
+
+                // 2. Fallback to standard browser download
                 const url = URL.createObjectURL(blob);
                 const a = document.createElement('a');
                 a.href = url;
-
-                const rawTitle = (window.PaperStore.meta.title || '试卷').trim();
-                const safeTitle = rawTitle.replace(/[/\\?%*:|"<>]/g, '_') || '试卷';
-                a.download = `${safeTitle}.zip`;
-
+                a.download = filename;
                 a.click();
                 URL.revokeObjectURL(url);
-                if (window.showToast) window.showToast(`LaTeX 源码包《${safeTitle}.zip》导出成功！`, 'success');
+                if (window.showToast) window.showToast(`LaTeX 源码包《${filename}》导出成功！`, 'success');
             } else {
                 const errData = await res.json();
                 if (window.showToast) window.showToast(errData.message || '导出失败', 'error');
