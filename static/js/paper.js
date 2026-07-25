@@ -810,15 +810,73 @@
         }
     };
 
+    // Drag and Drop Event Handlers for A4 Paper Canvas items
+    let draggedItemData = null;
+
+    window.onPaperCanvasDragStart = function (e, qid, cartIndex) {
+        draggedItemData = { qid: parseInt(qid, 10), fromIndex: parseInt(cartIndex, 10) };
+        e.dataTransfer.effectAllowed = 'move';
+        e.dataTransfer.setData('text/plain', String(qid));
+        if (e.currentTarget) {
+            e.currentTarget.classList.add('opacity-40');
+        }
+    };
+
+    window.onPaperCanvasDragOver = function (e) {
+        e.preventDefault();
+        e.dataTransfer.dropEffect = 'move';
+    };
+
+    window.onPaperCanvasDragEnter = function (e) {
+        e.preventDefault();
+        const targetCard = e.currentTarget.closest('.paper-q-item');
+        if (targetCard && draggedItemData) {
+            targetCard.classList.add('border-brand-500', 'bg-brand-50/60', 'ring-2', 'ring-brand-400/40');
+        }
+    };
+
+    window.onPaperCanvasDragLeave = function (e) {
+        const targetCard = e.currentTarget.closest('.paper-q-item');
+        if (targetCard) {
+            targetCard.classList.remove('border-brand-500', 'bg-brand-50/60', 'ring-2', 'ring-brand-400/40');
+        }
+    };
+
+    window.onPaperCanvasDrop = function (e, qid, toIndex) {
+        e.preventDefault();
+        const targetCard = e.currentTarget.closest('.paper-q-item');
+        if (targetCard) {
+            targetCard.classList.remove('border-brand-500', 'bg-brand-50/60', 'ring-2', 'ring-brand-400/40');
+        }
+
+        if (!draggedItemData) return;
+        const fromIndex = draggedItemData.fromIndex;
+        toIndex = parseInt(toIndex, 10);
+
+        if (fromIndex !== toIndex && fromIndex >= 0 && toIndex >= 0 && fromIndex < window.PaperStore.cart.length && toIndex < window.PaperStore.cart.length) {
+            const cart = window.PaperStore.cart;
+            const movedItem = cart.splice(fromIndex, 1)[0];
+            cart.splice(toIndex, 0, movedItem);
+            
+            saveCartToStorage();
+            renderPart3QuestionStream();
+            window.renderPaperCanvas();
+            if (window.showToast) window.showToast(`试题顺序已更新`, 'info');
+        }
+        draggedItemData = null;
+    };
+
     function generateA4PaperBodyHtml(cart) {
         if (cart.length === 0) {
             return `<div class="text-center py-20 text-slate-400 font-sans text-xs">暂无试题数据，请在左侧点击“加入试卷”添加题目</div>`;
         }
 
+        const cartItemsWithIndex = cart.map((item, idx) => ({ ...item, cartIndex: idx }));
+
         const typeOrder = ['single_choice', 'multi_choice', 'fill_in_blank', 'detailed_answer'];
         const grouped = {};
 
-        cart.forEach(item => {
+        cartItemsWithIndex.forEach(item => {
             const q = window.PaperStore.questionsMap[item.id];
             const qType = q ? q.question_type : 'single_choice';
             if (!grouped[qType]) grouped[qType] = [];
@@ -857,14 +915,14 @@
                     <h3 class="font-bold text-[13.5px] font-serif mb-2.5 text-slate-900 leading-snug">
                         ${secHeaderText}
                     </h3>
-                    <div class="space-y-3.5">
+                    <div class="space-y-2">
             `;
 
             items.forEach(item => {
                 const q = window.PaperStore.questionsMap[item.id];
                 let contentHtml = q ? formatQuestionContentHtml(q.content) : '';
-                
-                // For choice questions, ensure \paren parentheses space is rendered naturally if choices grid exists
+                const cIdx = item.cartIndex;
+
                 if (qType === 'single_choice' || qType === 'multi_choice') {
                     if (!contentHtml.includes('(') && !contentHtml.includes('（') && !contentHtml.includes('paren')) {
                         if (contentHtml.includes('choices-grid') || contentHtml.includes('katex-choices-grid')) {
@@ -876,9 +934,34 @@
                 }
 
                 html += `
-                    <div class="paper-q-item text-[13px] leading-normal font-serif pl-1">
-                        <span class="font-bold mr-1 text-slate-900">${globalQIndex}.</span>
-                        <div class="inline">${contentHtml}</div>
+                    <div class="paper-q-item group relative text-[13px] leading-normal font-serif p-2 rounded-xl border border-transparent hover:border-brand-300 hover:bg-brand-50/30 transition-all duration-200 cursor-grab active:cursor-grabbing"
+                        draggable="true"
+                        data-qid="${q ? q.id : ''}"
+                        data-cart-index="${cIdx}"
+                        ondragstart="onPaperCanvasDragStart(event, ${q ? q.id : 0}, ${cIdx})"
+                        ondragover="onPaperCanvasDragOver(event)"
+                        ondragenter="onPaperCanvasDragEnter(event)"
+                        ondragleave="onPaperCanvasDragLeave(event)"
+                        ondrop="onPaperCanvasDrop(event, ${q ? q.id : 0}, ${cIdx})">
+
+                        <!-- Hover Action Bar: Drag Handle & Quick Move/Remove Buttons -->
+                        <div class="absolute right-2 top-2 opacity-0 group-hover:opacity-100 transition-opacity flex items-center space-x-1 bg-white/95 backdrop-blur-sm px-2 py-0.5 rounded-lg border border-slate-200 shadow-xs text-2xs font-sans select-none z-10">
+                            <span class="text-slate-400 font-medium mr-1"><i class="fa-solid fa-grip-vertical"></i> 按住拖拽排序</span>
+                            <button onclick="event.stopPropagation(); window.movePaperQuestion(${cIdx}, 'up')" ${cIdx === 0 ? 'disabled' : ''} class="p-0.5 text-slate-500 hover:text-brand-600 disabled:opacity-30" title="上移">
+                                <i class="fa-solid fa-chevron-up"></i>
+                            </button>
+                            <button onclick="event.stopPropagation(); window.movePaperQuestion(${cIdx}, 'down')" ${cIdx === cart.length - 1 ? 'disabled' : ''} class="p-0.5 text-slate-500 hover:text-brand-600 disabled:opacity-30" title="下移">
+                                <i class="fa-solid fa-chevron-down"></i>
+                            </button>
+                            <button onclick="event.stopPropagation(); window.removeFromCart(${q ? q.id : 0})" class="p-0.5 text-slate-400 hover:text-rose-600" title="移出试卷">
+                                <i class="fa-solid fa-xmark"></i>
+                            </button>
+                        </div>
+
+                        <div class="flex items-start">
+                            <span class="font-bold mr-1 text-slate-900 shrink-0">${globalQIndex}.</span>
+                            <div class="inline flex-1">${contentHtml}</div>
+                        </div>
                     </div>
                 `;
                 globalQIndex++;
