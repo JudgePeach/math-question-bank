@@ -270,11 +270,11 @@ def build_latex_document(title: str, subtitle: str, paper_type: str, questions_d
             
             # Inject solution space for detailed_answer questions on papers without answer sheets
             if q_type == "detailed_answer" and paper_type != "exam_19" and not include_answers:
-                sol_space = item.get("solution_space") or q.get("solution_space") or "5.0"
+                sol_space = item.get("solution_space") or q.get("solution_space") or "7.0"
                 try:
                     space_val = float(sol_space)
                 except Exception:
-                    space_val = 5.0
+                    space_val = 7.0
                 if space_val > 0:
                     lines.append(f"\\vspace*{{{space_val:.1f}cm}}")
 

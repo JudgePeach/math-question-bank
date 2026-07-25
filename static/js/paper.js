@@ -483,6 +483,9 @@
     window.updatePaperMeta = function (key, value) {
         window.PaperStore.meta[key] = value;
         saveMetaToStorage();
+        if (key === 'paper_type') {
+            renderPart2FilterSection();
+        }
         window.renderPaperCanvas();
     };
 
@@ -1581,16 +1584,7 @@
         try {
             if (window.showToast) window.showToast('正在打包 LaTeX 源码与图片...', 'info');
 
-            const defaultSpace = parseFloat(window.PaperStore.meta.solution_space_default || '5.0').toFixed(1);
-            const cartQuestions = cart.map(item => {
-                const q = window.PaperStore.questionsMap[item.id] || {};
-                return {
-                    id: item.id,
-                    score: item.score,
-                    figure_align: q.figure_align || 'right',
-                    solution_space: item.solution_space !== undefined ? item.solution_space : defaultSpace
-                };
-            });
+            const cartQuestions = buildCartQuestionsPayload();
 
             const payload = {
                 title: window.PaperStore.meta.title,
@@ -1659,14 +1653,7 @@
         try {
             if (window.showToast) window.showToast('正在在线静默编译全套 PDF 并打包 LaTeX 源码...', 'info');
 
-            const cartQuestions = cart.map(item => {
-                const q = window.PaperStore.questionsMap[item.id] || {};
-                return {
-                    id: item.id,
-                    score: item.score,
-                    figure_align: q.figure_align || 'right'
-                };
-            });
+            const cartQuestions = buildCartQuestionsPayload();
 
             const payload = {
                 title: window.PaperStore.meta.title,
