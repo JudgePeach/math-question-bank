@@ -810,60 +810,127 @@
         }
     };
 
-    // Drag and Drop Event Handlers for A4 Paper Canvas items
+    // Real-Time Dynamic Drag and Drop for A4 Paper Canvas Items
     let draggedItemData = null;
+    let dragPlaceholder = null;
 
     window.onPaperCanvasDragStart = function (e, qid, cartIndex) {
-        draggedItemData = { qid: parseInt(qid, 10), fromIndex: parseInt(cartIndex, 10) };
+        const card = e.currentTarget.closest('.paper-q-item');
+        if (!card) return;
+
+        draggedItemData = { 
+            qid: parseInt(qid, 10), 
+            fromIndex: parseInt(cartIndex, 10),
+            element: card
+        };
+
         e.dataTransfer.effectAllowed = 'move';
         e.dataTransfer.setData('text/plain', String(qid));
-        if (e.currentTarget) {
-            e.currentTarget.classList.add('opacity-40');
+
+        // Create or reuse dynamic drop placeholder
+        if (!dragPlaceholder) {
+            dragPlaceholder = document.createElement('div');
+            dragPlaceholder.className = 'paper-drag-placeholder border-2 border-dashed border-brand-400 bg-brand-50/70 rounded-xl my-2 flex items-center justify-center text-xs font-semibold text-brand-600 shadow-inner transition-all duration-200 select-none';
+            dragPlaceholder.style.height = `${Math.max(48, card.offsetHeight - 8)}px`;
+            dragPlaceholder.innerHTML = '<span class="flex items-center space-x-1.5"><i class="fa-solid fa-arrow-down-long text-brand-500 animate-bounce"></i> <span>释放在此插入试题</span></span>';
         }
+
+        // Apply drag style to current card after browser creates drag ghost image
+        setTimeout(() => {
+            if (card) {
+                card.classList.add('opacity-30', 'scale-[0.98]', 'bg-slate-100');
+                if (card.parentNode) {
+                    card.parentNode.insertBefore(dragPlaceholder, card);
+                }
+            }
+        }, 0);
     };
 
     window.onPaperCanvasDragOver = function (e) {
         e.preventDefault();
         e.dataTransfer.dropEffect = 'move';
+
+        const targetCard = e.target.closest('.paper-q-item');
+        if (!targetCard || !dragPlaceholder || targetCard === draggedItemData?.element) return;
+
+        const rect = targetCard.getBoundingClientRect();
+        const midY = rect.top + rect.height / 2;
+
+        if (e.clientY < midY) {
+            // Mouse in top half -> place indicator above target
+            if (targetCard.previousElementSibling !== dragPlaceholder) {
+                targetCard.parentNode.insertBefore(dragPlaceholder, targetCard);
+            }
+        } else {
+            // Mouse in bottom half -> place indicator below target
+            if (targetCard.nextElementSibling !== dragPlaceholder) {
+                targetCard.parentNode.insertBefore(dragPlaceholder, targetCard.nextElementSibling);
+            }
+        }
     };
 
     window.onPaperCanvasDragEnter = function (e) {
         e.preventDefault();
-        const targetCard = e.currentTarget.closest('.paper-q-item');
-        if (targetCard && draggedItemData) {
-            targetCard.classList.add('border-brand-500', 'bg-brand-50/60', 'ring-2', 'ring-brand-400/40');
-        }
     };
 
     window.onPaperCanvasDragLeave = function (e) {
-        const targetCard = e.currentTarget.closest('.paper-q-item');
-        if (targetCard) {
-            targetCard.classList.remove('border-brand-500', 'bg-brand-50/60', 'ring-2', 'ring-brand-400/40');
-        }
+        e.preventDefault();
     };
 
-    window.onPaperCanvasDrop = function (e, qid, toIndex) {
-        e.preventDefault();
-        const targetCard = e.currentTarget.closest('.paper-q-item');
-        if (targetCard) {
-            targetCard.classList.remove('border-brand-500', 'bg-brand-50/60', 'ring-2', 'ring-brand-400/40');
+    window.onPaperCanvasDragEnd = function (e) {
+        const card = e.currentTarget.closest('.paper-q-item');
+        if (card) {
+            card.classList.remove('opacity-30', 'scale-[0.98]', 'bg-slate-100');
         }
 
-        if (!draggedItemData) return;
-        const fromIndex = draggedItemData.fromIndex;
-        toIndex = parseInt(toIndex, 10);
-
-        if (fromIndex !== toIndex && fromIndex >= 0 && toIndex >= 0 && fromIndex < window.PaperStore.cart.length && toIndex < window.PaperStore.cart.length) {
-            const cart = window.PaperStore.cart;
-            const movedItem = cart.splice(fromIndex, 1)[0];
-            cart.splice(toIndex, 0, movedItem);
+        // Find new index based on dragPlaceholder's location in DOM
+        if (dragPlaceholder && dragPlaceholder.parentNode && draggedItemData) {
+            const container = dragPlaceholder.parentNode;
+            const allItems = Array.from(container.children);
             
-            saveCartToStorage();
-            renderPart3QuestionStream();
-            window.renderPaperCanvas();
-            if (window.showToast) window.showToast(`试题顺序已更新`, 'info');
+            // Calculate placeholder position among question items
+            let newIndex = 0;
+            for (let i = 0; i < allItems.length; i++) {
+                const child = allItems[i];
+                if (child === dragPlaceholder) {
+                    break;
+                }
+                if (child.classList && child.classList.contains('paper-q-item') && child !== draggedItemData.element) {
+                    newIndex++;
+                }
+            }
+
+            const fromIndex = draggedItemData.fromIndex;
+            
+            if (dragPlaceholder.parentNode) {
+                dragPlaceholder.parentNode.removeChild(dragPlaceholder);
+            }
+
+            if (fromIndex !== newIndex && fromIndex >= 0 && newIndex >= 0 && fromIndex < window.PaperStore.cart.length) {
+                const cart = window.PaperStore.cart;
+                const movedItem = cart.splice(fromIndex, 1)[0];
+                const targetIdx = Math.min(newIndex, cart.length);
+                cart.splice(targetIdx, 0, movedItem);
+
+                saveCartToStorage();
+                renderPart3QuestionStream();
+                window.renderPaperCanvas();
+                if (window.showToast) window.showToast(`试题顺序已更新`, 'info');
+            } else {
+                renderPart3QuestionStream();
+                window.renderPaperCanvas();
+            }
+        } else if (dragPlaceholder && dragPlaceholder.parentNode) {
+            dragPlaceholder.parentNode.removeChild(dragPlaceholder);
         }
+
         draggedItemData = null;
+        dragPlaceholder = null;
+    };
+
+    window.onPaperCanvasDrop = function (e) {
+        e.preventDefault();
+        window.onPaperCanvasDragEnd(e);
     };
 
     function generateA4PaperBodyHtml(cart) {
@@ -915,7 +982,7 @@
                     <h3 class="font-bold text-[13.5px] font-serif mb-2.5 text-slate-900 leading-snug">
                         ${secHeaderText}
                     </h3>
-                    <div class="space-y-2">
+                    <div class="space-y-2 relative transition-all duration-200">
             `;
 
             items.forEach(item => {
@@ -942,6 +1009,7 @@
                         ondragover="onPaperCanvasDragOver(event)"
                         ondragenter="onPaperCanvasDragEnter(event)"
                         ondragleave="onPaperCanvasDragLeave(event)"
+                        ondragend="onPaperCanvasDragEnd(event)"
                         ondrop="onPaperCanvasDrop(event, ${q ? q.id : 0}, ${cIdx})">
 
                         <!-- Hover Action Bar: Drag Handle & Quick Move/Remove Buttons -->
