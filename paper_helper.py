@@ -165,19 +165,19 @@ def build_latex_document(title: str, subtitle: str, paper_type: str, questions_d
         unit_score = items[0].get("score", 5) if count > 0 else 5
         
         # For exam_19, set fixed starting question number according to Gaokao layout:
-        # 单选: 1 (problem counter 0)
-        # 多选: 9 (problem counter 8)
-        # 填空: 12 (problem counter 11)
-        # 解答: 15 (problem counter 14)
+        # 单选: 1
+        # 多选: 9
+        # 填空: 12
+        # 解答: 15
         if paper_type == "exam_19":
             if q_type == "single_choice":
-                lines.append(r"\setcounter{problem}{0}")
+                lines.append(r"\ExplSyntaxOn \int_gset:Nn \g__examzh_question_index_int {1} \ExplSyntaxOff")
             elif q_type == "multi_choice":
-                lines.append(r"\setcounter{problem}{8}")
+                lines.append(r"\ExplSyntaxOn \int_gset:Nn \g__examzh_question_index_int {9} \ExplSyntaxOff")
             elif q_type == "fill_in_blank":
-                lines.append(r"\setcounter{problem}{11}")
+                lines.append(r"\ExplSyntaxOn \int_gset:Nn \g__examzh_question_index_int {12} \ExplSyntaxOff")
             elif q_type == "detailed_answer":
-                lines.append(r"\setcounter{problem}{14}")
+                lines.append(r"\ExplSyntaxOn \int_gset:Nn \g__examzh_question_index_int {15} \ExplSyntaxOff")
 
         if q_type == "single_choice":
             section_header = f"选择题：本题共 {count} 小题，每小题 {unit_score} 分，共 {sec_score} 分。\n  在每小题给出的四个选项中，只有一项是符合题目要求的。"
