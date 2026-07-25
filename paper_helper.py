@@ -611,3 +611,41 @@ def create_tex_zip_package(title: str, tex_content: str, ans_tex_content: str, i
                 zf.write(img_p, arcname=f"images/{fname}")
 
     return zip_buffer.getvalue()
+
+def create_full_bundle_zip_package(
+    title: str,
+    tex_content: str,
+    ans_tex_content: str,
+    image_paths: list,
+    answer_sheet_tex: str = None,
+    main_pdf_bytes: bytes = None,
+    ans_pdf_bytes: bytes = None,
+    answer_sheet_pdf_bytes: bytes = None
+) -> bytes:
+    """
+    Creates an in-memory ZIP package containing LaTeX TeX files, compiled PDF files, and referenced images.
+    """
+    zip_buffer = BytesIO()
+    with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zf:
+        # 1. TeX files
+        zf.writestr("试卷正文.tex", tex_content.encode("utf-8"))
+        if ans_tex_content:
+            zf.writestr("参考答案与解析.tex", ans_tex_content.encode("utf-8"))
+        if answer_sheet_tex:
+            zf.writestr("答题卡.tex", answer_sheet_tex.encode("utf-8"))
+            
+        # 2. PDF files
+        if main_pdf_bytes:
+            zf.writestr("试卷正文.pdf", main_pdf_bytes)
+        if ans_pdf_bytes:
+            zf.writestr("参考答案与解析.pdf", ans_pdf_bytes)
+        if answer_sheet_pdf_bytes:
+            zf.writestr("答题卡.pdf", answer_sheet_pdf_bytes)
+            
+        # 3. Referenced images
+        for img_p in image_paths:
+            if os.path.exists(img_p):
+                fname = os.path.basename(img_p)
+                zf.write(img_p, arcname=f"images/{fname}")
+
+    return zip_buffer.getvalue()

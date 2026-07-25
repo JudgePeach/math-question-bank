@@ -714,59 +714,78 @@
         const hardPct = totalCount > 0 ? Math.max(0, 100 - easyPct - medPct) : 0;
 
         container.innerHTML = `
-            <!-- Top Studio Action Bar -->
-            <div class="bg-white/80 backdrop-blur-md p-3 rounded-2xl border border-slate-200/70 shadow-sm mb-4 flex items-center justify-between flex-wrap gap-2 dark:bg-slate-800/80 dark:border-slate-700/70">
-                <div class="flex items-center space-x-3">
-                    <div class="flex items-center space-x-1.5 px-3 py-1 rounded-xl bg-brand-50 text-brand-700 font-bold text-xs border border-brand-200/60 dark:bg-brand-900/40 dark:text-brand-300 dark:border-brand-800">
-                        <span>总分: ${totalScore} 分</span>
-                        <span class="text-slate-400 font-normal">|</span>
-                        <span>${totalCount} 题</span>
-                    </div>
-                    <!-- Difficulty ratio bar -->
-                    <div class="hidden lg:flex items-center space-x-1 text-xs">
-                        <span class="text-slate-400 font-medium">难度比:</span>
-                        <div class="w-24 h-2 rounded-full bg-slate-200 overflow-hidden flex dark:bg-slate-700" title="普通题: ${easyPct}% | 挑战题: ${medPct}% | 强基题: ${hardPct}%">
-                            <div class="bg-emerald-500 h-full" style="width: ${easyPct}%"></div>
-                            <div class="bg-amber-500 h-full" style="width: ${medPct}%"></div>
-                            <div class="bg-rose-500 h-full" style="width: ${hardPct}%"></div>
+            <!-- Top Studio Action Bar (Two Rows Layout) -->
+            <div class="bg-white/80 backdrop-blur-md p-3.5 rounded-2xl border border-slate-200/70 shadow-sm mb-5 flex flex-col space-y-3 dark:bg-slate-800/80 dark:border-slate-700/70">
+                <!-- Row 1: Left Stats + Right Paper Management -->
+                <div class="flex items-center justify-between flex-wrap gap-2 pb-2.5 border-b border-slate-100 dark:border-slate-700/60">
+                    <!-- Left Stats -->
+                    <div class="flex items-center space-x-3">
+                        <div class="flex items-center space-x-1.5 px-3 py-1 rounded-xl bg-brand-50 text-brand-700 font-bold text-xs border border-brand-200/60 dark:bg-brand-900/40 dark:text-brand-300 dark:border-brand-800">
+                            <span>总分: ${totalScore} 分</span>
+                            <span class="text-slate-400 font-normal">|</span>
+                            <span>${totalCount} 题</span>
                         </div>
+                        <!-- Difficulty ratio bar -->
+                        <div class="hidden lg:flex items-center space-x-1.5 text-xs">
+                            <span class="text-slate-400 font-medium">难度比:</span>
+                            <div class="w-28 h-2 rounded-full bg-slate-200 overflow-hidden flex dark:bg-slate-700" title="普通题: ${easyPct}% | 挑战题: ${medPct}% | 强基题: ${hardPct}%">
+                                <div class="bg-emerald-500 h-full" style="width: ${easyPct}%"></div>
+                                <div class="bg-amber-500 h-full" style="width: ${medPct}%"></div>
+                                <div class="bg-rose-500 h-full" style="width: ${hardPct}%"></div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Right Paper Management Actions -->
+                    <div class="flex items-center space-x-2">
+                        ${totalCount > 0 ? `
+                            <button onclick="clearCart()" class="px-3 py-1.5 rounded-xl text-xs font-semibold bg-rose-50 text-rose-600 border border-rose-200 hover:bg-rose-100 active:scale-95 transition-all flex items-center space-x-1.5 dark:bg-rose-950/40 dark:border-rose-800 dark:text-rose-300" title="清空当前试卷中的所有已选题目">
+                                <i class="fa-solid fa-trash-can"></i>
+                                <span>清空卷面</span>
+                            </button>
+                        ` : ''}
+                        <button onclick="savePaperToDb()" class="px-3 py-1.5 rounded-xl text-xs font-semibold bg-brand-600 text-white shadow-sm hover:bg-brand-700 active:scale-95 transition-all flex items-center space-x-1.5" title="将此试卷归档保存至系统数据库，并自动更新题目的引用使用次数">
+                            <i class="fa-solid fa-floppy-disk"></i>
+                            <span>保存试卷</span>
+                        </button>
+                        <button onclick="openSavedPapersModal()" class="px-3 py-1.5 rounded-xl text-xs font-semibold bg-amber-500 text-white shadow-sm hover:bg-amber-600 active:scale-95 transition-all flex items-center space-x-1.5" title="打开历史试卷归档库，查阅、删除或一键载入重新导出">
+                            <i class="fa-solid fa-folder-open"></i>
+                            <span>历史试卷库</span>
+                        </button>
                     </div>
                 </div>
 
-                <div class="flex items-center space-x-2">
-                    ${totalCount > 0 ? `
-                        <button onclick="clearCart()" class="px-3 py-1.5 rounded-xl text-xs font-semibold bg-rose-50 text-rose-600 border border-rose-200 hover:bg-rose-100 active:scale-95 transition-all flex items-center space-x-1.5 dark:bg-rose-950/40 dark:border-rose-800 dark:text-rose-300" title="清空当前试卷中的所有已选题目">
-                            <i class="fa-solid fa-trash-can"></i>
-                            <span>清空卷面</span>
+                <!-- Row 2: Preview & Export Options -->
+                <div class="flex items-center justify-between flex-wrap gap-2">
+                    <div class="text-xs font-bold text-slate-400 flex items-center space-x-1.5">
+                        <i class="fa-solid fa-cloud-arrow-down text-brand-500"></i>
+                        <span>预览与导出模式：</span>
+                    </div>
+                    <div class="flex items-center space-x-2">
+                        ${meta.paper_type === 'exam_19' ? `
+                            <button onclick="exportPaperPdf('paper')" class="px-3 py-1.5 rounded-xl text-xs font-semibold bg-emerald-600 text-white shadow-sm hover:bg-emerald-700 active:scale-95 transition-all flex items-center space-x-1.5" title="编译并打开试卷 PDF 预览">
+                                <i class="fa-solid fa-file-pdf"></i>
+                                <span>试卷 PDF 预览</span>
+                            </button>
+                            <button onclick="exportPaperPdf('sheet')" class="px-3 py-1.5 rounded-xl text-xs font-semibold bg-teal-600 text-white shadow-sm hover:bg-teal-700 active:scale-95 transition-all flex items-center space-x-1.5" title="编译并打开 A3 双面答题卡 PDF 预览">
+                                <i class="fa-solid fa-file-lines"></i>
+                                <span>答题卡 PDF 预览</span>
+                            </button>
+                        ` : `
+                            <button onclick="exportPaperPdf('paper')" class="px-3 py-1.5 rounded-xl text-xs font-semibold bg-emerald-600 text-white shadow-sm hover:bg-emerald-700 active:scale-95 transition-all flex items-center space-x-1.5" title="编译并打开高清 PDF 预览">
+                                <i class="fa-solid fa-file-pdf"></i>
+                                <span>PDF 预览</span>
+                            </button>
+                        `}
+                        <button onclick="exportPaperTex()" class="px-3 py-1.5 rounded-xl text-xs font-semibold bg-slate-700 text-white shadow-sm hover:bg-slate-800 active:scale-95 transition-all flex items-center space-x-1.5 dark:bg-slate-700 dark:hover:bg-slate-600" title="打包导出完整的 LaTeX 源码与关联插图 Zip 压缩包">
+                            <i class="fa-solid fa-file-zipper"></i>
+                            <span>LaTeX 源码包</span>
                         </button>
-                    ` : ''}
-                    ${meta.paper_type === 'exam_19' ? `
-                        <button onclick="exportPaperPdf('paper')" class="px-3 py-1.5 rounded-xl text-xs font-semibold bg-emerald-600 text-white shadow-sm hover:bg-emerald-700 active:scale-95 transition-all flex items-center space-x-1.5" title="编译并打开试卷 PDF 预览">
-                            <i class="fa-solid fa-file-pdf"></i>
-                            <span>试卷 PDF 预览</span>
+                        <button onclick="exportPaperBundle()" class="px-3.5 py-1.5 rounded-xl text-xs font-bold bg-gradient-to-r from-purple-600 to-indigo-600 text-white shadow-md hover:from-purple-700 hover:to-indigo-700 active:scale-95 transition-all flex items-center space-x-1.5" title="一键打包导出包含 LaTeX 源码、相关插图以及已编译好的全套 PDF">
+                            <i class="fa-solid fa-box-archive"></i>
+                            <span>合并全套导出 (TeX+PDF)</span>
                         </button>
-                        <button onclick="exportPaperPdf('sheet')" class="px-3 py-1.5 rounded-xl text-xs font-semibold bg-teal-600 text-white shadow-sm hover:bg-teal-700 active:scale-95 transition-all flex items-center space-x-1.5" title="编译并打开 A3 双面答题卡 PDF 预览">
-                            <i class="fa-solid fa-file-lines"></i>
-                            <span>答题卡 PDF 预览</span>
-                        </button>
-                    ` : `
-                        <button onclick="exportPaperPdf('paper')" class="px-3 py-1.5 rounded-xl text-xs font-semibold bg-emerald-600 text-white shadow-sm hover:bg-emerald-700 active:scale-95 transition-all flex items-center space-x-1.5" title="编译并打开高清 PDF 预览">
-                            <i class="fa-solid fa-file-pdf"></i>
-                            <span>PDF 预览</span>
-                        </button>
-                    `}
-                    <button onclick="exportPaperTex()" class="px-3 py-1.5 rounded-xl text-xs font-semibold bg-slate-700 text-white shadow-sm hover:bg-slate-800 active:scale-95 transition-all flex items-center space-x-1.5 dark:bg-slate-700 dark:hover:bg-slate-600" title="打包导出完整的 LaTeX 源码与关联插图 Zip 压缩包">
-                        <i class="fa-solid fa-file-zipper"></i>
-                        <span>LaTeX 导出</span>
-                    </button>
-                    <button onclick="savePaperToDb()" class="px-3 py-1.5 rounded-xl text-xs font-semibold bg-brand-600 text-white shadow-sm hover:bg-brand-700 active:scale-95 transition-all flex items-center space-x-1.5" title="将此试卷归档保存至系统数据库，并自动更新题目的引用使用次数">
-                        <i class="fa-solid fa-floppy-disk"></i>
-                        <span>保存试卷</span>
-                    </button>
-                    <button onclick="openSavedPapersModal()" class="px-3 py-1.5 rounded-xl text-xs font-semibold bg-amber-500 text-white shadow-sm hover:bg-amber-600 active:scale-95 transition-all flex items-center space-x-1.5" title="打开历史试卷归档库，查阅、删除或一键载入重新导出">
-                        <i class="fa-solid fa-folder-open"></i>
-                        <span>历史试卷库</span>
-                    </button>
+                    </div>
                 </div>
             </div>
 
@@ -1538,6 +1557,79 @@
             }
         } catch (e) {
             if (window.showToast) window.showToast('LaTeX 打包请求异常', 'error');
+        }
+    };
+
+    window.exportPaperBundle = async function () {
+        const cart = window.PaperStore.cart;
+        if (cart.length === 0) {
+            if (window.showToast) window.showToast('卷面为空，无法合并导出全套包', 'warning');
+            return;
+        }
+
+        try {
+            if (window.showToast) window.showToast('正在在线静默编译全套 PDF 并打包 LaTeX 源码...', 'info');
+
+            const cartQuestions = cart.map(item => {
+                const q = window.PaperStore.questionsMap[item.id] || {};
+                return {
+                    id: item.id,
+                    score: item.score,
+                    figure_align: q.figure_align || 'right'
+                };
+            });
+
+            const payload = {
+                title: window.PaperStore.meta.title,
+                subtitle: window.PaperStore.meta.subtitle,
+                paper_type: window.PaperStore.meta.paper_type,
+                questions: cartQuestions
+            };
+
+            const res = await fetch('/api/paper/export/bundle', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload)
+            });
+
+            if (res.ok) {
+                const blob = await res.blob();
+                const rawTitle = (window.PaperStore.meta.title || '试卷').trim();
+                const safeTitle = rawTitle.replace(/[/\\?%*:|"<>]/g, '_') || '试卷';
+                const filename = `${safeTitle}_全套合并归档.zip`;
+
+                if (typeof window.showSaveFilePicker === 'function') {
+                    try {
+                        const handle = await window.showSaveFilePicker({
+                            suggestedName: filename,
+                            types: [{
+                                description: 'Zip Archive',
+                                accept: { 'application/zip': ['.zip'] }
+                            }]
+                        });
+                        const writable = await handle.createWritable();
+                        await writable.write(blob);
+                        await writable.close();
+                        if (window.showToast) window.showToast(`全套合并归档包已保存至指定目录`, 'success');
+                        return;
+                    } catch (err) {
+                        if (err && err.name === 'AbortError') return;
+                    }
+                }
+
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = filename;
+                a.click();
+                URL.revokeObjectURL(url);
+                if (window.showToast) window.showToast(`全套合并归档包《${filename}》导出成功！`, 'success');
+            } else {
+                const errData = await res.json();
+                if (window.showToast) window.showToast(errData.message || '导出失败', 'error');
+            }
+        } catch (e) {
+            if (window.showToast) window.showToast('合并导出打包请求异常', 'error');
         }
     };
 

@@ -53,6 +53,11 @@ def test_paper_api_flow(client):
     assert tex_res.status_code == 200
     assert tex_res.headers.get("content-type") == "application/zip"
 
+    # 4b. Export Full Bundle Zip (TeX + PDF)
+    bundle_res = client.post("/api/paper/export/bundle", json=paper_payload, headers=headers)
+    assert bundle_res.status_code == 200
+    assert bundle_res.headers.get("content-type") == "application/zip"
+
     # 5. AI Paper Selection
     ai_res = client.post("/api/paper/ai-select", json={"prompt": "函数", "limit": 5}, headers=headers)
     assert ai_res.status_code == 200

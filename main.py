@@ -19,7 +19,7 @@ from sqlalchemy.orm import Session
 from dotenv import load_dotenv
 
 from database import Question, QuestionCurriculum, Paper, PaperQuestion, get_db, init_db
-from paper_helper import build_latex_document, build_answer_sheet_latex, compile_tex_to_pdf, create_tex_zip_package, collect_referenced_images
+from paper_helper import build_latex_document, build_answer_sheet_latex, compile_tex_to_pdf, create_tex_zip_package, create_full_bundle_zip_package, collect_referenced_images
 from sync_helper import export_database_to_files
 
 # Load environment variables
@@ -4306,6 +4306,67 @@ def export_paper_tex(payload: dict, db: Session = Depends(get_db)):
         })
     except Exception as e:
         return JSONResponse(content={"status": "error", "message": f"生成 LaTeX 源码失败: {str(e)}"}, status_code=500)
+
+@app.post("/api/paper/export/bundle")
+def export_paper_bundle(payload: dict, db: Session = Depends(get_db)):
+    """一键导出合并全套 Zip 压缩包（包含 LaTeX 源码、相关插图以及已编译好的 PDF）"""
+    try:
+        title = payload.get("title", "2026年高中数学模拟考试试卷")
+        subtitle = payload.get("subtitle", "")
+        paper_type = payload.get("paper_type", "exam")
+        questions_input = payload.get("questions", [])
+        
+        q_ids = [int(q.get("id")) for q in questions_input if q.get("id")]
+        questions_db = db.query(Question).filter(Question.id.in_(q_ids)).all()
+        q_map = {q.id: q.to_dict() for q in questions_db}
+        
+        questions_data = []
+        for item in questions_input:
+            qid = int(item.get("id"))
+            if qid in q_map:
+                q_dict = dict(q_map[qid])
+                if item.get("figure_align"):
+                    q_dict["figure_align"] = item.get("figure_align")
+                questions_data.append({
+                    "question": q_dict,
+                    "score": int(item.get("score", 5))
+                })
+                
+        tex_main = build_latex_document(title, subtitle, paper_type, questions_data, include_answers=False)
+        tex_ans = build_latex_document(title + " (参考答案与解析)", subtitle, paper_type, questions_data, include_answers=True)
+        
+        if paper_type == "exam_19":
+            tex_answer_sheet = build_answer_sheet_latex(title, subtitle, questions_data)
+        else:
+            tex_answer_sheet = None
+
+        image_paths = collect_referenced_images(questions_data, UPLOAD_DIR)
+
+        # Pre-compile PDFs
+        main_pdf_bytes, _ = compile_tex_to_pdf(tex_main, image_paths)
+        ans_pdf_bytes, _ = compile_tex_to_pdf(tex_ans, image_paths)
+        if paper_type == "exam_19" and tex_answer_sheet:
+            answer_sheet_pdf_bytes, _ = compile_tex_to_pdf(tex_answer_sheet, image_paths)
+        else:
+            answer_sheet_pdf_bytes = None
+
+        zip_bytes = create_full_bundle_zip_package(
+            title, tex_main, tex_ans, image_paths,
+            answer_sheet_tex=tex_answer_sheet,
+            main_pdf_bytes=main_pdf_bytes,
+            ans_pdf_bytes=ans_pdf_bytes,
+            answer_sheet_pdf_bytes=answer_sheet_pdf_bytes
+        )
+        
+        from urllib.parse import quote
+        safe_title = re.sub(r'[/\\?%*:|"<>]', '_', title.strip()) or "试卷"
+        filename = f"{safe_title}_全套归档.zip"
+        encoded_filename = quote(filename)
+        return Response(content=zip_bytes, media_type="application/zip", headers={
+            "Content-Disposition": f"attachment; filename=\"paper_bundle.zip\"; filename*=utf-8''{encoded_filename}"
+        })
+    except Exception as e:
+        return JSONResponse(content={"status": "error", "message": f"生成全套合并包失败: {str(e)}"}, status_code=500)
 
 @app.post("/api/paper/export/pdf")
 def export_paper_pdf(payload: dict, db: Session = Depends(get_db)):
