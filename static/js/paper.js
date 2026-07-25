@@ -1502,10 +1502,14 @@
                 const url = URL.createObjectURL(blob);
                 const a = document.createElement('a');
                 a.href = url;
-                a.download = `paper_${Date.now()}.zip`;
+
+                const rawTitle = (window.PaperStore.meta.title || '试卷').trim();
+                const safeTitle = rawTitle.replace(/[/\\?%*:|"<>]/g, '_') || '试卷';
+                a.download = `${safeTitle}.zip`;
+
                 a.click();
                 URL.revokeObjectURL(url);
-                if (window.showToast) window.showToast('LaTeX 源码包导出成功！', 'success');
+                if (window.showToast) window.showToast(`LaTeX 源码包《${safeTitle}.zip》导出成功！`, 'success');
             } else {
                 const errData = await res.json();
                 if (window.showToast) window.showToast(errData.message || '导出失败', 'error');

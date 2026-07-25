@@ -4298,9 +4298,11 @@ def export_paper_tex(payload: dict, db: Session = Depends(get_db)):
         image_paths = collect_referenced_images(questions_data, UPLOAD_DIR)
         zip_bytes = create_tex_zip_package(title, tex_main, tex_ans, image_paths, answer_sheet_tex=tex_answer_sheet)
         
-        filename = f"paper_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.zip"
+        from urllib.parse import quote
+        safe_title = re.sub(r'[/\\?%*:|"<>]', '_', title.strip()) or "试卷"
+        encoded_filename = quote(f"{safe_title}.zip")
         return Response(content=zip_bytes, media_type="application/zip", headers={
-            "Content-Disposition": f'attachment; filename="{filename}"'
+            "Content-Disposition": f"attachment; filename=\"paper_export.zip\"; filename*=utf-8''{encoded_filename}"
         })
     except Exception as e:
         return JSONResponse(content={"status": "error", "message": f"生成 LaTeX 源码失败: {str(e)}"}, status_code=500)
