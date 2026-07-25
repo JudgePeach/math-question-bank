@@ -549,7 +549,7 @@ def build_answer_sheet_latex(title: str, subtitle: str, questions_data: list) ->
         full_content = q_content + ("\n" + tikz_code if tikz_code else "")
         fig_code = extract_figures_for_answer_sheet(full_content)
         if fig_code:
-            fig_node = f"\\node[anchor=north west, inner sep=0pt, outer sep=0pt] at ({fig_coords}) {{\\resizebox{{4.0cm}}{{!}}{{\\begin{{minipage}}{{4.0cm}}\\centering {fig_code}\\end{{minipage}}}}}};"
+            fig_node = f"\\node[anchor=north west, inner sep=0pt, outer sep=0pt] at ({fig_coords}) {{\\resizebox{{3.6cm}}{{!}}{{\\begin{{minipage}}{{3.6cm}}\\centering {fig_code}\\end{{minipage}}}}}};"
             replacement = f"{new_line}\n    {fig_node}"
         else:
             replacement = new_line
