@@ -1490,6 +1490,15 @@
                 currentWorkspaceName.textContent = workspaceName;
             }
 
+            const toggleSidebarBtn = document.getElementById('toggleSidebarBtn');
+            if (toggleSidebarBtn) {
+                if (workspaceId === 'paper') {
+                    toggleSidebarBtn.classList.add('hidden');
+                } else {
+                    toggleSidebarBtn.classList.remove('hidden');
+                }
+            }
+
             const checkBank = document.getElementById('ws-check-bank');
             const checkPaper = document.getElementById('ws-check-paper');
             const btnBank = document.getElementById('ws-btn-bank');

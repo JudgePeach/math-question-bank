@@ -157,15 +157,18 @@
 
         const bankSec = document.getElementById('bankWorkspaceSection');
         const paperSec = document.getElementById('paperWorkspaceSection');
+        const toggleSidebarBtn = document.getElementById('toggleSidebarBtn');
 
         if (workspaceId === 'paper') {
             if (bankSec) bankSec.classList.add('hidden');
+            if (toggleSidebarBtn) toggleSidebarBtn.classList.add('hidden');
             if (paperSec) {
                 paperSec.classList.remove('hidden');
                 window.renderPaperWorkspace();
             }
         } else {
             if (paperSec) paperSec.classList.add('hidden');
+            if (toggleSidebarBtn) toggleSidebarBtn.classList.remove('hidden');
             if (bankSec) bankSec.classList.remove('hidden');
         }
     };
