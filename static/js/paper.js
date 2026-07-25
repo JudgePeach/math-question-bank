@@ -1004,12 +1004,7 @@
 
             pagesHtml += `
                 <div class="w-full max-w-[794px] min-h-[1123px] bg-white text-slate-900 px-10 py-12 shadow-2xl rounded-sm border border-slate-300 font-serif leading-relaxed relative overflow-hidden select-none mb-8 dark:bg-white dark:text-slate-900">
-                    ${isFirstPage ? renderA4Header(meta, totalCount, totalScore, totalPages) : `
-                        <div class="flex justify-between items-center mb-6 text-xs font-serif text-slate-500 border-b border-slate-200 pb-2">
-                            <span>绝密★启用前</span>
-                            <span class="font-bold">${escapeHtml(meta.title)}</span>
-                        </div>
-                    `}
+                    ${isFirstPage ? renderA4Header(meta, totalCount, totalScore, totalPages) : ''}
                     
                     <div class="space-y-1.5 text-[13px]">
                         ${pgContent}
