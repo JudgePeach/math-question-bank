@@ -745,10 +745,10 @@
                             <select onchange="window.updateGlobalSolutionSpace(this.value)"
                                 class="px-2 py-1 text-xs rounded-xl border border-brand-200/80 bg-brand-50/60 text-brand-900 font-bold focus:ring-2 focus:ring-brand-500 focus:outline-none dark:bg-brand-950/50 dark:border-brand-800 dark:text-brand-200">
                                 <option value="3.0" ${(parseFloat(meta.solution_space_default || '7.0') === 3.0) ? 'selected' : ''}>3 cm (紧凑)</option>
-                                <option value="5.0" ${(parseFloat(meta.solution_space_default || '7.0') === 5.0) ? 'selected' : ''}>5 cm (标准)</option>
-                                <option value="7.0" ${(parseFloat(meta.solution_space_default || '7.0') === 7.0) ? 'selected' : ''}>7 cm (推荐)</option>
+                                <option value="5.0" ${(parseFloat(meta.solution_space_default || '7.0') === 5.0) ? 'selected' : ''}>5 cm (适中)</option>
+                                <option value="7.0" ${(parseFloat(meta.solution_space_default || '7.0') === 7.0) ? 'selected' : ''}>7 cm (标准)</option>
                                 <option value="9.0" ${(parseFloat(meta.solution_space_default || '7.0') === 9.0) ? 'selected' : ''}>9 cm (宽敞)</option>
-                                <option value="11.0" ${(parseFloat(meta.solution_space_default || '7.0') === 11.0) ? 'selected' : ''}>11 cm (双倍)</option>
+                                <option value="11.0" ${(parseFloat(meta.solution_space_default || '7.0') === 11.0) ? 'selected' : ''}>11 cm (超大)</option>
                             </select>
                         </div>
                         ` : ''}
@@ -1396,6 +1396,34 @@
     window.onPaperCanvasDrop = function (e) {
         e.preventDefault();
         window.onPaperCanvasDragEnd(e);
+    };
+
+    // Solution Space Handlers
+    window.updateQuestionSolutionSpace = function (qid, delta) {
+        qid = parseInt(qid, 10);
+        const item = window.PaperStore.cart.find(it => it.id === qid);
+        if (!item) return;
+        const defaultSpace = parseFloat(window.PaperStore.meta.solution_space_default || '7.0');
+        let currentSpace = parseFloat(item.solution_space !== undefined ? item.solution_space : defaultSpace);
+        if (isNaN(currentSpace)) currentSpace = 7.0;
+        
+        let newSpace = Math.max(1.0, Math.min(15.0, Math.round((currentSpace + delta) * 10) / 10));
+        item.solution_space = newSpace.toFixed(1);
+        saveCartToStorage();
+        window.renderPaperCanvas();
+        if (window.showToast) window.showToast(`题目 #${qid} 留白高度设为 ${newSpace.toFixed(1)} cm`, 'info');
+    };
+
+    window.updateGlobalSolutionSpace = function (val) {
+        const spaceVal = parseFloat(val).toFixed(1);
+        window.PaperStore.meta.solution_space_default = spaceVal;
+        window.PaperStore.cart.forEach(item => {
+            item.solution_space = spaceVal;
+        });
+        saveMetaToStorage();
+        saveCartToStorage();
+        window.renderPaperCanvas();
+        if (window.showToast) window.showToast(`解答题全局留白设为 ${spaceVal} cm`, 'success');
     };
 
     // Export PDF, Tex, and Save Handlers
