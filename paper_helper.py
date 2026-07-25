@@ -236,7 +236,7 @@ def build_latex_document(title: str, subtitle: str, paper_type: str, questions_d
                 lines.append(r"\end{minipage}%")
                 lines.append(r"\hfill")
                 lines.append(r"\begin{minipage}[t]{5.2cm}")
-                lines.append(r"  \vspace{-0.4em}")
+                lines.append(r"  \vspace{-2.0em}")
                 lines.append(r"  \raggedleft")
                 lines.append(f"  \\adjustbox{{valign=t}}{{{fig_body}}}")
                 lines.append(r"\end{minipage}")
