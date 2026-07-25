@@ -19,7 +19,7 @@ from sqlalchemy.orm import Session
 from dotenv import load_dotenv
 
 from database import Question, QuestionCurriculum, Paper, PaperQuestion, get_db, init_db
-from paper_helper import build_latex_document, compile_tex_to_pdf, create_tex_zip_package, collect_referenced_images
+from paper_helper import build_latex_document, build_answer_sheet_latex, compile_tex_to_pdf, create_tex_zip_package, collect_referenced_images
 from sync_helper import export_database_to_files
 
 # Load environment variables
@@ -4211,9 +4211,13 @@ def export_paper_tex(payload: dict, db: Session = Depends(get_db)):
         tex_main = build_latex_document(title, subtitle, paper_type, questions_data, include_answers=False)
         tex_ans = build_latex_document(title + " (参考答案与解析)", subtitle, paper_type, questions_data, include_answers=True)
         
+        if paper_type == "exam_19":
+            tex_answer_sheet = build_answer_sheet_latex(title, subtitle, questions_data)
+        else:
+            tex_answer_sheet = None
+
         image_paths = collect_referenced_images(questions_data, UPLOAD_DIR)
-        
-        zip_bytes = create_tex_zip_package(title, tex_main, tex_ans, image_paths)
+        zip_bytes = create_tex_zip_package(title, tex_main, tex_ans, image_paths, answer_sheet_tex=tex_answer_sheet)
         
         filename = f"paper_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.zip"
         return Response(content=zip_bytes, media_type="application/zip", headers={
@@ -4228,7 +4232,7 @@ def export_paper_pdf(payload: dict, db: Session = Depends(get_db)):
     try:
         title = payload.get("title", "2026年高中数学模拟考试试卷")
         subtitle = payload.get("subtitle", "")
-        paper_type = payload.get("paper_type", "exam")
+        paper_type = payload.get("paper_type", "exam_19")
         include_answers = payload.get("include_answers", False)
         questions_input = payload.get("questions", [])
         
@@ -4250,6 +4254,19 @@ def export_paper_pdf(payload: dict, db: Session = Depends(get_db)):
         
         pdf_bytes, log_or_err = compile_tex_to_pdf(tex_content, image_paths)
         
+        if paper_type == "exam_19" and pdf_bytes:
+            tex_sheet = build_answer_sheet_latex(title, subtitle, questions_data)
+            sheet_pdf_bytes, _ = compile_tex_to_pdf(tex_sheet, image_paths)
+            if sheet_pdf_bytes:
+                zip_buf = io.BytesIO()
+                with zipfile.ZipFile(zip_buf, "w", zipfile.ZIP_DEFLATED) as zf:
+                    zf.writestr(f"{title}_试卷.pdf", pdf_bytes)
+                    zf.writestr(f"{title}_答题卡.pdf", sheet_pdf_bytes)
+                filename = f"paper_pkg_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.zip"
+                return Response(content=zip_buf.getvalue(), media_type="application/zip", headers={
+                    "Content-Disposition": f'attachment; filename="{filename}"'
+                })
+
         if pdf_bytes:
             filename = f"paper_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.pdf"
             return Response(content=pdf_bytes, media_type="application/pdf", headers={

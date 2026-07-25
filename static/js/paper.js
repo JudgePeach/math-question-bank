@@ -18,7 +18,7 @@
         meta: {
             title: '2026年高中数学模拟考试试卷',
             subtitle: '',
-            paper_type: 'exam'
+            paper_type: 'exam_19'
         },
         filters: {
             compulsory: '',
@@ -373,6 +373,7 @@
                         <label class="block text-2xs font-bold text-slate-500 uppercase mb-1">试卷类型预设</label>
                         <select id="paperMetaType" onchange="updatePaperMeta('paper_type', this.value)"
                             class="w-full px-3 py-1.5 text-xs rounded-xl border border-slate-200 bg-white focus:ring-2 focus:ring-brand-500 focus:outline-none dark:bg-slate-900/60 dark:border-slate-700 dark:text-slate-200">
+                            <option value="exam_19" ${meta.paper_type === 'exam_19' ? 'selected' : ''}>📄 19题高考卷 (含答题卡)</option>
                             <option value="exam" ${meta.paper_type === 'exam' ? 'selected' : ''}>📄 试卷</option>
                             <option value="quiz" ${meta.paper_type === 'quiz' ? 'selected' : ''}>📝 小练</option>
                         </select>
@@ -751,44 +752,9 @@
                 </div>
             </div>
 
-            <!-- A4 Desk Canvas Paper Sheet (Density matching LaTeX exam-zh template) -->
-            <div class="flex justify-center pb-10">
-                <div class="w-full max-w-[794px] min-h-[1123px] bg-white text-slate-900 px-8 py-10 sm:px-12 sm:py-12 shadow-2xl rounded-sm border border-slate-300 font-serif leading-relaxed relative overflow-hidden select-none dark:bg-white dark:text-slate-900" id="a4PaperPreviewSheet">
-                    <!-- Top Secret Mark Bar -->
-                    ${meta.paper_type === 'exam' ? `
-                        <div class="flex justify-between items-center mb-3 text-xs font-serif font-bold text-slate-800 pb-1">
-                            <span>绝密★启用前</span>
-                        </div>
-                    ` : ''}
-
-                    <!-- Exam Header Title & Subject -->
-                    <div class="text-center mb-3">
-                        <h1 class="text-2xl font-bold tracking-normal text-slate-900 font-serif mb-1.5">${escapeHtml(meta.title)}</h1>
-                        <div class="text-xl font-bold text-slate-900 font-serif my-2">数 学</div>
-                        ${meta.subtitle ? `<div class="text-xs font-semibold text-slate-700 mb-1">${escapeHtml(meta.subtitle)}</div>` : ''}
-                    </div>
-
-                    ${meta.paper_type === 'exam' ? `
-                        <div class="text-[12px] text-center font-serif text-slate-800 mb-4">
-                            本试卷共 ${totalCount} 题。全卷满分 ${totalScore} 分。考试用时 120 分钟。
-                        </div>
-
-                        <!-- Standard LaTeX Notice Block (Matching TeX exam-zh exact layout: NO outer box border, title "注意事项：") -->
-                        <div class="mb-5 text-[11.5px] leading-relaxed font-serif text-slate-800">
-                            <div class="font-bold mb-1 text-slate-900 text-[12px]">注意事项：</div>
-                            <ol class="list-decimal list-inside space-y-0.5 text-slate-800 pl-4">
-                                <li>答卷前，考生务必将自己的姓名、考生号、考场号、座位号填写在答题卡上。</li>
-                                <li>回答选择题时，选出每小题答案后，用铅笔把答题卡上对应题目的答案标号涂黑，如需改动，用橡皮擦干净后，再选涂其他答案标号。回答非选择题时，将答案写在答题卡上。写在本试卷上无效。</li>
-                                <li>考试结束后，将本试卷和答题卡一并交回。</li>
-                            </ol>
-                        </div>
-                    ` : ''}
-
-                    <!-- Canvas Body Sections -->
-                    <div id="a4PaperBodyContent" class="space-y-4 text-[13px]">
-                        ${generateA4PaperBodyHtml(cart)}
-                    </div>
-                </div>
+            <!-- A4 Desk Canvas Paper Container -->
+            <div class="flex flex-col items-center pb-10" id="a4PaperPreviewSheet">
+                ${generateA4PaperPagesHtml(cart, meta, totalCount, totalScore)}
             </div>
         `;
 
@@ -808,6 +774,234 @@
             } catch (e) { }
         }
     };
+
+    function renderA4Header(meta, totalCount, totalScore, totalPages) {
+        const isExamType = (meta.paper_type === 'exam' || meta.paper_type === 'exam_19');
+        return `
+            <!-- Top Secret Mark Bar -->
+            ${isExamType ? `
+                <div class="flex justify-between items-center mb-3 text-xs font-serif font-bold text-slate-800 pb-1">
+                    <span>绝密★启用前</span>
+                </div>
+            ` : ''}
+
+            <!-- Exam Header Title & Subject -->
+            <div class="text-center mb-3">
+                <h1 class="text-2xl font-bold tracking-normal text-slate-900 font-serif mb-1.5">${escapeHtml(meta.title)}</h1>
+                <div class="text-xl font-bold text-slate-900 font-serif my-2">数 学</div>
+                ${meta.subtitle ? `<div class="text-xs font-semibold text-slate-700 mb-1">${escapeHtml(meta.subtitle)}</div>` : ''}
+            </div>
+
+            ${isExamType ? `
+                <div class="text-[12px] text-center font-serif text-slate-800 mb-4">
+                    本试卷共 ${totalPages} 页，${totalCount} 题。全卷满分 ${totalScore} 分。考试用时 120 分钟。
+                </div>
+
+                <!-- Standard LaTeX Notice Block -->
+                <div class="mb-5 text-[11.5px] leading-relaxed font-serif text-slate-800">
+                    <div class="font-bold mb-1 text-slate-900 text-[12px]">注意事项：</div>
+                    <ol class="list-decimal list-inside space-y-0.5 text-slate-800 pl-4">
+                        <li>答卷前，考生务必将自己的姓名、考生号、考场号、座位号填写在答题卡上。</li>
+                        <li>回答选择题时，选出每小题答案后，用铅笔把答题卡上对应题目的答案标号涂黑，如需改动，用橡皮擦干净后，再选涂其他答案标号。回答非选择题时，将答案写在答题卡上。写在本试卷上无效。</li>
+                        <li>考试结束后，将本试卷和答题卡一并交回。</li>
+                    </ol>
+                </div>
+            ` : ''}
+        `;
+    }
+
+    function generateA4PaperPagesHtml(cart, meta, totalCount, totalScore) {
+        if (cart.length === 0) {
+            return `
+                <div class="w-full max-w-[794px] min-h-[1123px] bg-white text-slate-900 px-10 py-12 shadow-2xl rounded-sm border border-slate-300 font-serif leading-relaxed relative overflow-hidden select-none dark:bg-white dark:text-slate-900">
+                    ${renderA4Header(meta, totalCount, totalScore, 1)}
+                    <div class="text-center py-24 text-slate-400 font-sans text-xs">暂无试题数据，请在左侧点击“加入试卷”添加题目</div>
+                    <div class="absolute bottom-5 left-0 right-0 text-center text-xs font-serif text-slate-700 tracking-wider">数学 &nbsp; 第 1 页 (共 1 页)</div>
+                </div>
+            `;
+        }
+
+        const cartItemsWithIndex = cart.map((item, idx) => ({ ...item, cartIndex: idx }));
+
+        const typeOrder = ['single_choice', 'multi_choice', 'fill_in_blank', 'detailed_answer'];
+        const grouped = {};
+
+        cartItemsWithIndex.forEach(item => {
+            const q = window.PaperStore.questionsMap[item.id];
+            const qType = q ? q.question_type : 'single_choice';
+            if (!grouped[qType]) grouped[qType] = [];
+            grouped[qType].push(item);
+        });
+
+        const blocks = [];
+        const secNums = ['一', '二', '三', '四', '五'];
+        let secIdx = 0;
+        let globalQIndex = 1;
+
+        typeOrder.forEach(qType => {
+            const items = grouped[qType];
+            if (!items || items.length === 0) return;
+
+            const secNum = secNums[secIdx] || (secIdx + 1);
+            secIdx++;
+
+            const count = items.length;
+            const secScore = items.reduce((s, it) => s + (parseInt(it.score, 10) || 5), 0);
+            const unitScore = items[0] ? (parseInt(items[0].score, 10) || 5) : 5;
+
+            let secHeaderText = '';
+            if (qType === 'single_choice') {
+                secHeaderText = `${secNum}、选择题：本题共 ${count} 小题，每小题 ${unitScore} 分，共 ${secScore} 分。在每小题给出的四个选项中，只有一项是符合题目要求的。`;
+            } else if (qType === 'multi_choice') {
+                secHeaderText = `${secNum}、多选题：本题共 ${count} 小题，每小题 ${unitScore} 分，共 ${secScore} 分。在每小题给出的四个选项中，有多项符合题目要求。全部选对的得 ${unitScore} 分，部分选对的得部分分，有选错的得 0 分。`;
+            } else if (qType === 'fill_in_blank') {
+                secHeaderText = `${secNum}、填空题：本题共 ${count} 小题，每小题 ${unitScore} 分，共 ${secScore} 分。`;
+            } else {
+                secHeaderText = `${secNum}、解答题：本题共 ${count} 小题，共 ${secScore} 分。解答应写出文字说明、证明过程或演算步骤。`;
+            }
+
+            blocks.push({
+                type: 'section_title',
+                qType: qType,
+                html: `
+                    <div class="paper-sec-block mb-3" data-qtype="${qType}">
+                        <h3 class="font-bold text-[13.5px] font-serif mt-2 mb-2 text-slate-900 leading-snug">${secHeaderText}</h3>
+                    </div>
+                `,
+                estHeight: 40
+            });
+
+            items.forEach((item, subIdx) => {
+                const q = window.PaperStore.questionsMap[item.id];
+                let rawContent = q ? q.content : '';
+                let contentHtml = q ? formatQuestionContentHtml(rawContent) : '';
+
+                let stemLine = '';
+                if (qType === 'single_choice' || qType === 'multi_choice') {
+                    let stemContent = contentHtml;
+                    let choicesGrid = '';
+                    if (contentHtml.includes('choices-grid') || contentHtml.includes('katex-choices-grid')) {
+                        const match = contentHtml.match(/([\s\S]*?)(<(?:div|p)[^>]*class="[^"]*(?:choices-grid|katex-choices-grid)"[\s\S]*)/i);
+                        if (match) {
+                            stemContent = match[1];
+                            choicesGrid = match[2];
+                        }
+                    }
+                    stemContent = stemContent.replace(/（\s*）/g, '').replace(/\(\s*\)/g, '').replace(/\\paren/g, '').trim();
+
+                    stemLine = `
+                        <div class="flex justify-between items-baseline mb-1">
+                            <div class="flex-1">${stemContent}</div>
+                            <div class="shrink-0 ml-4 font-serif text-slate-900 font-normal select-none">（ &nbsp; ）</div>
+                        </div>
+                        ${choicesGrid}
+                    `;
+                } else {
+                    stemLine = contentHtml;
+                }
+
+                const itemHtml = `
+                    <div class="paper-q-item group relative text-[13px] leading-normal font-serif p-2 rounded-xl border border-transparent hover:border-brand-300 hover:bg-brand-50/30 transition-all duration-200 cursor-grab active:cursor-grabbing mb-2"
+                        draggable="true"
+                        data-qid="${q ? q.id : ''}"
+                        data-qtype="${qType}"
+                        data-sub-index="${subIdx}"
+                        ondragstart="onPaperCanvasDragStart(event, ${q ? q.id : 0}, ${subIdx}, '${qType}')"
+                        ondragover="onPaperCanvasDragOver(event)"
+                        ondragenter="onPaperCanvasDragEnter(event)"
+                        ondragleave="onPaperCanvasDragLeave(event)"
+                        ondragend="onPaperCanvasDragEnd(event)"
+                        ondrop="onPaperCanvasDrop(event)">
+
+                        <!-- Hover Action Bar: Drag Handle & Quick Move/Remove Buttons -->
+                        <div class="absolute right-2 top-2 opacity-0 group-hover:opacity-100 transition-opacity flex items-center space-x-1 bg-white/95 backdrop-blur-sm px-2 py-0.5 rounded-lg border border-slate-200 shadow-xs text-2xs font-sans select-none z-10">
+                            <span class="text-slate-400 font-medium mr-1"><i class="fa-solid fa-grip-vertical"></i> 按住拖拽排序</span>
+                            <button onclick="event.stopPropagation(); window.movePaperQuestionWithinType('${qType}', ${subIdx}, 'up')" ${subIdx === 0 ? 'disabled' : ''} class="p-0.5 text-slate-500 hover:text-brand-600 disabled:opacity-30" title="上移">
+                                <i class="fa-solid fa-chevron-up"></i>
+                            </button>
+                            <button onclick="event.stopPropagation(); window.movePaperQuestionWithinType('${qType}', ${subIdx}, 'down')" ${subIdx === items.length - 1 ? 'disabled' : ''} class="p-0.5 text-slate-500 hover:text-brand-600 disabled:opacity-30" title="下移">
+                                <i class="fa-solid fa-chevron-down"></i>
+                            </button>
+                            <button onclick="event.stopPropagation(); window.removeFromCart(${q ? q.id : 0})" class="p-0.5 text-slate-400 hover:text-rose-600" title="移出试卷">
+                                <i class="fa-solid fa-xmark"></i>
+                            </button>
+                        </div>
+
+                        <div class="flex items-start">
+                            <span class="font-bold mr-1 text-slate-900 shrink-0">${globalQIndex}.</span>
+                            <div class="inline flex-1">${stemLine}</div>
+                        </div>
+                    </div>
+                `;
+
+                let estH = 75;
+                if (qType === 'detailed_answer') estH = 170;
+                if (rawContent.length > 200) estH += 60;
+
+                blocks.push({
+                    type: 'question',
+                    qType: qType,
+                    html: itemHtml,
+                    estHeight: estH
+                });
+
+                globalQIndex++;
+            });
+        });
+
+        // Group blocks into A4 Page cards
+        const pages = [];
+        let currentPage = [];
+        let currentH = 0;
+        const PAGE_1_MAX = 620; // Height budget for Page 1
+        const PAGE_N_MAX = 920; // Height budget for Page 2+
+
+        blocks.forEach(blk => {
+            const maxH = (pages.length === 0) ? PAGE_1_MAX : PAGE_N_MAX;
+            if (currentH + blk.estHeight > maxH && currentPage.length > 0) {
+                pages.push(currentPage);
+                currentPage = [blk];
+                currentH = blk.estHeight;
+            } else {
+                currentPage.push(blk);
+                currentH += blk.estHeight;
+            }
+        });
+        if (currentPage.length > 0) {
+            pages.push(currentPage);
+        }
+
+        const totalPages = pages.length;
+
+        // Generate A4 Page Sheet DOM Cards
+        let pagesHtml = '';
+        pages.forEach((pgBlocks, pgIdx) => {
+            const isFirstPage = (pgIdx === 0);
+            let pgContent = pgBlocks.map(b => b.html).join('');
+
+            pagesHtml += `
+                <div class="w-full max-w-[794px] min-h-[1123px] bg-white text-slate-900 px-10 py-12 shadow-2xl rounded-sm border border-slate-300 font-serif leading-relaxed relative overflow-hidden select-none mb-8 dark:bg-white dark:text-slate-900">
+                    ${isFirstPage ? renderA4Header(meta, totalCount, totalScore, totalPages) : `
+                        <div class="flex justify-between items-center mb-6 text-xs font-serif text-slate-500 border-b border-slate-200 pb-2">
+                            <span>绝密★启用前</span>
+                            <span class="font-bold">${escapeHtml(meta.title)}</span>
+                        </div>
+                    `}
+                    
+                    <div class="space-y-1.5 text-[13px]">
+                        ${pgContent}
+                    </div>
+
+                    <!-- Page Footer -->
+                    <div class="absolute bottom-5 left-0 right-0 text-center text-xs font-serif text-slate-700 tracking-wider">
+                        数学 &nbsp; 第 ${pgIdx + 1} 页 (共 ${totalPages} 页)
+                    </div>
+                </div>
+            `;
+        });
+
+        return pagesHtml;
+    }
 
     function generateA4PaperBodyHtml(cart) {
         if (cart.length === 0) {

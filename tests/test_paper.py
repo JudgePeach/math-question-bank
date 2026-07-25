@@ -58,3 +58,37 @@ def test_paper_api_flow(client):
     assert ai_res.status_code == 200
     assert ai_res.json()["status"] == "success"
     assert len(ai_res.json()["data"]) >= 1
+
+def test_exam_19_and_answer_sheet_generation(client):
+    headers = {"X-Local-Token": LOCAL_TOKEN}
+    
+    from paper_helper import build_answer_sheet_latex
+    
+    questions_data = [
+        {
+            "question": {
+                "id": 101,
+                "question_type": "detailed_answer",
+                "content": "求证：$\\sin^2 x + \\cos^2 x = 1$。\n\\begin{tikzpicture}\n\\draw (0,0) -- (1,1);\n\\end{tikzpicture}"
+            },
+            "score": 13
+        }
+    ]
+    
+    sheet_tex = build_answer_sheet_latex("2026年模拟考试试卷", "", questions_data)
+    assert "\\documentclass" in sheet_tex
+    assert "2026年模拟考试试卷" in sheet_tex
+    assert "15.（13分）" in sheet_tex
+    assert "\\begin{tikzpicture}" in sheet_tex
+    
+    # Test export endpoints for exam_19
+    paper_payload = {
+        "title": "2026年高考模拟试卷",
+        "subtitle": "数学",
+        "paper_type": "exam_19",
+        "questions": []
+    }
+    
+    export_res = client.post("/api/paper/export/tex", json=paper_payload, headers=headers)
+    assert export_res.status_code == 200
+    assert export_res.headers.get("content-type") == "application/zip"

@@ -274,15 +274,266 @@ def compile_tex_to_pdf(tex_content: str, image_paths: list) -> tuple:
         except Exception as e:
             return (None, f"编译过程异常: {str(e)}")
 
-def create_tex_zip_package(title: str, tex_content: str, ans_tex_content: str, image_paths: list) -> bytes:
+def extract_figures_for_answer_sheet(content: str) -> str:
+    """Extract TikZ code or images from question content for answer sheet embedding."""
+    if not content:
+        return ""
+    figs = []
+    # 1. TikZ blocks
+    tikz_blocks = re.findall(r'(\\begin\{tikzpicture\}[\s\S]*?\\end\{tikzpicture\})', content)
+    for t in tikz_blocks:
+        figs.append(t)
+    # 2. Markdown image ![...](path)
+    img_matches = re.findall(r'!\[.*?\]\((?:/static/uploads/|static/uploads/|/uploads/|uploads/)?([^)]+)\)', content)
+    for img_name in img_matches:
+        base_n = os.path.basename(img_name)
+        figs.append(f"\\includegraphics[max width=4.5cm]{{{base_n}}}")
+    # 3. Direct \includegraphics
+    direct_imgs = re.findall(r'(\\includegraphics(?:\[.*?\])?\{.*?\})', content)
+    for d in direct_imgs:
+        if d not in figs:
+            figs.append(d)
+    return "\n".join(figs)
+
+def build_answer_sheet_latex(title: str, subtitle: str, questions_data: list) -> str:
     """
-    Creates a in-memory ZIP package containing paper.tex, answer.tex, and referenced images.
+    Generate Answer Sheet (答题卡.tex) LaTeX code based on /Users/yangyunlong/Downloads/答题卡.tex.
+    Dynamic updates: title, question scores, and embedded TikZ/image nodes for Q15-Q19.
+    """
+    template_path = "/Users/yangyunlong/Downloads/答题卡.tex"
+    content = ""
+    if os.path.exists(template_path):
+        try:
+            with open(template_path, "r", encoding="utf-8", errors="ignore") as f:
+                content = f.read()
+        except Exception:
+            pass
+
+    if not content:
+        content = r"""
+\documentclass[UTF8, 11pt, oneside]{ctexart}
+\usepackage{amsmath, amsthm, amssymb, graphicx}
+\usepackage[bookmarks=true, colorlinks, citecolor=blue, linkcolor=black]{hyperref}
+\usepackage[a3paper, landscape,left=0.7cm, right=0.7cm, top=0.6cm, bottom=0.6cm]{geometry}
+\usepackage{diagbox, tikz, fancyhdr, makecell, caption, float, eso-pic}
+\linespread{1.625}
+\setcounter{page}{1}
+\pagestyle{fancy}
+\fancyhf{}
+\definecolor{mycolor}{RGB}{255,50,165}
+\AddToShipoutPictureFG{%
+    \begin{tikzpicture}[remember picture, overlay]
+        \fill[black] ([xshift=0.7cm, yshift=0.6cm] current page.south west) rectangle ++(10mm, 6mm);
+        \fill[black] ([xshift=13.9cm, yshift=0.6cm] current page.south west) rectangle ++(10mm, 6mm);
+        \fill[black] ([xshift=27.1cm, yshift=0.6cm] current page.south west) rectangle ++(10mm, 6mm);
+        \fill[black] ([xshift=-0.7cm, yshift=0.6cm] current page.south east) rectangle ++(-10mm, 6mm);
+        \fill[black] ([xshift=-0.7cm, yshift=-0.6cm] current page.north east) rectangle ++(-10mm, -6mm);
+        \fill[black] ([xshift=0.7cm, yshift=-0.6cm] current page.north west) rectangle ++(10mm, -6mm);
+        \fill[black] ([xshift=13.9cm, yshift=-0.6cm] current page.north west) rectangle ++(10mm, -6mm);
+        \fill[black] ([xshift=27.1cm, yshift=-0.6cm] current page.north west) rectangle ++(10mm, -6mm);
+        \node at (current page.south) [anchor=south, yshift=0.6cm] {\color{mycolor}\textbf{数学答题卡第\thepage 面（共2面）}};
+    \end{tikzpicture}%
+}
+\begin{document}
+\centering
+\begin{tikzpicture}
+    \useasboundingbox (0,0) rectangle (39.2,28.25);
+    \node[font=\fontsize{16pt}{16pt}\selectfont] at (6.45,27.3) {\color{mycolor}\textbf{2026年普通高等学校招生全国统一考试}};
+    \node[font=\fontsize{22pt}{22pt}\selectfont] at (6.45,26.3){\textbf{数学答题卡}};
+    \node at (6.45,25) {试室号：\textcolor{mycolor}{\underline{\hspace{1.3cm}}} \hspace{0.6em}座位号：\textcolor{mycolor}{\underline{\hspace{1.3cm}}}\hspace{0.6em}姓名：\textcolor{mycolor}{\underline{\hspace{2.2cm}}} \hspace{0.6em}班级：\textcolor{mycolor}{\underline{\hspace{1.8cm}}}};
+    
+    \def\rows{10}\def\cols{10}\def\cellw{0.8}\def\cellh{0.5}\def\beginx{4.9}\def\beginy0{24.2}\def\fontHeight{0.6}\def\smallHeight{0.2}\def\selectw{0.5}\def\selecth{0.25}
+    \foreach \col [evaluate=\col as \x using \beginx+\col*\cellw] in {0,...,\cols} { \draw[mycolor] (\x, \beginy0-\fontHeight) -- (\x,\beginy0-\fontHeight-\cellw-\cellh*\rows-2*\smallHeight); }
+    \draw[mycolor] (\beginx,\beginy0-\fontHeight) -- (\beginx+\cellw*\cols,\beginy0-\fontHeight);
+    \draw[mycolor] (\beginx,\beginy0) -- (\beginx+\cellw*\cols,\beginy0);
+    \draw[mycolor] (\beginx,\beginy0) -- (\beginx,\beginy0-\fontHeight);
+    \draw[mycolor] (\beginx+\cellw*\cols,\beginy0) -- (\beginx+\cellw*\cols,\beginy0-\fontHeight);
+    \draw[mycolor] (\beginx,\beginy0-\fontHeight-\cellw) -- (\beginx+\cellw*\cols,\beginy0-\fontHeight-\cellw);
+    \draw[mycolor] (\beginx,\beginy0-\fontHeight-\cellw-\smallHeight*2-\cellh*\rows) -- (\beginx+\cellw*\cols,\beginy0-\fontHeight-\cellw-\smallHeight*2-\cellh*\rows);
+    \node at (\beginx+0.5*\cols*\cellw,\beginy0-0.5*\fontHeight) {\small\textbf{考\hspace{1em}生\hspace{1em}号}};
+    \foreach \row in {1,...,\rows} {
+        \foreach \col in {1,...,\cols} {
+            \node at (\beginx+\col*\cellw-0.5*\cellw,\beginy0-\fontHeight-\cellw-\smallHeight-\row*\cellh+0.5*\cellh) {\footnotesize\textcolor{mycolor}{\the\numexpr \row - 1 \relax}};
+            \draw[mycolor] (\beginx+\col*\cellw-0.5*\cellw-0.5*\selectw+0.25*\selectw,\beginy0-\fontHeight-\cellw-\smallHeight-\row*\cellh+0.5*\cellh+0.5*\selecth) -- ++(-0.25*\selectw,0) -- ++(0,-\selecth) -- ++(0.25*\selectw,0);
+            \draw[mycolor] (\beginx+\col*\cellw-0.5*\cellw-0.5*\selectw+0.75*\selectw,\beginy0-\fontHeight-\cellw-\smallHeight-\row*\cellh+0.5*\cellh+0.5*\selecth) -- ++(0.25*\selectw,0) -- ++(0,-\selecth) -- ++(-0.25*\selectw,0);
+        }
+    }
+    \foreach \row in {1,...,\rows} { \fill[black] (-0.7,\beginy0-\fontHeight-\cellw-\smallHeight-\row*\cellh+0.5*\cellh+0.5*\selecth) rectangle ++(\selectw,-\selecth); }
+    \foreach \col in{1,2,...,15} { \fill[black] (\beginx+\col*\cellw-0.5*\cellw-0.5*\selectw-4.5,28.1) rectangle ++(\selectw,-\selecth); }
+
+    \def\startx{0}\def\starty{24.2}\def\squarew{4.7}\def\squareh{6.8}\def\fontmarginx{0.1}\def\fontmarginy{0.1}
+    \draw[mycolor] (\startx,\starty) rectangle ++(\squarew,-\squareh);
+    \node[text width=4.3cm,align=left,anchor=north west] at (\startx+\fontmarginx,\starty-\fontmarginy)
+        {\fontsize{8pt}{8pt}\selectfont\textbf{注意事项}：\\1．答题前，考生务必用黑色字迹的钢笔或签字笔将试室号、座位号、姓名和考生号填写在答题卡上，并用2B铅笔将考生号对应的数字涂黑。\\2．选择题的选出每小题答案后，用2B铅笔把答题卡上对应题目的答案标号涂黑。如需改动，用橡皮擦擦干净后，再选其它答案标号涂黑。非选择题的答案不能超出指定答题区域。\\3．答题卡保持卡面整洁，不要折叠和弄破。\\};
+
+    \def\bigx{0}\def\bigy{16.9}\def\bigw{12.9}\def\bigh{16.3}
+    \draw[rounded corners=10pt,mycolor] (\bigx,\bigy) rectangle ++(\bigw,-\bigh);
+
+    \def\chosex{0.2}\def\chosey{16.2}\def\chosew{12.5}\def\choseh{2.7}
+    \draw[black] (\chosex,\chosey) rectangle ++(\chosew,-\choseh);
+    \node[anchor=north west, align=left, font=\fontsize{10pt}{9pt}\selectfont] at (\chosex+0.1, \chosey+0.6) {\textbf{一、选择题}\\};
+    \def\chosenumx{0.7}\def\chosenumy{15.67}\def\chosedistancey{0.55}\def\numenglishd{0.7}\def\chosedistancex{0.75}\def\distance{1.1}\def\quantity{11}
+    \pgfmathsetmacro{\d}{\numenglishd+3*\chosedistancex+\distance}
+    \foreach \row in {0,...,\numexpr\quantity-1\relax} {
+        \pgfmathtruncatemacro{\nx}{floor(\row/4)}
+        \node at (\chosenumx+\nx*\d,\chosenumy-\row*\chosedistancey+\nx*4*\chosedistancey) {\the\numexpr \row + 1 \relax};
+        \foreach \col in {0,1,2,3} {
+            \pgfmathsetmacro{\x}{{"A","B","C","D"}[\col]}
+            \node at (\chosenumx+\numenglishd+\chosedistancex*\col+\nx*\d,\chosenumy-\row*\chosedistancey+\nx*4*\chosedistancey) {\footnotesize\textcolor{mycolor}{\x}};
+            \draw[mycolor] (\chosenumx+\numenglishd-0.25*\selectw+\chosedistancex*\col+\nx*\d,\chosenumy-\row*\chosedistancey+0.5*\selecth+\nx*4*\chosedistancey) -- ++(-0.25*\selectw,0) -- ++(0,-\selecth) -- ++(0.25*\selectw,0);
+            \draw[mycolor] (\chosenumx+\numenglishd+0.25*\selectw+\chosedistancex*\col+\nx*\d,\chosenumy-\row*\chosedistancey+0.5*\selecth+\nx*4*\chosedistancey) -- ++(0.25*\selectw,0) -- ++(0,-\selecth) -- ++(-0.25*\selectw,0);
+        }
+    }
+    \foreach \row in{0,1,2,3} { \fill[black] (-0.7,\chosenumy-\row*\chosedistancey+0.5*\selecth) rectangle ++(\selectw,-\selecth); }
+
+    \def\blankx{0.2}\def\blanky{12.8}\def\blankw{12.5}\def\blankh{1.4}
+    \def\blanknumx{0.7}\def\blanknumy{12}
+    \pgfmathsetmacro{\distancew}{\numenglishd + 3*\chosedistancex + \distance}
+    \draw[black] (\blankx,\blanky) rectangle ++(\blankw,-\blankh);
+    \node[anchor=north west, align=left, font=\fontsize{10pt}{9pt}\selectfont] at (\blankx+0.1, \blanky+0.6) {\textbf{二、填空题}\\};
+    \foreach \row in {0,1,2} {
+        \node at (\blanknumx+\row*\distancew+0.1,\blanknumy) {\the\numexpr \row + 12 \relax.};
+        \draw[mycolor] (\blanknumx+\row*\distancew+0.4,\blanknumy-0.2) -- ++(\distancew-1,0);
+    }
+    
+    \def\ebx{0.2}\def\eby{10.7}\def\ebw{12.5}\def\ebh{9.5}
+    \draw[black] (\ebx,\eby) rectangle ++(\ebw,-\ebh);
+    \node[anchor=north west, align=left, font=\fontsize{10pt}{9pt}\selectfont] at (\ebx+0.1, \eby+0.6) {\textbf{三、解答题}\\};
+    \node[text=mycolor] at (\bigx+\bigw*0.5,\bigy-\bigh+0.3) {\small 请在各题目的答题区域内作答，超出黑色矩形边框限定区域的答案无效};
+    
+    \def\exx{1.5}\def\exy{10.2}
+    \node at (\exx,\exy) {15.（13分）};
+
+    \def\bigx{13.2}\def\bigy{27.4}\def\bigw{12.9}\def\bigh{26.8}
+    \draw[rounded corners=10pt,mycolor] (\bigx,\bigy) rectangle ++(\bigw,-\bigh);
+
+    \def\ebx{13.4}\def\eby{26.8}\def\ebw{12.5}\def\ebh{25.6}
+    \draw[black] (\ebx,\eby) rectangle ++(\ebw,-\ebh);
+    \draw (\ebx,\eby-0.25*\ebh) -- (\ebx+\ebw,\eby-0.25*\ebh);
+    
+    \node[text=mycolor] at (\bigx+\bigw*0.5,\bigy-\bigh+0.3) {\small 请在各题目的答题区域内作答，超出黑色矩形边框限定区域的答案无效};
+    \node[text=mycolor] at (\bigx+\bigw*0.5,\bigy-0.3) {\small 请在各题目的答题区域内作答，超出黑色矩形边框限定区域的答案无效};
+    
+    \def\exx{14.7}\def\exy{26.3}
+    \node at (\exx,\exy-0.25*\ebh) {16.（15分）};
+    \node at (\exx,\exy) {\textcolor{mycolor}{\textbf{（续15题）}}};
+
+    \def\bigx{26.4}\def\bigy{27.4}\def\bigw{12.9}\def\bigh{26.8}
+    \draw[rounded corners=10pt,mycolor] (\bigx,\bigy) rectangle ++(\bigw,-\bigh);
+
+    \def\ebx{26.6}\def\eby{26.8}\def\ebw{12.5}\def\ebh{25.6}
+    \draw[black] (\ebx,\eby) rectangle ++(\ebw,-\ebh);
+    
+    \node[text=mycolor] at (\bigx+\bigw*0.5,\bigy-\bigh+0.3) {\small 请在各题目的答题区域内作答，超出黑色矩形边框限定区域的答案无效};
+    \node[text=mycolor] at (\bigx+\bigw*0.5,\bigy-0.3) {\small 请在各题目的答题区域内作答，超出黑色矩形边框限定区域的答案无效};
+    
+    \def\exx{27.9}\def\exy{26.3}
+    \node at (\exx,\exy) {17.（15分）};
+\end{tikzpicture}
+\newpage
+\begin{tikzpicture}
+    \useasboundingbox (0,0) rectangle (39.2,28.25);
+    \def\bigx{0}\def\bigy{27.4}\def\bigw{12.9}\def\bigh{26.8}
+    \draw[rounded corners=10pt,mycolor] (\bigx,\bigy) rectangle ++(\bigw,-\bigh);
+
+    \def\ebx{0.2}\def\eby{26.8}\def\ebw{12.5}\def\ebh{25.6}
+    \draw[black] (\ebx,\eby) rectangle ++(\ebw,-\ebh);
+    
+    \node[text=mycolor] at (\bigx+\bigw*0.5,\bigy-\bigh+0.3) {\small 请在各题目的答题区域内作答，超出黑色矩形边框限定区域的答案无效};
+    \node[text=mycolor] at (\bigx+\bigw*0.5,\bigy-0.3) {\small 请在各题目的答题区域内作答，超出黑色矩形边框限定区域的答案无效};
+
+    \def\exx{1.5}\def\exy{26.3}
+    \node at (\exx,\exy) {18.（17分）};
+
+    \def\bigx{13.2}\def\bigy{27.4}\def\bigw{12.9}\def\bigh{26.8}
+    \draw[rounded corners=10pt,mycolor] (\bigx,\bigy) rectangle ++(\bigw,-\bigh);
+
+    \def\ebx{13.4}\def\eby{26.8}\def\ebw{12.5}\def\ebh{25.6}
+    \draw[black] (\ebx,\eby) rectangle ++(\ebw,-\ebh);
+    \draw (\ebx,\eby-0.5*\ebh) -- (\ebx+\ebw,\eby-0.5*\ebh);
+    
+    \node[text=mycolor] at (\bigx+\bigw*0.5,\bigy-\bigh+0.3) {\small 请在各题目的答题区域内作答，超出黑色矩形边框限定区域的答案无效};
+    \node[text=mycolor] at (\bigx+\bigw*0.5,\bigy-0.3) {\small 请在各题目的答题区域内作答，超出黑色矩形边框限定区域的答案无效};
+    
+    \def\exx{14.7}\def\exy{26.3}
+    \node at (\exx,\exy-0.5*\ebh) {19.（17分）};
+    \node at (\exx,\exy) {\textcolor{mycolor}{\textbf{（续18题）}}};
+
+    \def\bigx{26.4}\def\bigy{27.4}\def\bigw{12.9}\def\bigh{26.8}
+    \draw[rounded corners=10pt,mycolor] (\bigx,\bigy) rectangle ++(\bigw,-\bigh);
+
+    \def\ebx{26.6}\def\eby{26.8}\def\ebw{12.5}\def\ebh{25.6}
+    \draw[black] (\ebx,\eby) rectangle ++(\ebw,-\ebh);
+    
+    \node[text=mycolor] at (\bigx+\bigw*0.5,\bigy-\bigh+0.3) {\small 请在各题目的答题区域内作答，超出黑色矩形边框限定区域的答案无效};
+    \node[text=mycolor] at (\bigx+\bigw*0.5,\bigy-0.3) {\small 请在各题目的答题区域内作答，超出黑色矩形边框限定区域的答案无效};
+    
+    \def\exx{27.9}\def\exy{26.3}
+    \node at (\exx,\exy) {\textcolor{mycolor}{\textbf{（续19题）}}};
+\end{tikzpicture}
+\end{document}
+"""
+
+    # Clean un-commented header text before \documentclass
+    lines = content.splitlines()
+    cleaned_lines = []
+    for line in lines:
+        sline = line.strip()
+        if sline.startswith("作者：") or sline.startswith("链接：") or sline.startswith("来源：") or sline.startswith("著作权归作者所有"):
+            cleaned_lines.append("% " + line)
+        else:
+            cleaned_lines.append(line)
+    tex_str = "\n".join(cleaned_lines)
+
+    paper_title = title.strip() or "2026年普通高等学校招生全国统一考试"
+    tex_str = re.sub(r'202\d年普通高等学校招生全国统一考试', paper_title, tex_str)
+
+    # Extract detailed answer questions
+    detailed_questions = []
+    for item in questions_data:
+        q = item.get("question", {})
+        if q.get("question_type") == "detailed_answer":
+            detailed_questions.append(item)
+
+    # Map for Q15..Q19
+    coords_map = [
+        ("15", r"15.（13分）", "12.2, 10.2"),
+        ("16", r"16.（15分）", "25.4, 20.0"),
+        ("17", r"17.（15分）", "38.6, 26.3"),
+        ("18", r"18.（17分）", "12.2, 26.3"),
+        ("19", r"19.（17分）", "25.4, 13.5"),
+    ]
+
+    for idx in range(min(5, len(detailed_questions))):
+        item = detailed_questions[idx]
+        q = item.get("question", {})
+        score = item.get("score", 15)
+        q_num, default_header, fig_coords = coords_map[idx]
+
+        # Update score header
+        new_header = f"{q_num}.（{score}分）"
+        tex_str = tex_str.replace(default_header, new_header)
+
+        # Check for figures
+        q_content = q.get("content", "")
+        fig_code = extract_figures_for_answer_sheet(q_content)
+        if fig_code:
+            fig_node = f"\\node[anchor=north east] at ({fig_coords}) {{\\resizebox{{4.2cm}}{{!}}{{\\begin{{minipage}}{{4.2cm}}\\centering {fig_code}\\end{{minipage}}}}}};"
+            tex_str = tex_str.replace(new_header, f"{new_header}\n    {fig_node}")
+
+    return tex_str
+
+def create_tex_zip_package(title: str, tex_content: str, ans_tex_content: str, image_paths: list, answer_sheet_tex: str = None) -> bytes:
+    """
+    Creates an in-memory ZIP package containing paper.tex, answer.tex, answer_sheet.tex (if present), and referenced images.
     """
     zip_buffer = BytesIO()
     with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zf:
         zf.writestr("试卷正文.tex", tex_content.encode("utf-8"))
         if ans_tex_content:
             zf.writestr("参考答案与解析.tex", ans_tex_content.encode("utf-8"))
+        if answer_sheet_tex:
+            zf.writestr("答题卡.tex", answer_sheet_tex.encode("utf-8"))
             
         for img_p in image_paths:
             if os.path.exists(img_p):
