@@ -1317,6 +1317,19 @@
 
         const isExam19 = (window.PaperStore.meta.paper_type === 'exam_19');
 
+        // Pre-open tabs synchronously during click event to bypass browser popup blockers
+        const tabPaper = window.open('', '_blank');
+        let tabSheet = null;
+        if (isExam19) {
+            tabSheet = window.open('', '_blank');
+        }
+
+        // Write custom loading HTML in pre-opened tabs
+        setPdfTabLoadingState(tabPaper, '📄 试卷 PDF 编译中', '📄', '正在为您在线静默编译高清试卷 PDF...');
+        if (tabSheet) {
+            setPdfTabLoadingState(tabSheet, '📝 答题卡 PDF 编译中', '📝', '正在为您在线静默编译 A3 答题卡 PDF...');
+        }
+
         try {
             if (window.showToast) {
                 window.showToast(isExam19 ? '正在静默编译试卷与答题卡 PDF...' : '正在静默编译试卷 PDF...', 'info');
@@ -1339,7 +1352,7 @@
                     questions: cart
                 };
 
-                // Compile both试卷 and 答题卡 in parallel
+                // Compile both in parallel for maximum speed
                 const [resPaper, resSheet] = await Promise.all([
                     fetch('/api/paper/export/pdf', {
                         method: 'POST',
@@ -1359,11 +1372,11 @@
                     const urlPaper = URL.createObjectURL(blobPaper);
                     const urlSheet = URL.createObjectURL(blobSheet);
 
-                    // Open windows only AFTER compilation is complete
-                    window.open(urlPaper, '_blank');
-                    window.open(urlSheet, '_blank');
+                    // Navigate tabs to compiled PDF URLs
+                    if (tabPaper && !tabPaper.closed) tabPaper.location.href = urlPaper;
+                    if (tabSheet && !tabSheet.closed) tabSheet.location.href = urlSheet;
 
-                    if (window.showToast) window.showToast('试卷与答题卡 PDF 编译完成，已成功弹出窗口预览！', 'success');
+                    if (window.showToast) window.showToast('试卷与答题卡 PDF 编译完成，双窗口已就绪！', 'success');
                 } else {
                     let errLog = 'PDF 编译失败';
                     if (!resPaper.ok) {
@@ -1373,6 +1386,8 @@
                         const e2 = await resSheet.json();
                         errLog = e2.message || '答题卡 PDF 编译失败';
                     }
+                    if (tabPaper && !tabPaper.closed) tabPaper.close();
+                    if (tabSheet && !tabSheet.closed) tabSheet.close();
                     if (window.showToast) window.showToast(errLog, 'error');
                 }
             } else {
@@ -1385,17 +1400,100 @@
                 if (resPaper.ok) {
                     const blobPaper = await resPaper.blob();
                     const urlPaper = URL.createObjectURL(blobPaper);
-                    window.open(urlPaper, '_blank');
+                    if (tabPaper && !tabPaper.closed) tabPaper.location.href = urlPaper;
                     if (window.showToast) window.showToast('试卷 PDF 编译完成，已成功弹出窗口预览！', 'success');
                 } else {
+                    if (tabPaper && !tabPaper.closed) tabPaper.close();
                     const errData = await resPaper.json();
                     if (window.showToast) window.showToast(errData.message || '试卷 PDF 编译失败', 'error');
                 }
             }
         } catch (e) {
+            if (tabPaper && !tabPaper.closed) tabPaper.close();
+            if (tabSheet && !tabSheet.closed) tabSheet.close();
             if (window.showToast) window.showToast('PDF 请求编译异常', 'error');
         }
     };
+
+    function setPdfTabLoadingState(tab, title, iconEmoji, text) {
+        if (!tab) return;
+        try {
+            tab.document.write(`
+                <!DOCTYPE html>
+                <html>
+                <head>
+                    <meta charset="utf-8">
+                    <title>${title}</title>
+                    <style>
+                        body {
+                            margin: 0;
+                            padding: 0;
+                            background-color: #0f172a;
+                            color: #f8fafc;
+                            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+                            display: flex;
+                            min-height: 100vh;
+                            align-items: center;
+                            justify-content: center;
+                        }
+                        .card {
+                            background: #1e293b;
+                            border: 1px solid #334155;
+                            border-radius: 16px;
+                            padding: 32px 40px;
+                            text-align: center;
+                            box-shadow: 0 20px 25px -5px rgba(0,0,0,0.5);
+                            max-width: 360px;
+                        }
+                        .icon-box {
+                            width: 56px;
+                            height: 56px;
+                            border-radius: 14px;
+                            background: rgba(99, 102, 241, 0.15);
+                            display: flex;
+                            align-items: center;
+                            justify-content: center;
+                            font-size: 28px;
+                            margin: 0 auto 16px auto;
+                        }
+                        h2 { margin: 0 0 8px 0; font-size: 18px; font-weight: 700; color: #ffffff; }
+                        p { margin: 0 0 20px 0; font-size: 13px; color: #94a3b8; line-height: 1.5; }
+                        .status {
+                            display: inline-flex;
+                            align-items: center;
+                            justify-content: center;
+                            gap: 8px;
+                            color: #818cf8;
+                            font-size: 13px;
+                            font-weight: 600;
+                        }
+                        @keyframes spin { 100% { transform: rotate(360deg); } }
+                        .spinner {
+                            width: 14px;
+                            height: 14px;
+                            border: 2px solid rgba(99, 102, 241, 0.3);
+                            border-top-color: #818cf8;
+                            border-radius: 50%;
+                            animation: spin 0.8s linear infinite;
+                        }
+                    </style>
+                </head>
+                <body>
+                    <div class="card">
+                        <div class="icon-box">${iconEmoji}</div>
+                        <h2>${title}</h2>
+                        <p>${text}</p>
+                        <div class="status">
+                            <div class="spinner"></div>
+                            <span>LaTeX 引擎静默编译中...</span>
+                        </div>
+                    </div>
+                </body>
+                </html>
+            `);
+            tab.document.close();
+        } catch(e) {}
+    }
 
     window.exportPaperTex = async function () {
         const cart = window.PaperStore.cart;
