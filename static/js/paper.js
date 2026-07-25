@@ -1317,19 +1317,11 @@
 
         const isExam19 = (window.PaperStore.meta.paper_type === 'exam_19');
 
-        // Pre-open tabs synchronously during user click event to prevent browser popup blockers
-        const tabPaper = window.open('about:blank', '_blank');
-        let tabSheet = null;
-        if (isExam19) {
-            tabSheet = window.open('about:blank', '_blank');
-        }
-
         try {
             if (window.showToast) {
                 window.showToast(isExam19 ? '正在静默编译试卷与答题卡 PDF...' : '正在静默编译试卷 PDF...', 'info');
             }
 
-            // 1. Compile Exam Paper PDF
             const payloadPaper = {
                 title: window.PaperStore.meta.title,
                 subtitle: window.PaperStore.meta.subtitle,
@@ -1338,25 +1330,7 @@
                 questions: cart
             };
 
-            const resPaper = await fetch('/api/paper/export/pdf', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(payloadPaper)
-            });
-
-            if (resPaper.ok) {
-                const blob1 = await resPaper.blob();
-                const url1 = URL.createObjectURL(blob1);
-                if (tabPaper) tabPaper.location.href = url1;
-            } else {
-                if (tabPaper) tabPaper.close();
-                const errData = await resPaper.json();
-                if (window.showToast) window.showToast(errData.message || '试卷 PDF 编译失败', 'error');
-                return;
-            }
-
-            // 2. If exam_19, compile Answer Sheet PDF in tabSheet
-            if (isExam19 && tabSheet) {
+            if (isExam19) {
                 const payloadSheet = {
                     title: window.PaperStore.meta.title,
                     subtitle: window.PaperStore.meta.subtitle,
@@ -1365,27 +1339,60 @@
                     questions: cart
                 };
 
-                const resSheet = await fetch('/api/paper/export/pdf', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify(payloadSheet)
-                });
+                // Compile both试卷 and 答题卡 in parallel
+                const [resPaper, resSheet] = await Promise.all([
+                    fetch('/api/paper/export/pdf', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify(payloadPaper)
+                    }),
+                    fetch('/api/paper/export/pdf', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify(payloadSheet)
+                    })
+                ]);
 
-                if (resSheet.ok) {
-                    const blob2 = await resSheet.blob();
-                    const url2 = URL.createObjectURL(blob2);
-                    tabSheet.location.href = url2;
-                    if (window.showToast) window.showToast('试卷与答题卡 PDF 编译成功，已在新标签页分别打开！', 'success');
+                if (resPaper.ok && resSheet.ok) {
+                    const blobPaper = await resPaper.blob();
+                    const blobSheet = await resSheet.blob();
+                    const urlPaper = URL.createObjectURL(blobPaper);
+                    const urlSheet = URL.createObjectURL(blobSheet);
+
+                    // Open windows only AFTER compilation is complete
+                    window.open(urlPaper, '_blank');
+                    window.open(urlSheet, '_blank');
+
+                    if (window.showToast) window.showToast('试卷与答题卡 PDF 编译完成，已成功弹出窗口预览！', 'success');
                 } else {
-                    tabSheet.close();
-                    if (window.showToast) window.showToast('答题卡 PDF 编译失败', 'error');
+                    let errLog = 'PDF 编译失败';
+                    if (!resPaper.ok) {
+                        const e1 = await resPaper.json();
+                        errLog = e1.message || '试卷 PDF 编译失败';
+                    } else if (!resSheet.ok) {
+                        const e2 = await resSheet.json();
+                        errLog = e2.message || '答题卡 PDF 编译失败';
+                    }
+                    if (window.showToast) window.showToast(errLog, 'error');
                 }
             } else {
-                if (window.showToast) window.showToast('试卷 PDF 编译成功！已在新窗口打开', 'success');
+                const resPaper = await fetch('/api/paper/export/pdf', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payloadPaper)
+                });
+
+                if (resPaper.ok) {
+                    const blobPaper = await resPaper.blob();
+                    const urlPaper = URL.createObjectURL(blobPaper);
+                    window.open(urlPaper, '_blank');
+                    if (window.showToast) window.showToast('试卷 PDF 编译完成，已成功弹出窗口预览！', 'success');
+                } else {
+                    const errData = await resPaper.json();
+                    if (window.showToast) window.showToast(errData.message || '试卷 PDF 编译失败', 'error');
+                }
             }
         } catch (e) {
-            if (tabPaper) tabPaper.close();
-            if (tabSheet) tabSheet.close();
             if (window.showToast) window.showToast('PDF 请求编译异常', 'error');
         }
     };
