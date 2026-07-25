@@ -960,6 +960,10 @@
                         </div>
                         ${choicesGrid}
                     `;
+                } else {
+                    stemLine = contentHtml;
+                }
+
                 let solutionBlankHtml = '';
                 let solSpaceCm = 0;
                 if (qType === 'detailed_answer' && meta.paper_type !== 'exam_19') {
