@@ -1856,20 +1856,31 @@ def draw_tikz_from_image_endpoint(
 @app.get("/api/questions")
 def list_questions(
     q: str = None,
+    search: str = None,
     compulsory: str = None,
+    category_compulsory: str = None,
     chapter: str = None,
+    category_chapter: str = None,
     knowledge: str = None,
+    category_knowledge: str = None,
     qtype: str = None,
+    question_type: str = None,
     difficulty: str = None,
     source: str = None,
     db: Session = Depends(get_db)
 ):
+    search_q = q or search
+    comp_val = compulsory or category_compulsory
+    chap_val = chapter or category_chapter
+    know_val = knowledge or category_knowledge
+    type_val = qtype or question_type
+
     query = db.query(Question)
     
     # Check if searching for a specific display sequence number
     target_id_by_seq = None
-    if q:
-        clean_q = q.strip()
+    if search_q:
+        clean_q = search_q.strip()
         if clean_q.startswith("#"):
             clean_q = clean_q[1:]
         if clean_q.isdigit():
@@ -1878,32 +1889,32 @@ def list_questions(
             if 1 <= seq_val <= len(all_q_asc):
                 target_id_by_seq = all_q_asc[seq_val - 1][0]
 
-    if q:
+    if search_q:
         if target_id_by_seq is not None:
             query = query.filter(
                 (Question.id == target_id_by_seq) |
-                (Question.content.like(f"%{q}%")) | 
-                (Question.source.like(f"%{q}%")) |
-                (Question.answer_markdown.like(f"%{q}%")) |
-                (Question.review.like(f"%{q}%")) |
-                (Question.tags.like(f"%{q}%"))
+                (Question.content.like(f"%{search_q}%")) | 
+                (Question.source.like(f"%{search_q}%")) |
+                (Question.answer_markdown.like(f"%{search_q}%")) |
+                (Question.review.like(f"%{search_q}%")) |
+                (Question.tags.like(f"%{search_q}%"))
             )
         else:
             query = query.filter(
-                (Question.content.like(f"%{q}%")) | 
-                (Question.source.like(f"%{q}%")) |
-                (Question.answer_markdown.like(f"%{q}%")) |
-                (Question.review.like(f"%{q}%")) |
-                (Question.tags.like(f"%{q}%"))
+                (Question.content.like(f"%{search_q}%")) | 
+                (Question.source.like(f"%{search_q}%")) |
+                (Question.answer_markdown.like(f"%{search_q}%")) |
+                (Question.review.like(f"%{search_q}%")) |
+                (Question.tags.like(f"%{search_q}%"))
             )
-    if compulsory:
-        query = query.filter(Question.category_compulsory == compulsory)
-    if chapter:
-        query = query.filter(Question.category_chapter == chapter)
-    if knowledge:
-        query = query.filter(Question.category_knowledge == knowledge)
-    if qtype:
-        query = query.filter(Question.question_type == qtype)
+    if comp_val:
+        query = query.filter(Question.category_compulsory == comp_val)
+    if chap_val:
+        query = query.filter(Question.category_chapter == chap_val)
+    if know_val:
+        query = query.filter(Question.category_knowledge == know_val)
+    if type_val:
+        query = query.filter(Question.question_type == type_val)
     if difficulty:
         query = query.filter(Question.difficulty == difficulty)
     if source:

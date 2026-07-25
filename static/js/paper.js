@@ -242,12 +242,29 @@
     async function fetchBankQuestions() {
         const f = window.PaperStore.filters;
         const params = new URLSearchParams();
-        if (f.compulsory) params.append('category_compulsory', f.compulsory);
-        if (f.chapter) params.append('category_chapter', f.chapter);
-        if (f.knowledge) params.append('category_knowledge', f.knowledge);
-        if (f.question_type) params.append('question_type', f.question_type);
-        if (f.difficulty) params.append('difficulty', f.difficulty);
-        if (f.keyword) params.append('search', f.keyword);
+        if (f.compulsory) {
+            params.append('compulsory', f.compulsory);
+            params.append('category_compulsory', f.compulsory);
+        }
+        if (f.chapter) {
+            params.append('chapter', f.chapter);
+            params.append('category_chapter', f.chapter);
+        }
+        if (f.knowledge) {
+            params.append('knowledge', f.knowledge);
+            params.append('category_knowledge', f.knowledge);
+        }
+        if (f.question_type) {
+            params.append('qtype', f.question_type);
+            params.append('question_type', f.question_type);
+        }
+        if (f.difficulty) {
+            params.append('difficulty', f.difficulty);
+        }
+        if (f.keyword) {
+            params.append('q', f.keyword);
+            params.append('search', f.keyword);
+        }
 
         try {
             const res = await fetch(`/api/questions?${params.toString()}`);
