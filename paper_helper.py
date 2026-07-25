@@ -14,7 +14,7 @@ from database import Question, Paper, PaperQuestion, QuestionCurriculum
 # In-memory LRU cache for compiled PDF bytes
 _PDF_CACHE_LOCK = threading.Lock()
 _PDF_CACHE = OrderedDict()  # key -> (pdf_bytes, log_or_err)
-_MAX_PDF_CACHE_SIZE = 50
+_MAX_PDF_CACHE_SIZE = 20
 
 # Constants for question type labels
 TYPE_LABELS = {
