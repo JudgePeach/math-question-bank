@@ -1947,6 +1947,7 @@ def create_question(
     answer_markdown: str = Form(""),
     review: str = Form(""),
     tikz_code: str = Form(""),
+    figure_align: str = Form("right"),
     tags: str = Form(""),
     related_question_id: str = Form(""),
     image_paths: str = Form("[]"),  # JSON array string
@@ -1976,6 +1977,7 @@ def create_question(
             answer_markdown=answer_markdown,
             review=review,
             tikz_code=tikz_code,
+            figure_align=figure_align if figure_align in ["right", "center", "bottom_right"] else "right",
             tags=tags
         )
         db_question.image_paths = parsed_img_paths
@@ -2035,6 +2037,7 @@ def update_question(
     answer_markdown: str = Form(""),
     review: str = Form(""),
     tikz_code: str = Form(""),
+    figure_align: str = Form("right"),
     tags: str = Form(""),
     related_question_id: str = Form(""),
     image_paths: str = Form("[]"),
@@ -2066,6 +2069,8 @@ def update_question(
         db_question.answer_markdown = answer_markdown
         db_question.review = review
         db_question.tikz_code = tikz_code
+        if figure_align in ["right", "center", "bottom_right"]:
+            db_question.figure_align = figure_align
         db_question.tags = tags
         # Clean up removed images from disk to prevent storage leaks
         old_images = db_question.image_paths
@@ -2133,6 +2138,22 @@ def update_question(
     except Exception as e:
         db.rollback()
         raise HTTPException(status_code=400, detail=f"更新题目失败: {str(e)}")
+
+@app.post("/api/questions/{question_id}/figure_align")
+def update_question_figure_align(
+    question_id: int,
+    figure_align: str = Form("right"),
+    db: Session = Depends(get_db)
+):
+    db_question = db.query(Question).filter(Question.id == question_id).first()
+    if not db_question:
+        raise HTTPException(status_code=404, detail="未找到对应的题目")
+    if figure_align not in ["right", "center", "bottom_right"]:
+        figure_align = "right"
+    db_question.figure_align = figure_align
+    db.commit()
+    db.refresh(db_question)
+    return {"status": "success", "question_id": question_id, "figure_align": figure_align}
 
 @app.get("/api/questions/{question_id}/associated")
 def get_associated_questions(question_id: int, db: Session = Depends(get_db)):

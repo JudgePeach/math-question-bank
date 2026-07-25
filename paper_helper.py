@@ -221,6 +221,8 @@ def build_latex_document(title: str, subtitle: str, paper_type: str, questions_d
             env_name = "problem" if q_type == "detailed_answer" else "question"
             points_arg = f"[points = {q_score}]" if q_type == "detailed_answer" else ""
 
+            fig_align = q.get("figure_align") or "right"
+
             lines.append(f"\\begin{{{env_name}}}{points_arg}")
             if fig_body:
                 choices_part = ""
@@ -231,15 +233,27 @@ def build_latex_document(title: str, subtitle: str, paper_type: str, questions_d
                 else:
                     stem_text = cleaned_content
 
-                lines.append(r"\begin{minipage}[t]{\dimexpr\linewidth-5.8cm\relax}")
-                lines.append(f"  {stem_text}")
-                lines.append(r"\end{minipage}%")
-                lines.append(r"\hfill")
-                lines.append(r"\begin{minipage}[t]{5.2cm}")
-                lines.append(r"  \vspace{-2.0em}")
-                lines.append(r"  \raggedleft")
-                lines.append(f"  \\adjustbox{{valign=t}}{{{fig_body}}}")
-                lines.append(r"\end{minipage}")
+                if fig_align == "center":
+                    lines.append(stem_text)
+                    lines.append(r"\begin{center}")
+                    lines.append(f"  {fig_body}")
+                    lines.append(r"\end{center}")
+                elif fig_align == "bottom_right":
+                    lines.append(stem_text)
+                    lines.append(r"\begin{flushright}")
+                    lines.append(f"  {fig_body}")
+                    lines.append(r"\end{flushright}")
+                else:  # default "right"
+                    lines.append(r"\begin{minipage}[t]{\dimexpr\linewidth-5.8cm\relax}")
+                    lines.append(f"  {stem_text}")
+                    lines.append(r"\end{minipage}%")
+                    lines.append(r"\hfill")
+                    lines.append(r"\begin{minipage}[t]{5.2cm}")
+                    lines.append(r"  \vspace{-2.0em}")
+                    lines.append(r"  \raggedleft")
+                    lines.append(f"  \\adjustbox{{valign=t}}{{{fig_body}}}")
+                    lines.append(r"\end{minipage}")
+
                 if choices_part:
                     lines.append(choices_part)
             else:

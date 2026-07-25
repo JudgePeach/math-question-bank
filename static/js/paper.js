@@ -657,7 +657,7 @@
 
                     <!-- Full Question Render Content -->
                     <div class="question-full-render-box text-sm leading-relaxed text-slate-800 dark:text-slate-100 overflow-x-auto select-text" id="paper-q-render-${q.id}">
-                        ${formatQuestionContentHtml(q.content)}
+                        ${formatQuestionContentHtml(q.content, q.id, q.figure_align || 'right')}
                     </div>
                 </div>
             `;
@@ -894,7 +894,7 @@
             items.forEach((item, subIdx) => {
                 const q = window.PaperStore.questionsMap[item.id];
                 let rawContent = q ? q.content : '';
-                let contentHtml = q ? formatQuestionContentHtml(rawContent) : '';
+                let contentHtml = q ? formatQuestionContentHtml(rawContent, q.id, q.figure_align || 'right') : '';
 
                 let stemLine = '';
                 if (qType === 'single_choice' || qType === 'multi_choice') {
@@ -1077,7 +1077,7 @@
 
             items.forEach((item, subIdx) => {
                 const q = window.PaperStore.questionsMap[item.id];
-                let contentHtml = q ? formatQuestionContentHtml(q.content) : '';
+                let contentHtml = q ? formatQuestionContentHtml(q.content, q.id, q.figure_align || 'right') : '';
 
                 let stemLine = '';
                 if (qType === 'single_choice' || qType === 'multi_choice') {
@@ -1582,17 +1582,164 @@
         return `<span class="px-2 py-0.5 rounded-lg text-xs font-semibold ${badgeClass} border">${escapeHtml(label)}</span>`;
     }
 
-    function formatQuestionContentHtml(raw) {
+    window.setFigureAlign = function (qid, alignVal) {
+        qid = parseInt(qid, 10);
+        if (!qid) return;
+
+        // Update local memory store
+        if (window.PaperStore.questionsMap[qid]) {
+            window.PaperStore.questionsMap[qid].figure_align = alignVal;
+        }
+
+        // Close popover
+        const existingPopover = document.getElementById('figureAlignPopoverMenu');
+        if (existingPopover) existingPopover.remove();
+
+        // Send POST API request to persist in DB
+        const formData = new FormData();
+        formData.append('figure_align', alignVal);
+
+        fetch(`/api/questions/${qid}/figure_align`, {
+            method: 'POST',
+            headers: {
+                'X-Local-Token': window.LOCAL_TOKEN || ''
+            },
+            body: formData
+        })
+        .then(res => res.json())
+        .then(data => {
+            if (data.status === 'success') {
+                const labelMap = { 'right': '题干右侧', 'center': '下方居中', 'bottom_right': '下方居右' };
+                if (window.showToast) window.showToast(`已调整题目 #${qid} 插图排版为：${labelMap[alignVal] || alignVal}`, 'success');
+
+                // Re-render UI
+                if (typeof window.renderPart3QuestionStream === 'function') {
+                    window.renderPart3QuestionStream();
+                }
+                if (typeof window.renderPaperCanvas === 'function') {
+                    window.renderPaperCanvas();
+                }
+            }
+        })
+        .catch(err => {
+            console.error('Update figure_align failed:', err);
+        });
+    };
+
+    window.showFigureAlignPopover = function (event, qid) {
+        event.preventDefault();
+        event.stopPropagation();
+
+        qid = parseInt(qid, 10);
+        const q = window.PaperStore.questionsMap[qid] || {};
+        const currentAlign = q.figure_align || 'right';
+
+        // Remove existing popover
+        const existingPopover = document.getElementById('figureAlignPopoverMenu');
+        if (existingPopover) existingPopover.remove();
+
+        const popover = document.createElement('div');
+        popover.id = 'figureAlignPopoverMenu';
+        popover.className = 'fixed z-50 bg-white/95 backdrop-blur-md rounded-2xl border border-slate-200 shadow-xl p-2 font-sans text-xs flex flex-col space-y-1 animate-in fade-in zoom-in-95 duration-150 dark:bg-slate-800 dark:border-slate-700 text-slate-800 dark:text-slate-100';
+
+        // Position popover near mouse cursor
+        let left = event.clientX + 5;
+        let top = event.clientY + 5;
+
+        // Keep inside viewport bounds
+        if (left + 170 > window.innerWidth) left = window.innerWidth - 180;
+        if (top + 150 > window.innerHeight) top = window.innerHeight - 160;
+
+        popover.style.left = `${left}px`;
+        popover.style.top = `${top}px`;
+
+        popover.innerHTML = `
+            <div class="px-2 py-1 text-[11px] font-bold text-slate-400 border-b border-slate-100 dark:border-slate-700 flex items-center justify-between">
+                <span><i class="fa-solid fa-sliders text-brand-500 mr-1"></i> 调整插图排版位置</span>
+                <button onclick="document.getElementById('figureAlignPopoverMenu').remove()" class="text-slate-400 hover:text-slate-600 dark:hover:text-slate-200"><i class="fa-solid fa-xmark"></i></button>
+            </div>
+            <button onclick="window.setFigureAlign(${qid}, 'right')" class="w-full text-left px-3 py-1.5 rounded-xl hover:bg-brand-50 hover:text-brand-600 transition-colors flex items-center justify-between ${currentAlign === 'right' ? 'bg-brand-50 font-bold text-brand-600' : ''}">
+                <span><i class="fa-solid fa-align-right text-xs mr-2 text-brand-500"></i> 题干右侧 (默认)</span>
+                ${currentAlign === 'right' ? '<i class="fa-solid fa-check text-xs"></i>' : ''}
+            </button>
+            <button onclick="window.setFigureAlign(${qid}, 'center')" class="w-full text-left px-3 py-1.5 rounded-xl hover:bg-brand-50 hover:text-brand-600 transition-colors flex items-center justify-between ${currentAlign === 'center' ? 'bg-brand-50 font-bold text-brand-600' : ''}">
+                <span><i class="fa-solid fa-align-center text-xs mr-2 text-brand-500"></i> 题干下方居中</span>
+                ${currentAlign === 'center' ? '<i class="fa-solid fa-check text-xs"></i>' : ''}
+            </button>
+            <button onclick="window.setFigureAlign(${qid}, 'bottom_right')" class="w-full text-left px-3 py-1.5 rounded-xl hover:bg-brand-50 hover:text-brand-600 transition-colors flex items-center justify-between ${currentAlign === 'bottom_right' ? 'bg-brand-50 font-bold text-brand-600' : ''}">
+                <span><i class="fa-solid fa-align-right text-xs mr-2 text-brand-500"></i> 题干下方居右</span>
+                ${currentAlign === 'bottom_right' ? '<i class="fa-solid fa-check text-xs"></i>' : ''}
+            </button>
+        `;
+
+        document.body.appendChild(popover);
+
+        // Click outside listener
+        const closeHandler = function (e) {
+            if (!popover.contains(e.target)) {
+                popover.remove();
+                document.removeEventListener('click', closeHandler);
+            }
+        };
+        setTimeout(() => {
+            document.addEventListener('click', closeHandler);
+        }, 50);
+    };
+
+    function formatQuestionContentHtml(raw, qid = null, figAlign = 'right') {
         if (!raw) return '';
         let html = raw.trim();
+        figAlign = figAlign || 'right';
         
         // 1. Process LaTeX formulas, \underline, choices environment via preprocessFormulaForKaTeX
         if (typeof window.preprocessFormulaForKaTeX === 'function') {
             html = window.preprocessFormulaForKaTeX(html);
         }
 
-        // 2. Convert Markdown image syntax ![](/static/uploads/xxx.png) to <img>
-        html = html.replace(/!\[.*?\]\(([^)]+)\)/g, '<div class="my-2 text-center"><img src="$1" class="max-h-48 inline-block rounded-lg shadow-sm"></div>');
+        // 2. Check if Markdown image syntax ![](/static/uploads/xxx.png) exists
+        const imgMatch = html.match(/!\[.*?\]\(([^)]+)\)/);
+        if (imgMatch) {
+            const imgSrc = imgMatch[1];
+            // Remove the markdown tag from stem text
+            const stemText = html.replace(/!\[.*?\]\(([^)]+)\)/g, '').trim()
+                                .replace(/\n\n/g, '<br><br>').replace(/\n/g, '<br>');
+            
+            const alignLabelMap = {
+                'right': '题干右侧',
+                'center': '下方居中',
+                'bottom_right': '下方居右'
+            };
+            const currentLabel = alignLabelMap[figAlign] || '题干右侧';
+            const iconClass = figAlign === 'center' ? 'fa-align-center' : 'fa-align-right';
+            const qidAttr = qid ? qid : 0;
+
+            const imgControlHtml = `
+                <div class="inline-block relative group/fig">
+                    <img src="${imgSrc}" class="max-w-[200px] max-h-[170px] object-contain rounded-lg border border-slate-200 shadow-xs cursor-pointer hover:ring-2 hover:ring-brand-500 hover:scale-[1.02] transition-all"
+                        onclick="event.stopPropagation(); window.showFigureAlignPopover(event, ${qidAttr})"
+                        oncontextmenu="event.preventDefault(); event.stopPropagation(); window.showFigureAlignPopover(event, ${qidAttr})"
+                        title="点击或右击可切换图片排版位置 (当前: ${currentLabel})">
+                    <div class="mt-1 ${figAlign === 'center' ? 'text-center' : 'text-right'}">
+                        <button onclick="event.stopPropagation(); window.showFigureAlignPopover(event, ${qidAttr})" class="inline-flex items-center text-[10px] font-sans text-brand-700 bg-brand-50 hover:bg-brand-100 border border-brand-200/80 rounded-md px-1.5 py-0.5 transition-colors shadow-2xs">
+                            <i class="fa-solid ${iconClass} text-[9px] mr-1 text-brand-500"></i> ${currentLabel} <i class="fa-solid fa-chevron-down text-[8px] ml-1 opacity-70"></i>
+                        </button>
+                    </div>
+                </div>
+            `;
+
+            if (figAlign === 'center') {
+                return `<div>${stemText}</div><div class="my-2 text-center">${imgControlHtml}</div>`;
+            } else if (figAlign === 'bottom_right') {
+                return `<div>${stemText}</div><div class="my-2 text-right">${imgControlHtml}</div>`;
+            } else { // default 'right'
+                return `
+                    <div class="flex items-start justify-between gap-3 my-1">
+                        <div class="flex-1 min-w-0">${stemText}</div>
+                        <div class="shrink-0 text-right">${imgControlHtml}</div>
+                    </div>
+                `;
+            }
+        }
         
         // 3. Handle double line breaks outside math blocks for clean paragraph rendering
         html = html.replace(/\n\n/g, '<br><br>').replace(/\n/g, '<br>');

@@ -30,6 +30,7 @@ class Question(Base):
     association_group_id = Column(String(100), default="", index=True)  # 关联题目分组ID (支持传递关系)
     _image_paths = Column(Text, default="[]", name="image_paths")  # 以JSON字符串形式存储相对路径列表
     tikz_code = Column(Text, default="")  # TikZ 几何绘图源代码
+    figure_align = Column(String(50), default="right")  # 插图排版位置: right (题干右侧), center (下方居中), bottom_right (下方居右)
     tags = Column(Text, default="")  # 自定义标签 (逗号分隔或字符串)
     usage_count = Column(Integer, default=0, index=True)  # 组卷引用次数
     created_at = Column(DateTime, default=datetime.datetime.utcnow)
@@ -63,6 +64,7 @@ class Question(Base):
             "association_group_id": self.association_group_id,
             "image_paths": self.image_paths,
             "tikz_code": self.tikz_code,
+            "figure_align": self.figure_align or "right",
             "tags": self.tags,
             "usage_count": self.usage_count or 0,
             "created_at": (self.created_at.isoformat() + "Z") if self.created_at else None
@@ -80,6 +82,8 @@ class Question(Base):
             "source": self.source,
             "association_group_id": self.association_group_id,
             "image_paths": self.image_paths,
+            "tikz_code": self.tikz_code,
+            "figure_align": self.figure_align or "right",
             "tags": self.tags,
             "usage_count": self.usage_count or 0,
             "created_at": (self.created_at.isoformat() + "Z") if self.created_at else None
@@ -175,6 +179,10 @@ def init_db():
             if "tikz_code" not in columns:
                 conn.execute(text("ALTER TABLE questions ADD COLUMN tikz_code TEXT DEFAULT ''"))
                 print("Added column 'tikz_code' to questions table successfully.")
+
+            if "figure_align" not in columns:
+                conn.execute(text("ALTER TABLE questions ADD COLUMN figure_align VARCHAR(50) DEFAULT 'right'"))
+                print("Added column 'figure_align' to questions table successfully.")
                 
             if "tags" not in columns:
                 conn.execute(text("ALTER TABLE questions ADD COLUMN tags TEXT DEFAULT ''"))

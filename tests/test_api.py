@@ -274,6 +274,41 @@ def test_api_ai_solve_with_ocr(client):
             assert "请简化解答步骤" in user_msg
             assert "已知 $f(x) = x^2$" in user_msg
 
+def test_figure_align_api(client):
+    headers = {"X-Local-Token": LOCAL_TOKEN}
+    payload = {
+        "content": "插图排版测试题目 $x+y$",
+        "question_type": "single_choice",
+        "category_compulsory": "必修一",
+        "category_chapter": "集合",
+        "category_knowledge": "集合的含义",
+        "difficulty": "easy",
+        "source": "单元测试",
+        "answer_markdown": "答案",
+        "review": "",
+        "tikz_code": "",
+        "figure_align": "right",
+        "tags": "",
+        "related_question_id": "",
+        "image_paths": "[]"
+    }
+
+    response = client.post("/api/questions", data=payload, headers=headers)
+    assert response.status_code == 200
+    q_id = response.json()["question"]["id"]
+    assert response.json()["question"]["figure_align"] == "right"
+
+    # Update figure align to 'center' via dedicated endpoint
+    res_center = client.post(f"/api/questions/{q_id}/figure_align", data={"figure_align": "center"}, headers=headers)
+    assert res_center.status_code == 200
+    assert res_center.json()["figure_align"] == "center"
+
+    # Query back
+    res_get = client.get(f"/api/questions/{q_id}")
+    assert res_get.status_code == 200
+    assert res_get.json()["figure_align"] == "center"
+
+
 
 
 
