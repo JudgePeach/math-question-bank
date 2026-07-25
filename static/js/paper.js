@@ -1455,14 +1455,7 @@
                 window.showToast(`正在静默编译 ${targetName} PDF...`, 'info');
             }
 
-            const cartQuestions = cart.map(item => {
-                const q = window.PaperStore.questionsMap[item.id] || {};
-                return {
-                    id: item.id,
-                    score: item.score,
-                    figure_align: q.figure_align || 'right'
-                };
-            });
+            const cartQuestions = buildCartQuestionsPayload();
 
             const payload = {
                 title: window.PaperStore.meta.title,
