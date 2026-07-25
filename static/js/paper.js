@@ -729,14 +729,14 @@
                         <div class="hidden lg:flex items-center space-x-1.5 text-xs">
                             <span class="text-slate-400 font-medium">难度比:</span>
                             <div class="w-28 h-2 rounded-full bg-slate-200 overflow-hidden flex dark:bg-slate-700" title="普通题: ${easyPct}% | 挑战题: ${medPct}% | 强基题: ${hardPct}%">
-                                <div class="bg-slate-400 h-full" style="width: ${easyPct}%"></div>
-                                <div class="bg-slate-600 h-full" style="width: ${medPct}%"></div>
-                                <div class="bg-slate-900 dark:bg-slate-200 h-full" style="width: ${hardPct}%"></div>
+                                <div class="bg-emerald-500 h-full" style="width: ${easyPct}%"></div>
+                                <div class="bg-amber-500 h-full" style="width: ${medPct}%"></div>
+                                <div class="bg-rose-500 h-full" style="width: ${hardPct}%"></div>
                             </div>
                         </div>
                     </div>
 
-                    <!-- Right Paper Management Actions (Unified Clean Palette) -->
+                    <!-- Right Paper Management Actions -->
                     <div class="flex items-center space-x-4 sm:space-x-6">
                         ${totalCount > 0 ? `
                             <button onclick="clearCart()" class="w-28 sm:w-32 py-1.5 justify-center rounded-xl text-xs font-semibold bg-rose-50/80 text-rose-600 border border-rose-200/70 hover:bg-rose-100/80 active:scale-95 transition-all flex items-center space-x-1.5 whitespace-nowrap dark:bg-rose-950/40 dark:border-rose-800/60 dark:text-rose-300" title="清空当前试卷中的所有已选题目">
@@ -744,21 +744,21 @@
                                 <span>清空卷面</span>
                             </button>
                         ` : ''}
-                        <button onclick="savePaperToDb()" class="w-28 sm:w-32 py-1.5 justify-center rounded-xl text-xs font-semibold bg-brand-600 text-white shadow-xs hover:bg-brand-700 active:scale-95 transition-all flex items-center space-x-1.5 whitespace-nowrap" title="将此试卷归档保存至系统数据库，并自动更新题目的引用使用次数">
+                        <button onclick="savePaperToDb()" class="w-28 sm:w-32 py-1.5 justify-center rounded-xl text-xs font-semibold bg-emerald-600 text-white shadow-xs hover:bg-emerald-700 active:scale-95 transition-all flex items-center space-x-1.5 whitespace-nowrap" title="将此试卷归档保存至系统数据库，并自动更新题目的引用使用次数">
                             <i class="fa-solid fa-floppy-disk"></i>
                             <span>保存试卷</span>
                         </button>
-                        <button onclick="openSavedPapersModal()" class="w-28 sm:w-32 py-1.5 justify-center rounded-xl text-xs font-semibold bg-slate-100 text-slate-700 border border-slate-200 hover:bg-slate-200/80 active:scale-95 transition-all flex items-center space-x-1.5 whitespace-nowrap dark:bg-slate-700/60 dark:text-slate-200 dark:border-slate-600 dark:hover:bg-slate-700" title="打开历史试卷归档库，查阅、删除或一键载入重新导出">
+                        <button onclick="openSavedPapersModal()" class="w-28 sm:w-32 py-1.5 justify-center rounded-xl text-xs font-semibold bg-amber-500 text-white shadow-xs hover:bg-amber-600 active:scale-95 transition-all flex items-center space-x-1.5 whitespace-nowrap" title="打开历史试卷归档库，查阅、删除或一键载入重新导出">
                             <i class="fa-solid fa-folder-open"></i>
                             <span>历史试卷库</span>
                         </button>
                     </div>
                 </div>
 
-                <!-- Row 2: Preview & Export Options (Unified Neutral Slate Hierarchy) -->
+                <!-- Row 2: Preview & Export Options (All Uniform Light Grey) -->
                 <div class="flex items-center ${meta.paper_type === 'exam_19' ? 'space-x-2.5' : 'space-x-4 sm:space-x-6'}">
                     ${meta.paper_type === 'exam_19' ? `
-                        <button onclick="exportPaperPdf('paper')" class="px-3 py-1.5 rounded-xl text-xs font-semibold bg-slate-800 text-white shadow-xs hover:bg-slate-900 active:scale-95 transition-all flex items-center space-x-1.5 whitespace-nowrap dark:bg-slate-700 dark:hover:bg-slate-600" title="编译并打开试卷 PDF 预览">
+                        <button onclick="exportPaperPdf('paper')" class="px-3 py-1.5 rounded-xl text-xs font-semibold bg-slate-100 text-slate-700 border border-slate-200 hover:bg-slate-200/80 active:scale-95 transition-all flex items-center space-x-1.5 whitespace-nowrap dark:bg-slate-800 dark:text-slate-200 dark:border-slate-700 dark:hover:bg-slate-700" title="编译并打开试卷 PDF 预览">
                             <i class="fa-solid fa-file-pdf"></i>
                             <span>试卷 PDF 预览</span>
                         </button>
@@ -775,7 +775,7 @@
                             <span>合并导出</span>
                         </button>
                     ` : `
-                        <button onclick="exportPaperPdf('paper')" class="w-28 sm:w-32 py-1.5 justify-center rounded-xl text-xs font-semibold bg-slate-800 text-white shadow-xs hover:bg-slate-900 active:scale-95 transition-all flex items-center space-x-1.5 whitespace-nowrap dark:bg-slate-700 dark:hover:bg-slate-600" title="编译并打开高清 PDF 预览">
+                        <button onclick="exportPaperPdf('paper')" class="w-28 sm:w-32 py-1.5 justify-center rounded-xl text-xs font-semibold bg-slate-100 text-slate-700 border border-slate-200 hover:bg-slate-200/80 active:scale-95 transition-all flex items-center space-x-1.5 whitespace-nowrap dark:bg-slate-800 dark:text-slate-200 dark:border-slate-700 dark:hover:bg-slate-700" title="编译并打开高清 PDF 预览">
                             <i class="fa-solid fa-file-pdf"></i>
                             <span>PDF 预览</span>
                         </button>
