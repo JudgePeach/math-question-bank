@@ -189,14 +189,24 @@ def build_latex_document(title: str, subtitle: str, paper_type: str, questions_d
             elif q_type == "detailed_answer":
                 lines.append(r"\ExplSyntaxOn \int_gset:Nn \g__examzh_question_index_int {15} \ExplSyntaxOff")
 
-        if q_type == "single_choice":
-            section_header = f"选择题：本题共 {count} 小题，每小题 {unit_score} 分，共 {sec_score} 分。\n  在每小题给出的四个选项中，只有一项是符合题目要求的。"
-        elif q_type == "multi_choice":
-            section_header = f"多选题：本题共 {count} 小题，每小题 {unit_score} 分，共 {sec_score} 分。\n  在每小题给出的四个选项中，有多项符合题目要求。\n  全部选对的得 {unit_score} 分，部分选对的得部分分，有选错的得 0 分。"
-        elif q_type == "fill_in_blank":
-            section_header = f"填空题：本题共 {count} 小题，每小题 {unit_score} 分，共 {sec_score} 分。"
+        if paper_type == "quiz":
+            if q_type == "single_choice":
+                section_header = "单选题"
+            elif q_type == "multi_choice":
+                section_header = "多选题"
+            elif q_type == "fill_in_blank":
+                section_header = "填空题"
+            else:
+                section_header = "解答题"
         else:
-            section_header = f"解答题：本题共 {count} 小题，共 {sec_score} 分。解答应写出文字说明、证明过程或演算步骤。"
+            if q_type == "single_choice":
+                section_header = f"选择题：本题共 {count} 小题，每小题 {unit_score} 分，共 {sec_score} 分。\n  在每小题给出的四个选项中，只有一项是符合题目要求的。"
+            elif q_type == "multi_choice":
+                section_header = f"多选题：本题共 {count} 小题，每小题 {unit_score} 分，共 {sec_score} 分。\n  在每小题给出的四个选项中，有多项符合题目要求。\n  全部选对的得 {unit_score} 分，部分选对的得部分分，有选错的得 0 分。"
+            elif q_type == "fill_in_blank":
+                section_header = f"填空题：本题共 {count} 小题，每小题 {unit_score} 分，共 {sec_score} 分。"
+            else:
+                section_header = f"解答题：本题共 {count} 小题，共 {sec_score} 分。解答应写出文字说明、证明过程或演算步骤。"
             
         lines.append(f"\\section{{\n  {section_header}\n}}")
         lines.append("")

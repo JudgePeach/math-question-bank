@@ -981,14 +981,26 @@
             const unitScore = items[0] ? (parseInt(items[0].score, 10) || 5) : 5;
 
             let secHeaderText = '';
-            if (qType === 'single_choice') {
-                secHeaderText = `${secNum}、选择题：本题共 ${count} 小题，每小题 ${unitScore} 分，共 ${secScore} 分。在每小题给出的四个选项中，只有一项是符合题目要求的。`;
-            } else if (qType === 'multi_choice') {
-                secHeaderText = `${secNum}、多选题：本题共 ${count} 小题，每小题 ${unitScore} 分，共 ${secScore} 分。在每小题给出的四个选项中，有多项符合题目要求。全部选对的得 ${unitScore} 分，部分选对的得部分分，有选错的得 0 分。`;
-            } else if (qType === 'fill_in_blank') {
-                secHeaderText = `${secNum}、填空题：本题共 ${count} 小题，每小题 ${unitScore} 分，共 ${secScore} 分。`;
+            if (meta.paper_type === 'quiz') {
+                if (qType === 'single_choice') {
+                    secHeaderText = `${secNum}、单选题`;
+                } else if (qType === 'multi_choice') {
+                    secHeaderText = `${secNum}、多选题`;
+                } else if (qType === 'fill_in_blank') {
+                    secHeaderText = `${secNum}、填空题`;
+                } else {
+                    secHeaderText = `${secNum}、解答题`;
+                }
             } else {
-                secHeaderText = `${secNum}、解答题：本题共 ${count} 小题，共 ${secScore} 分。解答应写出文字说明、证明过程或演算步骤。`;
+                if (qType === 'single_choice') {
+                    secHeaderText = `${secNum}、选择题：本题共 ${count} 小题，每小题 ${unitScore} 分，共 ${secScore} 分。在每小题给出的四个选项中，只有一项是符合题目要求的。`;
+                } else if (qType === 'multi_choice') {
+                    secHeaderText = `${secNum}、多选题：本题共 ${count} 小题，每小题 ${unitScore} 分，共 ${secScore} 分。在每小题给出的四个选项中，有多项符合题目要求。全部选对的得 ${unitScore} 分，部分选对的得部分分，有选错的得 0 分。`;
+                } else if (qType === 'fill_in_blank') {
+                    secHeaderText = `${secNum}、填空题：本题共 ${count} 小题，每小题 ${unitScore} 分，共 ${secScore} 分。`;
+                } else {
+                    secHeaderText = `${secNum}、解答题：本题共 ${count} 小题，共 ${secScore} 分。解答应写出文字说明、证明过程或演算步骤。`;
+                }
             }
 
             blocks.push({
