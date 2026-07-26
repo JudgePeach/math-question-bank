@@ -371,7 +371,7 @@
                         <label class="block text-2xs font-semibold text-slate-500 mb-1">副标题 / 备注</label>
                         <input type="text" id="paperMetaSubtitle" value="${escapeHtml(meta.subtitle)}" 
                             onchange="updatePaperMeta('subtitle', this.value)"
-                            class="w-full px-3 py-1.5 text-xs rounded-xl border border-slate-200 bg-white focus:ring-2 focus:ring-brand-500 focus:outline-none dark:bg-slate-900/60 dark:border-slate-700 dark:text-slate-200" placeholder="如：考试时间：120分钟 满分：150分">
+                            class="w-full px-3 py-1.5 text-xs rounded-xl border border-slate-200 bg-white focus:ring-2 focus:ring-brand-500 focus:outline-none dark:bg-slate-900/60 dark:border-slate-700 dark:text-slate-200" placeholder="">
                     </div>
                     <div>
                         <label class="block text-2xs font-semibold text-slate-500 mb-1">试卷类型预设</label>
