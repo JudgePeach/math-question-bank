@@ -155,6 +155,12 @@
         }
 
         window.PaperStore.activeWorkspace = workspaceId;
+        try {
+            localStorage.setItem('mathbank_active_workspace', workspaceId);
+            if (window.__serverInstanceId) {
+                localStorage.setItem('mathbank_server_instance_id', window.__serverInstanceId);
+            }
+        } catch (e) { }
 
         const bankSec = document.getElementById('bankWorkspaceSection');
         const paperSec = document.getElementById('paperWorkspaceSection');
@@ -2212,6 +2218,33 @@
     document.addEventListener('DOMContentLoaded', function () {
         loadStateFromStorage();
         updateCartBadges();
+
+        // Restore active workspace if same server instance run (page refresh / tab re-open)
+        const currentServerId = window.__serverInstanceId || '';
+        let savedServerId = '';
+        let savedWorkspace = 'bank';
+        try {
+            savedServerId = localStorage.getItem('mathbank_server_instance_id') || '';
+            savedWorkspace = localStorage.getItem('mathbank_active_workspace') || 'bank';
+        } catch (e) { }
+
+        if (currentServerId && savedServerId === currentServerId) {
+            if (savedWorkspace === 'paper') {
+                setTimeout(function () {
+                    if (typeof window.selectWorkspace === 'function') {
+                        window.selectWorkspace('paper', '组卷排版工作台');
+                    }
+                }, 50);
+            }
+        } else {
+            // Fresh server startup (.command / .bat re-launch) -> reset to bank studio default
+            try {
+                localStorage.setItem('mathbank_active_workspace', 'bank');
+                if (currentServerId) {
+                    localStorage.setItem('mathbank_server_instance_id', currentServerId);
+                }
+            } catch (e) { }
+        }
     });
 
 })();

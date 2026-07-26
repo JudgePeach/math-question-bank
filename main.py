@@ -25,6 +25,9 @@ from sync_helper import export_database_to_files
 # Load environment variables
 load_dotenv()
 
+# Unique server instance ID generated per process launch/restart
+SERVER_INSTANCE_ID = str(uuid.uuid4())
+
 # Initialize DB
 init_db()
 
@@ -296,8 +299,8 @@ def read_index():
         css_mtime = int(os.path.getmtime(css_path)) if os.path.exists(css_path) else 0
         html_content = html_content.replace('/static/css/app.css', f'/static/css/app.css?v={css_mtime}')
             
-        # Inject the token directly into index.html to bypass any cookie blocking policies
-        token_script = f'<script>window.__localToken = "{LOCAL_TOKEN}";</script>'
+        # Inject the token and server_instance_id directly into index.html to bypass any cookie blocking policies
+        token_script = f'<script>window.__localToken = "{LOCAL_TOKEN}"; window.__serverInstanceId = "{SERVER_INSTANCE_ID}";</script>'
         html_content = html_content.replace('<head>', f'<head>\n    {token_script}')
             
         res = HTMLResponse(content=html_content)
@@ -707,12 +710,12 @@ def draw_tikz_via_high_model(image_path: str, prefer_draw: str, latex_content: s
         elif is_zhongzhan_gpt:
             api_key = os.getenv("ZHONGZHAN_GPT_API_KEY") or os.getenv("ZHONGZHAN_API_KEY")
             base_url = os.getenv("ZHONGZHAN_GPT_BASE_URL") or os.getenv("ZHONGZHAN_BASE_URL", "https://api.openai.com/v1")
-            provider_label = "中转站 (GPT)"
+            provider_label = "中转站 A"
             model_name = prefer_draw.split("/", 1)[1]
         else:
             api_key = os.getenv("ZHONGZHAN_CLAUDE_API_KEY")
             base_url = os.getenv("ZHONGZHAN_CLAUDE_BASE_URL", "https://api.openai.com/v1")
-            provider_label = "中转站 (Claude)"
+            provider_label = "中转站 B"
             model_name = prefer_draw.split("/", 1)[1]
             
         if not api_key:
@@ -883,12 +886,12 @@ def ocr_formula(
                 zz_key = os.getenv("ZHONGZHAN_CLAUDE_API_KEY")
                 zz_base_url = os.getenv("ZHONGZHAN_CLAUDE_BASE_URL", "https://api.openai.com/v1")
                 zz_model = os.getenv("ZHONGZHAN_CLAUDE_OCR_MODEL", "claude-3-5-sonnet")
-                provider_label = "中转站 (Claude)"
+                provider_label = "中转站 B"
             else:
                 zz_key = os.getenv("ZHONGZHAN_GPT_API_KEY") or os.getenv("ZHONGZHAN_API_KEY")
                 zz_base_url = os.getenv("ZHONGZHAN_GPT_BASE_URL") or os.getenv("ZHONGZHAN_BASE_URL", "https://api.openai.com/v1")
                 zz_model = os.getenv("ZHONGZHAN_GPT_OCR_MODEL") or os.getenv("ZHONGZHAN_OCR_MODEL", "gpt-4o")
-                provider_label = "中转站 (GPT)"
+                provider_label = "中转站 A"
                 
             if zz_key and zz_key.strip():
                 try:
@@ -1062,14 +1065,28 @@ async def ai_solve(
         }
         type_str = type_mapping.get(question_type, "数学题")
         
-        is_choice_or_blank = question_type in ["single_choice", "multi_choice", "fill_in_blank"]
-        
-        if is_choice_or_blank:
+        if question_type == "single_choice":
             first_block_header = "\\\\textbf{【参考答案】}"
             format_rules = (
                 "3. 你的输出内容必须且仅包含以下三个结构化板块（使用 LaTeX 粗体格式，绝对禁止使用 Markdown 的 ** 双星号加粗语法）：\n"
-                "   - \\\\textbf{【参考答案】}：直接给出最简练、准确的最终选项字母（如 A、B、C、D）或填空答案内容。\n"
-                "   - \\\\textbf{【解析过程】}：写出本题细致的推导和求解过程与解析步骤，方便师生理清思路。\n"
+                "   - \\\\textbf{【参考答案】}：必须在最开头第一行【直接、醒目】输出该单选题的唯一正确选项字母（如 A、B、C 或 D），绝对不要在此板块写入任何长篇推导过程！\n"
+                "   - \\\\textbf{【解析过程】}：紧接在【参考答案】下方，详细写出本题各个选项的推导、排除理由与分析步骤，方便师生理清思路。\n"
+                "   - \\\\textbf{【核心知识点】}：列出解答本题用到的关键数学公式、定理或思想方法。"
+            )
+        elif question_type == "multi_choice":
+            first_block_header = "\\\\textbf{【参考答案】}"
+            format_rules = (
+                "3. 你的输出内容必须且仅包含以下三个结构化板块（使用 LaTeX 粗体格式，绝对禁止使用 Markdown 的 ** 双星号加粗语法）：\n"
+                "   - \\\\textbf{【参考答案】}：必须在最开头第一行【直接、醒目】输出该多选题的所有正确选项字母（如 AB、ACD 或 BD），绝对不要在此板块写入任何长篇推导过程！\n"
+                "   - \\\\textbf{【解析过程】}：紧接在【参考答案】下方，详细写出本题各个选项的逐一推导、证明与分析步骤，方便师生理清思路。\n"
+                "   - \\\\textbf{【核心知识点】}：列出解答本题用到的关键数学公式、定理或思想方法。"
+            )
+        elif question_type == "fill_in_blank":
+            first_block_header = "\\\\textbf{【参考答案】}"
+            format_rules = (
+                "3. 你的输出内容必须且仅包含以下三个结构化板块（使用 LaTeX 粗体格式，绝对禁止使用 Markdown 的 ** 双星号加粗语法）：\n"
+                "   - \\\\textbf{【参考答案】}：必须在最开头第一行【直接、醒目】输出该填空题需填入的最终正确答案内容（如具体的数值、公式、表达式、集合或区间等），绝对不要在此板块写入任何长篇推导过程！\n"
+                "   - \\\\textbf{【解析过程】}：紧接在【参考答案】下方，详细写出本题求解推导与分析步骤，方便师生理清思路。\n"
                 "   - \\\\textbf{【核心知识点】}：列出解答本题用到的关键数学公式、定理或思想方法。"
             )
         else:
@@ -1085,7 +1102,7 @@ async def ai_solve(
             "你是一位极其严谨的、资深的高中数学教研专家。请解答用户输入的高中数学题目。特别注意：这必须是一道符合高中数学大纲要求的题目，你的解题思路、方法和技巧绝对不能超出中国普通高中阶段的水平（严禁使用大学高等数学、微积分、高等代数、洛必达法则、泰勒展开、拉格朗日中值定理等超出高中阶段教学大纲的大学方法，必须完全采用符合高中知识体系和认知范围的常规或技巧性方法）。\n"
             "【输出核心准则】\n"
             "1. 你的回答必须直接、干净地从下面的结构化板块开始。严禁包含任何前言、导语、引入承接句或问候语（例如“你好！”、“下面是解析：”等）。\n"
-            f"2. 你的回答必须直接以“{first_block_header}”作为第一个字符开始输出。严禁在结尾包含任何总结、客套话或多余的尾注段落。\n"
+            f"2. 你的回答必须直接以“{first_block_header}”作为第一个字符开始输出。特别强调：对于客观题（选择题/填空题），必须严格先在“{first_block_header}”板块第一行【直接、醒目】给出该题最终的正确答案（选项字母或填空数值/表达式），然后再在下方“\\\\textbf{{【解析过程】}}”板块中给出详细解析！严禁在结尾包含任何总结、客套话或多余的尾注段落。\n"
             "【输出格式要求】\n"
             "1. 必须使用标准的 LaTeX 语法书写所有的数学公式。行内公式使用 $...$ 或 \\( ... \\)，行间公式使用 $$\\n...\\n$$ 或 \\[ ... \\]。\n"
             "2. 排版优雅，逻辑步骤条理清晰，推理严密，没有任何废话。\n"
@@ -2688,6 +2705,7 @@ def save_metadata_config(payload: dict, db: Session = Depends(get_db)):
 def get_db_stats(db: Session = Depends(get_db)):
     try:
         total = db.query(Question).count()
+        normal = db.query(Question).filter(Question.difficulty == "normal").count()
         easy_error = db.query(Question).filter(Question.difficulty == "easy_error").count()
         challenge = db.query(Question).filter(Question.difficulty == "challenge").count()
         qiangji = db.query(Question).filter(Question.difficulty == "qiangji").count()
@@ -2708,6 +2726,22 @@ def get_db_stats(db: Session = Depends(get_db)):
                 comp_chap_stats[comp_val][chap_val] = 0
             comp_chap_stats[comp_val][chap_val] += 1
             
+        def compulsory_sort_key(comp_name: str):
+            if not comp_name or comp_name == "未分类":
+                return (99, 99, comp_name or "")
+            num_map = {'一': 1, '二': 2, '三': 3, '四': 4, '五': 5, '六': 6, '1': 1, '2': 2, '3': 3, '4': 4, '5': 5, '6': 6}
+            is_comp = 0 if ("必修" in comp_name and "选" not in comp_name) else 1
+            num = 99
+            for k, v in num_map.items():
+                if k in comp_name:
+                    num = min(num, v)
+            return (is_comp, num, comp_name)
+
+        sorted_comp_chap_stats = {
+            k: comp_chap_stats[k]
+            for k in sorted(comp_chap_stats.keys(), key=compulsory_sort_key)
+        }
+            
         # Daily additions in local time (UTC+8)
         date_rows = db.query(Question.created_at).all()
         daily_adds = {}
@@ -2717,14 +2751,15 @@ def get_db_stats(db: Session = Depends(get_db)):
                 local_time = created_at + datetime.timedelta(hours=8)
                 date_str = local_time.strftime("%Y-%m-%d")
                 daily_adds[date_str] = daily_adds.get(date_str, 0) + 1
-                
+
         return {
             "status": "success",
             "total_count": total,
+            "normal_count": normal,
             "easy_error_count": easy_error,
             "challenge_count": challenge,
             "qiangji_count": qiangji,
-            "compulsory_chapter_counts": comp_chap_stats,
+            "compulsory_chapter_counts": sorted_comp_chap_stats,
             "daily_adds": daily_adds
         }
     except Exception as e:
@@ -3069,7 +3104,7 @@ def parse_paper_text_internal(
         "   - 必须主动识别并清除这些题干中保留的答案，还原为纯净的空占位符！\n"
         "   - 对于选择题，将括号内代表答案的字母剥离清除，还原为干净的括号（如“（  ）”或“（ ）”）。\n"
         "   - 对于填空题，将下划线中代表答案的文本挖空，替换为纯粹的 LaTeX 空白占位符（如“\\underline{\\quad\\quad}”或“\\underline{\\quad \\quad}”）。\n"
-        "   - 将提取出来的答案字符（如“B”或“7”）作为最终参考答案，醒目融入在该题的 `answer_markdown` 字段最开始处，然后再呈现详细解析步骤。\n"
+        "   - 对于客观题（选择题/填空题），必须在 `answer_markdown` 最开头第一句/第一行【直接、醒目】输出最终正确答案（选择题如选项字母“A”或“ABD”，填空题如需填入的正确数值/公式/表达式“\\sqrt{3}”或“(-1, 1)”），然后再在下面呈现详细解析步骤。\n"
         "8. **【排版与字符格式规范】（极其重要）**：\n"
         "   - **推荐使用标准的 LaTeX 列表与排版环境**：为了方便用户直接复制高价值的 LaTeX 源码，推荐在需要列表、段落或编号排版时输出标准的 LaTeX 语法环境，如 `\\begin{itemize}`, `\\end{itemize}`, `\\item`, `\\begin{enumerate}`, `\\end{enumerate}`, `\\begin{center}`, `\\end{center}`。LaTeX 标记（如 `$` 或 `$$`）应该包围所有纯数学公式。\n"
         "   - **【加粗文本排版规范】**：在输出需要加粗的结构化文本时，**绝对禁止**使用 Markdown 的双星号 `**加粗文本**` 语法，必须且只能使用 LaTeX 标准的 `\\\\textbf{加粗文本}` 语法。\n"
@@ -3277,7 +3312,7 @@ async def ai_parse_paper(
             "   - 必须主动识别并清除这些题干中保留的答案，还原为纯净的空占位符！\n"
             "   - 对于选择题，将括号内代表答案的字母剥离清除，还原为干净的括号（如“（  ）”或“（ ）”）。\n"
             "   - 对于填空题，将下划线中代表答案的文本挖空，替换为纯粹的 LaTeX 空白占位符（如“\\underline{\\quad\\quad}”或“\\underline{\\quad \\quad}”）。\n"
-            "   - 将提取出来的答案字符（如“B”或“7”）作为最终参考答案，醒目融入在该题的 `answer_markdown` 字段最开始处，然后再呈现详细解析步骤。\n"
+            "   - 对于客观题（选择题/填空题），必须在 `answer_markdown` 最开头第一句/第一行【直接、醒目】输出最终正确答案（选择题如选项字母“A”或“ABD”，填空题如需填入的正确数值/公式/表达式“\\sqrt{3}”或“(-1, 1)”），然后再在下面呈现详细解析步骤。\n"
             "8. **【排版与字符格式规范】（极其重要）**：\n"
             "   - **推荐使用标准的 LaTeX 列表与排版环境**：为了方便用户直接复制高价值的 LaTeX 源码，推荐在需要列表、段落或编号排版时输出标准的 LaTeX 语法环境，如 `\\begin{itemize}`, `\\end{itemize}`, `\\item`, `\\begin{enumerate}`, `\\end{enumerate}`, `\\begin{center}`, `\\end{center}`。LaTeX 标记（如 `$` 或 `$$`）应该包围所有纯数学公式。\n"
             "   - **【加粗文本排版规范】**：在输出需要加粗的结构化文本时，**绝对禁止**使用 Markdown 的双星号 `**加粗文本**` 语法，必须且只能使用 LaTeX 标准的 `\\\\textbf{加粗文本}` 语法。\n"
