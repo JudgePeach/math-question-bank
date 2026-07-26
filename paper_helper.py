@@ -102,7 +102,7 @@ def build_latex_document(title: str, subtitle: str, paper_type: str, questions_d
     lines.append(r"\usepackage{caption}")
     lines.append(r"\usepackage{wrapfig}")
     lines.append(r"\usepackage{graphicx}")
-    lines.append(r"\usepackage{amsmath,amssymb}")
+    lines.append(r"\usepackage{amsmath}")
     lines.append(r"\usepackage{adjustbox}")
     lines.append(r"\examsetup{")
     lines.append(r"  page/size=a4paper,")
@@ -229,6 +229,8 @@ def build_latex_document(title: str, subtitle: str, paper_type: str, questions_d
                         cleaned_raw = cleaned_raw.replace(tikz_code, '').strip()
                 
                 cleaned_raw = re.sub(r'!\[.*?\]\([^)]+\)', '', cleaned_raw).strip()
+                if tikz_code and r"\begin{tikzpicture}" not in tikz_code:
+                    tikz_code = f"\\begin{{tikzpicture}}\n{tikz_code}\n\\end{{tikzpicture}}"
                 fig_body = f"\\resizebox{{5.0cm}}{{!}}{{{tikz_code}}}"
             elif re.search(r'!\[.*?\]\((?:/static/uploads/|static/uploads/|/uploads/|uploads/)?([^)]+)\)', raw_content):
                 m_img = re.search(r'!\[.*?\]\((?:/static/uploads/|static/uploads/|/uploads/|uploads/)?([^)]+)\)', raw_content)
@@ -267,13 +269,13 @@ def build_latex_document(title: str, subtitle: str, paper_type: str, questions_d
                     lines.append(stem_text)
                     lines.append(r"\begin{center}")
                     lines.append(r"  \vspace*{-0.4em}")
-                    lines.append(f"  \\smash{{{fig_body}}}" if is_sol_spaced else f"  {fig_body}")
+                    lines.append(f"  {fig_body}")
                     lines.append(r"\end{center}")
                 elif fig_align == "bottom_right":
                     lines.append(stem_text)
                     lines.append(r"\begin{flushright}")
                     lines.append(r"  \vspace*{-0.4em}")
-                    lines.append(f"  \\smash{{{fig_body}}}" if is_sol_spaced else f"  {fig_body}")
+                    lines.append(f"  {fig_body}")
                     lines.append(r"\end{flushright}")
                 else:  # default "right"
                     lines.append(r"\begin{minipage}[t]{\dimexpr\linewidth-5.8cm\relax}")
