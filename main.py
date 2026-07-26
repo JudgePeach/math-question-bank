@@ -3822,7 +3822,9 @@ def ai_select_paper(payload: dict, db: Session = Depends(get_db)):
 
         # 0. 自然语言意图智能分析 (NL Intent Parser)
         extracted_topics = []
+        is_review_intent = False
         if prompt:
+            is_review_intent = any(k in prompt for k in ['做过', '考过', '已抽过', '已用过', '复习', '旧题', '重做', '错题', '以往', '历史'])
             num_match = re.search(r'([一二三四五六七八九十1-9]+)\s*道', prompt)
             cn_to_num = {'一':1, '两':2, '二':2, '三':3, '四':4, '五':5, '六':6, '七':7, '八':8, '九':9, '十':10}
             if num_match:
@@ -3851,10 +3853,17 @@ def ai_select_paper(payload: dict, db: Session = Depends(get_db)):
         if knowledge:
             query = query.filter(Question.category_knowledge == knowledge)
             
-        candidates = query.order_by(Question.usage_count.asc(), Question.id.desc()).limit(35).all()
-        if not candidates:
-            # 宽泛放退：若限制过于严格导致候选集为空，退回全库候选集
-            candidates = db.query(Question).order_by(Question.usage_count.asc(), Question.id.desc()).limit(35).all()
+        if is_review_intent:
+            # 复习/旧题模式：优先提取已使用频次高的题目
+            review_query = query.filter(Question.usage_count > 0).order_by(Question.usage_count.desc(), Question.id.desc())
+            candidates = review_query.limit(35).all()
+            if not candidates:
+                candidates = query.order_by(Question.id.desc()).limit(35).all()
+        else:
+            # 默认鲜活模式：优先提取从未被使用过的冷门题目
+            candidates = query.order_by(Question.usage_count.asc(), Question.id.desc()).limit(35).all()
+            if not candidates:
+                candidates = db.query(Question).order_by(Question.usage_count.asc(), Question.id.desc()).limit(35).all()
 
         # 2. 严格按用户设置解析指定的 PREFER_SOLVE_MODEL (不进行任何跨提供商串用或自动轮询)
         target_model = os.getenv("PREFER_SOLVE_MODEL") or os.getenv("PREFER_PARSE_MODEL") or "deepseek-chat"
@@ -3919,14 +3928,18 @@ def ai_select_paper(payload: dict, db: Session = Depends(get_db)):
                         "id": q.id,
                         "question_type": q.question_type,
                         "difficulty": q.difficulty,
+                        "usage_count": q.usage_count or 0,
                         "knowledge": q.category_knowledge or q.category_chapter or "通用知识点",
                         "tags": q.tags or "",
                         "stem_excerpt": clean_stem
                     })
 
+                review_hint = "\n特别注意：教师明确要求提取【复习/考过/做过的题目】，请优先从候选池中遴选 usage_count > 0 的试题！\n" if is_review_intent else ""
+
                 system_prompt = (
                     "你是一位极其资深的高中数学教研组长和智能命题专家。\n"
-                    "请根据教师输入的自然语言组卷需求，从给出的候选试题池中遴选出最符合教学意图、涵盖关键结构情形、具备错解检验能力的题目。\n"
+                    "请根据教师输入的自然语言组卷需求，从给出的候选试题池中遴选出最符合教学意图、涵盖关键结构情形、具备错解检验能力的题目。"
+                    f"{review_hint}\n"
                     "【输出格式规范】\n"
                     "必须且只能返回一个可解析的合法 JSON 对象，绝对禁止包含 Markdown 格式标记代码块（例如不要写 ```json ... ```）：\n"
                     "{\n"
@@ -3997,7 +4010,8 @@ def ai_select_paper(payload: dict, db: Session = Depends(get_db)):
                     (Question.category_knowledge.like(f"%{topic}%")) |
                     (Question.tags.like(f"%{topic}%"))
                 )
-                for q in sub_query.order_by(Question.usage_count.asc(), Question.id.desc()).all():
+                order_clause = Question.usage_count.desc() if is_review_intent else Question.usage_count.asc()
+                for q in sub_query.order_by(order_clause, Question.id.desc()).all():
                     if q not in fallback_questions:
                         fallback_questions.append(q)
 
