@@ -4462,7 +4462,7 @@ def export_paper_pdf(payload: dict, db: Session = Depends(get_db)):
 
 @app.post("/api/paper/ai-select")
 def ai_select_paper(payload: dict, db: Session = Depends(get_db)):
-    """AI 智能选题：根据 Prompt 和过滤器自动组卷筛选题目"""
+    """AI 智能选题：结合 PREFER_SOLVE_MODEL 大模型与 math-teaching 教研引擎组卷"""
     try:
         prompt = payload.get("prompt", "").strip()
         question_type = payload.get("question_type", "")
@@ -4472,6 +4472,150 @@ def ai_select_paper(payload: dict, db: Session = Depends(get_db)):
         knowledge = payload.get("knowledge", "")
         limit = int(payload.get("limit", 5))
         
+        # 1. 结构化过滤基础题目池
+        query = db.query(Question)
+        if question_type:
+            query = query.filter(Question.question_type == question_type)
+        if difficulty:
+            query = query.filter(Question.difficulty == difficulty)
+        if compulsory:
+            query = query.filter(Question.category_compulsory == compulsory)
+        if chapter:
+            query = query.filter(Question.category_chapter == chapter)
+        if knowledge:
+            query = query.filter(Question.category_knowledge == knowledge)
+            
+        candidates = query.order_by(Question.usage_count.asc(), Question.id.desc()).limit(35).all()
+        if not candidates and (question_type or difficulty or compulsory or chapter or knowledge):
+            # 宽泛放退：若限制过于严格导致候选集为空，退回全库候选集
+            candidates = db.query(Question).order_by(Question.usage_count.asc(), Question.id.desc()).limit(35).all()
+
+        # 2. 尝试调用偏好大模型进行语义理解与组卷抽题
+        model = os.getenv("PREFER_SOLVE_MODEL") or os.getenv("PREFER_PARSE_MODEL") or "deepseek-chat"
+        model_lower = model.lower()
+        api_key = None
+        api_base = None
+        model_name = model
+        provider_name = "DeepSeek"
+
+        if "/" in model:
+            parts = model.split("/", 1)
+            prefix = parts[0].upper()
+            model_name = parts[1]
+            if prefix == "SILICONFLOW":
+                api_key = os.getenv("SILICONFLOW_API_KEY")
+                api_base = "https://api.siliconflow.cn/v1"
+                provider_name = "硅基流动"
+            elif prefix == "BAILIAN":
+                api_key = os.getenv("ALI_BAILIAN_API_KEY")
+                api_base = os.getenv("ALI_BAILIAN_API_BASE", "https://dashscope.aliyuncs.com/compatible-mode/v1")
+                provider_name = "阿里百炼"
+                if model_name == "qwen3.7-max":
+                    model_name = "qwen-max"
+            elif prefix == "DEEPSEEK":
+                api_key = os.getenv("DEEPSEEK_API_KEY")
+                api_base = os.getenv("DEEPSEEK_API_BASE", "https://api.deepseek.com")
+                provider_name = "DeepSeek"
+            elif prefix == "ZHONGZHAN_GPT":
+                api_key = os.getenv("ZHONGZHAN_GPT_API_KEY")
+                api_base = os.getenv("ZHONGZHAN_GPT_BASE_URL", "https://api.openai.com/v1")
+                provider_name = "中转站 A"
+            elif prefix == "ZHONGZHAN_CLAUDE":
+                api_key = os.getenv("ZHONGZHAN_CLAUDE_API_KEY")
+                api_base = os.getenv("ZHONGZHAN_CLAUDE_BASE_URL", "https://api.openai.com/v1")
+                provider_name = "中转站 B"
+        else:
+            if "qwen" in model_lower:
+                api_key = os.getenv("ALI_BAILIAN_API_KEY")
+                api_base = os.getenv("ALI_BAILIAN_API_BASE", "https://dashscope.aliyuncs.com/compatible-mode/v1")
+                provider_name = "阿里百炼"
+                model_name = "qwen-max" if model == "qwen3.7-max" else model
+            else:
+                api_key = os.getenv("DEEPSEEK_API_KEY") or os.getenv("ALI_BAILIAN_API_KEY") or os.getenv("SILICONFLOW_API_KEY")
+                if os.getenv("DEEPSEEK_API_KEY"):
+                    api_base = os.getenv("DEEPSEEK_API_BASE", "https://api.deepseek.com")
+                    provider_name = "DeepSeek"
+                elif os.getenv("ALI_BAILIAN_API_KEY"):
+                    api_base = os.getenv("ALI_BAILIAN_API_BASE", "https://dashscope.aliyuncs.com/compatible-mode/v1")
+                    provider_name = "阿里百炼"
+                    model_name = "qwen-max"
+                elif os.getenv("SILICONFLOW_API_KEY"):
+                    api_base = "https://api.siliconflow.cn/v1"
+                    provider_name = "硅基流动"
+                    model_name = "Qwen/Qwen2.5-72B-Instruct"
+
+        if prompt and api_key and api_base and candidates:
+            try:
+                candidate_items = []
+                for q in candidates:
+                    clean_stem = clean_content_for_latex(q.content)[:80].replace("\n", " ")
+                    candidate_items.append({
+                        "id": q.id,
+                        "question_type": q.question_type,
+                        "difficulty": q.difficulty,
+                        "knowledge": q.category_knowledge or q.category_chapter or "通用知识点",
+                        "tags": q.tags or "",
+                        "stem_excerpt": clean_stem
+                    })
+
+                system_prompt = (
+                    "你是一位极其资深的高中数学教研组长和智能命题专家。\n"
+                    "请根据教师输入的自然语言组卷需求，从给出的候选试题池中遴选出最符合教学意图、涵盖关键结构情形、具备错解检验能力的题目。\n"
+                    "【输出格式规范】\n"
+                    "必须且只能返回一个可解析的合法 JSON 对象，绝对禁止包含 Markdown 格式标记代码块（例如不要写 ```json ... ```）：\n"
+                    "{\n"
+                    '  "selected_ids": [12, 45, 89],\n'
+                    '  "ai_analysis": "【教研组卷分析与情形覆盖】\\n1. 考察重点：...\\n2. 难度与结构情形：涵盖保底情形与易错辨析...\\n3. 教学建议：..."\n'
+                    "}"
+                )
+
+                user_content = (
+                    f"【教师组卷需求】: {prompt}\n"
+                    f"【需要挑选的题目数量】: {limit} 道\n"
+                    f"【候选试题池】:\n{json.dumps(candidate_items, ensure_ascii=False)}"
+                )
+
+                url = f"{api_base.rstrip('/')}/chat/completions"
+                headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
+                payload_data = {
+                    "model": model_name,
+                    "messages": [
+                        {"role": "system", "content": system_prompt},
+                        {"role": "user", "content": user_content}
+                    ],
+                    "temperature": 0.3
+                }
+                
+                response = robust_request_post(url, headers=headers, json=payload_data, timeout=25)
+                if response.status_code == 200:
+                    res_json = response.json()
+                    raw_content = res_json.get("choices", [{}])[0].get("message", {}).get("content", "").strip()
+                    if raw_content.startswith("```"):
+                        raw_content = re.sub(r"^```(?:json)?\s*", "", raw_content)
+                        raw_content = re.sub(r"\s*```$", "", raw_content)
+                    
+                    parsed = json.loads(raw_content)
+                    selected_ids = parsed.get("selected_ids", [])
+                    ai_analysis = parsed.get("ai_analysis", "")
+                    
+                    if selected_ids and isinstance(selected_ids, list):
+                        db_selected = db.query(Question).filter(Question.id.in_(selected_ids)).all()
+                        id_map = {q.id: q for q in db_selected}
+                        final_questions = [id_map[qid].to_dict() for qid in selected_ids if qid in id_map]
+                        
+                        if final_questions:
+                            return {
+                                "status": "success",
+                                "data": final_questions,
+                                "count": len(final_questions),
+                                "ai_analysis": ai_analysis,
+                                "model_used": f"{provider_name} ({model_name})",
+                                "fallback": False
+                            }
+            except Exception as llm_err:
+                print(f"[AI Paper Select Warning] LLM call failed or timed out: {llm_err}, falling back to SQL algorithm.")
+
+        # 3. 兜底降级方案：经典 SQL 智能匹配算法
         query = db.query(Question)
         if question_type:
             query = query.filter(Question.question_type == question_type)
@@ -4496,7 +4640,15 @@ def ai_select_paper(payload: dict, db: Session = Depends(get_db)):
         questions = query.order_by(Question.usage_count.asc(), Question.id.desc()).limit(limit).all()
         result = [q.to_dict() for q in questions]
         
-        return {"status": "success", "data": result, "count": len(result)}
+        fallback_analysis = "【本地智能筛选分析】已根据筛选条件与自然语言关键词在本地数据库中进行匹配，并优先挑选历史使用频次最少的鲜活题目。"
+        return {
+            "status": "success",
+            "data": result,
+            "count": len(result),
+            "ai_analysis": fallback_analysis,
+            "model_used": "本地算法",
+            "fallback": True
+        }
     except Exception as e:
         return JSONResponse(content={"status": "error", "message": f"AI 智能选题失败: {str(e)}"}, status_code=500)
 

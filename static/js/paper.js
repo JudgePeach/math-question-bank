@@ -503,14 +503,20 @@
 
     window.triggerAiPaperSelect = async function () {
         const input = document.getElementById('paperAiPromptInput');
+        const btn = document.querySelector('button[onclick="triggerAiPaperSelect()"]');
         if (!input || !input.value.trim()) {
             if (window.showToast) window.showToast('请先输入智能抽卷要求', 'warning');
             return;
         }
         const promptText = input.value.trim();
+        const origBtnHtml = btn ? btn.innerHTML : '';
 
         try {
-            if (window.showToast) window.showToast('正在根据要求智能筛选试题...', 'info');
+            if (btn) {
+                btn.disabled = true;
+                btn.innerHTML = `<i class="fa-solid fa-brain fa-spin text-xs"></i><span>AI 思考组卷中...</span>`;
+            }
+            if (window.showToast) window.showToast('正在调用 AI 大模型分析需求并遴选最佳题目...', 'info');
             const f = window.PaperStore.filters;
             const res = await fetch('/api/paper/ai-select', {
                 method: 'POST',
@@ -535,16 +541,36 @@
                         addedCount++;
                     }
                 });
+                if (data.ai_analysis) {
+                    window.PaperStore.meta.ai_analysis = data.ai_analysis;
+                    window.PaperStore.meta.ai_model_used = data.model_used || '大模型';
+                    saveMetaToStorage();
+                }
                 saveCartToStorage();
                 renderPart3QuestionStream();
                 window.renderPaperCanvas();
-                if (window.showToast) window.showToast(`AI 成功挑选并加入了 ${addedCount} 道试题`, 'success');
+                if (window.showToast) {
+                    const engineLabel = data.fallback ? '算法' : (data.model_used || 'AI 大模型');
+                    window.showToast(`AI (${engineLabel}) 成功挑选并加入了 ${addedCount} 道试题`, 'success');
+                }
             } else {
                 if (window.showToast) window.showToast(data.message || '抽选试题无结果', 'warning');
             }
         } catch (e) {
             if (window.showToast) window.showToast('AI 抽题请求异常', 'error');
+        } finally {
+            if (btn) {
+                btn.disabled = false;
+                btn.innerHTML = origBtnHtml;
+            }
         }
+    };
+
+    window.clearAiAnalysis = function () {
+        delete window.PaperStore.meta.ai_analysis;
+        delete window.PaperStore.meta.ai_model_used;
+        saveMetaToStorage();
+        window.renderPaperCanvas();
     };
 
     // Switch Part 3 Tab ('all' or 'selected')
@@ -729,7 +755,28 @@
         const medPct = totalCount > 0 ? Math.round((medCount / totalCount) * 100) : 0;
         const hardPct = totalCount > 0 ? Math.max(0, 100 - easyPct - medPct) : 0;
 
+        let aiAnalysisBanner = '';
+        if (meta.ai_analysis) {
+            aiAnalysisBanner = `
+                <div class="mb-4 p-3.5 rounded-2xl border border-brand-200/80 bg-brand-50/50 backdrop-blur-md shadow-xs dark:bg-brand-950/40 dark:border-brand-800 transition-all">
+                    <div class="flex items-center justify-between mb-1.5 pb-1 border-b border-brand-200/50 dark:border-brand-800/60">
+                        <div class="flex items-center space-x-1.5 text-xs font-bold text-brand-700 dark:text-brand-300">
+                            <i class="fa-solid fa-brain text-brand-500"></i>
+                            <span>🤖 AI 选题教研分析与情形覆盖 (${escapeHtml(meta.ai_model_used || '大模型')})</span>
+                        </div>
+                        <button onclick="window.clearAiAnalysis()" class="text-2xs text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 px-1.5 py-0.5 rounded-md hover:bg-slate-200/60 font-medium transition-all" title="关闭分析框">
+                            <i class="fa-solid fa-xmark mr-1"></i>关闭分析
+                        </button>
+                    </div>
+                    <div class="text-xs text-slate-700 dark:text-slate-300 whitespace-pre-wrap leading-relaxed">
+                        ${escapeHtml(meta.ai_analysis)}
+                    </div>
+                </div>
+            `;
+        }
+
         container.innerHTML = `
+            ${aiAnalysisBanner}
             <!-- Top Studio Action Bar (Two Rows Layout) -->
             <div class="bg-white/80 backdrop-blur-md p-3.5 rounded-2xl border border-slate-200/70 shadow-sm mb-5 flex flex-col space-y-3 dark:bg-slate-800/80 dark:border-slate-700/70">
                 <!-- Row 1: Left Stats + Right Paper Management -->
