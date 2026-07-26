@@ -115,6 +115,36 @@
   - **临时清理 (Cleanup)**：如果用户点击“一键清除”或关闭拆卷面板，前端会调用 `/api/ai/clear-temp-crops` 将所有产生的未保存裁剪配图从磁盘上彻底物理删除。
   - **定时净化 (Self-Healing)**：自愈清理任务中加入对 `static/uploads/tmp/` 目录的扫描，定时物理删除修改时间超过 1 小时的孤儿或废弃临时裁剪图片。
 
+### 3.9 组卷排版工作台与 A4 Live Preview 实时渲染引擎
+- **A4 仿真纸张与 Live Preview 秒级渲染引擎**：
+  - 前端无需同步等待后端 PDF 编译，纯前端结合 KaTeX + 动态 DOM 模拟真实 A4 试卷（210mm x 297mm 纸张比例）。
+  - 支持渲染卷头密封线 (`\secret`)、大标题、副标题（连续空格 `&nbsp;` 与 `pre-wrap` 保持与 LaTeX `\large\bfseries` 粗体一致）、考试注意事项框 (`notice` 环境) 和大题分值信息。
+- **解答题留白调控 (Solution Space Control)**：
+  - 在 A4 Live Preview 视图中，解答题下方实时渲染浅蓝虚线留白区，并提供快捷内联调控按钮 (`[- 1cm]`, `[- 0.5cm]`, `[+ 0.5cm]`, `[+ 1cm]`)。
+  - 支持全局留白档位设定（如 `0cm` / `7cm` 等），微调值随试卷序列化存入 `cart`。
+- **HTML5 原生拖拽排序与交互**：
+  - 支持拖拽试题卡片（`ondragstart`, `ondragover`, `ondrop`）灵活调整卷面题目顺序。
+- **侧边栏折叠伸缩与无缝工作台切换 (Collapsible Sidebar & Workspace Switcher)**：
+  - 顶部导航栏提供动态 Dropdown 工作台切换（“题库研讨工作台” ↔ “组卷排版工作台”）。
+  - 试卷编辑区配备左侧栏一键折叠伸缩按钮（`toggleSidebarBtn`），隐藏侧栏以释放全屏宽幅预览空间，并配合平滑 CSS 动画与图标联动。
+- **已保存试卷的存档与载入管理 (Paper Management System)**：
+  - 组卷结果可序列化持久化至数据库 `papers` 与 `paper_questions` 级联表中。
+  - “已保存试卷”弹窗提供历史试卷一键全量载入组卷工作台、快速编译 PDF、以及删除试卷等全生命周期管理。
+
+### 3.10 高考级 LaTeX/PDF 编译引擎与 LRU 哈希缓存
+- **三套标准试卷模板**：
+  - `exam`：高考规范卷（含密封线、考生信息填涂框、试卷注意事项、解答题留白）。
+  - `quiz`：随堂小练卷（紧凑布局，去除了繁复的试卷注意事项与密封线）。
+  - `exam_19`：新高考 19 题专属答题卡联动卷（运用 LaTeX3 整数变量 `\g__examzh_question_index_int` 强置题号跳跃：单选 1~8、多选 9~11、填空 12~14、解答 15~19）。
+- **多模式插图排版映射**：
+  - 题目插图 `figure_align` 属性在导出/编译 LaTeX 时自动映射为对应宏包：`right` 映射为 `wrapfigure` 题干右侧图文双栏混排，`center` 映射为 `figure` 居中，`bottom_right` 映射为 `adjustbox`/`wrapfigure` 下方居右。
+- **`\raggedbottom` 顶格防拉伸控制**：
+  - 在 LaTeX 导言区自动注入 `\raggedbottom`，防止分页时大题标题与第一道题目之间出现垂直填充空白。
+- **线程安全 LRU 内存编译字节缓存**：
+  - 后端 `_PDF_CACHE` 容量为 20，基于全套 LaTeX 源码 MD5 哈希与关联插图文件修改时间戳进行防碰撞校验。相同源码 0ms 复用已有 PDF 字节流，极大减轻本地 CPU 编译开销。
+- **多格式导出能力**：
+  - 支持单 PDF 字节流快速下载，以及完整 LaTeX 源码包（`.tex` 主文件与相关配图打包为 `.zip`）导出，供线下 XeLaTeX 高级排版微调。
+
 ## 4. 外部 API 接入与接口安全严格规范
 必须读取根目录 `.env` 文件中的密钥进行 API 调用：
 - **安全鉴权机制**：
@@ -135,6 +165,7 @@
 前端界面必须具备现代化、极简的教研工作台风格：
 - **视觉风格**：采用 Glassmorphism（毛玻璃）或现代极简卡片（Cards）风格。背景推荐使用柔和的 `slate-50` 或 `gray-50`。
 - **组件细节**：卡片需带有优雅的阴影 (`shadow-md`, `shadow-lg`) 和圆角 (`rounded-xl`, `rounded-2xl`)。
+- **侧边栏与布局控制**：支持侧边栏一键折叠伸缩（`toggleSidebarBtn`），展开状态下保持舒展的响应式网格与固定高度滚动区，折叠时释放沉浸式全屏渲染视图。
 - **交互反馈**：所有的按钮、Tab 切换、拖拽上传区域必须有平滑的过渡动画（`transition-all`, `duration-300`）和明显的 Hover 状态反馈。
 - **上传组件**：图片上传区域需设计为带虚线边框、云朵图标的拖拽上传框。API 请求期间必须有明确的 Loading 动画或骨架屏（Skeleton）提示。
 - **排版原则**：参考 Notion，注重留白（Padding/Margin）与呼吸感。
