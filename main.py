@@ -3786,7 +3786,7 @@ def find_source_page_by_overlap(q_text: str, ocr_results: list) -> int:
 
 @app.post("/api/paper/ai-select")
 def ai_select_paper(payload: dict, db: Session = Depends(get_db)):
-    """AI 智能选题：结合 PREFER_SOLVE_MODEL 大模型与 math-teaching 教研引擎组卷"""
+    """AI 智能选题：结合用户指定的 PREFER_SOLVE_MODEL 大模型与 math-teaching 教研引擎组卷"""
     try:
         prompt = payload.get("prompt", "").strip()
         question_type = payload.get("question_type", "")
@@ -3832,68 +3832,91 @@ def ai_select_paper(payload: dict, db: Session = Depends(get_db)):
             # 宽泛放退：若限制过于严格导致候选集为空，退回全库候选集
             candidates = db.query(Question).order_by(Question.usage_count.asc(), Question.id.desc()).limit(35).all()
 
-        # 2. 构建大模型提供商优先级队列
-        providers = []
-        preferred_model = os.getenv("PREFER_SOLVE_MODEL") or os.getenv("PREFER_PARSE_MODEL") or "deepseek-chat"
-        
-        def add_provider_by_string(model_str):
-            if not model_str: return
-            if "/" in model_str:
-                parts = model_str.split("/", 1)
-                prefix, m_name = parts[0].upper(), parts[1]
-                if prefix == "SILICONFLOW" and os.getenv("SILICONFLOW_API_KEY"):
-                    providers.append(("硅基流动", "https://api.siliconflow.cn/v1", os.getenv("SILICONFLOW_API_KEY"), m_name))
-                elif prefix == "BAILIAN" and os.getenv("ALI_BAILIAN_API_KEY"):
-                    providers.append(("阿里百炼", os.getenv("ALI_BAILIAN_API_BASE", "https://dashscope.aliyuncs.com/compatible-mode/v1"), os.getenv("ALI_BAILIAN_API_KEY"), "qwen-max" if m_name == "qwen3.7-max" else m_name))
-                elif prefix == "DEEPSEEK" and os.getenv("DEEPSEEK_API_KEY"):
-                    providers.append(("DeepSeek", os.getenv("DEEPSEEK_API_BASE", "https://api.deepseek.com"), os.getenv("DEEPSEEK_API_KEY"), m_name))
-                elif prefix == "ZHONGZHAN_GPT" and os.getenv("ZHONGZHAN_GPT_API_KEY"):
-                    providers.append(("中转站 A", os.getenv("ZHONGZHAN_GPT_BASE_URL", "https://api.openai.com/v1"), os.getenv("ZHONGZHAN_GPT_API_KEY"), m_name))
-                elif prefix == "ZHONGZHAN_CLAUDE" and os.getenv("ZHONGZHAN_CLAUDE_API_KEY"):
-                    providers.append(("中转站 B", os.getenv("ZHONGZHAN_CLAUDE_BASE_URL", "https://api.openai.com/v1"), os.getenv("ZHONGZHAN_CLAUDE_API_KEY"), m_name))
+        # 2. 严格按用户设置解析指定的 PREFER_SOLVE_MODEL (不进行任何跨提供商串用或自动轮询)
+        target_model = os.getenv("PREFER_SOLVE_MODEL") or os.getenv("PREFER_PARSE_MODEL") or "deepseek-chat"
+        api_key = None
+        api_base = None
+        model_name = target_model
+        provider_name = "DeepSeek"
+
+        if "/" in target_model:
+            parts = target_model.split("/", 1)
+            prefix, model_name = parts[0].upper(), parts[1]
+            if prefix == "SILICONFLOW":
+                api_key = os.getenv("SILICONFLOW_API_KEY")
+                api_base = "https://api.siliconflow.cn/v1"
+                provider_name = "硅基流动"
+            elif prefix == "BAILIAN":
+                api_key = os.getenv("ALI_BAILIAN_API_KEY")
+                api_base = os.getenv("ALI_BAILIAN_API_BASE", "https://dashscope.aliyuncs.com/compatible-mode/v1")
+                provider_name = "阿里百炼"
+                if model_name == "qwen3.7-max": model_name = "qwen-max"
+            elif prefix == "DEEPSEEK":
+                api_key = os.getenv("DEEPSEEK_API_KEY")
+                api_base = os.getenv("DEEPSEEK_API_BASE", "https://api.deepseek.com")
+                provider_name = "DeepSeek"
+            elif prefix == "ZHONGZHAN_GPT":
+                api_key = os.getenv("ZHONGZHAN_GPT_API_KEY")
+                api_base = os.getenv("ZHONGZHAN_GPT_BASE_URL", "https://api.openai.com/v1")
+                provider_name = "中转站 A"
+            elif prefix == "ZHONGZHAN_CLAUDE":
+                api_key = os.getenv("ZHONGZHAN_CLAUDE_API_KEY")
+                api_base = os.getenv("ZHONGZHAN_CLAUDE_BASE_URL", "https://api.openai.com/v1")
+                provider_name = "中转站 B"
+        else:
+            if "qwen" in target_model.lower():
+                api_key = os.getenv("ALI_BAILIAN_API_KEY")
+                api_base = os.getenv("ALI_BAILIAN_API_BASE", "https://dashscope.aliyuncs.com/compatible-mode/v1")
+                provider_name = "阿里百炼"
+                model_name = "qwen-max" if target_model == "qwen3.7-max" else target_model
             else:
-                if "qwen" in model_str.lower() and os.getenv("ALI_BAILIAN_API_KEY"):
-                    providers.append(("阿里百炼", os.getenv("ALI_BAILIAN_API_BASE", "https://dashscope.aliyuncs.com/compatible-mode/v1"), os.getenv("ALI_BAILIAN_API_KEY"), "qwen-max"))
-                elif os.getenv("DEEPSEEK_API_KEY"):
-                    providers.append(("DeepSeek", os.getenv("DEEPSEEK_API_BASE", "https://api.deepseek.com"), os.getenv("DEEPSEEK_API_KEY"), model_str))
+                api_key = os.getenv("DEEPSEEK_API_KEY") or os.getenv("ALI_BAILIAN_API_KEY") or os.getenv("SILICONFLOW_API_KEY")
+                if os.getenv("DEEPSEEK_API_KEY"):
+                    api_base = os.getenv("DEEPSEEK_API_BASE", "https://api.deepseek.com")
+                    provider_name = "DeepSeek"
+                elif os.getenv("ALI_BAILIAN_API_KEY"):
+                    api_base = os.getenv("ALI_BAILIAN_API_BASE", "https://dashscope.aliyuncs.com/compatible-mode/v1")
+                    provider_name = "阿里百炼"
+                    model_name = "qwen-max"
+                elif os.getenv("SILICONFLOW_API_KEY"):
+                    api_base = "https://api.siliconflow.cn/v1"
+                    provider_name = "硅基流动"
+                    model_name = "Qwen/Qwen2.5-72B-Instruct"
 
-        add_provider_by_string(preferred_model)
-        if os.getenv("DEEPSEEK_API_KEY"):
-            providers.append(("DeepSeek", os.getenv("DEEPSEEK_API_BASE", "https://api.deepseek.com"), os.getenv("DEEPSEEK_API_KEY"), "deepseek-chat"))
-        if os.getenv("ALI_BAILIAN_API_KEY"):
-            providers.append(("阿里百炼", os.getenv("ALI_BAILIAN_API_BASE", "https://dashscope.aliyuncs.com/compatible-mode/v1"), os.getenv("ALI_BAILIAN_API_KEY"), "qwen-max"))
-
+        api_error_detail = None
         if prompt and candidates:
-            candidate_items = []
-            for q in candidates:
-                clean_stem = re.sub(r'[\r\n]+', ' ', q.content[:80])
-                candidate_items.append({
-                    "id": q.id,
-                    "question_type": q.question_type,
-                    "difficulty": q.difficulty,
-                    "knowledge": q.category_knowledge or q.category_chapter or "通用知识点",
-                    "tags": q.tags or "",
-                    "stem_excerpt": clean_stem
-                })
+            if not api_key or not api_base:
+                api_error_detail = f"指定的 AI 解题模型 ({target_model}) 未在配置文件 (.env) 中检测到有效的 API Key 或 Base URL。"
+            else:
+                candidate_items = []
+                for q in candidates:
+                    clean_stem = re.sub(r'[\r\n]+', ' ', q.content[:80])
+                    candidate_items.append({
+                        "id": q.id,
+                        "question_type": q.question_type,
+                        "difficulty": q.difficulty,
+                        "knowledge": q.category_knowledge or q.category_chapter or "通用知识点",
+                        "tags": q.tags or "",
+                        "stem_excerpt": clean_stem
+                    })
 
-            system_prompt = (
-                "你是一位极其资深的高中数学教研组长和智能命题专家。\n"
-                "请根据教师输入的自然语言组卷需求，从给出的候选试题池中遴选出最符合教学意图、涵盖关键结构情形、具备错解检验能力的题目。\n"
-                "【输出格式规范】\n"
-                "必须且只能返回一个可解析的合法 JSON 对象，绝对禁止包含 Markdown 格式标记代码块（例如不要写 ```json ... ```）：\n"
-                "{\n"
-                '  "selected_ids": [12, 45, 89],\n'
-                '  "ai_analysis": "【教研组卷分析与情形覆盖】\\n1. 考察重点：...\\n2. 难度与结构情形：涵盖保底情形与易错辨析...\\n3. 教学建议：..."\n'
-                "}"
-            )
+                system_prompt = (
+                    "你是一位极其资深的高中数学教研组长和智能命题专家。\n"
+                    "请根据教师输入的自然语言组卷需求，从给出的候选试题池中遴选出最符合教学意图、涵盖关键结构情形、具备错解检验能力的题目。\n"
+                    "【输出格式规范】\n"
+                    "必须且只能返回一个可解析的合法 JSON 对象，绝对禁止包含 Markdown 格式标记代码块（例如不要写 ```json ... ```）：\n"
+                    "{\n"
+                    '  "selected_ids": [12, 45, 89],\n'
+                    '  "ai_analysis": "【教研组卷分析与情形覆盖】\\n1. 考察重点：...\\n2. 难度与结构情形：涵盖保底情形与易错辨析...\\n3. 教学建议：..."\n'
+                    "}"
+                )
 
-            user_content = (
-                f"【教师组卷需求】: {prompt}\n"
-                f"【需要挑选的题目数量】: {limit} 道\n"
-                f"【候选试题池】:\n{json.dumps(candidate_items, ensure_ascii=False)}"
-            )
+                user_content = (
+                    f"【教师组卷需求】: {prompt}\n"
+                    f"【需要挑选的题目数量】: {limit} 道\n"
+                    f"【候选试题池】:\n{json.dumps(candidate_items, ensure_ascii=False)}"
+                )
 
-            for provider_name, api_base, api_key, model_name in providers:
                 try:
                     url = f"{api_base.rstrip('/')}/chat/completions"
                     headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
@@ -3932,10 +3955,12 @@ def ai_select_paper(payload: dict, db: Session = Depends(get_db)):
                                     "model_used": f"{provider_name} ({model_name})",
                                     "fallback": False
                                 }
+                    else:
+                        api_error_detail = f"{provider_name} API 响应异常 (HTTP {response.status_code}: {response.text.strip()[:150]})"
                 except Exception as llm_err:
-                    print(f"[AI Paper Select] Provider {provider_name} failed: {llm_err}, trying next provider...")
+                    api_error_detail = f"{provider_name} API 请求失败: {str(llm_err)}"
 
-        # 3. 兜底降级方案：智能多知识点 SQL 提取算法
+        # 3. 降级本地算法（带明确错误反馈）
         fallback_questions = []
         if extracted_topics:
             for topic in extracted_topics:
@@ -3964,13 +3989,14 @@ def ai_select_paper(payload: dict, db: Session = Depends(get_db)):
         result = [{**q.to_dict(), "seq_num": seq_map.get(q.id)} for q in fallback_questions[:limit]]
         
         topic_str = "、".join(extracted_topics) if extracted_topics else "通用知识点"
-        fallback_analysis = f"【本地智能筛选分析】已为您自动识别意图（{topic_str}），从题库中精准挑选并组合了鲜活试题。"
+        err_banner = f"⚠️ 【AI 解题模型调用未成功】: {api_error_detail}\n系统已为您自动启动本地教研算法，根据意图（{topic_str}）在本地题库中筛选并组合了 {len(result)} 道精选题目。" if api_error_detail else f"【本地智能筛选分析】已为您自动识别意图（{topic_str}），从题库中精准挑选并组合了鲜活试题。"
+        
         return {
             "status": "success",
             "data": result,
             "count": len(result),
-            "ai_analysis": fallback_analysis,
-            "model_used": "本地算法",
+            "ai_analysis": err_banner,
+            "model_used": f"⚠️ 模型调用失败 ({target_model}) ➔ 退回本地算法" if api_error_detail else "本地算法",
             "fallback": True
         }
     except Exception as e:
