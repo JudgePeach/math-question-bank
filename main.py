@@ -3866,7 +3866,7 @@ def ai_select_paper(payload: dict, db: Session = Depends(get_db)):
         if prompt and candidates:
             candidate_items = []
             for q in candidates:
-                clean_stem = clean_content_for_latex(q.content)[:80].replace("\n", " ")
+                clean_stem = re.sub(r'[\r\n]+', ' ', q.content[:80])
                 candidate_items.append({
                     "id": q.id,
                     "question_type": q.question_type,
