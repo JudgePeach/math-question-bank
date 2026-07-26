@@ -1,6 +1,11 @@
 /* ===== Apple-Style Glassmorphism Design System ===== */
 /* Inspired by macOS Sonoma & visionOS Spatial UI */
 
+/* Workspace Pre-render Flash Prevention */
+html.init-ws-paper #bankWorkspaceSection { display: none !important; }
+html.init-ws-paper #paperWorkspaceSection { display: block !important; }
+html.init-ws-paper #toggleSidebarBtn { display: none !important; }
+
 /* Local Inter & Outfit Webfonts (100% Offline & Cross-Platform) */
 @font-face {
     font-family: 'Inter';

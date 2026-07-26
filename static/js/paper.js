@@ -2230,11 +2230,9 @@
 
         if (currentServerId && savedServerId === currentServerId) {
             if (savedWorkspace === 'paper') {
-                setTimeout(function () {
-                    if (typeof window.selectWorkspace === 'function') {
-                        window.selectWorkspace('paper', '组卷排版工作台');
-                    }
-                }, 50);
+                if (typeof window.selectWorkspace === 'function') {
+                    window.selectWorkspace('paper', '组卷排版工作台');
+                }
             }
         } else {
             // Fresh server startup (.command / .bat re-launch) -> reset to bank studio default
@@ -2245,6 +2243,7 @@
                 }
             } catch (e) { }
         }
+        document.documentElement.classList.remove('init-ws-paper');
     });
 
 })();

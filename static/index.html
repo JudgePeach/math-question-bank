@@ -11,7 +11,7 @@
     <!-- Tailwind CSS -->
     <script src="/static/lib/tailwind/tailwind.min.js"></script>
     <script>
-        // Prevent theme flash
+        // Prevent theme and workspace flash
         (function() {
             const savedTheme = localStorage.getItem('theme-color') || 'violet';
             const savedDarkMode = localStorage.getItem('dark-mode') === 'true';
@@ -19,6 +19,16 @@
             if (savedDarkMode) {
                 document.documentElement.classList.add('dark');
             }
+
+            try {
+                var curId = window.__serverInstanceId || '';
+                var savedId = localStorage.getItem('mathbank_server_instance_id') || '';
+                var savedWs = localStorage.getItem('mathbank_active_workspace') || 'bank';
+                if (curId && savedId === curId && savedWs === 'paper') {
+                    document.documentElement.classList.add('init-ws-paper');
+                    window.__initWsIsPaper = true;
+                }
+            } catch(e) {}
         })();
 
         tailwind.config = {
@@ -1036,7 +1046,7 @@
 
     <!-- SETTINGS MODAL (API Configuration) - Apple Glass Style -->
     <div id="settingsModal" class="fixed inset-0 glass-modal-overlay z-50 flex items-center justify-center hidden opacity-0 transition-opacity duration-300">
-        <div class="glass-modal rounded-2xl w-full max-w-4xl p-6 transform scale-95 transition-transform duration-300 flex flex-col max-h-[90vh] overflow-hidden">
+        <div class="glass-modal rounded-2xl w-full max-w-5xl p-6 transform scale-95 transition-transform duration-300 flex flex-col max-h-[90vh] overflow-hidden">
             <div class="flex justify-between items-center border-b border-slate-200/50 pb-3 shrink-0">
                 <h3 class="font-bold text-base text-slate-800 flex items-center space-x-2">
                     <i class="fa-solid fa-sliders text-brand-600"></i>
@@ -1104,12 +1114,11 @@
                                    class="glass-input w-full px-3.5 py-2.5 rounded-xl text-xs font-mono">
                         </div>
 
-                        <!-- Zhongzhan A (适合 GPT 模型) Keys -->
+                        <!-- Zhongzhan A Keys -->
                         <div class="grid grid-cols-2 gap-2">
                             <div class="space-y-1">
-                                <label class="block text-[11px] font-semibold text-slate-500 flex items-center justify-between">
-                                    <span>中转站 A (GPT) Key</span>
-                                    <a href="https://www.right.codes/register?aff=f7656b31" target="_blank" class="text-brand-500 hover:underline text-[9px]">推荐中转 GPT</a>
+                                <label class="block text-[11px] font-semibold text-slate-500">
+                                    <span>中转站 A Key</span>
                                 </label>
                                 <input type="password" id="settingsZhongzhanGptKey" placeholder="ZHONGZHAN_GPT_API_KEY"
                                        class="glass-input w-full px-3 py-2.5 rounded-xl text-xs font-mono">
@@ -1121,12 +1130,11 @@
                             </div>
                         </div>
 
-                        <!-- Zhongzhan B (适合 Claude 模型) Keys -->
+                        <!-- Zhongzhan B Keys -->
                         <div class="grid grid-cols-2 gap-2">
                             <div class="space-y-1">
-                                <label class="block text-[11px] font-semibold text-slate-500 flex items-center justify-between">
-                                    <span>中转站 B (Claude) Key</span>
-                                    <a href="https://www.packyapi.com/register?aff=5yyF" target="_blank" class="text-brand-500 hover:underline text-[9px]">推荐中转 Claude</a>
+                                <label class="block text-[11px] font-semibold text-slate-500">
+                                    <span>中转站 B Key</span>
                                 </label>
                                 <input type="password" id="settingsZhongzhanClaudeKey" placeholder="ZHONGZHAN_CLAUDE_API_KEY"
                                        class="glass-input w-full px-3 py-2.5 rounded-xl text-xs font-mono">
@@ -1153,14 +1161,14 @@
                             <div class="p-3 bg-slate-50/40 rounded-xl border border-slate-200/60 space-y-1.5 shadow-3xs">
                                 <label class="block text-[11px] font-bold text-slate-600">AI 智能解题模型 (PREFER_SOLVE_MODEL)</label>
                                 <div class="flex items-center space-x-2">
-                                    <select id="solveModelProvider" onchange="onModelProviderChange('solve')" class="glass-select w-1/3 px-2 py-1.5 rounded-lg text-xs">
-                                        <option value="deepseek">DeepSeek 官方</option>
+                                    <select id="solveModelProvider" onchange="onModelProviderChange('solve')" class="glass-select w-[92px] shrink-0 px-2 py-1.5 rounded-lg text-xs">
+                                        <option value="deepseek">DeepSeek</option>
                                         <option value="siliconflow">硅基流动</option>
                                         <option value="bailian">阿里百炼</option>
-                                        <option value="zhongzhan_gpt">中转站 A (GPT)</option>
-                                        <option value="zhongzhan_claude">中转站 B (Claude)</option>
+                                        <option value="zhongzhan_gpt">中转站 A</option>
+                                        <option value="zhongzhan_claude">中转站 B</option>
                                     </select>
-                                    <div id="solveModelValueContainer" class="flex-1 flex items-center space-x-1.5">
+                                    <div id="solveModelValueContainer" class="flex-1 flex items-center space-x-1.5 min-w-0">
                                         <!-- Dynamic Load -->
                                     </div>
                                 </div>
@@ -1170,14 +1178,14 @@
                             <div class="p-3 bg-slate-50/40 rounded-xl border border-slate-200/60 space-y-1.5 shadow-3xs">
                                 <label class="block text-[11px] font-bold text-slate-600">试卷智能拆解模型 (PREFER_PARSE_MODEL)</label>
                                 <div class="flex items-center space-x-2">
-                                    <select id="parseModelProvider" onchange="onModelProviderChange('parse')" class="glass-select w-1/3 px-2 py-1.5 rounded-lg text-xs">
-                                        <option value="deepseek">DeepSeek 官方</option>
+                                    <select id="parseModelProvider" onchange="onModelProviderChange('parse')" class="glass-select w-[92px] shrink-0 px-2 py-1.5 rounded-lg text-xs">
+                                        <option value="deepseek">DeepSeek</option>
                                         <option value="siliconflow">硅基流动</option>
                                         <option value="bailian">阿里百炼</option>
-                                        <option value="zhongzhan_gpt">中转站 A (GPT)</option>
-                                        <option value="zhongzhan_claude">中转站 B (Claude)</option>
+                                        <option value="zhongzhan_gpt">中转站 A</option>
+                                        <option value="zhongzhan_claude">中转站 B</option>
                                     </select>
-                                    <div id="parseModelValueContainer" class="flex-1 flex items-center space-x-1.5">
+                                    <div id="parseModelValueContainer" class="flex-1 flex items-center space-x-1.5 min-w-0">
                                         <!-- Dynamic Load -->
                                     </div>
                                 </div>
@@ -1187,14 +1195,14 @@
                             <div class="p-3 bg-slate-50/40 rounded-xl border border-slate-200/60 space-y-1.5 shadow-3xs">
                                 <label class="block text-[11px] font-bold text-slate-600">题目智能分类模型 (PREFER_CLASSIFY_MODEL)</label>
                                 <div class="flex items-center space-x-2">
-                                    <select id="classifyModelProvider" onchange="onModelProviderChange('classify')" class="glass-select w-1/3 px-2 py-1.5 rounded-lg text-xs">
-                                        <option value="deepseek">DeepSeek 官方</option>
+                                    <select id="classifyModelProvider" onchange="onModelProviderChange('classify')" class="glass-select w-[92px] shrink-0 px-2 py-1.5 rounded-lg text-xs">
+                                        <option value="deepseek">DeepSeek</option>
                                         <option value="siliconflow">硅基流动</option>
                                         <option value="bailian">阿里百炼</option>
-                                        <option value="zhongzhan_gpt">中转站 A (GPT)</option>
-                                        <option value="zhongzhan_claude">中转站 B (Claude)</option>
+                                        <option value="zhongzhan_gpt">中转站 A</option>
+                                        <option value="zhongzhan_claude">中转站 B</option>
                                     </select>
-                                    <div id="classifyModelValueContainer" class="flex-1 flex items-center space-x-1.5">
+                                    <div id="classifyModelValueContainer" class="flex-1 flex items-center space-x-1.5 min-w-0">
                                         <!-- Dynamic Load -->
                                     </div>
                                 </div>
@@ -1204,13 +1212,13 @@
                             <div class="p-3 bg-slate-50/40 rounded-xl border border-slate-200/60 space-y-1.5 shadow-3xs">
                                 <label class="block text-[11px] font-bold text-slate-600">默认公式识图模型 (DEFAULT_OCR_ENGINE)</label>
                                 <div class="flex items-center space-x-2">
-                                    <select id="ocrModelProvider" onchange="onModelProviderChange('ocr')" class="glass-select w-1/3 px-2 py-1.5 rounded-lg text-xs">
+                                    <select id="ocrModelProvider" onchange="onModelProviderChange('ocr')" class="glass-select w-[92px] shrink-0 px-2 py-1.5 rounded-lg text-xs">
                                         <option value="siliconflow">硅基流动</option>
                                         <option value="bailian">阿里百炼</option>
-                                        <option value="zhongzhan_gpt">中转站 A (GPT)</option>
-                                        <option value="zhongzhan_claude">中转站 B (Claude)</option>
+                                        <option value="zhongzhan_gpt">中转站 A</option>
+                                        <option value="zhongzhan_claude">中转站 B</option>
                                     </select>
-                                    <div id="ocrModelValueContainer" class="flex-1 flex items-center space-x-1.5">
+                                    <div id="ocrModelValueContainer" class="flex-1 flex items-center space-x-1.5 min-w-0">
                                         <!-- Dynamic Load -->
                                     </div>
                                 </div>
@@ -1220,14 +1228,14 @@
                             <div class="p-3 bg-slate-50/40 rounded-xl border border-slate-200/60 space-y-1.5 shadow-3xs">
                                 <label class="block text-[11px] font-bold text-slate-600">高级 TikZ 绘图模型 (PREFER_DRAW_MODEL)</label>
                                 <div class="flex items-center space-x-2">
-                                    <select id="drawModelProvider" onchange="onModelProviderChange('draw')" class="glass-select w-1/3 px-2 py-1.5 rounded-lg text-xs">
+                                    <select id="drawModelProvider" onchange="onModelProviderChange('draw')" class="glass-select w-[92px] shrink-0 px-2 py-1.5 rounded-lg text-xs">
                                         <option value="siliconflow">硅基流动</option>
                                         <option value="bailian">阿里百炼</option>
-                                        <option value="zhongzhan_gpt">中转站 A (GPT)</option>
-                                        <option value="zhongzhan_claude">中转站 B (Claude)</option>
-                                        <option value="deepseek">DeepSeek 官方</option>
+                                        <option value="zhongzhan_gpt">中转站 A</option>
+                                        <option value="zhongzhan_claude">中转站 B</option>
+                                        <option value="deepseek">DeepSeek</option>
                                     </select>
-                                    <div id="drawModelValueContainer" class="flex-1 flex items-center space-x-1.5">
+                                    <div id="drawModelValueContainer" class="flex-1 flex items-center space-x-1.5 min-w-0">
                                         <!-- Dynamic Load -->
                                     </div>
                                 </div>
@@ -1301,7 +1309,7 @@
 
     <!-- DB STATISTICS DASHBOARD MODAL - Apple Glass Style -->
     <div id="statsModal" class="fixed inset-0 glass-modal-overlay z-50 flex items-center justify-center hidden opacity-0 transition-opacity duration-300">
-        <div class="glass-modal rounded-2xl w-full max-w-4xl p-6 transform scale-95 transition-transform duration-300 flex flex-col max-h-[90vh] overflow-hidden">
+        <div class="glass-modal rounded-2xl w-full max-w-5xl p-6 transform scale-95 transition-transform duration-300 flex flex-col max-h-[90vh] overflow-hidden">
             <!-- Modal Header -->
             <div class="flex justify-between items-center border-b border-slate-200/50 pb-3 shrink-0">
                 <h3 class="font-bold text-base text-slate-800 flex items-center space-x-2">
@@ -1315,42 +1323,51 @@
 
             <!-- Modal Content (Scrollable) -->
             <div class="overflow-y-auto flex-1 py-4 space-y-5 pr-1">
-                <!-- 1. Stats Counter Cards -->
-                <div class="grid grid-cols-4 gap-4">
+                <!-- 1. Stats Counter Cards (5 Columns Layout) -->
+                <div class="grid grid-cols-5 gap-3.5">
                     <!-- Total Count Card -->
-                    <div class="bg-gradient-to-br from-indigo-50 to-indigo-100/40 border border-indigo-200/50 rounded-xl p-4 flex items-center justify-between shadow-sm relative overflow-hidden group">
+                    <div class="bg-gradient-to-br from-indigo-50 to-indigo-100/40 border border-indigo-200/50 rounded-xl p-3.5 flex items-center justify-between shadow-sm relative overflow-hidden group">
                         <div class="space-y-1 z-10">
                             <span class="text-[10px] font-bold text-indigo-700 uppercase tracking-wider">题库总试题量</span>
                             <h2 class="text-2xl font-black text-indigo-900 font-mono" id="statsTotalCount">0</h2>
                         </div>
-                        <i class="fa-solid fa-database text-3xl text-indigo-500/15 absolute right-4 group-hover:scale-110 transition-transform duration-300 z-0"></i>
+                        <i class="fa-solid fa-database text-3xl text-indigo-500/15 absolute right-3 group-hover:scale-110 transition-transform duration-300 z-0"></i>
+                    </div>
+
+                    <!-- Normal Count Card (常规题) -->
+                    <div class="bg-gradient-to-br from-emerald-50 to-emerald-100/40 border border-emerald-200/50 rounded-xl p-3.5 flex items-center justify-between shadow-sm relative overflow-hidden group">
+                        <div class="space-y-1 z-10">
+                            <span class="text-[10px] font-bold text-emerald-700 uppercase tracking-wider">常规题数量</span>
+                            <h2 class="text-2xl font-black text-emerald-900 font-mono" id="statsNormalCount">0</h2>
+                        </div>
+                        <i class="fa-solid fa-cube text-3xl text-emerald-500/15 absolute right-3 group-hover:scale-110 transition-transform duration-300 z-0"></i>
                     </div>
 
                     <!-- Easy Error Count Card -->
-                    <div class="bg-gradient-to-br from-amber-50 to-amber-100/40 border border-amber-200/50 rounded-xl p-4 flex items-center justify-between shadow-sm relative overflow-hidden group">
+                    <div class="bg-gradient-to-br from-amber-50 to-amber-100/40 border border-amber-200/50 rounded-xl p-3.5 flex items-center justify-between shadow-sm relative overflow-hidden group">
                         <div class="space-y-1 z-10">
                             <span class="text-[10px] font-bold text-amber-700 uppercase tracking-wider">易错题数量</span>
                             <h2 class="text-2xl font-black text-amber-900 font-mono" id="statsEasyErrorCount">0</h2>
                         </div>
-                        <i class="fa-solid fa-triangle-exclamation text-3xl text-amber-500/15 absolute right-4 group-hover:scale-110 transition-transform duration-300 z-0"></i>
+                        <i class="fa-solid fa-triangle-exclamation text-3xl text-amber-500/15 absolute right-3 group-hover:scale-110 transition-transform duration-300 z-0"></i>
                     </div>
 
                     <!-- Challenge Count Card -->
-                    <div class="bg-gradient-to-br from-red-50 to-red-100/40 border border-red-200/50 rounded-xl p-4 flex items-center justify-between shadow-sm relative overflow-hidden group">
+                    <div class="bg-gradient-to-br from-red-50 to-red-100/40 border border-red-200/50 rounded-xl p-3.5 flex items-center justify-between shadow-sm relative overflow-hidden group">
                         <div class="space-y-1 z-10">
                             <span class="text-[10px] font-bold text-red-700 uppercase tracking-wider">挑战题数量</span>
                             <h2 class="text-2xl font-black text-red-900 font-mono" id="statsChallengeCount">0</h2>
                         </div>
-                        <i class="fa-solid fa-fire text-3xl text-red-500/15 absolute right-4 group-hover:scale-110 transition-transform duration-300 z-0"></i>
+                        <i class="fa-solid fa-fire text-3xl text-red-500/15 absolute right-3 group-hover:scale-110 transition-transform duration-300 z-0"></i>
                     </div>
 
                     <!-- Qiangji Count Card -->
-                    <div class="bg-gradient-to-br from-purple-50 to-purple-100/40 border border-purple-200/50 rounded-xl p-4 flex items-center justify-between shadow-sm relative overflow-hidden group">
+                    <div class="bg-gradient-to-br from-purple-50 to-purple-100/40 border border-purple-200/50 rounded-xl p-3.5 flex items-center justify-between shadow-sm relative overflow-hidden group">
                         <div class="space-y-1 z-10">
                             <span class="text-[10px] font-bold text-purple-700 uppercase tracking-wider">强基题数量</span>
                             <h2 class="text-2xl font-black text-purple-900 font-mono" id="statsQiangjiCount">0</h2>
                         </div>
-                        <i class="fa-solid fa-medal text-3xl text-purple-500/15 absolute right-4 group-hover:scale-110 transition-transform duration-300 z-0"></i>
+                        <i class="fa-solid fa-medal text-3xl text-purple-500/15 absolute right-3 group-hover:scale-110 transition-transform duration-300 z-0"></i>
                     </div>
                 </div>
 
