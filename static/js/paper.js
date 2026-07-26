@@ -93,7 +93,8 @@
             }
             window.PaperStore.cart.push({ id: qid, score: parseInt(score, 10) || 5 });
             saveCartToStorage();
-            if (window.showToast) window.showToast(`已将题目 #${qid} 加入试卷`, 'success');
+            const seqNum = (q && q.seq_num !== undefined) ? q.seq_num : qid;
+            if (window.showToast) window.showToast(`已将题目 #${seqNum} 加入试卷`, 'success');
             
             if (window.PaperStore.activeWorkspace === 'paper') {
                 renderPart3QuestionStream();
@@ -110,7 +111,9 @@
             renderPart3QuestionStream();
             window.renderPaperCanvas();
         }
-        if (window.showToast) window.showToast(`已将题目 #${qid} 移出试卷`, 'info');
+        const q = window.PaperStore.questionsMap[qid];
+        const seqNum = (q && q.seq_num !== undefined) ? q.seq_num : qid;
+        if (window.showToast) window.showToast(`已将题目 #${seqNum} 移出试卷`, 'info');
     };
 
     window.toggleCart = function (qid, score = null) {
@@ -652,7 +655,7 @@
                     <!-- Card Top Controls Bar -->
                     <div class="flex items-center justify-between pb-3 mb-3 border-b border-slate-100 dark:border-slate-700/60">
                         <div class="flex items-center space-x-2 flex-wrap gap-y-1">
-                            <span class="font-bold text-slate-800 dark:text-slate-100 text-sm">#${q.id}</span>
+                            <span class="font-bold text-slate-800 dark:text-slate-100 text-sm">#${q.seq_num !== undefined ? q.seq_num : q.id}</span>
                             <span class="px-2 py-0.5 rounded-lg text-xs font-semibold bg-brand-50 text-brand-600 border border-brand-200/50 dark:bg-brand-900/30 dark:text-brand-300 dark:border-brand-800/50">${qTypeLabel}</span>
                             ${diffTag}
                             ${q.category_compulsory ? `<span class="px-2 py-0.5 rounded-lg text-xs font-medium bg-slate-100 text-slate-600 dark:bg-slate-700 dark:text-slate-300">${escapeHtml(q.category_compulsory)}</span>` : ''}
@@ -1475,7 +1478,9 @@
         item.solution_space = newSpace.toFixed(1);
         saveCartToStorage();
         window.renderPaperCanvas();
-        if (window.showToast) window.showToast(`题目 #${qid} 留白高度设为 ${newSpace.toFixed(1)} cm`, 'info');
+        const q = window.PaperStore.questionsMap[qid];
+        const seqNum = (q && q.seq_num !== undefined) ? q.seq_num : qid;
+        if (window.showToast) window.showToast(`题目 #${seqNum} 留白高度设为 ${newSpace.toFixed(1)} cm`, 'info');
     };
 
     window.updateGlobalSolutionSpace = function (val) {
@@ -2132,7 +2137,9 @@
         .then(data => {
             if (data.status === 'success') {
                 const labelMap = { 'right': '题干右侧', 'center': '下方居中', 'bottom_right': '下方居右' };
-                if (window.showToast) window.showToast(`已调整题目 #${qid} 插图排版为：${labelMap[alignVal] || alignVal}`, 'success');
+                const q = window.PaperStore.questionsMap[qid];
+                const seqNum = (q && q.seq_num !== undefined) ? q.seq_num : qid;
+                if (window.showToast) window.showToast(`已调整题目 #${seqNum} 插图排版为：${labelMap[alignVal] || alignVal}`, 'success');
             }
         })
         .catch(err => {
