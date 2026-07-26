@@ -250,10 +250,34 @@ def clean_orphaned_images():
     except Exception as e:
         print(f"[Storage Cleanup Error] 执行静默图片净化时发生异常: {str(e)}")
 
+def recalibrate_usage_counts():
+    """自动校准全库题目的引用频次 usage_count，修正由于历史删除试卷遗留的计数差异"""
+    try:
+        from database import SessionLocal, Question, PaperQuestion
+        from sqlalchemy import func
+        db = SessionLocal()
+        try:
+            counts = db.query(PaperQuestion.question_id, func.count(PaperQuestion.id)).group_by(PaperQuestion.question_id).all()
+            ref_map = dict(counts)
+            questions = db.query(Question).all()
+            changed = False
+            for q in questions:
+                actual_ref = ref_map.get(q.id, 0)
+                if (q.usage_count or 0) != actual_ref:
+                    q.usage_count = actual_ref
+                    changed = True
+            if changed:
+                db.commit()
+        finally:
+            db.close()
+    except Exception as e:
+        print(f"[Usage Calibration Error] {e}")
+
 def start_startup_cleanup():
     # 稍等 2.5 秒，让主服务先启动完毕并打开浏览器，不占用首屏加载时间
     time.sleep(2.5)
     clean_orphaned_images()
+    recalibrate_usage_counts()
 
 # 仅在非测试环境下启动静默自愈清理后台守护线程
 if not IS_TESTING:
@@ -4503,12 +4527,18 @@ def get_paper_detail(paper_id: int, db: Session = Depends(get_db)):
 
 @app.delete("/api/papers/{paper_id}")
 def delete_paper(paper_id: int, background_tasks: BackgroundTasks, db: Session = Depends(get_db)):
-    """删除指定的历史试卷"""
+    """删除指定的历史试卷，并同步扣减关联题目的 usage_count"""
     try:
         paper = db.query(Paper).filter(Paper.id == paper_id).first()
         if not paper:
             return JSONResponse(content={"status": "error", "message": "试卷不存在"}, status_code=404)
             
+        pqs = db.query(PaperQuestion).filter(PaperQuestion.paper_id == paper_id).all()
+        for pq in pqs:
+            q = db.query(Question).filter(Question.id == pq.question_id).first()
+            if q and q.usage_count:
+                q.usage_count = max(0, q.usage_count - 1)
+                
         db.query(PaperQuestion).filter(PaperQuestion.paper_id == paper_id).delete()
         db.delete(paper)
         db.commit()
