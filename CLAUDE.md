@@ -33,6 +33,13 @@
 - **多教材大纲身份共存与迁移系统 (Curriculum Coexistence & Migration)**：
   - **活跃-镜像模式 (Active-Mirror Pattern)**：使用 `question_curriculums` 表独立保存题目在每套大纲（`A`、`B`、`S`）中的分类投影镜像。主表 `questions` 的分类字段仅实时缓存当前活跃配置，无需重构任何查询过滤或检索代码。
   - **版本切换与自动增量迁移**：保存并切换大纲版本（`POST /api/config/metadata`）时，后端自动获取旧活跃版本和新目标版本。若版本不同，自动在后台查找目标版本中尚未分类的题目，通过“通用关键字路由算法”将原版本的分类翻译为对应新版本的章级大纲镜像（增量翻译，不覆盖用户手动修改的分类记录），最后通过 SQLite 子查询极速将目标版本的分类同步刷入 `questions` 表的主字段。
+- **全工作台试题序号同步 (#seq_num Sync)**：
+  - 后端接口（`GET /api/questions`、`GET /api/questions/{id}`）自动基于 SQLite 物理升序索引计算全局纯净序号 `seq_num` (1 ~ N)。
+  - 题库研讨工作台（`editor.js`）与组卷排版工作台（`paper.js`）均统一优先采用 `q.seq_num` 作为试题卡片与 Toast 交互的视觉编号（如 `#22`），彻底规避历史删题导致的数据库主键 ID 断号/跳号给用户带来的困扰。
+- **AI 智能组卷与教育学理推理 (AI Paper Auto-Selection with Pedagogical Reasoning)**：
+  - 一键组卷功能升级调用 `PREFER_SOLVE_MODEL` 核心解题大模型，融入 `math-teaching` 中学数学教学教研思维（双向细目表、知识点覆盖率与难度阶梯分布），自动从题库中挑选最适配的题目组合。
+- **工作台状态无缝持久化与零闪烁首屏渲染 (Workspace State Persistence & Zero Flash)**：
+  - 前端自动记录当前活跃工作台（`PaperStore.activeWorkspace`）。在页面刷新或重新打开标签页时，系统会在 DOM 初始渲染前通过 HTML `init-ws-paper` 样式控制实现无闪烁的精准还原；仅在服务器全新启动（Fresh Server Boot）时重置为默认的题库研讨工作台。
 
 
 ### 3.2 草稿箱与三选项决策流
