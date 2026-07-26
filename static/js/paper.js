@@ -1025,7 +1025,32 @@
             items.forEach((item, subIdx) => {
                 const q = window.PaperStore.questionsMap[item.id];
                 let rawContent = q ? q.content : '';
-                let contentHtml = q ? formatQuestionContentHtml(rawContent, q.id, getQuestionFigAlign(q)) : '';
+                const figAlign = getQuestionFigAlign(q);
+
+                let solSpaceCm = 0;
+                let isSolSpaceEmbedded = false;
+
+                if (qType === 'detailed_answer') {
+                    const defaultFallback = meta.paper_type === 'exam_19' ? '0.0' : '7.0';
+                    const defaultSpace = parseFloat(meta.solution_space_default !== undefined ? meta.solution_space_default : defaultFallback);
+                    solSpaceCm = parseFloat(item.solution_space !== undefined ? item.solution_space : defaultSpace);
+                    if (isNaN(solSpaceCm)) solSpaceCm = 0.0;
+
+                    if (solSpaceCm > 0 && (figAlign === 'bottom_right' || figAlign === 'center')) {
+                        isSolSpaceEmbedded = true;
+                    }
+                }
+
+                let contentRes = q ? formatQuestionContentHtml(rawContent, q.id, figAlign, isSolSpaceEmbedded) : '';
+                let contentHtml = '';
+                let embeddedImgHtml = '';
+
+                if (isSolSpaceEmbedded && typeof contentRes === 'object') {
+                    contentHtml = contentRes.stemHtml;
+                    embeddedImgHtml = contentRes.imgHtml || '';
+                } else {
+                    contentHtml = typeof contentRes === 'string' ? contentRes : (contentRes.stemHtml || '');
+                }
 
                 let stemLine = '';
                 if (qType === 'single_choice' || qType === 'multi_choice') {
@@ -1052,17 +1077,27 @@
                 }
 
                 let solutionBlankHtml = '';
-                let solSpaceCm = 0;
                 if (qType === 'detailed_answer') {
-                    const defaultFallback = meta.paper_type === 'exam_19' ? '0.0' : '7.0';
-                    const defaultSpace = parseFloat(meta.solution_space_default !== undefined ? meta.solution_space_default : defaultFallback);
-                    solSpaceCm = parseFloat(item.solution_space !== undefined ? item.solution_space : defaultSpace);
-                    if (isNaN(solSpaceCm)) solSpaceCm = 0.0;
-                    
                     const spacePx = Math.round(solSpaceCm * 35);
                     const isZero = solSpaceCm <= 0;
+
+                    let embeddedImgContainer = '';
+                    if (isSolSpaceEmbedded && embeddedImgHtml) {
+                        const posClass = figAlign === 'center' ? 'left-1/2 -translate-x-1/2' : 'right-3';
+                        embeddedImgContainer = `
+                            <div class="absolute ${posClass} top-2 z-10">
+                                ${embeddedImgHtml}
+                            </div>
+                        `;
+                    }
+
+                    const minHeightStyle = (isSolSpaceEmbedded && embeddedImgHtml)
+                        ? `min-height: ${Math.max(spacePx, 180)}px; height: ${Math.max(spacePx, 180)}px;`
+                        : (isZero ? 'min-height: 20px;' : `height: ${spacePx}px;`);
+
                     solutionBlankHtml = `
-                        <div class="solution-space-zone relative ${isZero ? 'py-1 my-1 border-b border-dashed border-slate-200 hover:border-sky-300' : 'mt-3 mb-1 rounded-lg border border-dashed border-sky-300/80 bg-sky-50/20'} group/blank transition-all" style="${isZero ? 'min-height: 20px;' : `height: ${spacePx}px;`}">
+                        <div class="solution-space-zone relative ${isZero ? 'py-1 my-1 border-b border-dashed border-slate-200 hover:border-sky-300' : 'mt-2 mb-1 rounded-lg border border-dashed border-sky-300/80 bg-sky-50/20'} group/blank transition-all" style="${minHeightStyle}">
+                            ${embeddedImgContainer}
                             <div class="absolute inset-0 flex items-center justify-center pointer-events-none ${isZero ? 'opacity-0 group-hover/blank:opacity-70' : 'opacity-40 group-hover/blank:opacity-80'} transition-opacity">
                                 <span class="text-2xs font-sans text-sky-700 font-medium tracking-wider select-none">
                                     <i class="fa-solid fa-pen-ruler mr-1"></i> 解答题留白区域 (${solSpaceCm.toFixed(1)} cm)
@@ -2228,8 +2263,8 @@
         }, 50);
     };
 
-    function formatQuestionContentHtml(raw, qid = null, figAlign = 'right') {
-        if (!raw) return '';
+    function formatQuestionContentHtml(raw, qid = null, figAlign = 'right', embedInSolSpace = false) {
+        if (!raw) return embedInSolSpace ? { stemHtml: '', imgHtml: null } : '';
         let html = raw.trim();
         figAlign = figAlign || 'right';
 
@@ -2272,6 +2307,14 @@
                 </div>
             `;
 
+            if (embedInSolSpace && (figAlign === 'center' || figAlign === 'bottom_right')) {
+                return {
+                    stemHtml: `<div>${stemText}</div>`,
+                    imgHtml: imgControlHtml,
+                    figAlign: figAlign
+                };
+            }
+
             if (figAlign === 'center') {
                 return `<div>${stemText}</div><div class="my-2 text-center">${imgControlHtml}</div>`;
             } else if (figAlign === 'bottom_right') {
@@ -2286,6 +2329,10 @@
             }
         }
         
+        if (embedInSolSpace) {
+            return { stemHtml: stemText, imgHtml: null, figAlign: figAlign };
+        }
+
         return stemText;
     }
 

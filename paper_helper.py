@@ -256,15 +256,24 @@ def build_latex_document(title: str, subtitle: str, paper_type: str, questions_d
                 else:
                     stem_text = cleaned_content
 
+                sol_space = item.get("solution_space") or q.get("solution_space") or "0.0"
+                try:
+                    space_val = float(sol_space)
+                except Exception:
+                    space_val = 0.0
+                is_sol_spaced = (q_type == "detailed_answer" and not include_answers and space_val > 0)
+
                 if fig_align == "center":
                     lines.append(stem_text)
                     lines.append(r"\begin{center}")
-                    lines.append(f"  {fig_body}")
+                    lines.append(r"  \vspace*{-0.4em}")
+                    lines.append(f"  \\smash{{{fig_body}}}" if is_sol_spaced else f"  {fig_body}")
                     lines.append(r"\end{center}")
                 elif fig_align == "bottom_right":
                     lines.append(stem_text)
                     lines.append(r"\begin{flushright}")
-                    lines.append(f"  {fig_body}")
+                    lines.append(r"  \vspace*{-0.4em}")
+                    lines.append(f"  \\smash{{{fig_body}}}" if is_sol_spaced else f"  {fig_body}")
                     lines.append(r"\end{flushright}")
                 else:  # default "right"
                     lines.append(r"\begin{minipage}[t]{\dimexpr\linewidth-5.8cm\relax}")
