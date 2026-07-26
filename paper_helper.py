@@ -142,7 +142,8 @@ def build_latex_document(title: str, subtitle: str, paper_type: str, questions_d
     lines.append(r"\maketitle")
     
     if sub_title:
-        lines.append(rf"\begin{{center}}\large\bfseries {sub_title}\end{{center}}")
+        tex_sub_title = re.sub(r' {2,}', lambda m: r'\ ' * len(m.group(0)), sub_title)
+        lines.append(rf"\begin{{center}}\large\bfseries {tex_sub_title}\end{{center}}")
         
     if is_exam_style:
         lines.append(r"\begin{center}")

@@ -855,7 +855,7 @@
             <div class="text-center mb-3">
                 <h1 class="text-2xl font-bold tracking-normal text-slate-900 font-serif mb-1.5">${escapeHtml(meta.title)}</h1>
                 <div class="text-xl font-bold text-slate-900 font-serif my-2">数 学</div>
-                ${meta.subtitle ? `<div class="text-xs font-semibold text-slate-700 mb-1">${escapeHtml(meta.subtitle)}</div>` : ''}
+                ${meta.subtitle ? `<div class="text-xs font-semibold text-slate-700 mb-1 whitespace-pre-wrap">${escapeHtml(meta.subtitle)}</div>` : ''}
             </div>
 
             ${isExamType ? `
