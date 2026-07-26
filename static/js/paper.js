@@ -364,13 +364,13 @@
                     <div>
                         <label class="block text-2xs font-semibold text-slate-500 mb-1">主标题</label>
                         <input type="text" id="paperMetaTitle" value="${escapeHtml(meta.title)}" 
-                            onchange="updatePaperMeta('title', this.value)"
+                            oninput="updatePaperMeta('title', this.value)" onchange="updatePaperMeta('title', this.value)"
                             class="w-full px-3 py-1.5 text-xs rounded-xl border border-slate-200 bg-white focus:ring-2 focus:ring-brand-500 focus:outline-none dark:bg-slate-900/60 dark:border-slate-700 dark:text-slate-200" placeholder="如：2026年高中数学模拟考试试卷">
                     </div>
                     <div>
                         <label class="block text-2xs font-semibold text-slate-500 mb-1">副标题 / 备注</label>
                         <input type="text" id="paperMetaSubtitle" value="${escapeHtml(meta.subtitle)}" 
-                            onchange="updatePaperMeta('subtitle', this.value)"
+                            oninput="updatePaperMeta('subtitle', this.value)" onchange="updatePaperMeta('subtitle', this.value)"
                             class="w-full px-3 py-1.5 text-xs rounded-xl border border-slate-200 bg-white focus:ring-2 focus:ring-brand-500 focus:outline-none dark:bg-slate-900/60 dark:border-slate-700 dark:text-slate-200" placeholder="">
                     </div>
                     <div>
@@ -855,7 +855,7 @@
             <div class="text-center mb-3">
                 <h1 class="text-2xl font-bold tracking-normal text-slate-900 font-serif mb-1.5">${escapeHtml(meta.title)}</h1>
                 <div class="text-xl font-bold text-slate-900 font-serif my-2">数 学</div>
-                ${meta.subtitle ? `<div class="text-xs font-semibold text-slate-700 mb-1 whitespace-pre-wrap">${escapeHtml(meta.subtitle)}</div>` : ''}
+                ${meta.subtitle ? `<div class="text-xs font-semibold text-slate-700 mb-1" style="white-space: pre-wrap;">${escapeHtml(meta.subtitle).replace(/ /g, '&nbsp;')}</div>` : ''}
             </div>
 
             ${isExamType ? `
