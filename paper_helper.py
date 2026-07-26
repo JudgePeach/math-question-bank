@@ -241,7 +241,10 @@ def build_latex_document(title: str, subtitle: str, paper_type: str, questions_d
             env_name = "problem" if q_type == "detailed_answer" else "question"
             points_arg = f"[points = {q_score}]" if q_type == "detailed_answer" else ""
 
-            fig_align = q.get("figure_align") or "right"
+            default_fig_align = "bottom_right" if paper_type == "quiz" else "right"
+            fig_align = q.get("figure_align")
+            if not fig_align or (paper_type == "quiz" and fig_align == "right" and not q.get("custom_figure_align")):
+                fig_align = default_fig_align
 
             lines.append(f"\\begin{{{env_name}}}{points_arg}")
             if fig_body:

@@ -76,6 +76,14 @@
         } catch (e) { }
     }
 
+    function getQuestionFigAlign(q) {
+        const defaultAlign = (window.PaperStore.meta.paper_type === 'quiz') ? 'bottom_right' : 'right';
+        if (!q) return defaultAlign;
+        if (q.custom_figure_align) return q.custom_figure_align;
+        if (q.figure_align && q.figure_align !== 'right') return q.figure_align;
+        return defaultAlign;
+    }
+
     // Public Cart Helper Functions
     window.isInCart = function (qid) {
         qid = parseInt(qid, 10);
@@ -387,8 +395,8 @@
                         <select id="paperMetaType" onchange="updatePaperMeta('paper_type', this.value)"
                             class="w-full px-3 py-1.5 text-xs rounded-xl border border-slate-200 bg-white focus:ring-2 focus:ring-brand-500 focus:outline-none dark:bg-slate-900/60 dark:border-slate-700 dark:text-slate-200">
                             <option value="exam_19" ${meta.paper_type === 'exam_19' ? 'selected' : ''}>19题高考卷 (含答题卡)</option>
-                            <option value="exam" ${meta.paper_type === 'exam' ? 'selected' : ''}>试卷</option>
-                            <option value="quiz" ${meta.paper_type === 'quiz' ? 'selected' : ''}>小练</option>
+                            <option value="exam" ${meta.paper_type === 'exam' ? 'selected' : ''}>常规试卷</option>
+                            <option value="quiz" ${meta.paper_type === 'quiz' ? 'selected' : ''}>日常小练</option>
                         </select>
                     </div>
                 </div>
@@ -705,7 +713,7 @@
 
                     <!-- Full Question Render Content -->
                     <div class="question-full-render-box text-sm leading-relaxed text-slate-800 dark:text-slate-100 overflow-x-auto select-text" id="paper-q-render-${q.id}">
-                        ${formatQuestionContentHtml(q.content, q.id, q.figure_align || 'right')}
+                        ${formatQuestionContentHtml(q.content, q.id, getQuestionFigAlign(q))}
                     </div>
                 </div>
             `;
@@ -1017,7 +1025,7 @@
             items.forEach((item, subIdx) => {
                 const q = window.PaperStore.questionsMap[item.id];
                 let rawContent = q ? q.content : '';
-                let contentHtml = q ? formatQuestionContentHtml(rawContent, q.id, q.figure_align || 'right') : '';
+                let contentHtml = q ? formatQuestionContentHtml(rawContent, q.id, getQuestionFigAlign(q)) : '';
 
                 let stemLine = '';
                 if (qType === 'single_choice' || qType === 'multi_choice') {
@@ -1236,7 +1244,7 @@
 
             items.forEach((item, subIdx) => {
                 const q = window.PaperStore.questionsMap[item.id];
-                let contentHtml = q ? formatQuestionContentHtml(q.content, q.id, q.figure_align || 'right') : '';
+                let contentHtml = q ? formatQuestionContentHtml(q.content, q.id, getQuestionFigAlign(q)) : '';
 
                 let stemLine = '';
                 if (qType === 'single_choice' || qType === 'multi_choice') {
@@ -1523,7 +1531,7 @@
                 id: item.id,
                 score: item.score,
                 order: idx + 1,
-                figure_align: q.figure_align || 'right',
+                figure_align: getQuestionFigAlign(q),
                 solution_space: item.solution_space !== undefined ? item.solution_space.toString() : defaultSpace
             };
         });
@@ -1904,8 +1912,8 @@
 
                 const paperTypeMap = {
                     'exam_19': { label: '19题高考卷', color: 'bg-indigo-50 text-indigo-600 border-indigo-200 dark:bg-indigo-950/40 dark:border-indigo-800 dark:text-indigo-300' },
-                    'exam': { label: '标准卷', color: 'bg-emerald-50 text-emerald-600 border-emerald-200 dark:bg-emerald-950/40 dark:border-emerald-800 dark:text-emerald-300' },
-                    'quiz': { label: '小练/周测', color: 'bg-amber-50 text-amber-600 border-amber-200 dark:bg-amber-950/40 dark:border-amber-800 dark:text-amber-300' },
+                    'exam': { label: '常规试卷', color: 'bg-emerald-50 text-emerald-600 border-emerald-200 dark:bg-emerald-950/40 dark:border-emerald-800 dark:text-emerald-300' },
+                    'quiz': { label: '日常小练', color: 'bg-amber-50 text-amber-600 border-amber-200 dark:bg-amber-950/40 dark:border-amber-800 dark:text-amber-300' },
                     'handout': { label: '讲义/教案', color: 'bg-rose-50 text-rose-600 border-rose-200 dark:bg-rose-950/40 dark:border-rose-800 dark:text-rose-300' }
                 };
 
@@ -2027,7 +2035,7 @@
                 const cartQuestions = (paper.questions || []).map(item => ({
                     id: item.id,
                     score: item.score,
-                    figure_align: (item.question || {}).figure_align || 'right'
+                    figure_align: getQuestionFigAlign(item.question)
                 }));
 
                 const tab = window.open('', '_blank');
@@ -2123,6 +2131,7 @@
         // 1. Optimistically update local memory store
         if (window.PaperStore.questionsMap[qid]) {
             window.PaperStore.questionsMap[qid].figure_align = alignVal;
+            window.PaperStore.questionsMap[qid].custom_figure_align = alignVal;
         }
 
         // Close popover
@@ -2165,7 +2174,7 @@
 
         qid = parseInt(qid, 10);
         const q = window.PaperStore.questionsMap[qid] || {};
-        const currentAlign = q.figure_align || 'right';
+        const currentAlign = getQuestionFigAlign(q);
 
         // Remove existing popover
         const existingPopover = document.getElementById('figureAlignPopoverMenu');
