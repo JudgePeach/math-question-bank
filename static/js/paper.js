@@ -386,9 +386,9 @@
                         <label class="block text-2xs font-semibold text-slate-500 mb-1">试卷类型预设</label>
                         <select id="paperMetaType" onchange="updatePaperMeta('paper_type', this.value)"
                             class="w-full px-3 py-1.5 text-xs rounded-xl border border-slate-200 bg-white focus:ring-2 focus:ring-brand-500 focus:outline-none dark:bg-slate-900/60 dark:border-slate-700 dark:text-slate-200">
-                            <option value="exam_19" ${meta.paper_type === 'exam_19' ? 'selected' : ''}>📄 19题高考卷 (含答题卡)</option>
-                            <option value="exam" ${meta.paper_type === 'exam' ? 'selected' : ''}>📄 试卷</option>
-                            <option value="quiz" ${meta.paper_type === 'quiz' ? 'selected' : ''}>📝 小练</option>
+                            <option value="exam_19" ${meta.paper_type === 'exam_19' ? 'selected' : ''}>19题高考卷 (含答题卡)</option>
+                            <option value="exam" ${meta.paper_type === 'exam' ? 'selected' : ''}>试卷</option>
+                            <option value="quiz" ${meta.paper_type === 'quiz' ? 'selected' : ''}>小练</option>
                         </select>
                     </div>
                 </div>
@@ -451,7 +451,7 @@
                         <i class="fa-solid fa-wand-magic-sparkles text-brand-500 absolute left-3 top-2.5 text-xs"></i>
                         <input type="text" id="paperAiPromptInput" 
                             class="w-full pl-8 pr-3 py-1.5 text-xs rounded-xl border border-brand-200/80 bg-brand-50/30 focus:ring-2 focus:ring-brand-500 focus:outline-none dark:bg-slate-900/80 dark:border-slate-700 dark:text-slate-200" 
-                            placeholder="🤖 AI 智能一键抽卷：例如“帮我抽 5 道难度中等的函数选择题”"
+                            placeholder="智能一键抽卷：例如“帮我抽 5 道难度中等的函数选择题”"
                             onkeypress="if(event.key==='Enter') triggerAiPaperSelect()">
                     </div>
                     <button onclick="triggerAiPaperSelect()" class="px-3.5 py-1.5 rounded-xl text-xs font-semibold bg-brand-600 text-white shadow-sm hover:bg-brand-700 active:scale-95 transition-all flex items-center space-x-1 shrink-0">
@@ -605,11 +605,11 @@
                 <div class="flex items-center space-x-1.5 bg-slate-200/60 p-1 rounded-xl dark:bg-slate-800">
                     <button onclick="switchPaperStreamTab('all')" 
                         class="px-3 py-1 rounded-lg text-xs font-bold transition-all ${currentTab === 'all' ? 'bg-white text-brand-600 shadow-sm dark:bg-slate-700 dark:text-brand-300' : 'text-slate-500 hover:text-slate-800 dark:text-slate-400'}">
-                        📚 题库全部试题 (${bankQuestions.length})
+                        全库试题 (${bankQuestions.length})
                     </button>
                     <button onclick="switchPaperStreamTab('selected')" 
                         class="px-3 py-1 rounded-lg text-xs font-bold transition-all ${currentTab === 'selected' ? 'bg-white text-brand-600 shadow-sm dark:bg-slate-700 dark:text-brand-300' : 'text-slate-500 hover:text-slate-800 dark:text-slate-400'}">
-                        📄 已选组卷试题 (${cart.length})
+                        已选试题 (${cart.length})
                     </button>
                 </div>
 
@@ -660,7 +660,7 @@
                             ${diffTag}
                             ${q.category_compulsory ? `<span class="px-2 py-0.5 rounded-lg text-xs font-medium bg-slate-100 text-slate-600 dark:bg-slate-700 dark:text-slate-300">${escapeHtml(q.category_compulsory)}</span>` : ''}
                             ${q.category_chapter ? `<span class="px-2 py-0.5 rounded-lg text-xs font-medium bg-slate-100 text-slate-500 dark:bg-slate-700/50 dark:text-slate-400">${escapeHtml(q.category_chapter)}</span>` : ''}
-                            <span class="px-2 py-0.5 rounded-lg text-xs font-medium bg-slate-100 text-slate-500 dark:bg-slate-700/50 dark:text-slate-400" title="引用次数">🔥 ${usageCount}次</span>
+                            <span class="px-2 py-0.5 rounded-lg text-xs font-medium bg-slate-100 text-slate-500 dark:bg-slate-700/50 dark:text-slate-400" title="引用次数">引用 ${usageCount} 次</span>
                         </div>
 
                         <div class="flex items-center space-x-2">
@@ -765,7 +765,7 @@
                     <div class="flex items-center justify-between mb-1.5 pb-1 border-b border-brand-200/50 dark:border-brand-800/60">
                         <div class="flex items-center space-x-1.5 text-xs font-bold text-brand-700 dark:text-brand-300">
                             <i class="fa-solid fa-brain text-brand-500"></i>
-                            <span>🤖 AI 选题教研分析与情形覆盖 (${escapeHtml(meta.ai_model_used || '大模型')})</span>
+                            <span>双向细目表与考点覆盖分析 (${escapeHtml(meta.ai_model_used || '大模型')})</span>
                         </div>
                         <button onclick="window.clearAiAnalysis()" class="text-2xs text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 px-1.5 py-0.5 rounded-md hover:bg-slate-200/60 font-medium transition-all" title="关闭分析框">
                             <i class="fa-solid fa-xmark mr-1"></i>关闭分析
