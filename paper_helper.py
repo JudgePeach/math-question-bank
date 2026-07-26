@@ -301,7 +301,11 @@ def build_latex_document(title: str, subtitle: str, paper_type: str, questions_d
                 except Exception:
                     space_val = 0.0
                 if space_val > 0:
-                    lines.append(f"\\vspace*{{{space_val:.1f}cm}}")
+                    if fig_body and fig_align in ["bottom_right", "center"]:
+                        net_space = max(space_val - 3.2, 0.5)
+                        lines.append(f"\\vspace*{{{net_space:.1f}cm}}")
+                    else:
+                        lines.append(f"\\vspace*{{{space_val:.1f}cm}}")
 
             lines.append(f"\\end{{{env_name}}}")
 
