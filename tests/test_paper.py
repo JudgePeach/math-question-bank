@@ -127,7 +127,7 @@ def test_exam_19_and_answer_sheet_generation(client):
 
 def test_solution_space_latex_generation():
     from paper_helper import build_latex_document
-    questions_data = [{
+    questions_data_65 = [{
         "question": {
             "id": 99,
             "question_type": "detailed_answer",
@@ -137,12 +137,36 @@ def test_solution_space_latex_generation():
         "score": 12,
         "solution_space": "6.5"
     }]
+    questions_data_zero = [{
+        "question": {
+            "id": 99,
+            "question_type": "detailed_answer",
+            "content": "已知函数 $f(x) = ax^2 + bx + c$，求导数 $f'(x)$。",
+            "figure_align": "right"
+        },
+        "score": 12,
+        "solution_space": "0.0"
+    }]
     
     # 1. Non-exam_19 paper mode -> should inject \vspace*{6.5cm}
-    tex = build_latex_document("单元测试", "试卷", "exam", questions_data, include_answers=False)
+    tex = build_latex_document("单元测试", "试卷", "exam", questions_data_65, include_answers=False)
     assert r"\vspace*{6.5cm}" in tex
     
-    # 2. exam_19 paper mode -> answer sheet present, no solution space \vspace
-    tex_19 = build_latex_document("高考模拟", "试卷", "exam_19", questions_data, include_answers=False)
-    assert r"\vspace*{6.5cm}" not in tex_19
+    # 2. exam_19 paper mode with 3.0cm solution space -> should inject \vspace*{3.0cm}
+    questions_data_3 = [{
+        "question": {
+            "id": 99,
+            "question_type": "detailed_answer",
+            "content": "已知函数 $f(x) = ax^2 + bx + c$，求导数 $f'(x)$。",
+            "figure_align": "right"
+        },
+        "score": 12,
+        "solution_space": "3.0"
+    }]
+    tex_19_three = build_latex_document("高考模拟", "试卷", "exam_19", questions_data_3, include_answers=False)
+    assert r"\vspace*{3.0cm}" in tex_19_three
+
+    # 3. exam_19 paper mode with 0.0cm solution space -> should not inject \vspace
+    tex_19_zero = build_latex_document("高考模拟", "试卷", "exam_19", questions_data_zero, include_answers=False)
+    assert r"\vspace*" not in tex_19_zero
 
