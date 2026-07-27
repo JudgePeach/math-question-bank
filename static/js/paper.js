@@ -2395,10 +2395,15 @@
             const countTag = imgSrcList.length > 1 ? ` (${imgSrcList.length}图)` : '';
 
             const imgsHtml = imgSrcList.map((src, idx) => `
-                <img src="${src}" class="${imgSrcList.length > 1 ? 'max-w-[130px] max-h-[130px]' : 'max-w-[200px] max-h-[170px]'} object-contain rounded-lg border border-slate-200 shadow-xs cursor-pointer hover:ring-2 hover:ring-brand-500 hover:scale-[1.02] transition-all inline-block"
-                    onclick="event.stopPropagation(); window.showFigureAlignPopover(event, ${qidAttr})"
-                    oncontextmenu="event.preventDefault(); event.stopPropagation(); window.showFigureAlignPopover(event, ${qidAttr})"
-                    title="点击或右击可切换图片排版位置 (图${idx + 1} 当前: ${currentLabel})">
+                <div class="relative group/single-img inline-block">
+                    <img src="${src}" class="${imgSrcList.length > 1 ? 'max-w-[130px] max-h-[130px]' : 'max-w-[200px] max-h-[170px]'} object-contain rounded-lg border border-slate-200 shadow-xs cursor-pointer hover:ring-2 hover:ring-brand-500 hover:scale-[1.02] transition-all inline-block"
+                        onclick="event.stopPropagation(); window.showFigureAlignPopover(event, ${qidAttr})"
+                        oncontextmenu="event.preventDefault(); event.stopPropagation(); window.showFigureAlignPopover(event, ${qidAttr})"
+                        title="点击或右击可切换插图排版位置 (图${idx + 1} 当前: ${currentLabel})">
+                    ${qidAttr ? `<button onclick="event.stopPropagation(); window.removeQuestionImage(${qidAttr}, '${src}')" 
+                        class="absolute -top-1.5 -right-1.5 w-4.5 h-4.5 bg-red-500 hover:bg-red-600 text-white rounded-full text-[10px] font-bold flex items-center justify-center shadow-xs opacity-0 group-hover/single-img:opacity-100 transition-opacity cursor-pointer z-10" 
+                        title="移除此张插图">✕</button>` : ''}
+                </div>
             `).join('');
 
             const imgControlHtml = `
@@ -2476,3 +2481,42 @@
     });
 
 })();
+
+window.removeQuestionImage = async function (qid, imgSrc) {
+    if (!qid || !imgSrc) return;
+    if (!confirm('确认要从该题中移除此张插图吗？')) return;
+
+    try {
+        const res = await fetch(`/api/questions/${qid}`);
+        if (!res.ok) throw new Error('拉取题目数据失败');
+        const q = await res.json();
+        
+        let content = q.content || '';
+        const escapedSrc = imgSrc.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        const regex = new RegExp(`!\\[.*?\\]\\(${escapedSrc}\\)`, 'g');
+        content = content.replace(regex, '').trim();
+
+        const updateRes = await fetch(`/api/questions/${qid}`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ content: content })
+        });
+
+        if (!updateRes.ok) throw new Error('更新题目插图失败');
+
+        showToast('插图已成功移除', 'success');
+        
+        if (typeof PaperStore !== 'undefined' && PaperStore.renderPreview) {
+            const item = PaperStore.cart.find(it => (it.question_id || it.question?.id) === qid || it.id === qid);
+            if (item && item.question) {
+                item.question.content = content;
+            }
+            PaperStore.renderPreview();
+        }
+        if (typeof loadQuestions === 'function') {
+            loadQuestions();
+        }
+    } catch (err) {
+        showToast('移除插图失败: ' + err.message, 'error');
+    }
+};

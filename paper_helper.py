@@ -258,7 +258,10 @@ def build_latex_document(
             if img_matches:
                 for img_path in img_matches:
                     img_filename = os.path.basename(img_path)
-                    img_w = "3.8cm" if len(img_matches) > 1 or tikz_code else "5.0cm"
+                    # 避免在已经输出了矢量 tikz_code 时二次重叠渲染同名生成图 tikz_xxx.png
+                    if tikz_code and img_filename.startswith("tikz_"):
+                        continue
+                    img_w = "3.8cm" if (len(img_matches) > 1 and not (tikz_code and img_filename.startswith("tikz_"))) or (tikz_code and not img_filename.startswith("tikz_")) else "5.0cm"
                     fig_elements.append(f"\\includegraphics[width={img_w}]{{{img_filename}}}")
                 cleaned_raw = re.sub(r'!\[.*?\]\([^)]+\)', '', cleaned_raw).strip()
 
@@ -462,6 +465,8 @@ def extract_figures_for_answer_sheet(content: str) -> str:
     img_matches = re.findall(r'!\[.*?\]\((?:/static/uploads/|static/uploads/|/uploads/|uploads/)?([^)]+)\)', content)
     for img_name in img_matches:
         base_n = os.path.basename(img_name)
+        if tikz_blocks and base_n.startswith("tikz_"):
+            continue
         img_tag = f"\\includegraphics[max width=3.4cm]{{{base_n}}}"
         if img_tag not in figs:
             figs.append(img_tag)
