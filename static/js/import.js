@@ -439,17 +439,7 @@
                     const knowSelect = document.getElementById('editKnowledge');
                     
                     // In case the categories in item are not in tree yet, add them temporarily
-                    if (fullItem.category_compulsory && !categoryTree[fullItem.category_compulsory]) {
-                        categoryTree[fullItem.category_compulsory] = {};
-                    }
-                    if (fullItem.category_compulsory && fullItem.category_chapter && !categoryTree[fullItem.category_compulsory][fullItem.category_chapter]) {
-                        categoryTree[fullItem.category_compulsory][fullItem.category_chapter] = [];
-                    }
-                    if (fullItem.category_compulsory && fullItem.category_chapter && fullItem.category_knowledge && !categoryTree[fullItem.category_compulsory][fullItem.category_chapter].includes(fullItem.category_knowledge)) {
-                        categoryTree[fullItem.category_compulsory][fullItem.category_chapter].push(fullItem.category_knowledge);
-                    }
-                    
-                    // Repopulate with values
+                    // Repopulate with clean categoryTree
                     populateCategoryDropdowns();
                     
                     compSelect.value = fullItem.category_compulsory || '';

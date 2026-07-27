@@ -57,17 +57,29 @@ def heal_database_curriculum_names():
                 {QuestionCurriculum.compulsory: new}, synchronize_session=False
             )
             updated_mappings += res
+
+        # 清理在主表 questions 中残留的不属于当前大纲小节列表的旧章名/错位知识点
+        curr = get_current_curriculum()
+        healed_know_count = 0
+        all_qs = db.query(Question).all()
+        for q in all_qs:
+            comp = q.category_compulsory
+            chap = q.category_chapter
+            know = q.category_knowledge
+            if know:
+                valid_knows = curr.get(comp, {}).get(chap, [])
+                if know not in valid_knows:
+                    q.category_knowledge = ""
+                    healed_know_count += 1
             
-        if updated_questions > 0 or updated_mappings > 0:
+        if updated_questions > 0 or updated_mappings > 0 or healed_know_count > 0:
             db.commit()
-            print(f"[Self-Healing DB] Migrated {updated_questions} questions and {updated_mappings} mappings to simplified book names.")
+            print(f"[Self-Healing DB] Migrated {updated_questions} questions, {updated_mappings} mappings, and cleaned {healed_know_count} mismatched knowledge values.")
     except Exception as e:
         db.rollback()
         print(f"[Self-Healing DB Error] Failed to run database book names migration: {e}")
     finally:
         db.close()
-
-heal_database_curriculum_names()
 
 import sys
 # 检测是否在单元测试环境下运行
@@ -2543,6 +2555,7 @@ def load_or_init_metadata():
                     
                     METADATA_CACHE = loaded
                     print(f"[Metadata] Loaded custom metadata from {METADATA_FILE}")
+                    heal_database_curriculum_names()
                     return
         except Exception as e:
             print(f"[Metadata Warning] Error loading {METADATA_FILE}: {e}. Overwriting with default.")
@@ -2556,6 +2569,7 @@ def load_or_init_metadata():
         print(f"[Metadata Error] Could not write default metadata: {e}")
         
     METADATA_CACHE = default_metadata
+    heal_database_curriculum_names()
 
 # Load metadata on startup
 load_or_init_metadata()

@@ -47,6 +47,7 @@
 - **多教材大纲身份共存与迁移系统 (Curriculum Coexistence & Migration)**：
   - **活跃-镜像模式 (Active-Mirror Pattern)**：新建表 `question_curriculums` 用以存放题目在每套大纲（`A`、`B`、`S`）中的分类镜像。`questions` 主表字段仅反映当前活跃配置。
   - **大纲切换与自动增量迁移**：当用户在设置中保存并切换教材版本时（`POST /api/config/metadata`），系统会自动检测原活跃版本与新目标版本。若版本发生变化，系统会在后台自动对目标大纲中尚未分类（增量模式）的题目运行“通用关键词路由翻译算法”，瞬间生成并同步保存对应的章级镜像，最后批量刷入 `questions` 表的主字段中，无需用户进行任何手动迁移操作。
+  - **跨大纲小节隔离自愈 (Knowledge Field Isolation Self-Healing)**：系统会在初始化或切换大纲时校验主表及镜像表的小节字段（`category_knowledge`），若旧大纲章名或非法小节残存在新大纲的章节下，系统会自动将其清洗置空为 `""`（即标准的默认整章），且前端取消对全局 `categoryTree` 的盲目 `.push()` 追加，彻底防止多大纲下下拉菜单选项发生跨版交叉混排污染。
 - **全工作台试题序号同步 (#seq_num Sync)**：
   - 后端接口（`GET /api/questions`、`GET /api/questions/{id}`）自动基于 SQLite 物理升序索引计算全局纯净序号 `seq_num` (1 ~ N)。
   - 题库研讨工作台（`editor.js`）与组卷排版工作台（`paper.js`）均统一优先采用 `q.seq_num` 作为试题卡片与 Toast 交互的视觉编号（如 `#22`），彻底规避历史删题导致的数据库主键 ID 断号/跳号给用户带来的困扰。
