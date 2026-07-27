@@ -2384,34 +2384,31 @@
         const stemText = html.replace(/\n\n/g, '<br><br>').replace(/\n/g, '<br>');
 
         if (imgSrcList.length > 0) {
+            // 如果存在多张插图且原设定为右侧，默认自动优化调整为下方居中 (center) 展示
+            const effectiveAlign = (imgSrcList.length > 1 && figAlign === 'right') ? 'center' : (figAlign || 'right');
             const alignLabelMap = {
                 'right': '题干右侧',
                 'center': '下方居中',
                 'bottom_right': '下方居右'
             };
-            const currentLabel = alignLabelMap[figAlign] || '题干右侧';
-            const iconClass = figAlign === 'center' ? 'fa-align-center' : 'fa-align-right';
+            const currentLabel = alignLabelMap[effectiveAlign] || '下方居中';
+            const iconClass = effectiveAlign === 'center' ? 'fa-align-center' : 'fa-align-right';
             const qidAttr = qid ? qid : 0;
             const countTag = imgSrcList.length > 1 ? ` (${imgSrcList.length}图)` : '';
 
             const imgsHtml = imgSrcList.map((src, idx) => `
-                <div class="relative group/single-img inline-block">
-                    <img src="${src}" class="${imgSrcList.length > 1 ? 'max-w-[130px] max-h-[130px]' : 'max-w-[200px] max-h-[170px]'} object-contain rounded-lg border border-slate-200 shadow-xs cursor-pointer hover:ring-2 hover:ring-brand-500 hover:scale-[1.02] transition-all inline-block"
-                        onclick="event.stopPropagation(); window.showFigureAlignPopover(event, ${qidAttr})"
-                        oncontextmenu="event.preventDefault(); event.stopPropagation(); window.showFigureAlignPopover(event, ${qidAttr})"
-                        title="点击或右击可切换插图排版位置 (图${idx + 1} 当前: ${currentLabel})">
-                    ${qidAttr ? `<button onclick="event.stopPropagation(); window.removeQuestionImage(${qidAttr}, '${src}')" 
-                        class="absolute -top-1.5 -right-1.5 w-4.5 h-4.5 bg-red-500 hover:bg-red-600 text-white rounded-full text-[10px] font-bold flex items-center justify-center shadow-xs opacity-0 group-hover/single-img:opacity-100 transition-opacity cursor-pointer z-10" 
-                        title="移除此张插图">✕</button>` : ''}
-                </div>
+                <img src="${src}" class="${imgSrcList.length > 1 ? 'max-w-[150px] max-h-[140px]' : 'max-w-[200px] max-h-[170px]'} object-contain rounded-lg border border-slate-200 shadow-xs cursor-pointer hover:ring-2 hover:ring-brand-500 hover:scale-[1.02] transition-all inline-block"
+                    onclick="event.stopPropagation(); window.showFigureAlignPopover(event, ${qidAttr})"
+                    oncontextmenu="event.preventDefault(); event.stopPropagation(); window.showFigureAlignPopover(event, ${qidAttr})"
+                    title="点击或右击可切换插图排版位置 (图${idx + 1} 当前: ${currentLabel})">
             `).join('');
 
             const imgControlHtml = `
                 <div class="inline-block relative group/fig">
-                    <div class="flex flex-wrap items-center ${figAlign === 'center' ? 'justify-center' : 'justify-end'} gap-1.5">
+                    <div class="flex flex-wrap items-center ${effectiveAlign === 'center' ? 'justify-center' : 'justify-end'} gap-2">
                         ${imgsHtml}
                     </div>
-                    <div class="mt-1 ${figAlign === 'center' ? 'text-center' : 'text-right'}">
+                    <div class="mt-1 ${effectiveAlign === 'center' ? 'text-center' : 'text-right'}">
                         <button onclick="event.stopPropagation(); window.showFigureAlignPopover(event, ${qidAttr})" class="inline-flex items-center text-[10px] font-sans text-brand-700 bg-brand-50 hover:bg-brand-100 border border-brand-200/80 rounded-md px-1.5 py-0.5 transition-colors shadow-2xs">
                             <i class="fa-solid ${iconClass} text-[9px] mr-1 text-brand-500"></i> ${currentLabel}${countTag} <i class="fa-solid fa-chevron-down text-[8px] ml-1 opacity-70"></i>
                         </button>
@@ -2419,17 +2416,17 @@
                 </div>
             `;
 
-            if (embedInSolSpace && (figAlign === 'center' || figAlign === 'bottom_right')) {
+            if (embedInSolSpace && (effectiveAlign === 'center' || effectiveAlign === 'bottom_right')) {
                 return {
                     stemHtml: `<div>${stemText}</div>`,
                     imgHtml: imgControlHtml,
-                    figAlign: figAlign
+                    figAlign: effectiveAlign
                 };
             }
 
-            if (figAlign === 'center') {
+            if (effectiveAlign === 'center') {
                 return `<div>${stemText}</div><div class="my-2 text-center">${imgControlHtml}</div>`;
-            } else if (figAlign === 'bottom_right') {
+            } else if (effectiveAlign === 'bottom_right') {
                 return `<div>${stemText}</div><div class="my-2 text-right">${imgControlHtml}</div>`;
             } else { // default 'right'
                 return `
@@ -2481,42 +2478,3 @@
     });
 
 })();
-
-window.removeQuestionImage = async function (qid, imgSrc) {
-    if (!qid || !imgSrc) return;
-    if (!confirm('确认要从该题中移除此张插图吗？')) return;
-
-    try {
-        const res = await fetch(`/api/questions/${qid}`);
-        if (!res.ok) throw new Error('拉取题目数据失败');
-        const q = await res.json();
-        
-        let content = q.content || '';
-        const escapedSrc = imgSrc.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-        const regex = new RegExp(`!\\[.*?\\]\\(${escapedSrc}\\)`, 'g');
-        content = content.replace(regex, '').trim();
-
-        const updateRes = await fetch(`/api/questions/${qid}`, {
-            method: 'PUT',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ content: content })
-        });
-
-        if (!updateRes.ok) throw new Error('更新题目插图失败');
-
-        showToast('插图已成功移除', 'success');
-        
-        if (typeof PaperStore !== 'undefined' && PaperStore.renderPreview) {
-            const item = PaperStore.cart.find(it => (it.question_id || it.question?.id) === qid || it.id === qid);
-            if (item && item.question) {
-                item.question.content = content;
-            }
-            PaperStore.renderPreview();
-        }
-        if (typeof loadQuestions === 'function') {
-            loadQuestions();
-        }
-    } catch (err) {
-        showToast('移除插图失败: ' + err.message, 'error');
-    }
-};

@@ -276,6 +276,9 @@ def build_latex_document(
             fig_align = q.get("figure_align")
             if not fig_align or (paper_type == "quiz" and fig_align == "right" and not q.get("custom_figure_align")):
                 fig_align = default_fig_align
+            # 多张插图且原设定为右侧时，默认自动优化为下方居中 (center)
+            if len(fig_elements) > 1 and fig_align == "right":
+                fig_align = "center"
 
             lines.append(f"\\begin{{{env_name}}}{points_arg}")
             if fig_body:
