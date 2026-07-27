@@ -1509,8 +1509,17 @@ const PAGE_LIMIT = 20;
 
         function cleanChoiceStemParentheses(text) {
             if (!text) return "";
+            text = text.trim();
             const pattern = /(?:[\s\xa0\u3000]*[\(（]\s*\$?\s*(?:\\quad|\\qquad|\\hspace\{.*?\}|[\s\xa0\u3000_])*?\s*\$?\s*[\)）]\s*\$?[\s\xa0\u3000]*)+$/;
-            return text.trim().replace(pattern, '').replace(/\\paren\b/g, '').trim();
+            let cleaned = text.replace(pattern, '').replace(/\\paren\b/g, '').trim();
+
+            const sanitizedDollars = cleaned.replace(/\\\$/g, '');
+            const dollarCount = (sanitizedDollars.match(/\$/g) || []).length;
+            if (dollarCount % 2 !== 0) {
+                cleaned += '$';
+            }
+
+            return cleaned;
         }
         window.cleanChoiceStemParentheses = cleanChoiceStemParentheses;
 

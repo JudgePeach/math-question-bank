@@ -27,13 +27,20 @@ TYPE_LABELS = {
 TYPE_ORDER = ["single_choice", "multi_choice", "fill_in_blank", "detailed_answer"]
 
 def clean_choice_stem_parentheses(text: str) -> str:
-    """自动清洗选择题题干末尾供填答用的全角/半角空括号（支持包裹全角空格\u3000、$公式符号、\\quad等）"""
+    """自动清洗选择题题干末尾供填答用的全角/半角空括号（支持包裹全角空格\u3000、$公式符号、\\quad等），并保持 $ 符号闭合平衡"""
     if not text:
         return ""
     text = text.strip()
     pattern = r'(?:[\s\xa0\u3000]*[\(（]\s*\$?\s*(?:\\quad|\\qquad|\\hspace\{.*?\}|[\s\xa0\u3000_])*?\s*\$?\s*[\)）]\s*\$?[\s\xa0\u3000]*)+$'
-    text = re.sub(pattern, '', text).strip()
-    return re.sub(r'\\paren\b', '', text).strip()
+    cleaned = re.sub(pattern, '', text).strip()
+    cleaned = re.sub(r'\\paren\b', '', cleaned).strip()
+    
+    # 校验 $ 闭合奇偶性，若因抹除括号导致 $ 符号不成对（奇数个），在末尾补全闭合 $
+    dollars = re.findall(r'(?<!\\)\$', cleaned)
+    if len(dollars) % 2 != 0:
+        cleaned += "$"
+        
+    return cleaned
 
 def clean_content_for_latex(content: str, q_type: str = "") -> str:
     """

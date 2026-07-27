@@ -5,13 +5,19 @@ from database import Base, Question, engine, SessionLocal
 from sync_helper import export_database_to_files
 
 def clean_choice_stem_parentheses(text: str) -> str:
-    """清理选择题题干末尾供填答用的全角/半角空括号"""
+    """清理选择题题干末尾供填答用的全角/半角空括号并保证 $ 闭合"""
     if not text:
         return ""
     text = text.strip()
     pattern = r'(?:[\s\xa0\u3000]*[\(（]\s*\$?\s*(?:\\quad|\\qquad|\\hspace\{.*?\}|[\s\xa0\u3000_])*?\s*\$?\s*[\)）]\s*\$?[\s\xa0\u3000]*)+$'
-    text = re.sub(pattern, '', text).strip()
-    return re.sub(r'\\paren\b', '', text).strip()
+    cleaned = re.sub(pattern, '', text).strip()
+    cleaned = re.sub(r'\\paren\b', '', cleaned).strip()
+    
+    dollars = re.findall(r'(?<!\\)\$', cleaned)
+    if len(dollars) % 2 != 0:
+        cleaned += "$"
+        
+    return cleaned
 
 def run_migration():
     print("=== 开始全量扫描与清洗数据库中选择题题干末尾残留的填空括号 ===")
