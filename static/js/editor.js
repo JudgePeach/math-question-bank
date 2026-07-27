@@ -1522,10 +1522,10 @@ const PAGE_LIMIT = 20;
                     return /^\s*\d+(?:\.\d+)?\s*(?:cm|mm|in|pt|pc|em|ex)\s*$/i.test(str || '');
                 }
 
-                let innerTex = '\\underline{\\hspace{2.5cm}}';
+                let innerTex = '\\underline{\\hspace{1.5cm}}';
 
                 if (p1 !== undefined && p2 !== undefined) {
-                    const len = isLengthStr(p1) ? p1 : '2.5cm';
+                    const len = isLengthStr(p1) ? p1 : '1.5cm';
                     innerTex = '\\underline{\\hspace{' + len + '}' + p2 + '\\hspace{' + len + '}}';
                 } else if (p1 !== undefined) {
                     if (isLengthStr(p1)) {
@@ -1715,10 +1715,10 @@ const PAGE_LIMIT = 20;
                     return /^\s*\d+(?:\.\d+)?\s*(?:cm|mm|in|pt|pc|em|ex)\s*$/i.test(str || '');
                 }
 
-                let innerTex = '\\underline{\\hspace{2.5cm}}';
+                let innerTex = '\\underline{\\hspace{1.5cm}}';
 
                 if (p1 !== undefined && p2 !== undefined) {
-                    const len = isLengthStr(p1) ? p1 : '2.5cm';
+                    const len = isLengthStr(p1) ? p1 : '1.5cm';
                     innerTex = '\\underline{\\hspace{' + len + '}' + p2 + '\\hspace{' + len + '}}';
                 } else if (p1 !== undefined) {
                     if (isLengthStr(p1)) {

@@ -35,7 +35,7 @@
   - **解答题留白调控 (Detailed Answer Solution Space Control)**：针对无独立答题卡的试卷类型（`exam` 试卷与 `quiz` 小练），系统支持对 `detailed_answer`（解答题）进行留白高度调控。留白计算统一自题干文字结束算起，若插图设为 `bottom_right` 或 `center`，插图自动包含在留白空间（如 `7.0 cm`）内部顶侧，避免留白垂直叠加过长。前端 A4 实时预览与 LaTeX 导出（`\smash` 嵌入）均精准同步此算力。若切换为 `exam_19`（高考卷含答题卡），试卷正文自动恢复紧凑布局（留白归零）。
   - **选择题 choices 环境规范与填空题 \fillin 宏规范**：
     - 所有选择题在入库和存储时，选项部分必须统一格式化为 LaTeX 的 `choices` 环境（使用 `\begin{choices}` 和 `\item` 包裹，且剥离原本的 A., B., C., D. 等标号前缀）。
-    - **填空题 \fillin 规范与自动自愈 (Fillin Macro Standardization & Self-Healing)**：系统在多模态 OCR 识图（SiliconFlow / 阿里百炼 / 中展 AI）Prompt、试卷 AI 智能拆卷 Prompt 中均强制要求将填空题下划线生成为 `\fillin` 宏。同时在后端录入/修改/拆题逻辑中内置了 `normalize_fillin_macro` 自愈清洗器，会自动将 `______` 或 `\underline{\hspace{...}}` 等旧格式静默升级为标准的 `\fillin`。前端 `preprocessFormulaForKaTeX` 亦已全兼容 `\fillin` 及其带长度/带答案参数的多形态渲染。
+    - **填空题 \fillin 规范与自动自愈 (Fillin Macro Standardization & Self-Healing)**：系统在多模态 OCR 识图（SiliconFlow / 阿里百炼 / 中展 AI）Prompt、试卷 AI 智能拆卷 Prompt 中均强制要求将填空题下划线生成为 `\fillin` 宏。同时在后端录入/修改/拆题逻辑中内置了 `normalize_fillin_macro` 自愈清洗器，会自动将 `______` 或 `\underline{\hspace{...}}` 等旧格式静默升级为标准的 `\fillin`。前端 `preprocessFormulaForKaTeX` 默认将纯 `\fillin` 转化为 1.5cm 标准精美下划线渲染。
   - **前端渲染**：前端将自动依据选项最长字符数 `maxLen` 自适应网格排版（小于等于 10 字为 1行4列，大于 10 且小于等于 24 字为 2行2列，大于 24 字为 1行1列），并自动补全 `A.`, `B.`, `C.`, `D.` 标号。
   - **AI 题库转换**：后端导出 AI 专属只读题库时，会自动将此 `choices` 环境清洗为 Markdown 标准列表 `- A.` / `- B.` 形式，防止干扰大模型。
 - **标签系统**：
