@@ -27,9 +27,9 @@
 ### 3.1 题目收集与存储
 - **题干录入**：支持多行纯文本与 LaTeX 代码混合输入，界面需配备实时渲染的预览区。
 - **插图管理**：提供单独的图片/插图上传窗口（或直接输入 TikZ 绘图代码）。图片仅保存在本地文件系统（`static/uploads/`），数据库中仅存储相对路径。
-- **插图排版位置联动与互动切换 (Figure Placement Sync & Interactive Toggle)**：
-  - **多模式支持**：题目插图在后端存储 `figure_align` 属性（支持 `right` 常规试卷/高考卷默认题干右侧、`center` 下方居中、`bottom_right` 日常小练默认下方居右）。
-  - **实时预览同步**：前端 A4 试卷工作台 Live Preview 默认并实时根据 `figure_align` 排版（`right` 模式下文字与插图呈 flex 左右双栏排版）。
+- **插图排版位置联动与多图复合渲染 (Figure Placement Sync & Multi-Figure Rendering)**：
+  - **多模式与多插图支持**：支持题目包含多张图片或 TikZ 几何绘图与上传图片混合的复合插图模式。插图在后端存储 `figure_align` 属性（支持 `right` 常规试卷/高考卷默认题干右侧、`center` 下方居中、`bottom_right` 日常小练默认下方居右）。
+  - **全量插图抓取与实时预览同步**：前端 `paper.js`（`formatQuestionContentHtml`）与后端 `paper_helper.py` 完美升级为全量匹配 `[...matchAll(/!\[.*?\]\(([^)]+)\)/g)]`，取消了单匹配丢图问题。多图自动横向弹性排列组合在插图框内（支持按钮标识如 `题干右侧 (2图)`）。同时 LaTeX 编译与导出全量包裹多图并存输出。
   - **交互弹窗切换**：用户在试卷预览框或题卡中点击或右击插图（及位置指示按钮）时，会弹出定制的气泡菜单允许实时切换这三种排版位置，并通过 `POST /api/questions/{qid}/figure_align` 实时持久化保存至数据库。
   - **PDF 编译 LRU 哈希缓存与高考预设题号跳跃**：后端 `compile_tex_to_pdf` 内置基于全套 LaTeX 源码 MD5 哈希与关联插图修改时间戳的线程安全 LRU 内存缓存（容量 50）。在组卷预览与合并导出时，若 LaTeX 源码与配图未发生任何变动，直接 0ms 瞬间从内存复用已编译的 PDF 字节流，大幅降低 CPU 负载并提升合并导出响应速度。同时针对 `exam_19` (19题高考卷含答题卡预设)，通过设置 `exam-zh` 的 LaTeX3 全局整数变量 `\g__examzh_question_index_int`，使编译出的 PDF 题号按大型高考规范精准跳跃（单选为 1、多选为 9、填空为 12、解答为 15），与前端 A4 Live Preview 及 A3 答题卡完美联动。
   - **解答题留白调控 (Detailed Answer Solution Space Control)**：针对无独立答题卡的试卷类型（`exam` 试卷与 `quiz` 小练），系统支持对 `detailed_answer`（解答题）进行留白高度调控。留白计算统一自题干文字结束算起，若插图设为 `bottom_right` 或 `center`，插图自动包含在留白空间（如 `7.0 cm`）内部顶侧，避免留白垂直叠加过长。前端 A4 实时预览与 LaTeX 导出（`\smash` 嵌入）均精准同步此算力。若切换为 `exam_19`（高考卷含答题卡），试卷正文自动恢复紧凑布局（留白归零）。

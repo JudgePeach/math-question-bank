@@ -237,6 +237,7 @@ def build_latex_document(
 
             fig_body = ""
             cleaned_raw = raw_content
+            tikz_code = ""
 
             if tikz or r"\begin{tikzpicture}" in raw_content:
                 tikz_code = tikz
@@ -247,15 +248,22 @@ def build_latex_document(
                         cleaned_raw = cleaned_raw.replace(tikz_code, '').strip()
                 
                 cleaned_raw = re.sub(r'!\[.*?\]\([^)]+\)', '', cleaned_raw).strip()
-                if tikz_code and r"\begin{tikzpicture}" not in tikz_code:
+            fig_elements = []
+            if tikz_code:
+                if r"\begin{tikzpicture}" not in tikz_code:
                     tikz_code = f"\\begin{{tikzpicture}}\n{tikz_code}\n\\end{{tikzpicture}}"
-                fig_body = f"\\resizebox{{5.0cm}}{{!}}{{{tikz_code}}}"
-            elif re.search(r'!\[.*?\]\((?:/static/uploads/|static/uploads/|/uploads/|uploads/)?([^)]+)\)', raw_content):
-                m_img = re.search(r'!\[.*?\]\((?:/static/uploads/|static/uploads/|/uploads/|uploads/)?([^)]+)\)', raw_content)
-                if m_img:
-                    img_filename = os.path.basename(m_img.group(1))
-                    fig_body = f"\\includegraphics[width=5.0cm]{{{img_filename}}}"
-                    cleaned_raw = re.sub(r'!\[.*?\]\([^)]+\)', '', raw_content).strip()
+                fig_elements.append(f"\\resizebox{{4.5cm}}{{!}}{{{tikz_code}}}")
+
+            img_matches = re.findall(r'!\[.*?\]\((?:/static/uploads/|static/uploads/|/uploads/|uploads/)?([^)]+)\)', raw_content)
+            if img_matches:
+                for img_path in img_matches:
+                    img_filename = os.path.basename(img_path)
+                    img_w = "3.8cm" if len(img_matches) > 1 or tikz_code else "5.0cm"
+                    fig_elements.append(f"\\includegraphics[width={img_w}]{{{img_filename}}}")
+                cleaned_raw = re.sub(r'!\[.*?\]\([^)]+\)', '', cleaned_raw).strip()
+
+            if fig_elements:
+                fig_body = "\n\\vspace{2pt}\n".join(fig_elements)
 
             cleaned_content = clean_content_for_latex(cleaned_raw, q_type=q_type)
             env_name = "problem" if q_type == "detailed_answer" else "question"
@@ -450,17 +458,18 @@ def extract_figures_for_answer_sheet(content: str) -> str:
     tikz_blocks = re.findall(r'(\\begin\{tikzpicture\}[\s\S]*?\\end\{tikzpicture\})', content)
     for t in tikz_blocks:
         figs.append(t)
-    # 2. Markdown image ![...](path) - ONLY include if NO tikz_blocks present to prevent duplicates
-    if not tikz_blocks:
-        img_matches = re.findall(r'!\[.*?\]\((?:/static/uploads/|static/uploads/|/uploads/|uploads/)?([^)]+)\)', content)
-        for img_name in img_matches:
-            base_n = os.path.basename(img_name)
-            figs.append(f"\\includegraphics[max width=3.4cm]{{{base_n}}}")
-        # 3. Direct \includegraphics
-        direct_imgs = re.findall(r'(\\includegraphics(?:\[.*?\])?\{.*?\})', content)
-        for d in direct_imgs:
-            if d not in figs:
-                figs.append(d)
+    # 2. Markdown image ![...](path)
+    img_matches = re.findall(r'!\[.*?\]\((?:/static/uploads/|static/uploads/|/uploads/|uploads/)?([^)]+)\)', content)
+    for img_name in img_matches:
+        base_n = os.path.basename(img_name)
+        img_tag = f"\\includegraphics[max width=3.4cm]{{{base_n}}}"
+        if img_tag not in figs:
+            figs.append(img_tag)
+    # 3. Direct \includegraphics
+    direct_imgs = re.findall(r'(\\includegraphics(?:\[.*?\])?\{.*?\})', content)
+    for d in direct_imgs:
+        if d not in figs:
+            figs.append(d)
     return "\n".join(figs)
 
 def build_answer_sheet_latex(title: str, subtitle: str, questions_data: list) -> str:

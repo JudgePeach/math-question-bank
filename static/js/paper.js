@@ -2366,11 +2366,13 @@
         let html = raw.trim();
         figAlign = figAlign || 'right';
 
-        // 1. Extract Markdown image syntax ![](/static/uploads/xxx.png) BEFORE KaTeX processing to avoid corruption
-        let imgSrc = null;
-        const imgMatch = html.match(/!\[.*?\]\(([^)]+)\)/);
-        if (imgMatch) {
-            imgSrc = imgMatch[1];
+        // 1. Extract ALL Markdown image syntaxes ![](/static/uploads/xxx.png) BEFORE KaTeX processing
+        const imgSrcList = [];
+        const imgMatches = [...html.matchAll(/!\[.*?\]\(([^)]+)\)/g)];
+        imgMatches.forEach(m => {
+            if (m[1]) imgSrcList.push(m[1]);
+        });
+        if (imgSrcList.length > 0) {
             html = html.replace(/!\[.*?\]\(([^)]+)\)/g, '').trim();
         }
         
@@ -2381,7 +2383,7 @@
 
         const stemText = html.replace(/\n\n/g, '<br><br>').replace(/\n/g, '<br>');
 
-        if (imgSrc) {
+        if (imgSrcList.length > 0) {
             const alignLabelMap = {
                 'right': '题干右侧',
                 'center': '下方居中',
@@ -2390,16 +2392,23 @@
             const currentLabel = alignLabelMap[figAlign] || '题干右侧';
             const iconClass = figAlign === 'center' ? 'fa-align-center' : 'fa-align-right';
             const qidAttr = qid ? qid : 0;
+            const countTag = imgSrcList.length > 1 ? ` (${imgSrcList.length}图)` : '';
+
+            const imgsHtml = imgSrcList.map((src, idx) => `
+                <img src="${src}" class="${imgSrcList.length > 1 ? 'max-w-[130px] max-h-[130px]' : 'max-w-[200px] max-h-[170px]'} object-contain rounded-lg border border-slate-200 shadow-xs cursor-pointer hover:ring-2 hover:ring-brand-500 hover:scale-[1.02] transition-all inline-block"
+                    onclick="event.stopPropagation(); window.showFigureAlignPopover(event, ${qidAttr})"
+                    oncontextmenu="event.preventDefault(); event.stopPropagation(); window.showFigureAlignPopover(event, ${qidAttr})"
+                    title="点击或右击可切换图片排版位置 (图${idx + 1} 当前: ${currentLabel})">
+            `).join('');
 
             const imgControlHtml = `
                 <div class="inline-block relative group/fig">
-                    <img src="${imgSrc}" class="max-w-[200px] max-h-[170px] object-contain rounded-lg border border-slate-200 shadow-xs cursor-pointer hover:ring-2 hover:ring-brand-500 hover:scale-[1.02] transition-all"
-                        onclick="event.stopPropagation(); window.showFigureAlignPopover(event, ${qidAttr})"
-                        oncontextmenu="event.preventDefault(); event.stopPropagation(); window.showFigureAlignPopover(event, ${qidAttr})"
-                        title="点击或右击可切换图片排版位置 (当前: ${currentLabel})">
+                    <div class="flex flex-wrap items-center ${figAlign === 'center' ? 'justify-center' : 'justify-end'} gap-1.5">
+                        ${imgsHtml}
+                    </div>
                     <div class="mt-1 ${figAlign === 'center' ? 'text-center' : 'text-right'}">
                         <button onclick="event.stopPropagation(); window.showFigureAlignPopover(event, ${qidAttr})" class="inline-flex items-center text-[10px] font-sans text-brand-700 bg-brand-50 hover:bg-brand-100 border border-brand-200/80 rounded-md px-1.5 py-0.5 transition-colors shadow-2xs">
-                            <i class="fa-solid ${iconClass} text-[9px] mr-1 text-brand-500"></i> ${currentLabel} <i class="fa-solid fa-chevron-down text-[8px] ml-1 opacity-70"></i>
+                            <i class="fa-solid ${iconClass} text-[9px] mr-1 text-brand-500"></i> ${currentLabel}${countTag} <i class="fa-solid fa-chevron-down text-[8px] ml-1 opacity-70"></i>
                         </button>
                     </div>
                 </div>
