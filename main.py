@@ -1979,23 +1979,17 @@ def get_question(question_id: int, db: Session = Depends(get_db)):
     return q_dict
 
 def normalize_fillin_macro(text: str) -> str:
-    """将题干中的任意下划线格式（如 \\underline{\\qquad...}、\\underline{\\hspace{...}}、\\underline{\\quad...}、连续下划线 ___）一网打尽规范化为标准的 \\fillin 宏"""
+    """将题干中的任何下划线格式（\\underline{...}、\\fillin[...]、连续划线 ___）一律统一规范化为最纯粹的 \\fillin 宏"""
     if not text or not isinstance(text, str):
         return text or ""
-    # 1. 替换连续下划线 ___ (3个及以上) 为 \fillin，绝不动前后的 $ 闭合标记，防止 $ 开关颠倒
+    # 1. 替换连续下划线 ___ (3个及以上) 为 \fillin
     text = re.sub(r'_{3,}', r'\\fillin', text)
-    
-    # 2. 替换任意包含留白/空白/空格命令 (\quad, \qquad, \hspace{...}, \enspace 等) 的 \underline{...} 为 \fillin
-    def replace_underline(match):
-        inner = match.group(1).strip()
-        # 剥离常用的 LaTeX 留白间隔命令
-        cleaned = re.sub(r'\\(?:quad|qquad|hspace|enspace|thinspace|kern|space)\b(\{[^}]*?\})?', '', inner).strip()
-        if not cleaned:
-            return r'\fillin'
-        # 如果内部带有答案文本，转为 \fillin[答案]
-        return f'\\fillin[{cleaned}]'
-
-    text = re.sub(r'\\underline\s*\{([^}]*?)\}', replace_underline, text)
+    # 2. 替换任何带参数的 \fillin[...] 为纯净的 \fillin
+    text = re.sub(r'\\fillin\s*\[[^\]]*?\](?:\[[^\]]*?\])?', r'\\fillin', text)
+    # 3. 替换任何形式的 \underline{...} 为纯净的 \fillin
+    text = re.sub(r'\\underline\s*\{[^}]*?\}', r'\\fillin', text)
+    # 4. 清理可能残留的额外右花括号 }
+    text = re.sub(r'\\fillin\}', r'\\fillin', text)
     return text
 
 @app.post("/api/questions")
