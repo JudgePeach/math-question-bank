@@ -4,9 +4,8 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>判桃MATH</title>
-    <link rel="icon" type="image/svg+xml" href="/static/favicon.svg?v=2">
-    <link rel="icon" type="image/png" href="/static/favicon.png?v=2">
-    <link rel="apple-touch-icon" sizes="180x180" href="/static/apple-touch-icon.png?v=2">
+    <link rel="icon" type="image/png" href="/static/favicon.png?v=3">
+    <link rel="apple-touch-icon" sizes="180x180" href="/static/apple-touch-icon.png?v=3">
     
     <!-- Tailwind CSS -->
     <script src="/static/lib/tailwind/tailwind.min.js"></script>
@@ -79,11 +78,11 @@
     <header class="glass-panel sticky top-0 z-40 w-full h-16 flex items-center justify-between px-6">
         <div class="flex items-center space-x-3">
             <!-- 1. Absolute Top-Left Anchor: Logo & Title -->
-            <div class="h-10 w-10 rounded-xl project-icon-box flex items-center justify-center text-white shrink-0">
-                <i class="fa-solid fa-square-root-variable text-xl"></i>
+            <div class="h-10 w-10 rounded-xl overflow-hidden shadow-sm shrink-0 flex items-center justify-center">
+                <img src="/static/favicon.png?v=3" alt="MathBank Logo" class="w-full h-full object-cover">
             </div>
             <div class="relative" id="workspaceDropdownContainer">
-                <div onclick="toggleWorkspaceDropdown(event)" id="workspaceDropdownBtn" class="group cursor-pointer rounded-xl px-1.5 py-0.5 -mx-1.5 hover:bg-slate-100/80 active:scale-95 transition-all dark:hover:bg-slate-800/60" title="点击切换工作台">
+                <div onclick="toggleWorkspaceDropdown(event)" id="workspaceDropdownBtn" class="group cursor-pointer rounded-xl px-2 py-1 -mx-2 hover:bg-slate-200/50 dark:hover:bg-slate-800/60 active:scale-95 transition-all" title="点击切换工作台">
                     <span class="font-semibold text-lg tracking-tight font-['Outfit'] brand-title block">MathBank</span>
                     <div class="flex items-center space-x-1 -mt-1">
                         <span id="currentWorkspaceName" class="text-sm font-medium text-slate-700 dark:text-slate-200">题库研讨工作台</span>
@@ -91,14 +90,14 @@
                     </div>
                 </div>
                 <!-- Workspace Dropdown Menu -->
-                <div id="workspaceDropdownMenu" class="absolute left-0 mt-2 w-48 py-1 rounded-xl border border-slate-200/50 bg-white/95 backdrop-blur-xl shadow-lg transition-all duration-200 scale-90 opacity-0 pointer-events-none origin-top-left z-50 dark:bg-slate-900/95 dark:border-slate-800">
-                    <button onclick="selectWorkspace('bank', '题库研讨工作台')" class="w-full px-3 py-2 text-xs text-left text-slate-700 hover:bg-slate-100/80 dark:text-slate-200 dark:hover:bg-slate-800/60 flex items-center justify-between transition-colors font-medium" id="ws-btn-bank">
+                <div id="workspaceDropdownMenu" class="glass-dropdown absolute left-0 mt-2 w-52 py-1.5 rounded-2xl border border-slate-200/70 bg-white/95 backdrop-blur-xl shadow-xl transition-all duration-200 scale-90 opacity-0 pointer-events-none origin-top-left z-50">
+                    <button onclick="selectWorkspace('bank', '题库研讨工作台')" class="glass-dropdown-item w-full px-3.5 py-2.5 text-xs text-left flex items-center justify-between font-medium rounded-xl" id="ws-btn-bank">
                         <span>题库研讨工作台</span>
-                        <i class="fa-solid fa-check text-[10px] text-brand-600" id="ws-check-bank"></i>
+                        <i class="fa-solid fa-check text-[10px] text-brand-600 dark:text-brand-400" id="ws-check-bank"></i>
                     </button>
-                    <button onclick="selectWorkspace('paper', '组卷排版工作台')" class="w-full px-3 py-2 text-xs text-left text-slate-600 hover:bg-slate-100/80 dark:text-slate-300 dark:hover:bg-slate-800/60 flex items-center justify-between transition-colors" id="ws-btn-paper">
+                    <button onclick="selectWorkspace('paper', '组卷排版工作台')" class="glass-dropdown-item w-full px-3.5 py-2.5 text-xs text-left flex items-center justify-between rounded-xl" id="ws-btn-paper">
                         <span>组卷排版工作台</span>
-                        <i class="fa-solid fa-check text-[10px] text-brand-600 hidden" id="ws-check-paper"></i>
+                        <i class="fa-solid fa-check text-[10px] text-brand-600 dark:text-brand-400 hidden" id="ws-check-paper"></i>
                     </button>
                 </div>
             </div>
@@ -126,31 +125,36 @@
                         <i class="fa-solid fa-chevron-down text-[9px] text-slate-400 transition-transform duration-200" id="themeDropdownArrow"></i>
                     </button>
                     <!-- Dropdown Menu -->
-                    <div id="themeDropdownMenu" class="absolute left-0 mt-2.5 w-32 py-1 rounded-xl border border-slate-200/50 bg-white/95 backdrop-blur-xl shadow-lg transition-all duration-200 scale-90 opacity-0 pointer-events-none origin-top-left z-50">
-                        <button onclick="selectTheme('violet')" class="w-full px-3 py-1.5 text-xs text-left text-slate-600 hover:bg-slate-100/80 flex items-center space-x-2 transition-colors">
-                            <span class="w-2.5 h-2.5 rounded-full bg-[#8b5cf6]"></span>
+                    <div id="themeDropdownMenu" class="glass-dropdown absolute left-0 mt-2.5 w-36 py-1.5 rounded-2xl border border-slate-200/70 bg-white/95 backdrop-blur-xl shadow-xl transition-all duration-200 scale-90 opacity-0 pointer-events-none origin-top-left z-50">
+                        <button onclick="selectTheme('obsidian')" class="glass-dropdown-item w-full px-3.5 py-2 text-xs text-left flex items-center space-x-2 rounded-xl">
+                            <span class="w-2.5 h-2.5 rounded-full bg-[#0f172a] shrink-0 border border-slate-400/40"></span>
+                            <span>曜石黑</span>
+                            <i class="fa-solid fa-check text-[9px] text-brand-600 dark:text-brand-400 ml-auto hidden" id="check-obsidian"></i>
+                        </button>
+                        <button onclick="selectTheme('violet')" class="glass-dropdown-item w-full px-3.5 py-2 text-xs text-left flex items-center space-x-2 rounded-xl">
+                            <span class="w-2.5 h-2.5 rounded-full bg-[#8b5cf6] shrink-0"></span>
                             <span>罗兰紫</span>
-                            <i class="fa-solid fa-check text-[9px] text-brand-600 ml-auto hidden" id="check-violet"></i>
+                            <i class="fa-solid fa-check text-[9px] text-brand-600 dark:text-brand-400 ml-auto hidden" id="check-violet"></i>
                         </button>
-                        <button onclick="selectTheme('ocean')" class="w-full px-3 py-1.5 text-xs text-left text-slate-600 hover:bg-slate-100/80 flex items-center space-x-2 transition-colors">
-                            <span class="w-2.5 h-2.5 rounded-full bg-[#0ea5e9]"></span>
+                        <button onclick="selectTheme('ocean')" class="glass-dropdown-item w-full px-3.5 py-2 text-xs text-left flex items-center space-x-2 rounded-xl">
+                            <span class="w-2.5 h-2.5 rounded-full bg-[#0ea5e9] shrink-0"></span>
                             <span>深海蓝</span>
-                            <i class="fa-solid fa-check text-[9px] text-brand-600 ml-auto hidden" id="check-ocean"></i>
+                            <i class="fa-solid fa-check text-[9px] text-brand-600 dark:text-brand-400 ml-auto hidden" id="check-ocean"></i>
                         </button>
-                        <button onclick="selectTheme('emerald')" class="w-full px-3 py-1.5 text-xs text-left text-slate-600 hover:bg-slate-100/80 flex items-center space-x-2 transition-colors">
-                            <span class="w-2.5 h-2.5 rounded-full bg-[#10b981]"></span>
+                        <button onclick="selectTheme('emerald')" class="glass-dropdown-item w-full px-3.5 py-2 text-xs text-left flex items-center space-x-2 rounded-xl">
+                            <span class="w-2.5 h-2.5 rounded-full bg-[#10b981] shrink-0"></span>
                             <span>翡翠绿</span>
-                            <i class="fa-solid fa-check text-[9px] text-brand-600 ml-auto hidden" id="check-emerald"></i>
+                            <i class="fa-solid fa-check text-[9px] text-brand-600 dark:text-brand-400 ml-auto hidden" id="check-emerald"></i>
                         </button>
-                        <button onclick="selectTheme('amber')" class="w-full px-3 py-1.5 text-xs text-left text-slate-600 hover:bg-slate-100/80 flex items-center space-x-2 transition-colors">
-                            <span class="w-2.5 h-2.5 rounded-full bg-[#f59e0b]"></span>
+                        <button onclick="selectTheme('amber')" class="glass-dropdown-item w-full px-3.5 py-2 text-xs text-left flex items-center space-x-2 rounded-xl">
+                            <span class="w-2.5 h-2.5 rounded-full bg-[#f59e0b] shrink-0"></span>
                             <span>琥珀橙</span>
-                            <i class="fa-solid fa-check text-[9px] text-brand-600 ml-auto hidden" id="check-amber"></i>
+                            <i class="fa-solid fa-check text-[9px] text-brand-600 dark:text-brand-400 ml-auto hidden" id="check-amber"></i>
                         </button>
-                        <button onclick="selectTheme('crimson')" class="w-full px-3 py-1.5 text-xs text-left text-slate-600 hover:bg-slate-100/80 flex items-center space-x-2 transition-colors">
-                            <span class="w-2.5 h-2.5 rounded-full bg-[#f43f5e]"></span>
+                        <button onclick="selectTheme('crimson')" class="glass-dropdown-item w-full px-3.5 py-2 text-xs text-left flex items-center space-x-2 rounded-xl">
+                            <span class="w-2.5 h-2.5 rounded-full bg-[#f43f5e] shrink-0"></span>
                             <span>玫瑰红</span>
-                            <i class="fa-solid fa-check text-[9px] text-brand-600 ml-auto hidden" id="check-crimson"></i>
+                            <i class="fa-solid fa-check text-[9px] text-brand-600 dark:text-brand-400 ml-auto hidden" id="check-crimson"></i>
                         </button>
                     </div>
                 </div>
@@ -341,7 +345,7 @@
                     <div class="grid grid-cols-3 gap-3">
                         <div>
                             <label class="block text-[11px] font-medium text-slate-500 mb-1">题型</label>
-                            <select id="editQType" class="w-full px-2.5 py-2 rounded-lg text-xs border border-slate-200 focus:border-brand-500 focus:ring-1 focus:ring-brand-100 transition-all bg-white">
+                            <select id="editQType" class="glass-select w-full px-2.5 text-xs rounded-xl">
                                 <option value="single_choice">单选题</option>
                                 <option value="multi_choice">多选题</option>
                                 <option value="fill_in_blank">填空题</option>
@@ -350,7 +354,7 @@
                         </div>
                         <div>
                             <label class="block text-[11px] font-medium text-slate-500 mb-1">难度</label>
-                            <select id="editDifficulty" class="w-full px-2.5 py-2 rounded-lg text-xs border border-slate-200 focus:border-brand-500 focus:ring-1 focus:ring-brand-100 transition-all bg-white">
+                            <select id="editDifficulty" class="glass-select w-full px-2.5 text-xs rounded-xl">
                                 <option value="easy_error">易错题</option>
                                 <option value="challenge">挑战题</option>
                                 <option value="qiangji">强基题</option>
@@ -359,7 +363,7 @@
                         <div>
                             <label class="block text-[11px] font-medium text-slate-500 mb-1">来源</label>
                             <input type="text" id="editSource" placeholder="如：2025全国甲卷"
-                                   class="w-full px-2.5 py-2 rounded-lg text-xs border border-slate-200 focus:border-brand-500 focus:ring-1 focus:ring-brand-100 transition-all">
+                                   class="glass-input w-full px-2.5 text-xs rounded-xl">
                         </div>
                     </div>
 
@@ -367,19 +371,19 @@
                     <div class="grid grid-cols-3 gap-3">
                         <div>
                             <label class="block text-[11px] font-medium text-slate-500 mb-1">学段</label>
-                            <select id="editCompulsory" class="w-full px-2.5 py-2 rounded-lg text-xs border border-slate-200 focus:border-brand-500 focus:ring-1 focus:ring-brand-100 transition-all bg-white">
+                            <select id="editCompulsory" class="glass-select w-full px-2.5 text-xs rounded-xl">
                                 <option value="">选择学段</option>
                             </select>
                         </div>
                         <div>
                             <label class="block text-[11px] font-medium text-slate-500 mb-1">章节</label>
-                            <select id="editChapter" class="w-full px-2.5 py-2 rounded-lg text-xs border border-slate-200 focus:border-brand-500 focus:ring-1 focus:ring-brand-100 transition-all bg-white" disabled>
+                            <select id="editChapter" class="glass-select w-full px-2.5 text-xs rounded-xl disabled:opacity-50" disabled>
                                 <option value="">先选学段</option>
                             </select>
                         </div>
                         <div>
                             <label class="block text-[11px] font-medium text-slate-500 mb-1">小节</label>
-                            <select id="editKnowledge" class="w-full px-2.5 py-2 rounded-lg text-xs border border-slate-200 focus:border-brand-500 focus:ring-1 focus:ring-brand-100 transition-all bg-white" disabled>
+                            <select id="editKnowledge" class="glass-select w-full px-2.5 text-xs rounded-xl disabled:opacity-50" disabled>
                                 <option value="">先选章节</option>
                             </select>
                         </div>
@@ -392,7 +396,7 @@
                             <span>自定义标签 (Tag)</span>
                         </label>
                         <input type="text" id="editTags" placeholder="如：高一, 期中, 真题 (使用逗号分隔)"
-                               class="w-full px-2.5 py-2 rounded-lg text-xs border border-slate-200 focus:border-brand-500 focus:ring-1 focus:ring-brand-100 transition-all">
+                               class="glass-input w-full px-2.5 text-xs rounded-xl">
                     </div>
                 </div>
 
@@ -952,17 +956,17 @@
         <!-- End of Bank Workspace Section -->
 
         <!-- Workspace 2: Standalone 4-Part Paper Studio Workspace Section -->
-        <div id="paperWorkspaceSection" class="w-full h-full flex overflow-hidden hidden">
+        <div id="paperWorkspaceSection" class="w-full h-full flex overflow-hidden hidden bg-slate-50 dark:bg-slate-950">
             <!-- Left Side: Parts ② & ③ (60% width) -->
-            <div class="w-[60%] flex flex-col h-full border-r border-slate-200/80 dark:border-slate-800 shrink-0">
+            <div class="w-[60%] flex flex-col h-full border-r border-slate-200/80 dark:border-slate-800 shrink-0 bg-slate-50/50 dark:bg-slate-900/50">
                 <!-- Part ②: Collapsible Control Bar -->
                 <div id="paperFilterSection" class="p-4 transition-all duration-300 shrink-0">
                     <!-- Rendered by paper.js -->
                 </div>
 
                 <!-- Part ② & ③ Boundary Collapse Toggle Bar -->
-                <div class="px-4 py-1.5 bg-slate-100/70 border-y border-slate-200/60 dark:bg-slate-800/50 dark:border-slate-700/60 flex items-center justify-between shrink-0">
-                    <button onclick="togglePaperFilterBar()" id="togglePaperFilterBtn" class="text-2xs font-semibold text-slate-500 hover:text-brand-600 flex items-center space-x-1.5 transition-colors">
+                <div class="px-4 py-1.5 bg-slate-100/40 dark:bg-slate-900/60 border-y border-slate-200/50 dark:border-slate-800/80 flex items-center justify-between shrink-0">
+                    <button onclick="togglePaperFilterBar()" id="togglePaperFilterBtn" class="text-2xs font-semibold text-slate-500 hover:text-brand-600 dark:text-slate-400 dark:hover:text-brand-300 flex items-center space-x-1.5 transition-colors">
                         <i id="paperFilterToggleIcon" class="fa-solid fa-chevron-up text-xs"></i>
                         <span id="paperFilterToggleTxt">收起组卷配置栏</span>
                     </button>
@@ -975,7 +979,7 @@
             </div>
 
             <!-- Right Side: Part ④ (40% width) -->
-            <div class="w-[40%] flex flex-col h-full bg-slate-100/60 dark:bg-slate-900/60 p-4 overflow-y-auto custom-scrollbar shrink-0" id="paperCanvasSection">
+            <div class="w-[40%] flex flex-col h-full bg-slate-100/60 dark:bg-slate-950 p-4 overflow-y-auto custom-scrollbar shrink-0" id="paperCanvasSection">
                 <!-- Rendered by paper.js -->
             </div>
         </div>
@@ -1074,173 +1078,184 @@
                 <div class="flex-1 overflow-y-auto pr-1 space-y-5 scrollbar-thin py-2">
 
                 <!-- API Keys & Models Tab Content -->
-                <div id="settings-tab-api" class="grid grid-cols-1 md:grid-cols-2 gap-6">
-                    <!-- Column 1: API Keys -->
-                    <div class="space-y-4">
-                        <div class="border-b border-slate-200/60 pb-2">
-                            <h4 class="text-xs font-bold text-slate-700 uppercase tracking-wider flex items-center space-x-2">
-                                <i class="fa-solid fa-key text-brand-500"></i>
-                                <span>API 接口密钥配置</span>
-                            </h4>
-                        </div>
-                        
-                        <!-- DeepSeek Key -->
-                        <div class="space-y-1">
-                            <label class="block text-xs font-semibold text-slate-500 flex items-center justify-between">
-                                <span>DeepSeek API Key (AI 解题与推理)</span>
-                                <a href="https://platform.deepseek.com/" target="_blank" class="text-brand-500 hover:underline text-[10px]">获取 API Key</a>
-                            </label>
-                            <input type="password" id="settingsDeepseekKey" placeholder="输入您的 DEEPSEEK_API_KEY"
-                                   class="glass-input w-full px-3.5 py-2.5 rounded-xl text-xs font-mono">
-                        </div>
-
-                        <!-- SiliconFlow Key -->
-                        <div class="space-y-1">
-                            <label class="block text-xs font-semibold text-slate-500 flex items-center justify-between">
-                                <span>SiliconFlow API Key (硅基流动云端)</span>
-                                <a href="https://cloud.siliconflow.cn/" target="_blank" class="text-brand-500 hover:underline text-[10px]">获取 API Key</a>
-                            </label>
-                            <input type="password" id="settingsSiliconflowKey" placeholder="输入您的 SILICONFLOW_API_KEY"
-                                   class="glass-input w-full px-3.5 py-2.5 rounded-xl text-xs font-mono">
-                        </div>
-
-                        <!-- Alibaba Bailian Key -->
-                        <div class="space-y-1">
-                            <label class="block text-xs font-semibold text-slate-500 flex items-center justify-between">
-                                <span>Alibaba Bailian API Key (阿里百炼)</span>
-                                <a href="https://bailian.console.aliyun.com/" target="_blank" class="text-brand-500 hover:underline text-[10px]">获取 API Key</a>
-                            </label>
-                            <input type="password" id="settingsAliBailianKey" placeholder="输入您的 ALI_BAILIAN_API_KEY"
-                                   class="glass-input w-full px-3.5 py-2.5 rounded-xl text-xs font-mono">
-                        </div>
-
-                        <!-- Zhongzhan A Keys -->
-                        <div class="grid grid-cols-2 gap-2">
+                <div id="settings-tab-api" class="space-y-4">
+                    <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+                        <!-- Column 1: API Keys -->
+                        <div class="space-y-4">
+                            <div class="border-b border-slate-200/60 pb-2">
+                                <h4 class="text-xs font-bold text-slate-700 uppercase tracking-wider flex items-center space-x-2">
+                                    <i class="fa-solid fa-key text-brand-500"></i>
+                                    <span>API 接口密钥配置</span>
+                                </h4>
+                            </div>
+                            
+                            <!-- DeepSeek Key -->
                             <div class="space-y-1">
-                                <label class="block text-[11px] font-semibold text-slate-500">
-                                    <span>中转站 A Key</span>
+                                <label class="block text-xs font-semibold text-slate-500 flex items-center justify-between">
+                                    <span>DeepSeek API Key (AI 解题与推理)</span>
+                                    <a href="https://platform.deepseek.com/" target="_blank" class="text-brand-500 hover:underline text-[10px]">获取 API Key</a>
                                 </label>
-                                <input type="password" id="settingsZhongzhanGptKey" placeholder="ZHONGZHAN_GPT_API_KEY"
-                                       class="glass-input w-full px-3 py-2.5 rounded-xl text-xs font-mono">
+                                <input type="password" id="settingsDeepseekKey" placeholder="输入您的 DEEPSEEK_API_KEY"
+                                       class="glass-input w-full px-3.5 py-2.5 rounded-xl text-xs font-mono">
                             </div>
+
+                            <!-- SiliconFlow Key -->
                             <div class="space-y-1">
-                                <label class="block text-[11px] font-semibold text-slate-500">中转站 A Base URL</label>
-                                <input type="text" id="settingsZhongzhanGptBaseUrl" placeholder="https://api.openai.com/v1"
-                                       class="glass-input w-full px-3 py-2.5 rounded-xl text-xs font-mono">
+                                <label class="block text-xs font-semibold text-slate-500 flex items-center justify-between">
+                                    <span>SiliconFlow API Key (硅基流动云端)</span>
+                                    <a href="https://cloud.siliconflow.cn/" target="_blank" class="text-brand-500 hover:underline text-[10px]">获取 API Key</a>
+                                </label>
+                                <input type="password" id="settingsSiliconflowKey" placeholder="输入您的 SILICONFLOW_API_KEY"
+                                       class="glass-input w-full px-3.5 py-2.5 rounded-xl text-xs font-mono">
+                            </div>
+
+                            <!-- Alibaba Bailian Key -->
+                            <div class="space-y-1">
+                                <label class="block text-xs font-semibold text-slate-500 flex items-center justify-between">
+                                    <span>Alibaba Bailian API Key (阿里百炼)</span>
+                                    <a href="https://bailian.console.aliyun.com/" target="_blank" class="text-brand-500 hover:underline text-[10px]">获取 API Key</a>
+                                </label>
+                                <input type="password" id="settingsAliBailianKey" placeholder="输入您的 ALI_BAILIAN_API_KEY"
+                                       class="glass-input w-full px-3.5 py-2.5 rounded-xl text-xs font-mono">
+                            </div>
+
+                            <!-- Zhongzhan A Keys -->
+                            <div class="grid grid-cols-2 gap-2">
+                                <div class="space-y-1">
+                                    <label class="block text-[11px] font-semibold text-slate-500">
+                                        <span>中转站 A Key</span>
+                                    </label>
+                                    <input type="password" id="settingsZhongzhanGptKey" placeholder="ZHONGZHAN_GPT_API_KEY"
+                                           class="glass-input w-full px-3 py-2.5 rounded-xl text-xs font-mono">
+                                </div>
+                                <div class="space-y-1">
+                                    <label class="block text-[11px] font-semibold text-slate-500">中转站 A Base URL</label>
+                                    <input type="text" id="settingsZhongzhanGptBaseUrl" placeholder="https://api.openai.com/v1"
+                                           class="glass-input w-full px-3 py-2.5 rounded-xl text-xs font-mono">
+                                </div>
+                            </div>
+
+                            <!-- Zhongzhan B Keys -->
+                            <div class="grid grid-cols-2 gap-2">
+                                <div class="space-y-1">
+                                    <label class="block text-[11px] font-semibold text-slate-500">
+                                        <span>中转站 B Key</span>
+                                    </label>
+                                    <input type="password" id="settingsZhongzhanClaudeKey" placeholder="ZHONGZHAN_CLAUDE_API_KEY"
+                                           class="glass-input w-full px-3 py-2.5 rounded-xl text-xs font-mono">
+                                </div>
+                                <div class="space-y-1">
+                                    <label class="block text-[11px] font-semibold text-slate-500">中转站 B Base URL</label>
+                                    <input type="text" id="settingsZhongzhanClaudeBaseUrl" placeholder="https://api.openai.com/v1"
+                                           class="glass-input w-full px-3 py-2.5 rounded-xl text-xs font-mono">
+                                </div>
                             </div>
                         </div>
 
-                        <!-- Zhongzhan B Keys -->
-                        <div class="grid grid-cols-2 gap-2">
-                            <div class="space-y-1">
-                                <label class="block text-[11px] font-semibold text-slate-500">
-                                    <span>中转站 B Key</span>
-                                </label>
-                                <input type="password" id="settingsZhongzhanClaudeKey" placeholder="ZHONGZHAN_CLAUDE_API_KEY"
-                                       class="glass-input w-full px-3 py-2.5 rounded-xl text-xs font-mono">
+                        <!-- Column 2: Preferred Models & OCR -->
+                        <div class="space-y-4">
+                            <div class="border-b border-slate-200/60 pb-2">
+                                <h4 class="text-xs font-bold text-slate-700 uppercase tracking-wider flex items-center space-x-2">
+                                    <i class="fa-solid fa-robot text-brand-500"></i>
+                                    <span>首选模型与识别设置</span>
+                                </h4>
                             </div>
-                            <div class="space-y-1">
-                                <label class="block text-[11px] font-semibold text-slate-500">中转站 B Base URL</label>
-                                <input type="text" id="settingsZhongzhanClaudeBaseUrl" placeholder="https://api.openai.com/v1"
-                                       class="glass-input w-full px-3 py-2.5 rounded-xl text-xs font-mono">
+
+                            <div class="space-y-3 max-h-[380px] overflow-y-auto pr-1">
+                                <!-- 1. AI 智能解题模型 -->
+                                <div class="p-3 glass-card rounded-xl space-y-1.5 shadow-3xs">
+                                    <label class="block text-[11px] font-bold text-slate-600 dark:text-slate-200">AI 智能解题模型 (PREFER_SOLVE_MODEL)</label>
+                                    <div class="flex items-center space-x-2">
+                                        <select id="solveModelProvider" onchange="onModelProviderChange('solve')" class="glass-select w-[92px] shrink-0 px-2 py-1.5 rounded-lg text-xs">
+                                            <option value="deepseek">DeepSeek</option>
+                                            <option value="siliconflow">硅基流动</option>
+                                            <option value="bailian">阿里百炼</option>
+                                            <option value="zhongzhan_gpt">中转站 A</option>
+                                            <option value="zhongzhan_claude">中转站 B</option>
+                                        </select>
+                                        <div id="solveModelValueContainer" class="flex-1 flex items-center space-x-1.5 min-w-0">
+                                            <!-- Dynamic Load -->
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <!-- 2. 试卷智能拆解模型 -->
+                                <div class="p-3 glass-card rounded-xl space-y-1.5 shadow-3xs">
+                                    <label class="block text-[11px] font-bold text-slate-600 dark:text-slate-200">试卷智能拆解模型 (PREFER_PARSE_MODEL)</label>
+                                    <div class="flex items-center space-x-2">
+                                        <select id="parseModelProvider" onchange="onModelProviderChange('parse')" class="glass-select w-[92px] shrink-0 px-2 py-1.5 rounded-lg text-xs">
+                                            <option value="deepseek">DeepSeek</option>
+                                            <option value="siliconflow">硅基流动</option>
+                                            <option value="bailian">阿里百炼</option>
+                                            <option value="zhongzhan_gpt">中转站 A</option>
+                                            <option value="zhongzhan_claude">中转站 B</option>
+                                        </select>
+                                        <div id="parseModelValueContainer" class="flex-1 flex items-center space-x-1.5 min-w-0">
+                                            <!-- Dynamic Load -->
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <!-- 3. 题目智能分类模型 -->
+                                <div class="p-3 glass-card rounded-xl space-y-1.5 shadow-3xs">
+                                    <label class="block text-[11px] font-bold text-slate-600 dark:text-slate-200">题目智能分类模型 (PREFER_CLASSIFY_MODEL)</label>
+                                    <div class="flex items-center space-x-2">
+                                        <select id="classifyModelProvider" onchange="onModelProviderChange('classify')" class="glass-select w-[92px] shrink-0 px-2 py-1.5 rounded-lg text-xs">
+                                            <option value="deepseek">DeepSeek</option>
+                                            <option value="siliconflow">硅基流动</option>
+                                            <option value="bailian">阿里百炼</option>
+                                            <option value="zhongzhan_gpt">中转站 A</option>
+                                            <option value="zhongzhan_claude">中转站 B</option>
+                                        </select>
+                                        <div id="classifyModelValueContainer" class="flex-1 flex items-center space-x-1.5 min-w-0">
+                                            <!-- Dynamic Load -->
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <!-- 4. 默认公式识图模型 -->
+                                <div class="p-3 glass-card rounded-xl space-y-1.5 shadow-3xs">
+                                    <label class="block text-[11px] font-bold text-slate-600 dark:text-slate-200">默认公式识图模型 (DEFAULT_OCR_ENGINE)</label>
+                                    <div class="flex items-center space-x-2">
+                                        <select id="ocrModelProvider" onchange="onModelProviderChange('ocr')" class="glass-select w-[92px] shrink-0 px-2 py-1.5 rounded-lg text-xs">
+                                            <option value="siliconflow">硅基流动</option>
+                                            <option value="bailian">阿里百炼</option>
+                                            <option value="zhongzhan_gpt">中转站 A</option>
+                                            <option value="zhongzhan_claude">中转站 B</option>
+                                        </select>
+                                        <div id="ocrModelValueContainer" class="flex-1 flex items-center space-x-1.5 min-w-0">
+                                            <!-- Dynamic Load -->
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <!-- 5. 高级 TikZ 绘图模型 -->
+                                <div class="p-3 glass-card rounded-xl space-y-1.5 shadow-3xs">
+                                    <label class="block text-[11px] font-bold text-slate-600 dark:text-slate-200">高级 TikZ 绘图模型 (PREFER_DRAW_MODEL)</label>
+                                    <div class="flex items-center space-x-2">
+                                        <select id="drawModelProvider" onchange="onModelProviderChange('draw')" class="glass-select w-[92px] shrink-0 px-2 py-1.5 rounded-lg text-xs">
+                                            <option value="siliconflow">硅基流动</option>
+                                            <option value="bailian">阿里百炼</option>
+                                            <option value="zhongzhan_gpt">中转站 A</option>
+                                            <option value="zhongzhan_claude">中转站 B</option>
+                                            <option value="deepseek">DeepSeek</option>
+                                        </select>
+                                        <div id="drawModelValueContainer" class="flex-1 flex items-center space-x-1.5 min-w-0">
+                                            <!-- Dynamic Load -->
+                                        </div>
+                                    </div>
+                                </div>
                             </div>
                         </div>
                     </div>
 
-                    <!-- Column 2: Preferred Models & OCR -->
-                    <div class="space-y-4">
-                        <div class="border-b border-slate-200/60 pb-2">
-                            <h4 class="text-xs font-bold text-slate-700 uppercase tracking-wider flex items-center space-x-2">
-                                <i class="fa-solid fa-robot text-brand-500"></i>
-                                <span>首选模型与识别设置</span>
-                            </h4>
-                        </div>
-
-                        <div class="space-y-3 max-h-[380px] overflow-y-auto pr-1">
-                            <!-- 1. AI 智能解题模型 -->
-                            <div class="p-3 bg-slate-50/40 rounded-xl border border-slate-200/60 space-y-1.5 shadow-3xs">
-                                <label class="block text-[11px] font-bold text-slate-600">AI 智能解题模型 (PREFER_SOLVE_MODEL)</label>
-                                <div class="flex items-center space-x-2">
-                                    <select id="solveModelProvider" onchange="onModelProviderChange('solve')" class="glass-select w-[92px] shrink-0 px-2 py-1.5 rounded-lg text-xs">
-                                        <option value="deepseek">DeepSeek</option>
-                                        <option value="siliconflow">硅基流动</option>
-                                        <option value="bailian">阿里百炼</option>
-                                        <option value="zhongzhan_gpt">中转站 A</option>
-                                        <option value="zhongzhan_claude">中转站 B</option>
-                                    </select>
-                                    <div id="solveModelValueContainer" class="flex-1 flex items-center space-x-1.5 min-w-0">
-                                        <!-- Dynamic Load -->
-                                    </div>
-                                </div>
-                            </div>
-
-                            <!-- 2. 试卷智能拆解模型 -->
-                            <div class="p-3 bg-slate-50/40 rounded-xl border border-slate-200/60 space-y-1.5 shadow-3xs">
-                                <label class="block text-[11px] font-bold text-slate-600">试卷智能拆解模型 (PREFER_PARSE_MODEL)</label>
-                                <div class="flex items-center space-x-2">
-                                    <select id="parseModelProvider" onchange="onModelProviderChange('parse')" class="glass-select w-[92px] shrink-0 px-2 py-1.5 rounded-lg text-xs">
-                                        <option value="deepseek">DeepSeek</option>
-                                        <option value="siliconflow">硅基流动</option>
-                                        <option value="bailian">阿里百炼</option>
-                                        <option value="zhongzhan_gpt">中转站 A</option>
-                                        <option value="zhongzhan_claude">中转站 B</option>
-                                    </select>
-                                    <div id="parseModelValueContainer" class="flex-1 flex items-center space-x-1.5 min-w-0">
-                                        <!-- Dynamic Load -->
-                                    </div>
-                                </div>
-                            </div>
-
-                            <!-- 3. 题目智能分类模型 -->
-                            <div class="p-3 bg-slate-50/40 rounded-xl border border-slate-200/60 space-y-1.5 shadow-3xs">
-                                <label class="block text-[11px] font-bold text-slate-600">题目智能分类模型 (PREFER_CLASSIFY_MODEL)</label>
-                                <div class="flex items-center space-x-2">
-                                    <select id="classifyModelProvider" onchange="onModelProviderChange('classify')" class="glass-select w-[92px] shrink-0 px-2 py-1.5 rounded-lg text-xs">
-                                        <option value="deepseek">DeepSeek</option>
-                                        <option value="siliconflow">硅基流动</option>
-                                        <option value="bailian">阿里百炼</option>
-                                        <option value="zhongzhan_gpt">中转站 A</option>
-                                        <option value="zhongzhan_claude">中转站 B</option>
-                                    </select>
-                                    <div id="classifyModelValueContainer" class="flex-1 flex items-center space-x-1.5 min-w-0">
-                                        <!-- Dynamic Load -->
-                                    </div>
-                                </div>
-                            </div>
-
-                            <!-- 4. 默认公式识图模型 -->
-                            <div class="p-3 bg-slate-50/40 rounded-xl border border-slate-200/60 space-y-1.5 shadow-3xs">
-                                <label class="block text-[11px] font-bold text-slate-600">默认公式识图模型 (DEFAULT_OCR_ENGINE)</label>
-                                <div class="flex items-center space-x-2">
-                                    <select id="ocrModelProvider" onchange="onModelProviderChange('ocr')" class="glass-select w-[92px] shrink-0 px-2 py-1.5 rounded-lg text-xs">
-                                        <option value="siliconflow">硅基流动</option>
-                                        <option value="bailian">阿里百炼</option>
-                                        <option value="zhongzhan_gpt">中转站 A</option>
-                                        <option value="zhongzhan_claude">中转站 B</option>
-                                    </select>
-                                    <div id="ocrModelValueContainer" class="flex-1 flex items-center space-x-1.5 min-w-0">
-                                        <!-- Dynamic Load -->
-                                    </div>
-                                </div>
-                            </div>
-
-                            <!-- 5. 高级 TikZ 绘图模型 -->
-                            <div class="p-3 bg-slate-50/40 rounded-xl border border-slate-200/60 space-y-1.5 shadow-3xs">
-                                <label class="block text-[11px] font-bold text-slate-600">高级 TikZ 绘图模型 (PREFER_DRAW_MODEL)</label>
-                                <div class="flex items-center space-x-2">
-                                    <select id="drawModelProvider" onchange="onModelProviderChange('draw')" class="glass-select w-[92px] shrink-0 px-2 py-1.5 rounded-lg text-xs">
-                                        <option value="siliconflow">硅基流动</option>
-                                        <option value="bailian">阿里百炼</option>
-                                        <option value="zhongzhan_gpt">中转站 A</option>
-                                        <option value="zhongzhan_claude">中转站 B</option>
-                                        <option value="deepseek">DeepSeek</option>
-                                    </select>
-                                    <div id="drawModelValueContainer" class="flex-1 flex items-center space-x-1.5 min-w-0">
-                                        <!-- Dynamic Load -->
-                                    </div>
-                                </div>
-                            </div>
-                        </div>
+                    <!-- API Safety Note (Full Width Below Grid) -->
+                    <div class="p-3 bg-amber-50/80 dark:bg-amber-950/40 border border-amber-200/60 dark:border-amber-900/60 text-[10px] text-amber-800 dark:text-amber-300 rounded-xl flex items-start space-x-2 leading-relaxed">
+                        <i class="fa-solid fa-circle-exclamation mt-0.5"></i>
+                        <span>
+                            <strong>多模态与安全说明：</strong>
+                            所有 API 配置信息均直接持久化保存在您的本地根目录 <code>.env</code> 文件中。通过 硅基流动(SiliconFlow) 或 阿里百炼(Alibaba Bailian) 调用 Qwen 多模态视觉模型，能够实现极其高精准度的行内公式与混排题干识别。
+                        </span>
                     </div>
                 </div>
                 <!-- End of settings-tab-api -->
@@ -1278,9 +1293,7 @@
                                   placeholder="正在读取元数据配置..."></textarea>
                     </div>
                     
-
-                    
-                    <div class="bg-amber-50 border border-amber-200 rounded-xl p-3 text-[10px] text-amber-700 space-y-1">
+                    <div class="bg-amber-50/80 dark:bg-amber-950/40 border border-amber-200/80 dark:border-amber-900/60 rounded-xl p-3 text-[10px] text-amber-800 dark:text-amber-300 space-y-1">
                         <p class="font-bold flex items-center space-x-1"><i class="fa-solid fa-circle-info"></i><span>配置说明：</span></p>
                         <p>1. <strong>question_types</strong>: 题型列表。例如：<code>{"value": "single_choice", "label": "单选题"}</code>。</p>
                         <p>2. <strong>difficulties</strong>: 难度等级列表。必须包含 value, label 和 color 属性。color 使用 Tailwind CSS 类名控制徽章样式。</p>
@@ -1288,14 +1301,6 @@
                     </div>
                 </div>
                 <!-- End of settings-tab-metadata -->
-
-                <div class="p-3 bg-amber-50 text-[10px] text-amber-700 rounded-lg flex items-start space-x-2 leading-relaxed">
-                    <i class="fa-solid fa-circle-exclamation mt-0.5"></i>
-                    <span>
-                        <strong>多模态与安全说明：</strong>
-                        所有 API 配置信息均直接持久化保存在您的本地根目录 <code>.env</code> 文件中。通过 硅基流动(SiliconFlow) 或 阿里百炼(Alibaba Bailian) 调用 Qwen 多模态视觉模型，能够实现极其高精准度的行内公式与混排题干识别。
-                    </span>
-                </div>
                 </div>
                 <!-- End of Scrollable Settings Body -->
 
@@ -1326,91 +1331,91 @@
                 <!-- 1. Stats Counter Cards (5 Columns Layout) -->
                 <div class="grid grid-cols-5 gap-3.5">
                     <!-- Total Count Card -->
-                    <div class="bg-gradient-to-br from-indigo-50 to-indigo-100/40 border border-indigo-200/50 rounded-xl p-3.5 flex items-center justify-between shadow-sm relative overflow-hidden group">
+                    <div class="bg-indigo-50/80 border border-indigo-200/60 dark:bg-indigo-500/10 dark:border-indigo-500/25 rounded-xl p-3.5 flex items-center justify-between shadow-sm relative overflow-hidden group">
                         <div class="space-y-1 z-10">
-                            <span class="text-[10px] font-bold text-indigo-700 uppercase tracking-wider">题库总试题量</span>
-                            <h2 class="text-2xl font-black text-indigo-900 font-mono" id="statsTotalCount">0</h2>
+                            <span class="text-[10px] font-bold text-indigo-700 dark:text-indigo-300 uppercase tracking-wider">题库总试题量</span>
+                            <h2 class="text-2xl font-black text-indigo-950 dark:text-indigo-200 font-mono" id="statsTotalCount">0</h2>
                         </div>
-                        <i class="fa-solid fa-database text-3xl text-indigo-500/15 absolute right-3 group-hover:scale-110 transition-transform duration-300 z-0"></i>
+                        <i class="fa-solid fa-database text-3xl text-indigo-500/20 dark:text-indigo-400/30 absolute right-3 group-hover:scale-110 transition-transform duration-300 z-0"></i>
                     </div>
 
                     <!-- Normal Count Card (常规题) -->
-                    <div class="bg-gradient-to-br from-emerald-50 to-emerald-100/40 border border-emerald-200/50 rounded-xl p-3.5 flex items-center justify-between shadow-sm relative overflow-hidden group">
+                    <div class="bg-emerald-50/80 border border-emerald-200/60 dark:bg-emerald-500/10 dark:border-emerald-500/25 rounded-xl p-3.5 flex items-center justify-between shadow-sm relative overflow-hidden group">
                         <div class="space-y-1 z-10">
-                            <span class="text-[10px] font-bold text-emerald-700 uppercase tracking-wider">常规题数量</span>
-                            <h2 class="text-2xl font-black text-emerald-900 font-mono" id="statsNormalCount">0</h2>
+                            <span class="text-[10px] font-bold text-emerald-700 dark:text-emerald-300 uppercase tracking-wider">常规题数量</span>
+                            <h2 class="text-2xl font-black text-emerald-950 dark:text-emerald-200 font-mono" id="statsNormalCount">0</h2>
                         </div>
-                        <i class="fa-solid fa-cube text-3xl text-emerald-500/15 absolute right-3 group-hover:scale-110 transition-transform duration-300 z-0"></i>
+                        <i class="fa-solid fa-cube text-3xl text-emerald-500/20 dark:text-emerald-400/30 absolute right-3 group-hover:scale-110 transition-transform duration-300 z-0"></i>
                     </div>
 
                     <!-- Easy Error Count Card -->
-                    <div class="bg-gradient-to-br from-amber-50 to-amber-100/40 border border-amber-200/50 rounded-xl p-3.5 flex items-center justify-between shadow-sm relative overflow-hidden group">
+                    <div class="bg-amber-50/80 border border-amber-200/60 dark:bg-amber-500/10 dark:border-amber-500/25 rounded-xl p-3.5 flex items-center justify-between shadow-sm relative overflow-hidden group">
                         <div class="space-y-1 z-10">
-                            <span class="text-[10px] font-bold text-amber-700 uppercase tracking-wider">易错题数量</span>
-                            <h2 class="text-2xl font-black text-amber-900 font-mono" id="statsEasyErrorCount">0</h2>
+                            <span class="text-[10px] font-bold text-amber-700 dark:text-amber-300 uppercase tracking-wider">易错题数量</span>
+                            <h2 class="text-2xl font-black text-amber-950 dark:text-amber-200 font-mono" id="statsEasyErrorCount">0</h2>
                         </div>
-                        <i class="fa-solid fa-triangle-exclamation text-3xl text-amber-500/15 absolute right-3 group-hover:scale-110 transition-transform duration-300 z-0"></i>
+                        <i class="fa-solid fa-triangle-exclamation text-3xl text-amber-500/20 dark:text-amber-400/30 absolute right-3 group-hover:scale-110 transition-transform duration-300 z-0"></i>
                     </div>
 
                     <!-- Challenge Count Card -->
-                    <div class="bg-gradient-to-br from-red-50 to-red-100/40 border border-red-200/50 rounded-xl p-3.5 flex items-center justify-between shadow-sm relative overflow-hidden group">
+                    <div class="bg-rose-50/80 border border-rose-200/60 dark:bg-rose-500/10 dark:border-rose-500/25 rounded-xl p-3.5 flex items-center justify-between shadow-sm relative overflow-hidden group">
                         <div class="space-y-1 z-10">
-                            <span class="text-[10px] font-bold text-red-700 uppercase tracking-wider">挑战题数量</span>
-                            <h2 class="text-2xl font-black text-red-900 font-mono" id="statsChallengeCount">0</h2>
+                            <span class="text-[10px] font-bold text-rose-700 dark:text-rose-300 uppercase tracking-wider">挑战题数量</span>
+                            <h2 class="text-2xl font-black text-rose-950 dark:text-rose-200 font-mono" id="statsChallengeCount">0</h2>
                         </div>
-                        <i class="fa-solid fa-fire text-3xl text-red-500/15 absolute right-3 group-hover:scale-110 transition-transform duration-300 z-0"></i>
+                        <i class="fa-solid fa-fire text-3xl text-rose-500/20 dark:text-rose-400/30 absolute right-3 group-hover:scale-110 transition-transform duration-300 z-0"></i>
                     </div>
 
                     <!-- Qiangji Count Card -->
-                    <div class="bg-gradient-to-br from-purple-50 to-purple-100/40 border border-purple-200/50 rounded-xl p-3.5 flex items-center justify-between shadow-sm relative overflow-hidden group">
+                    <div class="bg-purple-50/80 border border-purple-200/60 dark:bg-purple-500/10 dark:border-purple-500/25 rounded-xl p-3.5 flex items-center justify-between shadow-sm relative overflow-hidden group">
                         <div class="space-y-1 z-10">
-                            <span class="text-[10px] font-bold text-purple-700 uppercase tracking-wider">强基题数量</span>
-                            <h2 class="text-2xl font-black text-purple-900 font-mono" id="statsQiangjiCount">0</h2>
+                            <span class="text-[10px] font-bold text-purple-700 dark:text-purple-300 uppercase tracking-wider">强基题数量</span>
+                            <h2 class="text-2xl font-black text-purple-950 dark:text-purple-200 font-mono" id="statsQiangjiCount">0</h2>
                         </div>
-                        <i class="fa-solid fa-medal text-3xl text-purple-500/15 absolute right-3 group-hover:scale-110 transition-transform duration-300 z-0"></i>
+                        <i class="fa-solid fa-medal text-3xl text-purple-500/20 dark:text-purple-400/30 absolute right-3 group-hover:scale-110 transition-transform duration-300 z-0"></i>
                     </div>
                 </div>
 
                 <!-- 2. Main Analytics Panels Split -->
                 <div class="grid grid-cols-1 md:grid-cols-12 gap-5">
                     <!-- Left: Cascaded Stage & Chapter query -->
-                    <div class="md:col-span-5 bg-white border border-slate-200/60 rounded-xl p-4 shadow-sm flex flex-col space-y-4">
-                        <h4 class="text-xs font-bold text-slate-700 flex items-center space-x-1 border-b pb-2">
+                    <div class="md:col-span-5 glass-card rounded-xl p-4 flex flex-col space-y-4">
+                        <h4 class="text-xs font-bold text-slate-700 dark:text-slate-200 flex items-center space-x-1 border-b border-slate-100 dark:border-slate-800 pb-2">
                             <i class="fa-solid fa-magnifying-glass-chart text-slate-400"></i>
                             <span>分学段与章节定位查询</span>
                         </h4>
 
-                        <div class="space-y-3 text-xs text-slate-700">
+                        <div class="space-y-3 text-xs text-slate-700 dark:text-slate-300">
                             <div class="space-y-1">
-                                <label class="block text-[10px] font-semibold text-slate-500">选择教材学段</label>
+                                <label class="block text-[10px] font-semibold text-slate-500 dark:text-slate-400">选择教材学段</label>
                                 <select id="statsQueryCompulsory" onchange="onStatsQueryCompulsoryChange()" 
-                                        class="w-full px-2.5 py-1.5 border border-slate-200 rounded-lg outline-none focus:border-brand-500 bg-slate-50 transition-all text-slate-750">
+                                        class="glass-select w-full px-2.5 py-1.5 rounded-lg">
                                     <option value="">-- 选择学段 --</option>
                                 </select>
                             </div>
 
                             <div class="space-y-1">
-                                <label class="block text-[10px] font-semibold text-slate-500">选择具体章节</label>
+                                <label class="block text-[10px] font-semibold text-slate-500 dark:text-slate-400">选择具体章节</label>
                                 <select id="statsQueryChapter" onchange="onStatsQueryChapterChange()" 
-                                        class="w-full px-2.5 py-1.5 border border-slate-200 rounded-lg outline-none focus:border-brand-500 bg-slate-50 transition-all text-slate-750" disabled>
+                                        class="glass-select w-full px-2.5 py-1.5 rounded-lg disabled:opacity-50" disabled>
                                     <option value="">-- 先选择学段 --</option>
                                 </select>
                             </div>
                         </div>
 
                         <!-- Result Display Panel -->
-                        <div class="bg-slate-50 border border-slate-100 rounded-xl p-3.5 flex-1 flex flex-col justify-center items-center text-center space-y-2 min-h-[120px]">
+                        <div class="bg-slate-50/50 dark:bg-slate-900/60 border border-slate-100 dark:border-slate-800 rounded-xl p-3.5 flex-1 flex flex-col justify-center items-center text-center space-y-2 min-h-[120px]">
                             <div id="statsQueryResultEmpty" class="space-y-1">
-                                <i class="fa-solid fa-chart-bar text-slate-350 text-xl"></i>
-                                <p class="text-[10px] text-slate-500">选择学段章节查看具体统计数据</p>
+                                <i class="fa-solid fa-chart-bar text-slate-350 dark:text-slate-600 text-xl"></i>
+                                <p class="text-[10px] text-slate-500 dark:text-slate-400">选择学段章节查看具体统计数据</p>
                             </div>
                             <div id="statsQueryResultData" class="hidden w-full text-left space-y-2.5">
-                                <div class="flex items-center justify-between border-b pb-1.5">
-                                    <span class="text-[11px] font-bold text-slate-700">章节题目总数:</span>
-                                    <span class="text-sm font-black text-brand-650 font-mono" id="statsQueryCount">0</span>
+                                <div class="flex items-center justify-between border-b border-slate-100 dark:border-slate-800 pb-1.5">
+                                    <span class="text-[11px] font-bold text-slate-700 dark:text-slate-200">章节题目总数:</span>
+                                    <span class="text-sm font-black text-brand-650 dark:text-brand-400 font-mono" id="statsQueryCount">0</span>
                                 </div>
                                 <div class="space-y-1.5">
-                                    <span class="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">所含小节/知识点分布</span>
+                                    <span class="text-[10px] font-bold text-slate-400 dark:text-slate-400 uppercase tracking-wider block">所含小节/知识点分布</span>
                                     <div class="max-h-[140px] overflow-y-auto space-y-1 pr-1" id="statsQueryKnowledgeList">
                                         <!-- Dynamic knowledge stats items -->
                                     </div>
@@ -1420,7 +1425,7 @@
                     </div>
 
                     <!-- Right: Daily additions calendar -->
-                    <div class="md:col-span-7 bg-white border border-slate-200/60 rounded-xl p-4 shadow-sm flex flex-col space-y-3">
+                    <div class="md:col-span-7 glass-card rounded-xl p-4 flex flex-col space-y-3">
                         <!-- Calendar Header Toolbar -->
                         <div class="flex justify-between items-center border-b pb-2">
                             <h4 class="text-xs font-bold text-slate-700 flex items-center space-x-1">

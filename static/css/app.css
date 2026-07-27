@@ -58,6 +58,18 @@ html.init-ws-paper #toggleSidebarBtn { display: none !important; }
 }
 
 /* Theme Classes definitions */
+.theme-obsidian {
+    --brand-50-rgb: 248, 250, 252;
+    --brand-100-rgb: 241, 245, 249;
+    --brand-200-rgb: 226, 232, 240;
+    --brand-500-rgb: 30, 41, 59;
+    --brand-600-rgb: 15, 23, 42;
+    --brand-700-rgb: 2, 6, 23;
+    --brand-900-rgb: 2, 6, 23;
+    --brand-rgb: 15, 23, 42;
+    --apple-shadow-glow: 0 0 20px rgba(15, 23, 42, 0.2);
+}
+
 .theme-violet {
     --brand-50-rgb: 245, 243, 255;
     --brand-100-rgb: 237, 233, 254;
@@ -311,33 +323,132 @@ html.init-ws-paper #toggleSidebarBtn { display: none !important; }
 }
 
 .dark .bg-white\/50,
-.dark .bg-white {
+.dark .bg-white:not(.a4-paper-sheet) {
     background-color: rgba(22, 31, 48, 0.6) !important;
 }
 
+/* Dedicated Protection for A4 Simulated Test Paper Preview */
+.a4-paper-sheet,
+.dark .a4-paper-sheet {
+    background-color: #ffffff !important;
+    color: #0f172a !important;
+    border-color: #cbd5e1 !important;
+    box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.5), 0 8px 10px -6px rgba(0, 0, 0, 0.4) !important;
+}
+
+.a4-paper-sheet h1,
+.a4-paper-sheet h2,
+.a4-paper-sheet h3,
+.a4-paper-sheet h4,
+.a4-paper-sheet p,
+.a4-paper-sheet span,
+.dark .a4-paper-sheet h1,
+.dark .a4-paper-sheet h2,
+.dark .a4-paper-sheet h3,
+.dark .a4-paper-sheet h4,
+.dark .a4-paper-sheet p,
+.dark .a4-paper-sheet span:not(.solution-space-label):not(.toolbar-label) {
+    color: #0f172a !important;
+}
+
+.dark .a4-paper-sheet .katex,
+.dark .a4-paper-sheet .katex * {
+    color: #0f172a !important;
+}
+
+/* Paper Score Selector Pill */
+.paper-score-pill {
+    background-color: rgba(241, 245, 249, 0.9);
+    border: 1px solid rgba(226, 232, 240, 0.9);
+    color: #475569;
+}
+
+.paper-score-pill input {
+    background-color: #ffffff;
+    border: 1px solid #cbd5e1;
+    color: #0f172a;
+}
+
+.dark .paper-score-pill {
+    background-color: rgba(30, 41, 59, 0.85) !important;
+    border-color: rgba(51, 65, 85, 0.8) !important;
+    color: #cbd5e1 !important;
+}
+
+.dark .paper-score-pill input {
+    background-color: rgba(15, 23, 42, 0.95) !important;
+    border-color: rgba(71, 85, 105, 0.8) !important;
+    color: #f8fafc !important;
+}
+
+/* Paper Live Preview Canvas Floating Action Bar */
+.paper-canvas-toolbar {
+    background-color: rgba(255, 255, 255, 0.95);
+    border: 1px solid rgba(203, 213, 225, 0.8);
+    color: #64748b;
+}
+
+.paper-canvas-toolbar .toolbar-label,
+.paper-canvas-toolbar .toolbar-btn {
+    color: #64748b !important;
+}
+
+.dark .paper-canvas-toolbar {
+    background-color: rgba(15, 23, 42, 0.92) !important;
+    border-color: rgba(51, 65, 85, 0.9) !important;
+    box-shadow: 0 10px 25px rgba(0, 0, 0, 0.4) !important;
+}
+
+.dark .paper-canvas-toolbar .toolbar-label {
+    color: #94a3b8 !important;
+}
+
+.dark .paper-canvas-toolbar .toolbar-btn {
+    color: #cbd5e1 !important;
+}
+
+.dark .paper-canvas-toolbar .toolbar-btn:hover {
+    color: #38bdf8 !important;
+}
+
 .dark .bg-slate-50,
-.dark .bg-gray-50 {
-    background-color: rgba(15, 23, 42, 0.75) !important;
+.dark .bg-slate-50\/40,
+.dark .bg-slate-50\/50,
+.dark .bg-slate-50\/60,
+.dark .bg-slate-50\/70,
+.dark .bg-slate-50\/80,
+.dark .bg-slate-50\/90,
+.dark .bg-gray-50,
+.dark .bg-slate-100,
+.dark .bg-slate-100\/70,
+.dark .bg-slate-100\/60,
+.dark .bg-slate-100\/50,
+.dark .bg-slate-100\/40,
+.dark .bg-slate-200,
+.dark .bg-slate-200\/60,
+.dark .bg-slate-200\/70,
+.dark .bg-slate-200\/80 {
+    background-color: rgba(15, 23, 42, 0.6) !important;
 }
 
 .dark .border-slate-100,
 .dark .border-slate-200,
 .dark .border-gray-200,
-.dark .border-slate-300 {
+.dark .border-slate-300:not(.a4-paper-sheet) {
     border-color: rgba(255, 255, 255, 0.08) !important;
 }
 
-.dark .text-slate-800 {
+.dark .text-slate-800:not(.a4-paper-sheet *) {
     color: #F1F5F9 !important;
 }
 
-.dark .text-slate-700,
-.dark .text-slate-600 {
+.dark .text-slate-700:not(.a4-paper-sheet *),
+.dark .text-slate-600:not(.a4-paper-sheet *) {
     color: #CBD5E1 !important; /* slate-300 */
 }
 
-.dark .text-slate-500,
-.dark .text-slate-400 {
+.dark .text-slate-500:not(.a4-paper-sheet *),
+.dark .text-slate-400:not(.a4-paper-sheet *) {
     color: #94A3B8 !important; /* slate-400 */
 }
 
@@ -426,6 +537,8 @@ html {
 }
 
 .dark .glass-card {
+    background: var(--apple-glass-bg) !important;
+    border-color: var(--apple-glass-border) !important;
     box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.08), var(--apple-shadow-sm) !important;
 }
 
@@ -531,6 +644,14 @@ html {
     transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
 }
 
+input.glass-input {
+    height: 34px;
+    box-sizing: border-box;
+    padding-top: 0 !important;
+    padding-bottom: 0 !important;
+    line-height: 34px;
+}
+
 .glass-input:focus {
     background: #ffffff;
     border-color: rgba(var(--brand-rgb), 0.7);
@@ -543,6 +664,11 @@ html {
     border: 1px solid #cbd5e1;
     transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
     cursor: pointer;
+    height: 34px;
+    box-sizing: border-box;
+    padding-top: 0 !important;
+    padding-bottom: 0 !important;
+    line-height: 34px;
 }
 
 .glass-select:focus {
@@ -855,6 +981,35 @@ button, a, input, select, textarea {
     border-radius: var(--apple-radius-md);
 }
 
+.dark .glass-dropdown,
+.dark .bg-white\/95 {
+    background: rgba(22, 31, 48, 0.95) !important;
+    border-color: rgba(255, 255, 255, 0.1) !important;
+    box-shadow: 0 20px 40px rgba(0, 0, 0, 0.5) !important;
+}
+
+/* Dropdown Items - Dedicated Hover & Focus System */
+.glass-dropdown-item {
+    color: #334155;
+    background-color: transparent;
+    transition: background-color 0.15s ease, color 0.15s ease;
+}
+
+.glass-dropdown-item:hover {
+    background-color: rgba(241, 245, 249, 0.9) !important;
+    color: #0f172a !important;
+}
+
+.dark .glass-dropdown-item {
+    color: #cbd5e1 !important;
+    background-color: transparent !important;
+}
+
+.dark .glass-dropdown-item:hover {
+    background-color: rgba(51, 65, 85, 0.85) !important;
+    color: #ffffff !important;
+}
+
 /* Tooltip - Apple Style */
 .glass-tooltip {
     background: rgba(30, 30, 30, 0.85);
@@ -1088,22 +1243,22 @@ button, a, input, select, textarea {
     background: linear-gradient(180deg, rgba(var(--brand-50-rgb), 0.22) 0%, rgba(22, 31, 48, 0.6) 45%, rgba(22, 31, 48, 0.6) 100%) !important;
 }
 
-/* Brand Title Gradient Text Override */
+/* Brand Title Stable Neutral Text */
 .brand-title {
-    background: linear-gradient(to right, rgb(var(--brand-700-rgb)), rgb(var(--brand-900-rgb))) !important;
-    -webkit-background-clip: text !important;
-    -webkit-text-fill-color: transparent !important;
-    background-clip: text !important;
-    color: transparent !important;
+    color: #0f172a !important;
+    background: none !important;
+    -webkit-background-clip: initial !important;
+    -webkit-text-fill-color: #0f172a !important;
+    background-clip: initial !important;
     display: inline-block;
 }
 
 .dark .brand-title {
-    background: linear-gradient(to right, rgb(var(--brand-500-rgb)), #FFFFFF) !important;
-    -webkit-background-clip: text !important;
-    -webkit-text-fill-color: transparent !important;
-    background-clip: text !important;
-    color: transparent !important;
+    color: #f8fafc !important;
+    background: none !important;
+    -webkit-background-clip: initial !important;
+    -webkit-text-fill-color: #f8fafc !important;
+    background-clip: initial !important;
 }
 
 /* Glass Button Dark Mode Custom Overrides */
@@ -1126,6 +1281,32 @@ button, a, input, select, textarea {
 
 .dark .glass-btn:hover i {
     color: #ffffff !important;
+}
+
+/* Editable Canvas Meta Title & Subtitle Empty Placeholders */
+.canvas-meta-title:empty::before {
+    content: attr(placeholder);
+    color: #94a3b8;
+    font-weight: normal;
+    font-size: 1rem;
+    font-family: ui-sans-serif, system-ui, sans-serif;
+    opacity: 0.75;
+    display: inline-block;
+}
+
+.canvas-meta-subtitle:empty::before {
+    content: attr(placeholder);
+    color: #94a3b8;
+    font-weight: normal;
+    font-size: 0.85rem;
+    font-family: ui-sans-serif, system-ui, sans-serif;
+    opacity: 0.75;
+    display: inline-block;
+}
+
+.canvas-meta-title:focus::before,
+.canvas-meta-subtitle:focus::before {
+    opacity: 0.3;
 }
 
 .dark .glass-btn .text-slate-500,

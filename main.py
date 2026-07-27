@@ -850,6 +850,7 @@ def ocr_formula(
     engine: str = Form(None),
     skip_tikz: bool = Form(False)
 ):
+    import re
     temp_filepath = None
     try:
         # 同步读取文件字节
@@ -934,6 +935,8 @@ def ocr_formula(
         if latex_content:
             # 过滤干扰字符
             latex_content = latex_content.replace("\\,", "").replace("\\!", "")
+            # 自动清洗规范化下划线/连续划线/任何 \underline 变体为标准的 \fillin 宏
+            latex_content = normalize_fillin_macro(latex_content)
 
         # ----------------- 双阶段多模态识图与高级 TikZ 绘图模型联动 -----------------
         tikz_code_from_high_model = None
@@ -1975,6 +1978,26 @@ def get_question(question_id: int, db: Session = Depends(get_db)):
     q_dict["seq_num"] = seq_map.get(q.id)
     return q_dict
 
+def normalize_fillin_macro(text: str) -> str:
+    """将题干中的任意下划线格式（如 \\underline{\\qquad...}、\\underline{\\hspace{...}}、\\underline{\\quad...}、连续下划线 ___）一网打尽规范化为标准的 \\fillin 宏"""
+    if not text or not isinstance(text, str):
+        return text or ""
+    # 1. 替换连续下划线 ___ (3个及以上) 为 \fillin，绝不动前后的 $ 闭合标记，防止 $ 开关颠倒
+    text = re.sub(r'_{3,}', r'\\fillin', text)
+    
+    # 2. 替换任意包含留白/空白/空格命令 (\quad, \qquad, \hspace{...}, \enspace 等) 的 \underline{...} 为 \fillin
+    def replace_underline(match):
+        inner = match.group(1).strip()
+        # 剥离常用的 LaTeX 留白间隔命令
+        cleaned = re.sub(r'\\(?:quad|qquad|hspace|enspace|thinspace|kern|space)\b(\{[^}]*?\})?', '', inner).strip()
+        if not cleaned:
+            return r'\fillin'
+        # 如果内部带有答案文本，转为 \fillin[答案]
+        return f'\\fillin[{cleaned}]'
+
+    text = re.sub(r'\\underline\s*\{([^}]*?)\}', replace_underline, text)
+    return text
+
 @app.post("/api/questions")
 def create_question(
     background_tasks: BackgroundTasks,
@@ -1995,6 +2018,9 @@ def create_question(
     db: Session = Depends(get_db)
 ):
     try:
+        # 规范化填空题下划线为 \fillin 宏
+        content = normalize_fillin_macro(content)
+
         # Validate json array format
         parsed_img_paths = json.loads(image_paths) if image_paths else []
         
@@ -2089,6 +2115,9 @@ def update_question(
         raise HTTPException(status_code=404, detail="未找到对应的题目")
         
     try:
+        # 规范化填空题下划线为 \fillin 宏
+        content = normalize_fillin_macro(content)
+
         parsed_img_paths = json.loads(image_paths) if image_paths else []
         
         # 自动晋升临时图片
@@ -4047,6 +4076,11 @@ def post_process_pdf_parsed_questions(parsed_questions: list, paper_title: str, 
     import re
     import os
     import glob
+
+    # 0. 规范化所有拆解题目的填空下划线为 \fillin 宏
+    for q in parsed_questions:
+        if q.get("content"):
+            q["content"] = normalize_fillin_macro(q.get("content", ""))
 
     # 1. 搜集该 PDF 任务在 tmp 文件夹中生成的所有物理裁剪图片，按生成时间（mtime）进行排序
     task_crop_urls = []

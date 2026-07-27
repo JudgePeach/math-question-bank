@@ -33,7 +33,9 @@
   - **交互弹窗切换**：用户在试卷预览框或题卡中点击或右击插图（及位置指示按钮）时，会弹出定制的气泡菜单允许实时切换这三种排版位置，并通过 `POST /api/questions/{qid}/figure_align` 实时持久化保存至数据库。
   - **PDF 编译 LRU 哈希缓存与高考预设题号跳跃**：后端 `compile_tex_to_pdf` 内置基于全套 LaTeX 源码 MD5 哈希与关联插图修改时间戳的线程安全 LRU 内存缓存（容量 50）。在组卷预览与合并导出时，若 LaTeX 源码与配图未发生任何变动，直接 0ms 瞬间从内存复用已编译的 PDF 字节流，大幅降低 CPU 负载并提升合并导出响应速度。同时针对 `exam_19` (19题高考卷含答题卡预设)，通过设置 `exam-zh` 的 LaTeX3 全局整数变量 `\g__examzh_question_index_int`，使编译出的 PDF 题号按大型高考规范精准跳跃（单选为 1、多选为 9、填空为 12、解答为 15），与前端 A4 Live Preview 及 A3 答题卡完美联动。
   - **解答题留白调控 (Detailed Answer Solution Space Control)**：针对无独立答题卡的试卷类型（`exam` 试卷与 `quiz` 小练），系统支持对 `detailed_answer`（解答题）进行留白高度调控。留白计算统一自题干文字结束算起，若插图设为 `bottom_right` 或 `center`，插图自动包含在留白空间（如 `7.0 cm`）内部顶侧，避免留白垂直叠加过长。前端 A4 实时预览与 LaTeX 导出（`\smash` 嵌入）均精准同步此算力。若切换为 `exam_19`（高考卷含答题卡），试卷正文自动恢复紧凑布局（留白归零）。
-- **选择题 choices 环境规范**：所有选择题在入库和存储时，选项部分必须统一格式化为 LaTeX 的 `choices` 环境（使用 `\begin{choices}` 和 `\item` 包裹，且剥离原本的 A., B., C., D. 等标号前缀）。
+  - **选择题 choices 环境规范与填空题 \fillin 宏规范**：
+    - 所有选择题在入库和存储时，选项部分必须统一格式化为 LaTeX 的 `choices` 环境（使用 `\begin{choices}` 和 `\item` 包裹，且剥离原本的 A., B., C., D. 等标号前缀）。
+    - **填空题 \fillin 规范与自动自愈 (Fillin Macro Standardization & Self-Healing)**：系统在多模态 OCR 识图（SiliconFlow / 阿里百炼 / 中展 AI）Prompt、试卷 AI 智能拆卷 Prompt 中均强制要求将填空题下划线生成为 `\fillin` 宏。同时在后端录入/修改/拆题逻辑中内置了 `normalize_fillin_macro` 自愈清洗器，会自动将 `______` 或 `\underline{\hspace{...}}` 等旧格式静默升级为标准的 `\fillin`。前端 `preprocessFormulaForKaTeX` 亦已全兼容 `\fillin` 及其带长度/带答案参数的多形态渲染。
   - **前端渲染**：前端将自动依据选项最长字符数 `maxLen` 自适应网格排版（小于等于 10 字为 1行4列，大于 10 且小于等于 24 字为 2行2列，大于 24 字为 1行1列），并自动补全 `A.`, `B.`, `C.`, `D.` 标号。
   - **AI 题库转换**：后端导出 AI 专属只读题库时，会自动将此 `choices` 环境清洗为 Markdown 标准列表 `- A.` / `- B.` 形式，防止干扰大模型。
 - **标签系统**：
@@ -119,6 +121,8 @@
 - **A4 仿真纸张与 Live Preview 秒级渲染引擎**：
   - 前端无需同步等待后端 PDF 编译，纯前端结合 KaTeX + 动态 DOM 模拟真实 A4 试卷（210mm x 297mm 纸张比例）。
   - 支持渲染卷头密封线 (`\secret`)、大标题、副标题（连续空格 `&nbsp;` 与 `pre-wrap` 保持与 LaTeX `\large\bfseries` 粗体一致）、考试注意事项框 (`notice` 环境) 和大题分值信息。
+  - **主副标题双向 WYSIWYG 实时编辑 (Bi-directional Title Editing)**：支持在左侧配置栏与右侧 A4 Live Preview 试卷画布上双向自由修改主标题与副标题。A4 画布节点具备 `contenteditable="true"` 属性与琥珀微光 Focus 框，副标题为空时自动展示 `+ 点击在此直接添加副标题 / 备注` 占位提示，打字过程进行增量 DOM 局部更新，做到零闪烁与零丢焦点。
+  - **试卷密封线与注意事项可视化交互显隐 (Secret & Notice Interactive Toggle)**：在 Live Preview 预览中，鼠标悬浮左上角绝密标记可触发 `[移除标记]` 隐去，悬浮注意事项可触发 `[移除注意事项]` 隐去。原位置分别保留精致虚线交互占位块 `[+ 已移除绝密标记]` / `[+ 已移除注意事项]` 支持随时点击一键恢复。导出与编译 LaTeX 时根据 `show_secret` 和 `show_notice` 状态自动将 LaTeX 的 `\secret` 与 `notice` 环境整块进行注释/解注释（`% \secret` / `% \begin{notice}`）。
 - **解答题留白调控 (Solution Space Control)**：
   - 在 A4 Live Preview 视图中，解答题下方实时渲染浅蓝虚线留白区，并提供快捷内联调控按钮 (`[- 1cm]`, `[- 0.5cm]`, `[+ 0.5cm]`, `[+ 1cm]`)。
   - 支持全局留白档位设定（如 `0cm` / `7cm` 等），微调值随试卷序列化存入 `cart`。
@@ -166,6 +170,15 @@
 - **视觉风格**：采用 Glassmorphism（毛玻璃）或现代极简卡片（Cards）风格。背景推荐使用柔和的 `slate-50` 或 `gray-50`。
 - **组件细节**：卡片需带有优雅的阴影 (`shadow-md`, `shadow-lg`) 和圆角 (`rounded-xl`, `rounded-2xl`)。
 - **侧边栏与布局控制**：支持侧边栏一键折叠伸缩（`toggleSidebarBtn`），展开状态下保持舒展的响应式网格与固定高度滚动区，折叠时释放沉浸式全屏渲染视图。
+- **暗色模式设计与防阴森规则 (Modern Dark Mode & Anti-Gloom Protocol)**：
+  - **玻璃底 + 霓虹透光微光 (Vibrant Glass & Neon Tint)**：在暗色模式下，严禁使用浓重晦暗的深纯色（如 `indigo-950`, `emerald-950`, `rose-950`, `amber-950`），此类调色在深色底板上会产生浑浊阴森感。必须采用**高通透玻璃底 + 10% 品牌色霓虹透光微光**（如 `dark:bg-indigo-500/10 dark:border-indigo-500/25`），搭配高对比度亮彩文字（`indigo-200`, `emerald-200`, `amber-200`, `rose-200`）与发光 Icon。
+  - **下拉菜单与 Hover 悬浮态规范 (Dropdown & Hover Protocol)**：严禁在下拉菜单项或触发按钮上使用单纯的 `hover:bg-slate-100` 类，防止在暗色模式下被误判为“浅灰底 + 白字”无法识别。必须统一采用 `.glass-dropdown` 容器与 `.glass-dropdown-item` 类，暗色 Hover 状态自动映射为深石墨灰背景 (`rgba(51, 65, 85, 0.85)` Slate-700) 与高亮纯白字 (`#ffffff`)。
+  - **弹窗与卡片暗色覆盖层防护 (Modal & Card Overlay Protection)**：全局在 `app.css` 中建立对 `.dark .bg-slate-50\/40` ~ `/90` 等全套透明度变体及 `glass-card` 的暗色保护；同时保护试卷/A4仿真纸张 (`.a4-paper-sheet`) 在暗色模式下强制维持 `#ffffff` 背景与 `#0f172a` 文字。
+- **多主题色彩系统与极简曜石黑预设 (Multi-Theme System & Obsidian Monochromatic Preset)**：支持 6 套主题色彩自由切换（曜石黑 `.theme-obsidian` / 罗兰紫 `.theme-violet` / 深海蓝 `.theme-ocean` / 翡翠绿 `.theme-emerald` / 琥珀橙 `.theme-amber` / 玫瑰红 `.theme-crimson`）。“曜石黑”作为极简黑白单色旗舰调色，在亮色模式下以 `#0f172a`（Slate-900）深藏青/黑曜石作为主品牌色，呈现与黑白 Logo 完美融为一体的现代极简教研质感。
+- **系统图标与 Logo 视觉设计规范 (Flat Minimalist Icon & Logo Design Protocol)**：
+  - **平面极简设计**：项目图标与 Logo 统一采用**平面极简风格（Flat Minimalist Style）**。
+  - **禁忌规则**：**严禁使用廉价的 3D 浮雕、塑料质感渲染或俗套的蓝紫大渐变**。
+  - **标准构图与配色**：底座统一采用深藏青/黑曜石圆角矩形（Dark Slate Squircle `#0f172a`），配合极简几何线条（Golden Ratio/Monogram、线条手稿、发光高对比度元素），确保在全平台 Favicon、App 图标与 Header Logo 各种尺寸下均兼具极致辨识度与现代科技教研感。
 - **交互反馈**：所有的按钮、Tab 切换、拖拽上传区域必须有平滑的过渡动画（`transition-all`, `duration-300`）和明显的 Hover 状态反馈。
 - **上传组件**：图片上传区域需设计为带虚线边框、云朵图标的拖拽上传框。API 请求期间必须有明确的 Loading 动画或骨架屏（Skeleton）提示。
 - **排版原则**：参考 Notion，注重留白（Padding/Margin）与呼吸感。

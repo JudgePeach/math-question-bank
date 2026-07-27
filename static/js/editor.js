@@ -835,12 +835,12 @@ const PAGE_LIMIT = 20;
                     Object.entries(knowStats).forEach(([know, knCount]) => {
                         const pct = Math.round((knCount / count) * 100);
                         listContainer.innerHTML += `
-                            <div class="space-y-1 bg-slate-50/70 p-2 rounded-lg border border-slate-100">
-                                <div class="flex justify-between items-center text-[10px] font-semibold text-slate-700">
+                            <div class="space-y-1 bg-slate-50/70 dark:bg-slate-800/50 p-2 rounded-lg border border-slate-100 dark:border-slate-700/60">
+                                <div class="flex justify-between items-center text-[10px] font-semibold text-slate-700 dark:text-slate-200">
                                     <span class="truncate pr-2">${know}</span>
-                                    <span class="font-mono text-slate-550 text-[10px]">${knCount} 题 (${pct}%)</span>
+                                    <span class="font-mono text-slate-550 dark:text-slate-400 text-[10px]">${knCount} 题 (${pct}%)</span>
                                 </div>
-                                <div class="w-full bg-slate-200 h-1.5 rounded-full overflow-hidden">
+                                <div class="w-full bg-slate-200 dark:bg-slate-700 h-1.5 rounded-full overflow-hidden">
                                     <div class="bg-brand-500 h-1.5 rounded-full" style="width: ${pct}%"></div>
                                 </div>
                             </div>
@@ -867,7 +867,7 @@ const PAGE_LIMIT = 20;
             // Pre-fill empty days for previous month alignment
             for (let i = 0; i < firstDayIndex; i++) {
                 const emptyCell = document.createElement('div');
-                emptyCell.className = "bg-slate-100/30 rounded-lg border border-transparent";
+                emptyCell.className = "bg-slate-100/30 dark:bg-slate-800/20 rounded-lg border border-transparent";
                 grid.appendChild(emptyCell);
             }
             
@@ -888,16 +888,16 @@ const PAGE_LIMIT = 20;
                 const isToday = (new Date().getFullYear() === year && new Date().getMonth() + 1 === month && new Date().getDate() === day);
                 
                 if (count > 0) {
-                    dayCell.className = `p-1 bg-red-50/70 border border-red-200/50 hover:bg-red-100/50 rounded-lg flex flex-col justify-between items-center transition-all shadow-sm cursor-help select-none ${isToday ? 'ring-2 ring-red-400' : ''}`;
+                    dayCell.className = `p-1 bg-rose-50/80 dark:bg-rose-500/15 border border-rose-200/60 dark:border-rose-500/30 hover:bg-rose-100/80 dark:hover:bg-rose-500/25 rounded-lg flex flex-col justify-between items-center transition-all shadow-sm cursor-help select-none ${isToday ? 'ring-2 ring-rose-400 dark:ring-rose-400' : ''}`;
                     dayCell.title = `当天最终录入：${count} 道题目`;
                     dayCell.innerHTML = `
-                        <span class="text-[10px] font-bold text-red-800 ${isToday ? 'bg-red-200 px-1 py-0.5 rounded-md' : ''}">${day}</span>
-                        <span class="text-[10px] font-extrabold text-red-500 font-mono animate-[bounce_1.5s_infinite]">+${count}</span>
+                        <span class="text-[10px] font-bold text-rose-800 dark:text-rose-200 ${isToday ? 'bg-rose-200 dark:bg-rose-500/30 px-1 py-0.5 rounded-md' : ''}">${day}</span>
+                        <span class="text-[10px] font-extrabold text-rose-600 dark:text-rose-400 font-mono animate-[bounce_1.5s_infinite]">+${count}</span>
                     `;
                 } else {
-                    dayCell.className = `p-1 bg-white border border-slate-200/40 hover:bg-slate-50 rounded-lg flex flex-col justify-start items-center transition-all select-none ${isToday ? 'ring-2 ring-brand-400 border-brand-300' : ''}`;
+                    dayCell.className = `p-1 bg-white dark:bg-slate-900/50 border border-slate-200/40 dark:border-slate-800 hover:bg-slate-50 dark:hover:bg-slate-800/60 rounded-lg flex flex-col justify-start items-center transition-all select-none ${isToday ? 'ring-2 ring-brand-400 border-brand-300 dark:ring-brand-500' : ''}`;
                     dayCell.innerHTML = `
-                        <span class="text-[10px] font-medium text-slate-550 ${isToday ? 'bg-brand-100 text-brand-700 px-1 py-0.5 rounded-md font-bold' : ''}">${day}</span>
+                        <span class="text-[10px] font-medium text-slate-600 dark:text-slate-300 ${isToday ? 'bg-brand-100 dark:bg-brand-900/60 text-brand-700 dark:text-brand-300 px-1 py-0.5 rounded-md font-bold' : ''}">${day}</span>
                     `;
                 }
                 
@@ -912,13 +912,13 @@ const PAGE_LIMIT = 20;
                 const pad = limit - totalCellsUsed;
                 for (let i = 0; i < pad; i++) {
                     const emptyCell = document.createElement('div');
-                    emptyCell.className = "bg-slate-100/30 rounded-lg border border-transparent";
+                    emptyCell.className = "bg-slate-100/30 dark:bg-slate-800/20 rounded-lg border border-transparent";
                     grid.appendChild(emptyCell);
                 }
             } else {
                 for (let i = 0; i < remainingCells; i++) {
                     const emptyCell = document.createElement('div');
-                    emptyCell.className = "bg-slate-100/30 rounded-lg border border-transparent";
+                    emptyCell.className = "bg-slate-100/30 dark:bg-slate-800/20 rounded-lg border border-transparent";
                     grid.appendChild(emptyCell);
                 }
             }
@@ -1510,20 +1510,49 @@ const PAGE_LIMIT = 20;
         function preprocessFormulaForKaTeX(text) {
             if (!text) return "";
             
+            // Clean up any historical \vphantom{...} or \strut from underline text to prevent KaTeX rendering artifact letters
+            let clean = text.replace(/\\vphantom\s*\{\s*[^}]*?\}/g, '')
+                            .replace(/\\strut\b/g, '');
+
+            // Transform exam-zh \fillin macro into KaTeX compatible \underline
+            clean = clean.replace(/(\$?)\\fillin(?:\[([^\]]*?)\])?(?:\[([^\]]*?)\])?(\$?)/g, function(match, preDollar, p1, p2, postDollar) {
+                const inMath = (preDollar === '$' && postDollar === '$');
+                
+                function isLengthStr(str) {
+                    return /^\s*\d+(?:\.\d+)?\s*(?:cm|mm|in|pt|pc|em|ex)\s*$/i.test(str || '');
+                }
+
+                let innerTex = '\\underline{\\hspace{2.5cm}}';
+
+                if (p1 !== undefined && p2 !== undefined) {
+                    const len = isLengthStr(p1) ? p1 : '2.5cm';
+                    innerTex = '\\underline{\\hspace{' + len + '}' + p2 + '\\hspace{' + len + '}}';
+                } else if (p1 !== undefined) {
+                    if (isLengthStr(p1)) {
+                        innerTex = '\\underline{\\hspace{' + p1 + '}}';
+                    } else {
+                        innerTex = '\\underline{\\quad ' + p1 + ' \\quad}';
+                    }
+                }
+
+                if (inMath) {
+                    return innerTex;
+                } else {
+                    return (preDollar || '') + '$' + innerTex + '$' + (postDollar || '');
+                }
+            });
+
             // Clean up illegal nesting like \underline{\quad $\mathbf{14}$ \quad} in KaTeX
-            let clean = text.replace(/(\\underline\s*\{[^}]*?)\$([^$]+?)\$([^}]*?\})/g, function(match, p1, p2, p3) {
+            clean = clean.replace(/(\\underline\s*\{[^}]*?)\$([^$]+?)\$([^}]*?\})/g, function(match, p1, p2, p3) {
                 return '$' + p1 + p2 + p3 + '$';
             });
             
-            // Auto-heal empty underline spacers like \underline{\hspace{2cm}} to draw visible lines via \vphantom{A}
-            clean = clean.replace(/\\underline\s*\{\s*\\hspace\s*\{([^}]+?)\}\s*\}/g, '\\underline{\\vphantom{A}\\hspace{$1}}');
-            
-            // If \underline{\vphantom{A}\hspace{...}} is directly exposed outside math environments, wrap it inside '$...$' so KaTeX scanner can parse it!
-            clean = clean.replace(/(\$?)\\underline\s*\{\s*\\vphantom\s*\{\s*\w+\s*\}\s*\\hspace\s*\{([^}]+?)\}\s*\}(\$?)/g, function(match, p1, p2, p3) {
+            // If \underline{\hspace{...}} is directly exposed outside math environments, wrap it inside '$...$' so KaTeX scanner can parse it!
+            clean = clean.replace(/(\$?)\\underline\s*\{\s*\\hspace\s*\{([^}]+?)\}\s*\}(\$?)/g, function(match, p1, p2, p3) {
                 if (p1 === '$' || p3 === '$') {
                     return match;
                 }
-                return '$\\underline{\\vphantom{A}\\hspace{' + p2 + '}}$';
+                return '$\\underline{\\hspace{' + p2 + '}}$';
             });
             
             // Protect math blocks to avoid replacing spacing commands inside math environments
@@ -1674,20 +1703,49 @@ const PAGE_LIMIT = 20;
                        .replace(/<ul class="list-disc pl-5 my-2">\s*<\/li>/g, '<ul class="list-disc pl-5 my-2">')
                        .replace(/<ol class="list-decimal pl-5 my-2">\s*<\/li>/g, '<ol class="list-decimal pl-5 my-2">');
             
+            // Clean up any historical \vphantom{...} or \strut from underline text to prevent KaTeX rendering artifact letters
+            text = text.replace(/\\vphantom\s*\{\s*[^}]*?\}/g, '')
+                        .replace(/\\strut\b/g, '');
+
+            // Transform exam-zh \fillin macro into KaTeX compatible \underline
+            text = text.replace(/(\$?)\\fillin(?:\[([^\]]*?)\])?(?:\[([^\]]*?)\])?(\$?)/g, function(match, preDollar, p1, p2, postDollar) {
+                const inMath = (preDollar === '$' && postDollar === '$');
+                
+                function isLengthStr(str) {
+                    return /^\s*\d+(?:\.\d+)?\s*(?:cm|mm|in|pt|pc|em|ex)\s*$/i.test(str || '');
+                }
+
+                let innerTex = '\\underline{\\hspace{2.5cm}}';
+
+                if (p1 !== undefined && p2 !== undefined) {
+                    const len = isLengthStr(p1) ? p1 : '2.5cm';
+                    innerTex = '\\underline{\\hspace{' + len + '}' + p2 + '\\hspace{' + len + '}}';
+                } else if (p1 !== undefined) {
+                    if (isLengthStr(p1)) {
+                        innerTex = '\\underline{\\hspace{' + p1 + '}}';
+                    } else {
+                        innerTex = '\\underline{\\quad ' + p1 + ' \\quad}';
+                    }
+                }
+
+                if (inMath) {
+                    return innerTex;
+                } else {
+                    return (preDollar || '') + '$' + innerTex + '$' + (postDollar || '');
+                }
+            });
+
             // Clean up illegal nesting like \underline{\quad $\mathbf{14}$ \quad} in KaTeX
             text = text.replace(/(\\underline\s*\{[^}]*?)\$([^$]+?)\$([^}]*?\})/g, function(match, p1, p2, p3) {
                 return '$' + p1 + p2 + p3 + '$';
             });
             
-            // Auto-heal empty underline spacers like \underline{\hspace{2cm}} to draw visible lines via \vphantom{A}
-            text = text.replace(/\\underline\s*\{\s*\\hspace\s*\{([^}]+?)\}\s*\}/g, '\\underline{\\vphantom{A}\\hspace{$1}}');
-            
-            // If \underline{\vphantom{A}\hspace{...}} is directly exposed outside math environments, wrap it inside '$...$' so KaTeX scanner can parse it!
-            text = text.replace(/(\$?)\\underline\s*\{\s*\\vphantom\s*\{\s*\w+\s*\}\s*\\hspace\s*\{([^}]+?)\}\s*\}(\$?)/g, function(match, p1, p2, p3) {
+            // If \underline{\hspace{...}} is directly exposed outside math environments, wrap it inside '$...$' so KaTeX scanner can parse it!
+            text = text.replace(/(\$?)\\underline\s*\{\s*\\hspace\s*\{([^}]+?)\}\s*\}(\$?)/g, function(match, p1, p2, p3) {
                 if (p1 === '$' || p3 === '$') {
                     return match;
                 }
-                return '$\\underline{\\vphantom{A}\\hspace{' + p2 + '}}$';
+                return '$\\underline{\\hspace{' + p2 + '}}$';
             });
             
             const placeholders = [];

@@ -21,7 +21,9 @@
 ### 3.1 题目收集与级联标签系统
 - **编辑与实时预览**：题干编辑区与答案终审区采用分栏设计，左侧输入 LaTeX/Markdown，右侧 KaTeX 进行试卷级精美排版和实时预览。
 - **插图管理**：提供单独的图片上传窗口（亦可直接粘贴或拖拽上传）。图片仅保存在本地 `./static/uploads/` 相对路径下，不可在录入阶段固化排版（如居中等样式），排版样式由展示时动态应用。
-- **选择题 choices 环境规范**：所有选择题在入库和存储时，选项部分必须统一格式化为 LaTeX 的 `choices` 环境（使用 `\begin{choices}` 和 `\item` 包裹，且剥离原本的 A., B., C., D. 等标号前缀）。
+- **选择题 choices 环境规范与填空题 \fillin 宏规范**：
+  - 所有选择题在入库和存储时，选项部分必须统一格式化为 LaTeX 的 `choices` 环境（使用 `\begin{choices}` 和 `\item` 包裹，且剥离原本的 A., B., C., D. 等标号前缀）。
+  - **填空题 \fillin 规范与自动自愈 (Fillin Macro Standardization & Self-Healing)**：系统在多模态 OCR 识图（SiliconFlow / 阿里百炼 / 中展 AI）Prompt、试卷 AI 智能拆卷 Prompt 中均强制要求将填空题下划线生成为 `\fillin` 宏。同时在后端录入/修改/拆题逻辑中内置了 `normalize_fillin_macro` 自愈清洗器，会自动将 `______` 或 `\underline{\hspace{...}}` 等旧格式静默升级为标准的 `\fillin`。前端 `preprocessFormulaForKaTeX` 亦已全兼容 `\fillin` 及其带长度/带答案参数的多形态渲染。
   - **前端渲染**：前端将自动依据选项最长字符数 `maxLen` 自适应网格排版（小于等于 10 字为 1行4列，大于 10 且小于等于 24 字为 2行2列，大于 24 字为 1行1列），并自动补全 `A.`, `B.`, `C.`, `D.` 标号。
   - **AI 题库转换**：后端导出 AI 专属只读题库时，会自动将此 `choices` 环境清洗为 Markdown 标准列表 `- A.` / `- B.` 形式，防止干扰大模型。
 - **级联目录体系**：
@@ -137,6 +139,8 @@
 - **A4 仿真纸张与 Live Preview 秒级渲染引擎**：
   - 前端无需同步等待后端 PDF 编译，纯前端结合 KaTeX + 动态 DOM 模拟真实 A4 试卷（210mm x 297mm 纸张比例）。
   - 支持渲染卷头密封线 (`\secret`)、大标题、副标题（连续空格 `&nbsp;` 与 `pre-wrap` 保持与 LaTeX `\large\bfseries` 粗体一致）、考试注意事项框 (`notice` 环境) 和大题分值信息。
+  - **主副标题双向 WYSIWYG 实时编辑 (Bi-directional Title Editing)**：支持在左侧配置栏与右侧 A4 Live Preview 试卷画布上双向自由修改主标题与副标题。A4 画布节点具备 `contenteditable="true"` 属性与琥珀微光 Focus 框，副标题为空时自动展示 `+ 点击在此直接添加副标题 / 备注` 占位提示，打字过程进行增量 DOM 局部更新，做到零闪烁与零丢焦点。
+  - **试卷密封线与注意事项可视化交互显隐 (Secret & Notice Interactive Toggle)**：在 Live Preview 预览中，鼠标悬浮左上角绝密标记可触发 `[移除标记]` 隐去，悬浮注意事项可触发 `[移除注意事项]` 隐去。原位置分别保留精致虚线交互占位块 `[+ 已移除绝密标记]` / `[+ 已移除注意事项]` 支持随时点击一键恢复。导出与编译 LaTeX 时根据 `show_secret` 和 `show_notice` 状态自动将 LaTeX 的 `\secret` 与 `notice` 环境整块进行注释/解注释（`% \secret` / `% \begin{notice}`）。
 - **解答题留白调控 (Solution Space Control)**：
   - 在 A4 Live Preview 视图中，解答题下方实时渲染浅蓝虚线留白区，并提供快捷内联调控按钮 (`[- 1cm]`, `[- 0.5cm]`, `[+ 0.5cm]`, `[+ 1cm]`)。
   - 支持全局留白档位设定（如 `0cm` / `7cm` 等），微调值随试卷序列化存入 `cart`。
@@ -162,6 +166,20 @@
   - 后端 `_PDF_CACHE` 容量为 20，基于全套 LaTeX 源码 MD5 哈希与关联插图文件修改时间戳进行防碰撞校验。相同源码 0ms 复用已有 PDF 字节流，极大减轻本地 CPU 编译开销。
 - **多格式导出能力**：
   - 支持单 PDF 字节流快速下载，以及完整 LaTeX 源码包（`.tex` 主文件与相关配图打包为 `.zip`）导出，供线下 XeLaTeX 高级排版微调。
+
+### 3.14 现代化暗色模式视觉规范 (Modern Dark Mode & Anti-Gloom Protocol)
+- **玻璃底 + 霓虹透光微光 (Vibrant Glass & Neon Tint)**：在暗色模式下，严禁使用浓重晦暗的深纯色（如 `indigo-950`, `emerald-950`, `rose-950`, `amber-950`），此类调色在深色底板上会产生浑浊阴森感。必须采用**高通透玻璃底 + 10% 品牌色霓虹透光微光**（如 `dark:bg-indigo-500/10 dark:border-indigo-500/25`），搭配高对比度亮彩文字（`indigo-200`, `emerald-200`, `amber-200`, `rose-200`）与发光 Icon。
+- **下拉菜单与 Hover 悬浮态规范 (Dropdown & Hover Protocol)**：严禁在下拉菜单项或触发按钮上使用单纯的 `hover:bg-slate-100` 类，防止在暗色模式下被误判为“浅灰底 + 白字”无法识别。必须统一采用 `.glass-dropdown` 容器与 `.glass-dropdown-item` 类，暗色 Hover 状态自动映射为深石墨灰背景 (`rgba(51, 65, 85, 0.85)` Slate-700) 与高亮纯白字 (`#ffffff`)。
+- **弹窗与卡片暗色覆盖层防护 (Modal & Card Overlay Protection)**：全局在 `app.css` 中建立对 `.dark .bg-slate-50\/40` ~ `/90` 等全套透明度变体及 `glass-card` 的暗色保护；同时保护试卷/A4仿真纸张 (`.a4-paper-sheet`) 在暗色模式下强制维持 `#ffffff` 背景与 `#0f172a` 文字。
+
+### 3.15 系统图标与 Logo 视觉设计规范 (Flat Minimalist Icon & Logo Design Protocol)
+- **平面极简设计**：项目图标与 Logo 统一采用**平面极简风格（Flat Minimalist Style）**。
+- **禁忌规则**：**严禁使用廉价的 3D 浮雕、塑料质感渲染或俗套的蓝紫大渐变**。
+- **标准构图与配色**：底座统一采用深藏青/黑曜石圆角矩形（Dark Slate Squircle `#0f172a`），配合极简几何线条（Golden Ratio/Monogram、线条手稿、发光高对比度元素），确保在全平台 Favicon、App 图标与 Header Logo 各种尺寸下均兼具极致辨识度与现代科技教研感。
+
+### 3.16 多主题色彩系统与极简曜石黑预设 (Multi-Theme System & Obsidian Monochromatic Preset)
+- **6大内置调色盘**：包含曜石黑 (`.theme-obsidian`)、罗兰紫 (`.theme-violet`)、深海蓝 (`.theme-ocean`)、翡翠绿 (`.theme-emerald`)、琥珀橙 (`.theme-amber`) 与玫瑰红 (`.theme-crimson`)。
+- **曜石黑 (Obsidian Monochromatic)**：“曜石黑”作为旗舰极简黑白单色调色，在亮色模式下主按键、Tab 高亮与 Badge 以 `#0f172a`（Slate-900）深藏青/黑曜石为主色，搭配高纯白文字与优雅阴影，与黑白 Logo 及标志文本形成极高一致性的现代冷冽教研美学。
 
 ---
 

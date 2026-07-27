@@ -81,7 +81,15 @@ def clean_content_for_latex(content: str, q_type: str = "") -> str:
 
     return text
 
-def build_latex_document(title: str, subtitle: str, paper_type: str, questions_data: list, include_answers: bool = False) -> str:
+def build_latex_document(
+    title: str,
+    subtitle: str,
+    paper_type: str,
+    questions_data: list,
+    include_answers: bool = False,
+    show_secret: bool = True,
+    show_notice: bool = True
+) -> str:
     """
     Generate LaTeX source code based on exam-zh document class matching 试卷类模板.tex.
     questions_data: list of dicts with keys 'question' (Question dict) and 'score' (int).
@@ -136,7 +144,10 @@ def build_latex_document(title: str, subtitle: str, paper_type: str, questions_d
     
     is_exam_style = (paper_type == "exam" or paper_type == "exam_19")
     if is_exam_style:
-        lines.append(r"\secret")
+        if show_secret:
+            lines.append(r"\secret")
+        else:
+            lines.append(r"% \secret")
         lines.append("")
     
     lines.append(r"\maketitle")
@@ -150,11 +161,18 @@ def build_latex_document(title: str, subtitle: str, paper_type: str, questions_d
         lines.append(f"    本试卷共 \\pageref{{LastPage}} 页，{total_q_count} 题。全卷满分 {total_score_sum} 分。考试用时 120 分钟。")
         lines.append(r"\end{center}")
         lines.append("")
-        lines.append(r"\begin{notice}")
-        lines.append(r"  \item 答卷前，考生务必将自己的姓名、考生号、考场号、座位号填写在答题卡上。")
-        lines.append(r"  \item 回答选择题时，选出每小题答案后，用铅笔把答题卡上对应题目的答案标号涂黑，如需改动，用橡皮擦干净后，再选涂其他答案标号。回答非选择题时，将答案写在答题卡上。写在本试卷上无效。")
-        lines.append(r"  \item 考试结束后，将本试卷和答题卡一并交回。")
-        lines.append(r"\end{notice}")
+        if show_notice:
+            lines.append(r"\begin{notice}")
+            lines.append(r"  \item 答卷前，考生务必将自己的姓名、考生号、考场号、座位号填写在答题卡上。")
+            lines.append(r"  \item 回答选择题时，选出每小题答案后，用铅笔把答题卡上对应题目的答案标号涂黑，如需改动，用橡皮擦干净后，再选涂其他答案标号。回答非选择题时，将答案写在答题卡上。写在本试卷上无效。")
+            lines.append(r"  \item 考试结束后，将本试卷和答题卡一并交回。")
+            lines.append(r"\end{notice}")
+        else:
+            lines.append(r"% \begin{notice}")
+            lines.append(r"%   \item 答卷前，考生务必将自己的姓名、考生号、考场号、座位号填写在答题卡上。")
+            lines.append(r"%   \item 回答选择题时，选出每小题答案后，用铅笔把答题卡上对应题目的答案标号涂黑，如需改动，用橡皮擦干净后，再选涂其他答案标号。回答非选择题时，将答案写在答题卡上。写在本试卷上无效。")
+            lines.append(r"%   \item 考试结束后，将本试卷和答题卡一并交回。")
+            lines.append(r"% \end{notice}")
         lines.append("")
 
     # Group questions by question_type
@@ -447,10 +465,10 @@ def extract_figures_for_answer_sheet(content: str) -> str:
 
 def build_answer_sheet_latex(title: str, subtitle: str, questions_data: list) -> str:
     """
-    Generate Answer Sheet (答题卡.tex) LaTeX code based on /Users/yangyunlong/Downloads/答题卡.tex.
+    Generate Answer Sheet (答题卡.tex) LaTeX code based on templates/答题卡.tex or built-in default.
     Dynamic updates: title, question scores, and embedded TikZ/image nodes for Q15-Q19.
     """
-    template_path = "/Users/yangyunlong/Downloads/答题卡.tex"
+    template_path = os.path.join(os.path.dirname(__file__), "templates", "答题卡.tex")
     content = ""
     if os.path.exists(template_path):
         try:

@@ -19,7 +19,9 @@
             title: '2026年高中数学模拟考试试卷',
             subtitle: '',
             paper_type: 'exam_19',
-            solution_space_default: '7.0'
+            solution_space_default: '7.0',
+            show_notice: true,
+            show_secret: true
         },
         filters: {
             compulsory: '',
@@ -375,25 +377,25 @@
         });
 
         container.innerHTML = `
-            <div class="space-y-3 bg-white/80 backdrop-blur-md p-4 rounded-2xl border border-slate-200/70 shadow-sm dark:bg-slate-800/80 dark:border-slate-700/70">
+            <div class="space-y-3 glass-card p-4 rounded-2xl">
                 <!-- Top Row: Paper Metadata -->
                 <div class="grid grid-cols-1 md:grid-cols-3 gap-3">
                     <div>
-                        <label class="block text-2xs font-semibold text-slate-500 mb-1">主标题</label>
+                        <label class="block text-2xs font-semibold text-slate-500 dark:text-slate-400 mb-1">主标题</label>
                         <input type="text" id="paperMetaTitle" value="${escapeHtml(meta.title)}" 
                             oninput="updatePaperMeta('title', this.value)" onchange="updatePaperMeta('title', this.value)"
-                            class="w-full px-3 py-1.5 text-xs rounded-xl border border-slate-200 bg-white focus:ring-2 focus:ring-brand-500 focus:outline-none dark:bg-slate-900/60 dark:border-slate-700 dark:text-slate-200" placeholder="如：2026年高中数学模拟考试试卷">
+                            class="glass-input w-full px-3 py-1.5 text-xs rounded-xl" placeholder="如：2026年高中数学模拟考试试卷">
                     </div>
                     <div>
-                        <label class="block text-2xs font-semibold text-slate-500 mb-1">副标题 / 备注</label>
+                        <label class="block text-2xs font-semibold text-slate-500 dark:text-slate-400 mb-1">副标题 / 备注</label>
                         <input type="text" id="paperMetaSubtitle" value="${escapeHtml(meta.subtitle)}" 
                             oninput="updatePaperMeta('subtitle', this.value)" onchange="updatePaperMeta('subtitle', this.value)"
-                            class="w-full px-3 py-1.5 text-xs rounded-xl border border-slate-200 bg-white focus:ring-2 focus:ring-brand-500 focus:outline-none dark:bg-slate-900/60 dark:border-slate-700 dark:text-slate-200" placeholder="">
+                            class="glass-input w-full px-3 py-1.5 text-xs rounded-xl" placeholder="">
                     </div>
                     <div>
-                        <label class="block text-2xs font-semibold text-slate-500 mb-1">试卷类型预设</label>
+                        <label class="block text-2xs font-semibold text-slate-500 dark:text-slate-400 mb-1">试卷类型预设</label>
                         <select id="paperMetaType" onchange="updatePaperMeta('paper_type', this.value)"
-                            class="w-full px-3 py-1.5 text-xs rounded-xl border border-slate-200 bg-white focus:ring-2 focus:ring-brand-500 focus:outline-none dark:bg-slate-900/60 dark:border-slate-700 dark:text-slate-200">
+                            class="glass-select w-full px-3 py-1.5 text-xs rounded-xl">
                             <option value="exam_19" ${meta.paper_type === 'exam_19' ? 'selected' : ''}>19题高考卷 (含答题卡)</option>
                             <option value="exam" ${meta.paper_type === 'exam' ? 'selected' : ''}>常规试卷</option>
                             <option value="quiz" ${meta.paper_type === 'quiz' ? 'selected' : ''}>日常小练</option>
@@ -404,23 +406,23 @@
                 <!-- Middle Row 1: 3-Level Cascade Curriculum Dropdowns (学段 -> 章节 -> 小节/知识点) -->
                 <div class="grid grid-cols-1 sm:grid-cols-3 gap-2 pt-2 border-t border-slate-100 dark:border-slate-700/60">
                     <div>
-                        <label class="block text-2xs font-semibold text-slate-400 mb-0.5">学段</label>
+                        <label class="block text-2xs font-semibold text-slate-400 mb-0.5 dark:text-slate-400">学段</label>
                         <select id="paperFilterCompulsory" onchange="onPaperFilterChange('compulsory', this.value)"
-                            class="w-full px-2.5 py-1.5 text-xs rounded-xl border border-slate-200 bg-white focus:ring-2 focus:ring-brand-500 focus:outline-none dark:bg-slate-900 dark:border-slate-700 dark:text-slate-200">
+                            class="glass-select w-full px-2.5 py-1.5 text-xs rounded-xl">
                             ${bookOptions}
                         </select>
                     </div>
                     <div>
-                        <label class="block text-2xs font-semibold text-slate-400 mb-0.5">章节</label>
+                        <label class="block text-2xs font-semibold text-slate-400 mb-0.5 dark:text-slate-400">章节</label>
                         <select id="paperFilterChapter" onchange="onPaperFilterChange('chapter', this.value)" ${isChapterDisabled ? 'disabled' : ''}
-                            class="w-full px-2.5 py-1.5 text-xs rounded-xl border border-slate-200 bg-white focus:ring-2 focus:ring-brand-500 focus:outline-none disabled:bg-slate-100 disabled:opacity-60 dark:bg-slate-900 dark:border-slate-700 dark:text-slate-200">
+                            class="glass-select w-full px-2.5 py-1.5 text-xs rounded-xl disabled:opacity-50">
                             ${chapterOptions}
                         </select>
                     </div>
                     <div>
-                        <label class="block text-2xs font-semibold text-slate-400 mb-0.5">小节 / 知识点</label>
+                        <label class="block text-2xs font-semibold text-slate-400 mb-0.5 dark:text-slate-400">小节 / 知识点</label>
                         <select id="paperFilterKnowledge" onchange="onPaperFilterChange('knowledge', this.value)" ${isKnowledgeDisabled ? 'disabled' : ''}
-                            class="w-full px-2.5 py-1.5 text-xs rounded-xl border border-slate-200 bg-white focus:ring-2 focus:ring-brand-500 focus:outline-none disabled:bg-slate-100 disabled:opacity-60 dark:bg-slate-900 dark:border-slate-700 dark:text-slate-200">
+                            class="glass-select w-full px-2.5 py-1.5 text-xs rounded-xl disabled:opacity-50">
                             ${knowledgeOptions}
                         </select>
                     </div>
@@ -429,26 +431,26 @@
                 <!-- Middle Row 2: Question Type, Difficulty & Search Input -->
                 <div class="grid grid-cols-2 sm:grid-cols-4 gap-2">
                     <div>
-                        <label class="block text-2xs font-semibold text-slate-400 mb-0.5">题型</label>
+                        <label class="block text-2xs font-semibold text-slate-400 mb-0.5 dark:text-slate-400">题型</label>
                         <select id="paperFilterType" onchange="onPaperFilterChange('question_type', this.value)"
-                            class="w-full px-2.5 py-1.5 text-xs rounded-xl border border-slate-200 bg-white focus:ring-2 focus:ring-brand-500 focus:outline-none dark:bg-slate-900 dark:border-slate-700 dark:text-slate-200">
+                            class="glass-select w-full px-2.5 py-1.5 text-xs rounded-xl">
                             ${qTypeOptions}
                         </select>
                     </div>
                     <div>
-                        <label class="block text-2xs font-semibold text-slate-400 mb-0.5">难度</label>
+                        <label class="block text-2xs font-semibold text-slate-400 mb-0.5 dark:text-slate-400">难度</label>
                         <select id="paperFilterDifficulty" onchange="onPaperFilterChange('difficulty', this.value)"
-                            class="w-full px-2.5 py-1.5 text-xs rounded-xl border border-slate-200 bg-white focus:ring-2 focus:ring-brand-500 focus:outline-none dark:bg-slate-900 dark:border-slate-700 dark:text-slate-200">
+                            class="glass-select w-full px-2.5 py-1.5 text-xs rounded-xl">
                             ${diffOptions}
                         </select>
                     </div>
                     <div class="col-span-2">
-                        <label class="block text-2xs font-semibold text-slate-400 mb-0.5">来源 / 自定义标签 / 关键词</label>
+                        <label class="block text-2xs font-semibold text-slate-400 mb-0.5 dark:text-slate-400">来源 / 自定义标签 / 关键词</label>
                         <div class="relative">
-                            <i class="fa-solid fa-magnifying-glass text-slate-400 absolute left-3 top-2.5 text-xs"></i>
+                            <i class="fa-solid fa-magnifying-glass text-slate-400 absolute left-3 top-1/2 -translate-y-1/2 text-xs"></i>
                             <input type="text" id="paperFilterKeyword" value="${escapeHtml(f.keyword)}"
                                 oninput="onPaperFilterChange('keyword', this.value)"
-                                class="w-full pl-8 pr-3 py-1.5 text-xs rounded-xl border border-slate-200 bg-white focus:ring-2 focus:ring-brand-500 focus:outline-none dark:bg-slate-900 dark:border-slate-700 dark:text-slate-200" placeholder="搜索题干内容 / 来源 / 标签 / 批注...">
+                                class="glass-input w-full pl-8 pr-3 text-xs rounded-xl" placeholder="搜索题干内容 / 来源 / 标签 / 批注...">
                         </div>
                     </div>
                 </div>
@@ -456,13 +458,13 @@
                 <!-- Bottom Row: AI Prompt Selection Bar -->
                 <div class="pt-2 border-t border-slate-100 dark:border-slate-700/60 flex items-center space-x-2">
                     <div class="relative flex-1">
-                        <i class="fa-solid fa-wand-magic-sparkles text-brand-500 absolute left-3 top-2.5 text-xs"></i>
+                        <i class="fa-solid fa-wand-magic-sparkles text-brand-500 absolute left-3 top-1/2 -translate-y-1/2 text-xs"></i>
                         <input type="text" id="paperAiPromptInput" 
-                            class="w-full pl-8 pr-3 py-1.5 text-xs rounded-xl border border-brand-200/80 bg-brand-50/30 focus:ring-2 focus:ring-brand-500 focus:outline-none dark:bg-slate-900/80 dark:border-slate-700 dark:text-slate-200" 
+                            class="glass-input w-full pl-8 pr-3 text-xs rounded-xl border-brand-200/80" 
                             placeholder="智能一键抽卷：例如“帮我抽 5 道难度中等的函数选择题”"
                             onkeypress="if(event.key==='Enter') triggerAiPaperSelect()">
                     </div>
-                    <button onclick="triggerAiPaperSelect()" class="px-3.5 py-1.5 rounded-xl text-xs font-semibold bg-brand-600 text-white shadow-sm hover:bg-brand-700 active:scale-95 transition-all flex items-center space-x-1 shrink-0">
+                    <button onclick="triggerAiPaperSelect()" class="glass-btn-primary h-[34px] px-3.5 rounded-xl text-xs font-semibold flex items-center space-x-1 shrink-0">
                         <span>智能抽取</span>
                     </button>
                 </div>
@@ -497,6 +499,45 @@
         }
     };
 
+    function syncCanvasHeaderMeta(key, value) {
+        const cleanVal = (value || '').trim();
+        if (key === 'title') {
+            const nodes = document.querySelectorAll('.canvas-meta-title');
+            nodes.forEach(node => {
+                if (node !== document.activeElement) {
+                    if (!cleanVal) {
+                        node.innerHTML = '';
+                    } else if (node.innerText !== value) {
+                        node.innerText = value;
+                    }
+                } else if (!cleanVal && node.innerHTML !== '') {
+                    if (node.innerText.trim() === '') node.innerHTML = '';
+                }
+            });
+            const leftInput = document.getElementById('paperMetaTitle');
+            if (leftInput && leftInput !== document.activeElement && leftInput.value !== value) {
+                leftInput.value = value;
+            }
+        } else if (key === 'subtitle') {
+            const nodes = document.querySelectorAll('.canvas-meta-subtitle');
+            nodes.forEach(node => {
+                if (node !== document.activeElement) {
+                    if (!cleanVal) {
+                        node.innerHTML = '';
+                    } else if (node.innerText !== value) {
+                        node.innerText = value;
+                    }
+                } else if (!cleanVal && node.innerHTML !== '') {
+                    if (node.innerText.trim() === '') node.innerHTML = '';
+                }
+            });
+            const leftInput = document.getElementById('paperMetaSubtitle');
+            if (leftInput && leftInput !== document.activeElement && leftInput.value !== value) {
+                leftInput.value = value;
+            }
+        }
+    }
+
     window.updatePaperMeta = function (key, value) {
         window.PaperStore.meta[key] = value;
         if (key === 'paper_type') {
@@ -509,7 +550,12 @@
             renderPart2FilterSection();
         }
         saveMetaToStorage();
-        window.renderPaperCanvas();
+
+        if (key === 'title' || key === 'subtitle') {
+            syncCanvasHeaderMeta(key, value);
+        } else {
+            window.renderPaperCanvas();
+        }
     };
 
     window.triggerAiPaperSelect = async function () {
@@ -674,12 +720,12 @@
                         <div class="flex items-center space-x-2">
                             ${inCart ? `
                                 <!-- Score Selector -->
-                                <div class="flex items-center space-x-1 bg-slate-100/80 px-2 py-1 rounded-xl dark:bg-slate-700/50">
-                                    <span class="text-xs text-slate-500 font-medium">分值:</span>
+                                <div class="paper-score-pill flex items-center space-x-1 px-2.5 py-1 rounded-xl">
+                                    <span class="text-xs font-medium">分值:</span>
                                     <input type="number" min="1" max="100" value="${currentScore}" 
                                         onchange="window.updatePaperQuestionScore(${q.id}, this.value)"
-                                        class="w-12 text-center text-xs font-bold bg-white rounded-lg border border-slate-200 focus:outline-none dark:bg-slate-800 dark:border-slate-600 dark:text-slate-200">
-                                    <span class="text-xs text-slate-500 font-medium">分</span>
+                                        class="w-12 text-center text-xs font-bold rounded-lg focus:outline-none">
+                                    <span class="text-xs font-medium">分</span>
                                 </div>
 
                                 <!-- Move Up / Move Down -->
@@ -789,7 +835,7 @@
         container.innerHTML = `
             ${aiAnalysisBanner}
             <!-- Top Studio Action Bar (Two Rows Layout) -->
-            <div class="bg-white/80 backdrop-blur-md p-3.5 rounded-2xl border border-slate-200/70 shadow-sm mb-5 flex flex-col space-y-3 dark:bg-slate-800/80 dark:border-slate-700/70">
+            <div class="glass-card p-3.5 rounded-2xl mb-5 flex flex-col space-y-3">
                 <!-- Row 1: Left Stats + Right Paper Management -->
                 <div class="flex items-center justify-between flex-wrap gap-2 pb-2.5 border-b border-slate-100 dark:border-slate-700/60">
                     <!-- Left Stats -->
@@ -910,16 +956,43 @@
         return `
             <!-- Top Secret Mark Bar -->
             ${isExamType ? `
-                <div class="flex justify-between items-center mb-3 text-xs font-serif font-bold text-slate-800 pb-1">
-                    <span>绝密★启用前</span>
-                </div>
+                ${meta.show_secret !== false ? `
+                    <div class="group relative flex justify-between items-center mb-3 text-xs font-serif font-bold text-slate-800 pb-1 border border-transparent hover:border-amber-300 hover:bg-amber-50/40 px-2 py-0.5 rounded-lg transition-all duration-200 cursor-default">
+                        <span>绝密★启用前</span>
+                        <button type="button" onclick="updatePaperMeta('show_secret', false)" 
+                                title="点击移除绝密标记"
+                                class="opacity-0 group-hover:opacity-100 absolute top-0.5 right-1 bg-amber-500 hover:bg-amber-600 text-white text-[10px] font-sans px-2 py-0.5 rounded-full shadow-md transition-all duration-200 flex items-center space-x-1 cursor-pointer z-20">
+                            <i class="fa-solid fa-eye-slash text-[9px]"></i>
+                            <span>移除标记</span>
+                        </button>
+                    </div>
+                ` : `
+                    <div onclick="updatePaperMeta('show_secret', true)" 
+                         title="点击恢复绝密标记"
+                         class="mb-3 border border-dashed border-slate-300 hover:border-brand-400 bg-slate-50/50 hover:bg-brand-50/50 rounded-lg py-0.5 px-2 text-xs text-slate-400 hover:text-brand-600 cursor-pointer transition-all duration-200 group select-none flex items-center space-x-1.5 w-fit">
+                        <i class="fa-solid fa-circle-plus text-slate-400 group-hover:text-brand-500 text-xs group-hover:scale-110 transition-transform"></i>
+                        <span class="font-sans font-medium text-2xs">已移除绝密标记 (点击在此恢复)</span>
+                    </div>
+                `}
             ` : ''}
 
             <!-- Exam Header Title & Subject -->
-            <div class="text-center mb-3">
-                <h1 class="text-2xl font-bold tracking-normal text-slate-900 font-serif mb-1.5">${escapeHtml(meta.title)}</h1>
-                <div class="text-xl font-bold text-slate-900 font-serif my-2">数 学</div>
-                ${meta.subtitle ? `<div class="text-sm font-bold font-serif text-slate-900 my-1.5" style="white-space: pre-wrap;">${escapeHtml(meta.subtitle).replace(/ /g, '&nbsp;')}</div>` : ''}
+            <div class="title-header-group text-center mb-3">
+                <h1 contenteditable="true"
+                    oninput="updatePaperMeta('title', this.innerText)"
+                    onblur="saveMetaToStorage()"
+                    title="点击直接在试卷上修改主标题"
+                    placeholder="+ 点击在此直接添加主标题"
+                    class="canvas-meta-title text-2xl font-bold tracking-normal text-slate-900 font-serif mb-1.5 outline-none hover:bg-amber-50/60 focus:bg-white focus:ring-2 focus:ring-brand-300/80 rounded-lg px-3 py-0.5 transition-all cursor-text inline-block min-w-[200px]"
+                    spellcheck="false">${(meta.title && meta.title.trim()) ? escapeHtml(meta.title) : ''}</h1>
+                <div class="text-xl font-bold text-slate-900 font-serif my-2 select-none">数 学</div>
+                <div contenteditable="true"
+                     oninput="updatePaperMeta('subtitle', this.innerText)"
+                     onblur="saveMetaToStorage()"
+                     title="点击直接在试卷上修改副标题/备注"
+                     placeholder="+ 点击在此直接添加副标题 / 备注"
+                     class="canvas-meta-subtitle text-sm font-bold font-serif text-slate-900 my-1.5 outline-none hover:bg-amber-50/60 focus:bg-white focus:ring-2 focus:ring-brand-300/80 rounded-lg px-3 py-0.5 transition-all cursor-text min-w-[140px] inline-block"
+                     spellcheck="false">${(meta.subtitle && meta.subtitle.trim()) ? escapeHtml(meta.subtitle) : ''}</div>
             </div>
 
             ${isExamType ? `
@@ -927,15 +1000,30 @@
                     本试卷共 ${totalPages} 页，${totalCount} 题。全卷满分 ${totalScore} 分。考试用时 120 分钟。
                 </div>
 
-                <!-- Standard LaTeX Notice Block -->
-                <div class="mb-5 text-[11.5px] leading-relaxed font-serif text-slate-800">
-                    <div class="font-bold mb-1 text-slate-900 text-[12px]">注意事项：</div>
-                    <ol class="list-decimal list-inside space-y-0.5 text-slate-800 pl-4">
-                        <li>答卷前，考生务必将自己的姓名、考生号、考场号、座位号填写在答题卡上。</li>
-                        <li>回答选择题时，选出每小题答案后，用铅笔把答题卡上对应题目的答案标号涂黑，如需改动，用橡皮擦干净后，再选涂其他答案标号。回答非选择题时，将答案写在答题卡上。写在本试卷上无效。</li>
-                        <li>考试结束后，将本试卷和答题卡一并交回。</li>
-                    </ol>
-                </div>
+                <!-- Standard LaTeX Notice Block with Interactive Toggle -->
+                ${meta.show_notice !== false ? `
+                    <div class="group relative mb-5 text-[11.5px] leading-relaxed font-serif text-slate-800 border border-transparent hover:border-amber-300 hover:bg-amber-50/40 p-2.5 rounded-xl transition-all duration-200 cursor-default">
+                        <button type="button" onclick="updatePaperMeta('show_notice', false)" 
+                                title="点击移除注意事项"
+                                class="opacity-0 group-hover:opacity-100 absolute -top-2.5 right-2 bg-amber-500 hover:bg-amber-600 text-white text-[10px] font-sans px-2.5 py-0.5 rounded-full shadow-md transition-all duration-200 flex items-center space-x-1 cursor-pointer z-20">
+                            <i class="fa-solid fa-eye-slash text-[9px]"></i>
+                            <span>移除注意事项</span>
+                        </button>
+                        <div class="font-bold mb-1 text-slate-900 text-[12px]">注意事项：</div>
+                        <ol class="list-decimal list-inside space-y-0.5 text-slate-800 pl-4">
+                            <li>答卷前，考生务必将自己的姓名、考生号、考场号、座位号填写在答题卡上。</li>
+                            <li>回答选择题时，选出每小题答案后，用铅笔把答题卡上对应题目的答案标号涂黑，如需改动，用橡皮擦干净后，再选涂其他答案标号。回答非选择题时，将答案写在答题卡上。写在本试卷上无效。</li>
+                            <li>考试结束后，将本试卷和答题卡一并交回。</li>
+                        </ol>
+                    </div>
+                ` : `
+                    <div onclick="updatePaperMeta('show_notice', true)" 
+                         title="点击恢复注意事项"
+                         class="mb-4 my-2 border border-dashed border-slate-300 hover:border-brand-400 bg-slate-50/50 hover:bg-brand-50/50 rounded-xl p-2 text-center text-xs text-slate-400 hover:text-brand-600 cursor-pointer transition-all duration-200 group select-none flex items-center justify-center space-x-1.5">
+                        <i class="fa-solid fa-circle-plus text-slate-400 group-hover:text-brand-500 text-sm group-hover:scale-110 transition-transform"></i>
+                        <span class="font-sans font-medium text-2xs">已移除注意事项 (点击在此恢复)</span>
+                    </div>
+                `}
             ` : ''}
         `;
     }
@@ -943,7 +1031,7 @@
     function generateA4PaperPagesHtml(cart, meta, totalCount, totalScore) {
         if (cart.length === 0) {
             return `
-                <div class="w-full max-w-[794px] min-h-[1123px] bg-white text-slate-900 px-10 py-12 shadow-2xl rounded-sm border border-slate-300 font-serif leading-relaxed relative overflow-hidden select-none dark:bg-white dark:text-slate-900">
+                <div class="a4-paper-sheet w-full max-w-[794px] min-h-[1123px] bg-white text-slate-900 px-10 py-12 shadow-2xl rounded-sm border border-slate-300 font-serif leading-relaxed relative overflow-hidden select-none">
                     ${renderA4Header(meta, totalCount, totalScore, 1)}
                     <div class="text-center py-24 text-slate-400 font-sans text-xs">暂无试题数据，请在左侧点击“加入试卷”添加题目</div>
                     <div class="absolute bottom-5 left-0 right-0 text-center text-xs font-serif text-slate-700 tracking-wider">数学 &nbsp; 第 1 页 (共 1 页)</div>
@@ -1138,15 +1226,15 @@
                         ondrop="onPaperCanvasDrop(event)">
 
                         <!-- Hover Action Bar: Drag Handle & Quick Move/Remove Buttons -->
-                        <div class="absolute right-2 top-2 opacity-0 group-hover:opacity-100 transition-opacity flex items-center space-x-1 bg-white/95 backdrop-blur-sm px-2 py-0.5 rounded-lg border border-slate-200 shadow-xs text-2xs font-sans select-none z-10">
-                            <span class="text-slate-400 font-medium mr-1"><i class="fa-solid fa-grip-vertical"></i> 按住拖拽排序</span>
-                            <button onclick="event.stopPropagation(); window.movePaperQuestionWithinType('${qType}', ${subIdx}, 'up')" ${subIdx === 0 ? 'disabled' : ''} class="p-0.5 text-slate-500 hover:text-brand-600 disabled:opacity-30" title="上移">
+                        <div class="paper-canvas-toolbar absolute right-2 top-2 opacity-0 group-hover:opacity-100 transition-opacity flex items-center space-x-1.5 px-2.5 py-1 rounded-lg text-2xs font-sans select-none z-10">
+                            <span class="toolbar-label font-medium mr-0.5"><i class="fa-solid fa-grip-vertical"></i> 按住拖拽排序</span>
+                            <button onclick="event.stopPropagation(); window.movePaperQuestionWithinType('${qType}', ${subIdx}, 'up')" ${subIdx === 0 ? 'disabled' : ''} class="toolbar-btn p-0.5 disabled:opacity-30" title="上移">
                                 <i class="fa-solid fa-chevron-up"></i>
                             </button>
-                            <button onclick="event.stopPropagation(); window.movePaperQuestionWithinType('${qType}', ${subIdx}, 'down')" ${subIdx === items.length - 1 ? 'disabled' : ''} class="p-0.5 text-slate-500 hover:text-brand-600 disabled:opacity-30" title="下移">
+                            <button onclick="event.stopPropagation(); window.movePaperQuestionWithinType('${qType}', ${subIdx}, 'down')" ${subIdx === items.length - 1 ? 'disabled' : ''} class="toolbar-btn p-0.5 disabled:opacity-30" title="下移">
                                 <i class="fa-solid fa-chevron-down"></i>
                             </button>
-                            <button onclick="event.stopPropagation(); window.removeFromCart(${q ? q.id : 0})" class="p-0.5 text-slate-400 hover:text-rose-600" title="移出试卷">
+                            <button onclick="event.stopPropagation(); window.removeFromCart(${q ? q.id : 0})" class="toolbar-btn p-0.5 hover:text-rose-500" title="移出试卷">
                                 <i class="fa-solid fa-xmark"></i>
                             </button>
                         </div>
@@ -1207,7 +1295,7 @@
             let pgContent = pgBlocks.map(b => b.html).join('');
 
             pagesHtml += `
-                <div class="w-full max-w-[794px] min-h-[1123px] bg-white text-slate-900 px-10 py-12 shadow-2xl rounded-sm border border-slate-300 font-serif leading-relaxed relative overflow-hidden select-none mb-8 dark:bg-white dark:text-slate-900">
+                <div class="a4-paper-sheet w-full max-w-[794px] min-h-[1123px] bg-white text-slate-900 px-10 py-12 shadow-2xl rounded-sm border border-slate-300 font-serif leading-relaxed relative overflow-hidden select-none mb-8">
                     ${isFirstPage ? renderA4Header(meta, totalCount, totalScore, totalPages) : ''}
                     
                     <div class="space-y-1.5 text-[13px]">
@@ -1319,15 +1407,15 @@
                         ondrop="onPaperCanvasDrop(event)">
 
                         <!-- Hover Action Bar: Drag Handle & Quick Move/Remove Buttons -->
-                        <div class="absolute right-2 top-2 opacity-0 group-hover:opacity-100 transition-opacity flex items-center space-x-1 bg-white/95 backdrop-blur-sm px-2 py-0.5 rounded-lg border border-slate-200 shadow-xs text-2xs font-sans select-none z-10">
-                            <span class="text-slate-400 font-medium mr-1"><i class="fa-solid fa-grip-vertical"></i> 按住拖拽排序</span>
-                            <button onclick="event.stopPropagation(); window.movePaperQuestionWithinType('${qType}', ${subIdx}, 'up')" ${subIdx === 0 ? 'disabled' : ''} class="p-0.5 text-slate-500 hover:text-brand-600 disabled:opacity-30" title="上移">
+                        <div class="paper-canvas-toolbar absolute right-2 top-2 opacity-0 group-hover:opacity-100 transition-opacity flex items-center space-x-1.5 px-2.5 py-1 rounded-lg text-2xs font-sans select-none z-10">
+                            <span class="toolbar-label font-medium mr-0.5"><i class="fa-solid fa-grip-vertical"></i> 按住拖拽排序</span>
+                            <button onclick="event.stopPropagation(); window.movePaperQuestionWithinType('${qType}', ${subIdx}, 'up')" ${subIdx === 0 ? 'disabled' : ''} class="toolbar-btn p-0.5 disabled:opacity-30" title="上移">
                                 <i class="fa-solid fa-chevron-up"></i>
                             </button>
-                            <button onclick="event.stopPropagation(); window.movePaperQuestionWithinType('${qType}', ${subIdx}, 'down')" ${subIdx === items.length - 1 ? 'disabled' : ''} class="p-0.5 text-slate-500 hover:text-brand-600 disabled:opacity-30" title="下移">
+                            <button onclick="event.stopPropagation(); window.movePaperQuestionWithinType('${qType}', ${subIdx}, 'down')" ${subIdx === items.length - 1 ? 'disabled' : ''} class="toolbar-btn p-0.5 disabled:opacity-30" title="下移">
                                 <i class="fa-solid fa-chevron-down"></i>
                             </button>
-                            <button onclick="event.stopPropagation(); window.removeFromCart(${q ? q.id : 0})" class="p-0.5 text-slate-400 hover:text-rose-600" title="移出试卷">
+                            <button onclick="event.stopPropagation(); window.removeFromCart(${q ? q.id : 0})" class="toolbar-btn p-0.5 hover:text-rose-500" title="移出试卷">
                                 <i class="fa-solid fa-xmark"></i>
                             </button>
                         </div>
@@ -1598,6 +1686,8 @@
                 title: window.PaperStore.meta.title,
                 subtitle: window.PaperStore.meta.subtitle,
                 paper_type: window.PaperStore.meta.paper_type,
+                show_notice: window.PaperStore.meta.show_notice !== false,
+                show_secret: window.PaperStore.meta.show_secret !== false,
                 target: target,
                 questions: cartQuestions
             };
@@ -1726,6 +1816,8 @@
                 title: window.PaperStore.meta.title,
                 subtitle: window.PaperStore.meta.subtitle,
                 paper_type: window.PaperStore.meta.paper_type,
+                show_notice: window.PaperStore.meta.show_notice !== false,
+                show_secret: window.PaperStore.meta.show_secret !== false,
                 questions: cartQuestions
             };
 
@@ -1795,6 +1887,8 @@
                 title: window.PaperStore.meta.title,
                 subtitle: window.PaperStore.meta.subtitle,
                 paper_type: window.PaperStore.meta.paper_type,
+                show_notice: window.PaperStore.meta.show_notice !== false,
+                show_secret: window.PaperStore.meta.show_secret !== false,
                 questions: cartQuestions
             };
 
@@ -1857,6 +1951,8 @@
                 title: window.PaperStore.meta.title,
                 subtitle: window.PaperStore.meta.subtitle,
                 paper_type: window.PaperStore.meta.paper_type,
+                show_notice: window.PaperStore.meta.show_notice !== false,
+                show_secret: window.PaperStore.meta.show_secret !== false,
                 questions: cart
             };
 
@@ -2011,6 +2107,8 @@
                 window.PaperStore.meta.title = paper.title || '未命名试卷';
                 window.PaperStore.meta.subtitle = paper.subtitle || '';
                 window.PaperStore.meta.paper_type = paper.paper_type || 'exam';
+                window.PaperStore.meta.show_notice = paper.show_notice !== false;
+                window.PaperStore.meta.show_secret = paper.show_secret !== false;
 
                 // Rebuild cart & questionsMap
                 window.PaperStore.cart = [];

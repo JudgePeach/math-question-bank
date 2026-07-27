@@ -1363,7 +1363,7 @@
 
         // Global Theme Color and Dark Mode Management
         window.changeTheme = function(themeName, save = true) {
-            const themes = ['theme-violet', 'theme-emerald', 'theme-ocean', 'theme-amber', 'theme-crimson'];
+            const themes = ['theme-obsidian', 'theme-violet', 'theme-emerald', 'theme-ocean', 'theme-amber', 'theme-crimson'];
             
             // Remove all themes from document root and body
             themes.forEach(t => {
@@ -1381,18 +1381,19 @@
             const nameSpan = document.getElementById('currentThemeName');
             if (dot && nameSpan) {
                 const colorMap = {
+                    'obsidian': '#0f172a',
                     'violet': '#8b5cf6',
                     'ocean': '#0ea5e9',
                     'emerald': '#10b981',
                     'amber': '#f59e0b',
                     'crimson': '#f43f5e'
                 };
-                dot.style.backgroundColor = colorMap[themeName] || '#8b5cf6';
+                dot.style.backgroundColor = colorMap[themeName] || '#0f172a';
                 nameSpan.textContent = getThemeChineseName(themeName);
             }
             
             // Update check marks
-            const themesOnly = ['violet', 'ocean', 'emerald', 'amber', 'crimson'];
+            const themesOnly = ['obsidian', 'violet', 'ocean', 'emerald', 'amber', 'crimson'];
             themesOnly.forEach(t => {
                 const check = document.getElementById(`check-${t}`);
                 if (check) {
@@ -1618,6 +1619,7 @@
 
         function getThemeChineseName(themeName) {
             const names = {
+                'obsidian': '曜石黑',
                 'violet': '罗兰紫',
                 'emerald': '翡翠绿',
                 'ocean': '深海蓝',
