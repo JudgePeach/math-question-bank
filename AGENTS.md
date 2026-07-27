@@ -82,6 +82,10 @@
   - **高可用终端交互**：为了在编写教案、备课或课件时让 AI（如 Claude Code, Cursor 等）能极速、大容量地访问本地题库并摆脱读取大文件的性能瓶颈，系统在根目录提供了一个高能 CLI 检索工具 `search_questions.py`。
   - **极速检索模式**：AI 代理应优先在终端中通过运行 `python3 search_questions.py -q <关键词>` 模糊匹配学段、章节、知识点、题干、来源或自定义标签，以结构化 Markdown + LaTeX 公式混合的形式拉取题目。
   - **命令参数速查**：支持 `-q` (模糊词), `-n` (返回数限制，默认 50，使用 `-1` 为无上限), `-a` (携带答案、解析与点评), `-t` (题型过滤), `-d` (难度过滤), `-r` (查询与特定 ID 题目发生双向关联的全部题目)。
+- **历史填空题下划线批量升级迁移工具 (`migrate_fillin.py`)**：
+  - **功能用途**：扫描本地 SQLite 数据库中所有已入库题目，自动将题干中遗留的旧下划线格式（如 `______`、`\underline{...}`、`\fillin[...]`）批量规范化清洗为 100% 纯粹干净的 `\fillin` 宏。
+  - **自动落盘与数据同步**：迁移完成后会自动触发 `export_database_to_files()`，同步刷新 `data_backup/questions_backup.json` 备份文件与 `data_backup/questions_library.md` AI 专属题库文件。
+  - **运行指令**：在项目根目录下直接执行 `python3 migrate_fillin.py`。
 
 ### 3.4 题目双向关联与题组管理
 - **关联机制**：系统通过 `association_group_id` 对题目发生双向关联（如变式题、一题多问的子母题）。

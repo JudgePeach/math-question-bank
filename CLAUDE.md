@@ -78,6 +78,10 @@
     - `-a`, `--with-answers`：是否携带答案与详细解析（默认隐藏以防 AI 答案泄露）。
     - `-t`, `--type`：过滤特定题型 (`single_choice`, `multi_choice`, `fill_in_blank`, `detailed_answer`)。
     - `-d`, `--difficulty`：过滤难度等级 (`easy`, `medium`, `hard`)。
+- **历史填空题下划线批量升级迁移工具 (`migrate_fillin.py`)**：
+  - **功能用途**：扫描本地 SQLite 数据库中所有已入库题目，自动将题干中遗留的旧下划线格式（如 `______`、`\underline{...}`、`\fillin[...]`）批量规范化清洗为 100% 纯粹干净的 `\fillin` 宏。
+  - **自动落盘与数据同步**：迁移完成后会自动触发 `export_database_to_files()`，同步刷新 `data_backup/questions_backup.json` 备份文件与 `data_backup/questions_library.md` AI 专属题库文件。
+  - **运行指令**：在项目根目录下直接执行 `python3 migrate_fillin.py`。
     - `-r`, `--related-to`：查询与特定 ID 题目发生双向关联的全部题目。
 - **并发写保护锁 (`threading.Lock`)**：后台写盘操作被全局线程锁保护。即使连续高频修改，写入任务也会在后台自动排队执行，绝对防止多线程冲突带来的文件损坏。
 
