@@ -508,7 +508,7 @@ def build_answer_sheet_latex(title: str, subtitle: str, questions_data: list) ->
     \useasboundingbox (0,0) rectangle (39.2,28.25);
     \node[font=\fontsize{16pt}{16pt}\selectfont] at (6.45,27.3) {\color{mycolor}\textbf{2026年普通高等学校招生全国统一考试}};
     \node[font=\fontsize{22pt}{22pt}\selectfont] at (6.45,26.3){\textbf{数学答题卡}};
-    \node at (6.45,25) {试室号：\textcolor{mycolor}{\underline{\hspace{1.3cm}}} \hspace{0.6em}座位号：\textcolor{mycolor}{\underline{\hspace{1.3cm}}}\hspace{0.6em}姓名：\textcolor{mycolor}{\underline{\hspace{2.2cm}}} \hspace{0.6em}班级：\textcolor{mycolor}{\underline{\hspace{1.8cm}}}};
+    \node at (6.45,25) {考场号：\textcolor{mycolor}{\underline{\hspace{1.3cm}}} \hspace{0.6em}座位号：\textcolor{mycolor}{\underline{\hspace{1.3cm}}}\hspace{0.6em}姓名：\textcolor{mycolor}{\underline{\hspace{2.2cm}}} \hspace{0.6em}班级：\textcolor{mycolor}{\underline{\hspace{1.8cm}}}};
     
     \def\rows{10}\def\cols{10}\def\cellw{0.8}\def\cellh{0.5}\def\beginx{4.9}\def\beginy0{24.2}\def\fontHeight{0.6}\def\smallHeight{0.2}\def\selectw{0.5}\def\selecth{0.25}
     \foreach \col [evaluate=\col as \x using \beginx+\col*\cellw] in {0,...,\cols} { \draw[mycolor] (\x, \beginy0-\fontHeight) -- (\x,\beginy0-\fontHeight-\cellw-\cellh*\rows-2*\smallHeight); }
@@ -532,7 +532,7 @@ def build_answer_sheet_latex(title: str, subtitle: str, questions_data: list) ->
     \def\startx{0}\def\starty{24.2}\def\squarew{4.7}\def\squareh{6.8}\def\fontmarginx{0.1}\def\fontmarginy{0.1}
     \draw[mycolor] (\startx,\starty) rectangle ++(\squarew,-\squareh);
     \node[text width=4.3cm,align=left,anchor=north west] at (\startx+\fontmarginx,\starty-\fontmarginy)
-        {\fontsize{8pt}{8pt}\selectfont\textbf{注意事项}：\\1．答题前，考生务必用黑色字迹的钢笔或签字笔将试室号、座位号、姓名和考生号填写在答题卡上，并用2B铅笔将考生号对应的数字涂黑。\\2．选择题的选出每小题答案后，用2B铅笔把答题卡上对应题目的答案标号涂黑。如需改动，用橡皮擦擦干净后，再选其它答案标号涂黑。非选择题的答案不能超出指定答题区域。\\3．答题卡保持卡面整洁，不要折叠和弄破。\\};
+        {\fontsize{8pt}{8pt}\selectfont\textbf{注意事项}：\\1．答题前，考生务必用黑色字迹的钢笔或签字笔将考场号、座位号、姓名和考生号填写在答题卡上，并用2B铅笔将考生号对应的数字涂黑。\\2．选择题的选出每小题答案后，用2B铅笔把答题卡上对应题目的答案标号涂黑。如需改动，用橡皮擦擦干净后，再选其它答案标号涂黑。非选择题的答案不能超出指定答题区域。\\3．答题卡保持卡面整洁，不要折叠和弄破。\\};
 
     \def\bigx{0}\def\bigy{16.9}\def\bigw{12.9}\def\bigh{16.3}
     \draw[rounded corners=10pt,mycolor] (\bigx,\bigy) rectangle ++(\bigw,-\bigh);
