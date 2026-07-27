@@ -58,7 +58,7 @@ def heal_database_curriculum_names():
             )
             updated_mappings += res
 
-        # 清理在主表 questions 中残留的不属于当前大纲小节列表的旧章名/错位知识点
+        # 清理在主表 questions 及镜像表 question_curriculums 中残留的不属于各自大纲小节列表的旧章名/错位知识点
         curr = get_current_curriculum()
         healed_know_count = 0
         all_qs = db.query(Question).all()
@@ -70,6 +70,15 @@ def heal_database_curriculum_names():
                 valid_knows = curr.get(comp, {}).get(chap, [])
                 if know not in valid_knows:
                     q.category_knowledge = ""
+                    healed_know_count += 1
+
+        all_qcs = db.query(QuestionCurriculum).all()
+        for qc in all_qcs:
+            if qc.knowledge:
+                c_tree = RENJIAO_A_CURRICULUM if qc.version_code == "A" else curr
+                valid_knows = c_tree.get(qc.compulsory, {}).get(qc.chapter, [])
+                if qc.knowledge not in valid_knows:
+                    qc.knowledge = ""
                     healed_know_count += 1
             
         if updated_questions > 0 or updated_mappings > 0 or healed_know_count > 0:
@@ -2590,6 +2599,91 @@ def get_active_version_code() -> str:
 def get_metadata_config():
     return METADATA_CACHE
 
+def route_chapter(comp: str, chap: str, know: str, target: str) -> tuple[str, str, str]:
+    """跨大纲版本智能章节与小节路由翻译算法，返回 (new_compulsory, new_chapter, new_knowledge)"""
+    combined = f"{comp} {chap} {know}"
+    new_comp, new_chap = "", ""
+    if target == "A":
+        if "集合" in combined: new_comp, new_chap = "必修一", "1. 集合与常用逻辑用语"
+        elif "逻辑" in combined: new_comp, new_chap = "必修一", "1. 集合与常用逻辑用语"
+        elif "等式" in combined or "不等式" in combined: new_comp, new_chap = "必修一", "2. 一元二次函数、方程和不等式"
+        elif "指数" in combined or "对数" in combined: new_comp, new_chap = "必修一", "4. 指数函数与对数函数"
+        elif "三角函数" in combined or "三角恒等" in combined: new_comp, new_chap = "必修一", "5. 三角函数"
+        elif "函数" in combined: new_comp, new_chap = "必修一", "3. 函数的概念与性质"
+        elif "解三角形" in combined or "正弦" in combined or "余弦" in combined: new_comp, new_chap = "必修二", "6. 平面向量及其应用"
+        elif "数量积" in combined or "平面向量" in combined: new_comp, new_chap = "必修二", "6. 平面向量及其应用"
+        elif "复数" in combined: new_comp, new_chap = "必修二", "7. 复数"
+        elif "立体几何" in combined and "空间向量" not in combined: new_comp, new_chap = "必修二", "8. 立体几何初步"
+        elif "空间向量" in combined: new_comp, new_chap = "选修一", "1. 空间向量与立体几何"
+        elif "直线" in combined or "圆的方程" in combined: new_comp, new_chap = "选修一", "2. 直线和圆的方程"
+        elif "圆" in combined and "圆锥曲线" not in combined: new_comp, new_chap = "选修一", "2. 直线和圆的方程"
+        elif "圆锥曲线" in combined or "椭圆" in combined or "双曲线" in combined or "抛物线" in combined: new_comp, new_chap = "选修一", "3. 圆锥曲线的方程"
+        elif "解析几何" in combined: new_comp, new_chap = "选修一", "2. 直线和圆的方程"
+        elif "数列" in combined: new_comp, new_chap = "选修二", "4. 数列"
+        elif "导数" in combined: new_comp, new_chap = "选修二", "5. 一元函数的导数及其应用"
+        elif "计数" in combined or "排列" in combined or "组合" in combined or "二项式" in combined: new_comp, new_chap = "选修三", "6. 计数原理"
+        elif "概率" in combined or "随机变量" in combined or "分布" in combined: new_comp, new_chap = "选修三", "7. 随机变量及其分布"
+        elif "统计" in combined or "回归" in combined or "独立性" in combined or "成对" in combined: new_comp, new_chap = "选修三", "8. 成对数据的统计分析"
+        else: new_comp, new_chap = "必修一", "1. 集合与常用逻辑用语"
+    elif target == "B":
+        if "集合" in combined: new_comp, new_chap = "必修一", "第一章 集合与常用逻辑用语"
+        elif "逻辑" in combined: new_comp, new_chap = "必修一", "第一章 集合与常用逻辑用语"
+        elif "等式" in combined or "不等式" in combined: new_comp, new_chap = "必修一", "第二章 等式与不等式"
+        elif "指数" in combined or "对数" in combined: new_comp, new_chap = "必修二", "第四章 指数函数、对数函数与幂函数"
+        elif "三角函数" in combined: new_comp, new_chap = "必修三", "第七章 三角函数"
+        elif "函数" in combined: new_comp, new_chap = "必修一", "第三章 函数"
+        elif "解三角形" in combined or "正弦" in combined or "余弦" in combined: new_comp, new_chap = "必修四", "第九章 解三角形"
+        elif "数量积" in combined or "三角恒等" in combined: new_comp, new_chap = "必修三", "第八章 向量的数量积与三角恒等变换"
+        elif "平面向量" in combined: new_comp, new_chap = "必修二", "第六章 平面向量初步"
+        elif "复数" in combined: new_comp, new_chap = "必修四", "第十章 复数"
+        elif "立体几何" in combined and "空间向量" not in combined: new_comp, new_chap = "必修四", "第十一章 立体几何初步"
+        elif "空间向量" in combined: new_comp, new_chap = "选修一", "第一章 空间向量与立体几何"
+        elif "直线" in combined or "圆" in combined or "圆锥曲线" in combined or "椭圆" in combined or "双曲线" in combined or "抛物线" in combined: new_comp, new_chap = "选修一", "第二章 平面解析几何"
+        elif "解析几何" in combined: new_comp, new_chap = "选修一", "第二章 平面解析几何"
+        elif "数列" in combined: new_comp, new_chap = "选修三", "第五章 数列"
+        elif "导数" in combined: new_comp, new_chap = "选修三", "第六章 导数及其应用"
+        elif "计数" in combined or "排列" in combined or "组合" in combined or "二项式" in combined: new_comp, new_chap = "选修二", "第三章 排列、组合与二项式定理"
+        elif "随机变量" in combined or "条件概率" in combined or "回归" in combined or "独立性" in combined or "成对" in combined: new_comp, new_chap = "选修二", "第四章 概率与统计"
+        elif "统计" in combined or "概率" in combined: new_comp, new_chap = "必修二", "第五章 统计与概率"
+        else: new_comp, new_chap = "必修一", "第一章 集合与常用逻辑用语"
+    elif target == "S":
+        if "集合" in combined: new_comp, new_chap = "必修一", "第1章 集合"
+        elif "逻辑" in combined: new_comp, new_chap = "必修一", "第2章 常用逻辑用语"
+        elif "等式" in combined or "不等式" in combined: new_comp, new_chap = "必修一", "第3章 不等式"
+        elif "指数" in combined or "对数" in combined: new_comp, new_chap = "必修一", "第4章 指数与对数"
+        elif "三角函数" in combined: new_comp, new_chap = "必修一", "第7章 三角函数"
+        elif "函数" in combined: new_comp, new_chap = "必修一", "第5章 函数概念与性质"
+        elif "解三角形" in combined or "正弦" in combined or "余弦" in combined: new_comp, new_chap = "必修二", "第11章 解三角形"
+        elif "数量积" in combined or "平面向量" in combined: new_comp, new_chap = "必修二", "第9章 平面向量"
+        elif "三角恒等" in combined: new_comp, new_chap = "必修二", "第10章 三角恒等变换"
+        elif "复数" in combined: new_comp, new_chap = "必修二", "第12章 复数"
+        elif "立体几何" in combined and "空间向量" not in combined: new_comp, new_chap = "必修二", "第13章 立体几何初步"
+        elif "空间向量" in combined: new_comp, new_chap = "选修二", "第6章 空间向量与立体几何"
+        elif "直线" in combined: new_comp, new_chap = "选修一", "第1章 直线与方程"
+        elif "圆" in combined and "圆锥曲线" not in combined: new_comp, new_chap = "选修一", "第2章 圆与方程"
+        elif "圆锥曲线" in combined or "椭圆" in combined or "双曲线" in combined or "抛物线" in combined: new_comp, new_chap = "选修一", "第3章 圆锥曲线与方程"
+        elif "解析几何" in combined: new_comp, new_chap = "选修一", "第1章 直线与方程"
+        elif "数列" in combined: new_comp, new_chap = "选修一", "第4章 数列"
+        elif "导数" in combined: new_comp, new_chap = "选修一", "第5章 导数及其应用"
+        elif "计数" in combined or "排列" in combined or "组合" in combined or "二项式" in combined: new_comp, new_chap = "选修二", "第7章 计数原理"
+        elif "随机变量" in combined or "条件概率" in combined: new_comp, new_chap = "选修二", "第8章 概率"
+        elif "回归" in combined or "独立性" in combined or "成对" in combined: new_comp, new_chap = "选修二", "第9章 统计"
+        elif "统计" in combined: new_comp, new_chap = "必修二", "第14章 统计"
+        elif "概率" in combined: new_comp, new_chap = "必修二", "第15章 概率"
+        else: new_comp, new_chap = "必修一", "第1章 集合"
+
+    active_v = get_active_version_code()
+    if target == active_v:
+        c_tree = METADATA_CACHE.get("curriculum", {})
+    elif target == "A":
+        c_tree = RENJIAO_A_CURRICULUM
+    else:
+        c_tree = METADATA_CACHE.get("curriculum", {}) if active_v == target else {}
+    
+    valid_knows = c_tree.get(new_comp, {}).get(new_chap, [])
+    new_know = know if know in valid_knows else ""
+    return new_comp, new_chap, new_know
+
 @app.post("/api/config/metadata")
 def save_metadata_config(payload: dict, db: Session = Depends(get_db)):
     global METADATA_CACHE
@@ -2631,91 +2725,6 @@ def save_metadata_config(payload: dict, db: Session = Depends(get_db)):
         
         # Incremental migration if curriculum version shifts
         if source_version != target_version:
-            def route_chapter(comp: str, chap: str, know: str, target: str) -> tuple[str, str]:
-                combined = f"{comp} {chap} {know}"
-                if target == "A":
-                    if "集合" in combined: return "必修一", "1. 集合与常用逻辑用语"
-                    if "逻辑" in combined: return "必修一", "1. 集合与常用逻辑用语"
-                    if "等式" in combined or "不等式" in combined: return "必修一", "2. 一元二次函数、方程和不等式"
-                    if "指数" in combined or "对数" in combined: return "必修一", "4. 指数函数与对数函数"
-                    if "三角函数" in combined or "三角恒等" in combined: return "必修一", "5. 三角函数"
-                    if "函数" in combined: return "必修一", "3. 函数的概念与性质"
-                    if "解三角形" in combined or "正弦" in combined or "余弦" in combined: return "必修二", "6. 平面向量及其应用"
-                    if "数量积" in combined or "平面向量" in combined: return "必修二", "6. 平面向量及其应用"
-                    if "复数" in combined: return "必修二", "7. 复数"
-                    if "立体几何" in combined and "空间向量" not in combined: return "必修二", "8. 立体几何初步"
-                    if "空间向量" in combined: return "选修一", "1. 空间向量与立体几何"
-                    if "直线" in combined or "圆的方程" in combined: return "选修一", "2. 直线和圆的方程"
-                    if "圆" in combined and "圆锥曲线" not in combined: return "选修一", "2. 直线和圆的方程"
-                    if "圆锥曲线" in combined or "椭圆" in combined or "双曲线" in combined or "抛物线" in combined: return "选修一", "3. 圆锥曲线的方程" # wait: keep exact:
-                    if "解析几何" in combined: return "选修一", "2. 直线和圆的方程"
-                    if "数列" in combined: return "选修二", "4. 数列"
-                    if "导数" in combined: return "选修二", "5. 一元函数的导数及其应用"
-                    if "计数" in combined or "排列" in combined or "组合" in combined or "二项式" in combined: return "选修三", "6. 计数原理"
-                    # Elective stats/prob check
-                    if "选修" in combined or "选择性" in combined:
-                        if "概率" in combined or "随机变量" in combined or "分布" in combined: return "选修三", "7. 随机变量及其分布"
-                        if "统计" in combined or "回归" in combined or "独立性" in combined or "成对" in combined: return "选修三", "8. 成对数据的统计分析"
-                    if "回归" in combined or "独立性" in combined or "成对" in combined: return "选修三", "8. 成对数据的统计分析"
-                    if "统计" in combined: return "必修二", "9. 统计"
-                    if "概率" in combined: return "必修二", "10. 概率"
-                    return "必修一", "1. 集合与常用逻辑用语"
-                elif target == "B":
-                    if "集合" in combined: return "必修一", "第一章 集合与常用逻辑用语"
-                    if "逻辑" in combined: return "必修一", "第一章 集合与常用逻辑用语"
-                    if "等式" in combined or "不等式" in combined: return "必修一", "第二章 等式与不等式"
-                    if "指数" in combined or "对数" in combined: return "必修二", "第四章 指数函数、对数函数与幂函数"
-                    if "三角函数" in combined: return "必修三", "第七章 三角函数"
-                    if "函数" in combined: return "必修一", "第三章 函数"
-                    if "解三角形" in combined or "正弦" in combined or "余弦" in combined: return "必修四", "第九章 解三角形"
-                    if "数量积" in combined or "三角恒等" in combined: return "必修三", "第八章 向量的数量积与三角恒等变换"
-                    if "平面向量" in combined: return "必修二", "第六章 平面向量初步"
-                    if "复数" in combined: return "必修四", "第十章 复数"
-                    if "立体几何" in combined and "空间向量" not in combined: return "必修四", "第十一章 立体几何初步"
-                    if "空间向量" in combined: return "选修一", "第一章 空间向量与立体几何"
-                    if "直线" in combined or "圆" in combined or "圆锥曲线" in combined or "椭圆" in combined or "双曲线" in combined or "抛物线" in combined: return "选修一", "第二章 平面解析几何"
-                    if "解析几何" in combined: return "选修一", "第二章 平面解析几何"
-                    if "数列" in combined: return "选修三", "第五章 数列"
-                    if "导数" in combined: return "选修三", "第六章 导数及其应用"
-                    if "计数" in combined or "排列" in combined or "组合" in combined or "二项式" in combined: return "选修二", "第三章 排列、组合与二项式定理"
-                    # Elective stats/prob check
-                    if "选修" in combined or "选择性" in combined:
-                        if "概率" in combined or "统计" in combined or "随机变量" in combined: return "选修二", "第四章 概率与统计"
-                    if "随机变量" in combined or "条件概率" in combined: return "选修二", "第四章 概率与统计"
-                    if "回归" in combined or "独立性" in combined or "成对" in combined: return "选修二", "第四章 概率与统计"
-                    if "统计" in combined or "概率" in combined: return "必修二", "第五章 统计与概率"
-                    return "必修一", "第一章 集合与常用逻辑用语"
-                elif target == "S":
-                    if "集合" in combined: return "必修一", "第1章 集合"
-                    if "逻辑" in combined: return "必修一", "第2章 常用逻辑用语"
-                    if "等式" in combined or "不等式" in combined: return "必修一", "第3章 不等式"
-                    if "指数" in combined or "对数" in combined: return "必修一", "第4章 指数与对数"
-                    if "三角函数" in combined: return "必修一", "第7章 三角函数"
-                    if "函数" in combined: return "必修一", "第5章 函数概念与性质"
-                    if "解三角形" in combined or "正弦" in combined or "余弦" in combined: return "必修二", "第11章 解三角形"
-                    if "数量积" in combined or "平面向量" in combined: return "必修二", "第9章 平面向量"
-                    if "三角恒等" in combined: return "必修二", "第10章 三角恒等变换"
-                    if "复数" in combined: return "必修二", "第12章 复数"
-                    if "立体几何" in combined and "空间向量" not in combined: return "必修二", "第13章 立体几何初步"
-                    if "空间向量" in combined: return "选修二", "第6章 空间向量与立体几何"
-                    if "直线" in combined: return "选修一", "第1章 直线与方程"
-                    if "圆" in combined and "圆锥曲线" not in combined: return "选修一", "第2章 圆与方程"
-                    if "圆锥曲线" in combined or "椭圆" in combined or "双曲线" in combined or "抛物线" in combined: return "选修一", "第3章 圆锥曲线与方程"
-                    if "解析几何" in combined: return "选修一", "第1章 直线与方程"
-                    if "数列" in combined: return "选修一", "第4章 数列"
-                    if "导数" in combined: return "选修一", "第5章 导数及其应用"
-                    if "计数" in combined or "排列" in combined or "组合" in combined or "二项式" in combined: return "选修二", "第7章 计数原理"
-                    # Elective stats/prob check
-                    if "选修" in combined or "选择性" in combined:
-                        if "概率" in combined or "随机变量" in combined or "分布" in combined: return "选修二", "第8章 概率"
-                        if "统计" in combined or "回归" in combined or "独立性" in combined or "成对" in combined: return "选修二", "第9章 统计"
-                    if "随机变量" in combined or "条件概率" in combined: return "选修二", "第8章 概率"
-                    if "回归" in combined or "独立性" in combined or "成对" in combined: return "选修二", "第9章 统计"
-                    if "统计" in combined: return "必修二", "第14章 统计"
-                    if "概率" in combined: return "必修二", "第15章 概率"
-                    return "必修一", "第1章 集合"
-                return "", ""
-
             # Check and run incremental migration for all questions that do not have classifications for target_version
             all_questions = db.query(Question).all()
             for q in all_questions:
@@ -2729,7 +2738,7 @@ def save_metadata_config(payload: dict, db: Session = Depends(get_db)):
                         QuestionCurriculum.version_code == source_version
                     ).first()
                     if source_map and source_map.compulsory:
-                        new_comp, new_chap = route_chapter(
+                        new_comp, new_chap, new_know = route_chapter(
                             source_map.compulsory, source_map.chapter, source_map.knowledge, target_version
                         )
                         if not target_map:
@@ -2740,7 +2749,7 @@ def save_metadata_config(payload: dict, db: Session = Depends(get_db)):
                             db.add(target_map)
                         target_map.compulsory = new_comp
                         target_map.chapter = new_chap
-                        target_map.knowledge = ""
+                        target_map.knowledge = new_know
             db.commit()
 
         # Batch update main questions table categories with target version values
