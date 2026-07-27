@@ -1509,7 +1509,8 @@ const PAGE_LIMIT = 20;
 
         function cleanChoiceStemParentheses(text) {
             if (!text) return "";
-            return text.replace(/(?:[\s\xa0]*[\(（]\s*(?:\\quad|\\qquad|\\hspace\{.*?\}|_\s*)*\s*[\)）]\s*)+$/, '').trim();
+            const pattern = /(?:[\s\xa0\u3000]*[\(（]\s*\$?\s*(?:\\quad|\\qquad|\\hspace\{.*?\}|[\s\xa0\u3000_])*?\s*\$?\s*[\)）]\s*\$?[\s\xa0\u3000]*)+$/;
+            return text.trim().replace(pattern, '').replace(/\\paren\b/g, '').trim();
         }
         window.cleanChoiceStemParentheses = cleanChoiceStemParentheses;
 

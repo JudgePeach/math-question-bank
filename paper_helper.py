@@ -27,11 +27,13 @@ TYPE_LABELS = {
 TYPE_ORDER = ["single_choice", "multi_choice", "fill_in_blank", "detailed_answer"]
 
 def clean_choice_stem_parentheses(text: str) -> str:
-    """自动清洗选择题题干末尾供填答用的全角/半角空括号（如 'a = (  )' 或 '下列说法正确的是（ ）'）"""
+    """自动清洗选择题题干末尾供填答用的全角/半角空括号（支持包裹全角空格\u3000、$公式符号、\\quad等）"""
     if not text:
         return ""
-    pattern = r'(?:[\s\xa0]*[\(（]\s*(?:\\quad|\\qquad|\\hspace\{.*?\}|_\s*)*\s*[\)）]\s*)+$'
-    return re.sub(pattern, '', text).strip()
+    text = text.strip()
+    pattern = r'(?:[\s\xa0\u3000]*[\(（]\s*\$?\s*(?:\\quad|\\qquad|\\hspace\{.*?\}|[\s\xa0\u3000_])*?\s*\$?\s*[\)）]\s*\$?[\s\xa0\u3000]*)+$'
+    text = re.sub(pattern, '', text).strip()
+    return re.sub(r'\\paren\b', '', text).strip()
 
 def clean_content_for_latex(content: str, q_type: str = "") -> str:
     """
@@ -81,14 +83,13 @@ def clean_content_for_latex(content: str, q_type: str = "") -> str:
     if q_type in ["single_choice", "multi_choice"]:
         if r"\begin{choices}" in text:
             parts = text.split(r"\begin{choices}", 1)
-            stem = parts[0].strip()
+            stem = clean_choice_stem_parentheses(parts[0])
             rest = r"\begin{choices}" + parts[1]
-            if r"\paren" not in stem and r"\parentheses" not in stem:
-                stem += r" \paren"
+            stem += r" \paren"
             text = stem + "\n  " + rest
         else:
-            if r"\paren" not in text and r"\parentheses" not in text:
-                text += r" \paren"
+            stem = clean_choice_stem_parentheses(text)
+            text = stem + r" \paren"
 
     return text
 

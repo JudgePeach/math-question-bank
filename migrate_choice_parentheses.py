@@ -8,8 +8,10 @@ def clean_choice_stem_parentheses(text: str) -> str:
     """清理选择题题干末尾供填答用的全角/半角空括号"""
     if not text:
         return ""
-    pattern = r'(?:[\s\xa0]*[\(（]\s*(?:\\quad|\\qquad|\\hspace\{.*?\}|_\s*)*\s*[\)）]\s*)+$'
-    return re.sub(pattern, '', text).strip()
+    text = text.strip()
+    pattern = r'(?:[\s\xa0\u3000]*[\(（]\s*\$?\s*(?:\\quad|\\qquad|\\hspace\{.*?\}|[\s\xa0\u3000_])*?\s*\$?\s*[\)）]\s*\$?[\s\xa0\u3000]*)+$'
+    text = re.sub(pattern, '', text).strip()
+    return re.sub(r'\\paren\b', '', text).strip()
 
 def run_migration():
     print("=== 开始全量扫描与清洗数据库中选择题题干末尾残留的填空括号 ===")
@@ -23,13 +25,14 @@ def run_migration():
                 content = q.content or ""
                 if r"\begin{choices}" in content:
                     parts = content.split(r"\begin{choices}", 1)
-                    cleaned_stem = clean_choice_stem_parentheses(parts[0])
-                    if cleaned_stem != parts[0].strip():
-                        q.content = cleaned_stem + "\n\\begin{choices}" + parts[1]
+                    stem_part = parts[0].strip()
+                    cleaned_stem = clean_choice_stem_parentheses(stem_part)
+                    if cleaned_stem != stem_part:
+                        q.content = cleaned_stem + "\n\\begin{choices}\n" + parts[1].strip()
                         cleaned_count += 1
                 else:
                     cleaned_content = clean_choice_stem_parentheses(content)
-                    if cleaned_content != content:
+                    if cleaned_content != content.strip():
                         q.content = cleaned_content
                         cleaned_count += 1
         

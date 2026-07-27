@@ -1151,7 +1151,11 @@
                             choicesGrid = match[2];
                         }
                     }
-                    stemContent = stemContent.replace(/（\s*）/g, '').replace(/\(\s*\)/g, '').replace(/\\paren/g, '').trim();
+                    if (typeof window.cleanChoiceStemParentheses === 'function') {
+                        stemContent = window.cleanChoiceStemParentheses(stemContent);
+                    } else {
+                        stemContent = stemContent.replace(/(?:[\s\xa0\u3000]*[\(（]\s*\$?\s*(?:\\quad|\\qquad|\\hspace\{.*?\}|[\s\xa0\u3000_])*?\s*\$?\s*[\)）]\s*)+$/, '').replace(/\\paren\b/g, '').trim();
+                    }
 
                     stemLine = `
                         <div class="flex justify-between items-baseline mb-1">
@@ -1380,7 +1384,11 @@
                             choicesGrid = match[2];
                         }
                     }
-                    stemContent = stemContent.replace(/（\s*）/g, '').replace(/\(\s*\)/g, '').replace(/\\paren/g, '').trim();
+                    if (typeof window.cleanChoiceStemParentheses === 'function') {
+                        stemContent = window.cleanChoiceStemParentheses(stemContent);
+                    } else {
+                        stemContent = stemContent.replace(/(?:[\s\xa0\u3000]*[\(（]\s*\$?\s*(?:\\quad|\\qquad|\\hspace\{.*?\}|[\s\xa0\u3000_])*?\s*\$?\s*[\)）]\s*)+$/, '').replace(/\\paren\b/g, '').trim();
+                    }
 
                     stemLine = `
                         <div class="flex justify-between items-baseline mb-1">
