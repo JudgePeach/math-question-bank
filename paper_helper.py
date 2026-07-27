@@ -26,6 +26,13 @@ TYPE_LABELS = {
 
 TYPE_ORDER = ["single_choice", "multi_choice", "fill_in_blank", "detailed_answer"]
 
+def clean_choice_stem_parentheses(text: str) -> str:
+    """自动清洗选择题题干末尾供填答用的全角/半角空括号（如 'a = (  )' 或 '下列说法正确的是（ ）'）"""
+    if not text:
+        return ""
+    pattern = r'(?:[\s\xa0]*[\(（]\s*(?:\\quad|\\qquad|\\hspace\{.*?\}|_\s*)*\s*[\)）]\s*)+$'
+    return re.sub(pattern, '', text).strip()
+
 def clean_content_for_latex(content: str, q_type: str = "") -> str:
     """
     Clean markdown/LaTeX question content for exam-zh LaTeX document export based on 试卷类模板.tex.
@@ -35,6 +42,10 @@ def clean_content_for_latex(content: str, q_type: str = "") -> str:
         return ""
     
     text = content.strip()
+    
+    # 如果是选择题，先清洗题干末尾残留的全角/半角供填答空括号，避免与右侧 \paren 生成括号重叠
+    if q_type in ["single_choice", "multi_choice"] or r"\begin{choices}" in text or re.search(r'^\s*[-*]?\s*[A-D][\.、\s]', text, re.MULTILINE):
+        text = clean_choice_stem_parentheses(text)
     
     # If TikZ code is present in text, remove ANY markdown image tags ![](...) to avoid duplicate image rendering
     if r"\begin{tikzpicture}" in text:

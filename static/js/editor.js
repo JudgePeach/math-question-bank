@@ -1507,6 +1507,12 @@ const PAGE_LIMIT = 20;
             updatePaperMeta();
         }
 
+        function cleanChoiceStemParentheses(text) {
+            if (!text) return "";
+            return text.replace(/(?:[\s\xa0]*[\(（]\s*(?:\\quad|\\qquad|\\hspace\{.*?\}|_\s*)*\s*[\)）]\s*)+$/, '').trim();
+        }
+        window.cleanChoiceStemParentheses = cleanChoiceStemParentheses;
+
         function preprocessFormulaForKaTeX(text) {
             if (!text) return "";
             

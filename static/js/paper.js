@@ -2366,6 +2366,16 @@
         let html = raw.trim();
         figAlign = figAlign || 'right';
 
+        if (typeof window.cleanChoiceStemParentheses === 'function' && (html.includes('choices') || html.match(/^\s*[-*]?\s*[A-D][\.、\s]/m))) {
+            if (html.includes('\\begin{choices}')) {
+                const parts = html.split('\\begin{choices}');
+                parts[0] = window.cleanChoiceStemParentheses(parts[0]);
+                html = parts[0] + '\\begin{choices}' + parts[1];
+            } else {
+                html = window.cleanChoiceStemParentheses(html);
+            }
+        }
+
         // 1. Extract ALL Markdown image syntaxes ![](/static/uploads/xxx.png) BEFORE KaTeX processing
         const imgSrcList = [];
         const imgMatches = [...html.matchAll(/!\[.*?\]\(([^)]+)\)/g)];
