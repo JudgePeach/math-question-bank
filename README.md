@@ -6,7 +6,9 @@
 
 本项目追求**极简配置**、**零前端构建**与**极致本地体验**，开箱即用。内置 LaTeX 公式与 TikZ 几何图形秒级渲染引擎，深度集成组卷排版工作台、A4 Live Preview 仿真画布、高考级 XeLaTeX 编译导出，以及主流大语言模型（DeepSeek / 阿里百炼 / GPT-4o / Claude 等）与多通道 OCR 接口。
 
-![MathBank 界面截图](screenshot.png)
+![MathBank 题库研讨工作台](screenshot1.png)
+
+![MathBank 组卷排版工作台](screenshot2.png)
 
 ---
 
