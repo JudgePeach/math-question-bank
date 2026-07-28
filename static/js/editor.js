@@ -1510,8 +1510,10 @@ const PAGE_LIMIT = 20;
         function cleanChoiceStemParentheses(text) {
             if (!text) return "";
             text = text.trim();
+            text = text.replace(/(?:<br\s*\/?>\s*)+$/i, '').trim();
             const pattern = /(?:[\s\xa0\u3000]*[\(（]\s*\$?\s*(?:\\quad|\\qquad|\\hspace\{.*?\}|[\s\xa0\u3000_])*?\s*\$?\s*[\)）]\s*\$?[\s\xa0\u3000]*)+$/;
             let cleaned = text.replace(pattern, '').replace(/\\paren\b/g, '').trim();
+            cleaned = cleaned.replace(/(?:<br\s*\/?>\s*)+$/i, '').trim();
 
             const sanitizedDollars = cleaned.replace(/\\\$/g, '');
             const dollarCount = (sanitizedDollars.match(/\$/g) || []).length;
@@ -1617,10 +1619,10 @@ const PAGE_LIMIT = 20;
                     gridCols = "grid-cols-2";
                 }
 
-                let html = `<div class="grid ${gridCols} gap-2 my-2 select-none">`;
+                let html = `<div class="grid ${gridCols} gap-2 my-2 select-none choices-grid items-center">`;
                 items.forEach((item, idx) => {
                     const label = labels[idx] || (idx + 1);
-                    html += `<div class="flex items-baseline"><span class="font-bold mr-1.5 text-slate-800">${label}.</span><span class="flex-1 [&>p]:m-0 [&>p]:inline">${item}</span></div>`;
+                    html += `<div class="flex items-center"><span class="font-bold mr-1.5 text-slate-800 shrink-0">${label}.</span><span class="flex-1 [&>p]:m-0 [&>p]:inline">${item}</span></div>`;
                 });
                 html += '</div>';
                 return html;
@@ -1673,7 +1675,7 @@ const PAGE_LIMIT = 20;
                 const labels = ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H'];
                 let maxLen = 0;
                 items.forEach(item => {
-                    const cleanText = item.replace(/\$/g, '');
+                    const cleanText = item.replace(/\$([^\$]+?)\$/g, (m, math) => math.replace(/\\[a-zA-Z]+/g, 'x')).replace(/\$/g, '');
                     if (cleanText.length > maxLen) {
                         maxLen = cleanText.length;
                     }
@@ -1686,10 +1688,10 @@ const PAGE_LIMIT = 20;
                     gridCols = "grid-cols-2";
                 }
 
-                let html = `<div class="grid ${gridCols} gap-2 my-2 select-none">`;
+                let html = `<div class="grid ${gridCols} gap-2 my-2 select-none choices-grid items-center">`;
                 items.forEach((item, idx) => {
                     const label = labels[idx] || (idx + 1);
-                    html += `<div class="flex items-baseline"><span class="font-bold mr-1.5 text-slate-800">${label}.</span><span class="flex-1 [&>p]:m-0 [&>p]:inline">${item}</span></div>`;
+                    html += `<div class="flex items-center"><span class="font-bold mr-1.5 text-slate-800 shrink-0">${label}.</span><span class="flex-1 [&>p]:m-0 [&>p]:inline">${item}</span></div>`;
                 });
                 html += '</div>';
                 return html;

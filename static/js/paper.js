@@ -1178,8 +1178,8 @@
                 if (qType === 'single_choice' || qType === 'multi_choice') {
                     let stemContent = contentHtml;
                     let choicesGrid = '';
-                    if (contentHtml.includes('choices-grid') || contentHtml.includes('katex-choices-grid')) {
-                        const match = contentHtml.match(/([\s\S]*?)(<(?:div|p)[^>]*class="[^"]*(?:choices-grid|katex-choices-grid)"[\s\S]*)/i);
+                    if (contentHtml.includes('choices-grid') || contentHtml.includes('katex-choices-grid') || contentHtml.includes('grid-cols-')) {
+                        const match = contentHtml.match(/([\s\S]*?)(<(?:div|p)[^>]*class="[^"]*(?:choices-grid|katex-choices-grid|grid-cols-[124])"[\s\S]*)/i);
                         if (match) {
                             stemContent = match[1];
                             choicesGrid = match[2];
@@ -1411,8 +1411,8 @@
                 if (qType === 'single_choice' || qType === 'multi_choice') {
                     let stemContent = contentHtml;
                     let choicesGrid = '';
-                    if (contentHtml.includes('choices-grid') || contentHtml.includes('katex-choices-grid')) {
-                        const match = contentHtml.match(/([\s\S]*?)(<(?:div|p)[^>]*class="[^"]*(?:choices-grid|katex-choices-grid)"[\s\S]*)/i);
+                    if (contentHtml.includes('choices-grid') || contentHtml.includes('katex-choices-grid') || contentHtml.includes('grid-cols-')) {
+                        const match = contentHtml.match(/([\s\S]*?)(<(?:div|p)[^>]*class="[^"]*(?:choices-grid|katex-choices-grid|grid-cols-[124])"[\s\S]*)/i);
                         if (match) {
                             stemContent = match[1];
                             choicesGrid = match[2];
