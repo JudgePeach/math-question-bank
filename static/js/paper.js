@@ -1277,7 +1277,7 @@
                             </button>
                         </div>
 
-                        <div class="flex items-start">
+                        <div class="flex items-baseline">
                             <span class="font-bold mr-1 text-slate-900 shrink-0">${globalQIndex}.</span>
                             <div class="inline flex-1">
                                 ${stemLine}
@@ -1462,7 +1462,7 @@
                             </button>
                         </div>
 
-                        <div class="flex items-start">
+                        <div class="flex items-baseline">
                             <span class="font-bold mr-1 text-slate-900 shrink-0">${globalQIndex}.</span>
                             <div class="inline flex-1">${stemLine}</div>
                         </div>
