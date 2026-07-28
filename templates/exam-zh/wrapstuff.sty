@@ -1,0 +1,2536 @@
+%%
+%% This is file `wrapstuff.sty',
+%% generated with the docstrip utility.
+%%
+%% The original source files were:
+%%
+%% wrapstuff.dtx  (with options: `package')
+%% 
+%%     Copyright (C) 2022 by Qing Lee <sobenlee@gmail.com>
+%% -----------------------------------------------------------------
+%% 
+%%     This work may be distributed and/or modified under the
+%%     conditions of the LaTeX Project Public License, either
+%%     version 1.3c of this license or (at your option) any later
+%%     version. This version of this license is in
+%%        http://www.latex-project.org/lppl/lppl-1-3c.txt
+%%     and the latest version of this license is in
+%%        http://www.latex-project.org/lppl.txt
+%%     and version 1.3 or later is part of all distributions of
+%%     LaTeX version 2005/12/01 or later.
+%% 
+%%     This work has the LPPL maintenance status "maintained".
+%% 
+%%     The Current Maintainer of this work is Qing Lee.
+%% 
+%% -----------------------------------------------------------------
+%% 
+\NeedsTeXFormat{LaTeX2e}[2021-06-01]
+\@ifundefined{ExplLoaderFileDate}{\RequirePackage{expl3}}{}
+\GetIdInfo$Id: wrapstuff.dtx 3be38c0 2022-08-05 21:01:02 +0800 Qing Lee <sobenlee@gmail.com> $
+  {Wrapping text around stuff}
+\ProvidesExplPackage{\ExplFileName}
+  {\ExplFileDate}{0.3}{\ExplFileDescription}
+\@ifl@t@r \fmtversion { 2021-06-01 }
+  { }
+  {
+    \msg_new:nnn { wrapstuff } { latex-too-old }
+      {
+        You~need~to~update~your~LaTeX~to~the~latest~release. \\
+        Loading~wrapstuff~will~abort!
+      }
+    \msg_critical:nn { wrapstuff } { latex-too-old }
+  }
+\@ifl@t@r \ExplLoaderFileDate { 2022-04-10 }
+  { }
+  {
+    \msg_new:nnn { wrapstuff } { latex3-too-old }
+      {
+        You~need~to~update~your~installation~of~the~bundles~
+        "l3kernel"~and~"l3packages". \\
+        Loading~wrapstuff~will~abort!
+      }
+    \msg_critical:nn { wrapstuff } { latex3-too-old }
+  }
+\prop_gput:Nnn \g_msg_module_name_prop { wstf } { wrapstuff }
+\tl_const:Nn \c__wstf_global_tl_tl
+  { \g__wstf_main_setting_tl }
+\tl_const:Nn \c__wstf_global_dim_tl
+  {
+    \g__wstf_hang_ht_dim
+    \g__wstf_total_ht_dim
+    \g__wstf_stuff_ht_dim
+    \g__wstf_stuff_wd_dim
+    \g__wstf_first_dp_dim
+    \g__wstf_first_sep_dim
+    \g__wstf_prevdepth_dim
+    \g__wstf_column_ht_dim
+    \g__wstf_window_ht_dim
+    \g__wstf_remaining_dim
+    \g__wstf_column_room_dim
+    \g__wstf_parshape_indent_dim
+    \g__wstf_parshape_length_dim
+  }
+\tl_const:Nn \c__wstf_global_int_tl
+  {
+    \g__wstf_top_int
+    \g__wstf_column_int
+    \g__wstf_window_int
+  }
+\tl_const:Nn \c__wstf_global_bool_tl
+  {
+    \g__wstf_next_bool
+    \g__wstf_leqno_bool
+    \g__wstf_column_bool
+    \g__wstf_entire_bool
+    \g__wstf_display_bool
+    \g__wstf_move_hang_bool
+    \g__wstf_next_hang_bool
+    \g__wstf_first_set_bool
+    \g__wstf_first_save_bool
+    \g__wstf_right_move_bool
+  }
+\cs_new_protected:Npn \__wstf_tl_init:N #1
+  {
+    \tl_new:N #1
+    \tl_gput_right:Nn \g__wstf_var_clear_tl
+      { \tl_gclear:N #1 }
+    \tl_gput_right:Nn \g__wstf_var_push_tl
+      { \tl_gset:Nn \exp_not:N #1 { \exp_not:o {#1} } }
+  }
+\cs_new_protected:Npn \__wstf_dim_init:N #1
+  {
+    \dim_new:N #1
+    \tl_gput_right:Nn \g__wstf_var_clear_tl
+      { \dim_gzero:N #1 }
+    \tl_gput_right:Nn \g__wstf_var_push_tl
+      { \dim_gset:Nn #1 { \dim_use:N #1 } }
+  }
+\cs_new_protected:Npn \__wstf_int_init:N #1
+  {
+    \int_new:N #1
+    \tl_gput_right:Nn \g__wstf_var_clear_tl
+      { \int_gzero:N #1 }
+    \tl_gput_right:Nn \g__wstf_var_push_tl
+      { \int_gset:Nn #1 { \int_use:N #1 } }
+  }
+\cs_new_protected:Npn \__wstf_bool_init:N #1
+  {
+    \bool_new:N #1
+    \tl_gput_right:Nn \g__wstf_var_clear_tl
+      { \bool_gset_false:N #1 }
+    \tl_gput_right:Nn \g__wstf_var_push_tl
+      {
+        \bool_if:NTF #1
+          { \bool_gset_true:N  #1 }
+          { \bool_gset_false:N #1 }
+      }
+  }
+\tl_new:N \g__wstf_var_clear_tl
+\tl_new:N \g__wstf_var_push_tl
+\tl_map_function:NN \c__wstf_global_tl_tl   \__wstf_tl_init:N
+\tl_map_function:NN \c__wstf_global_dim_tl  \__wstf_dim_init:N
+\tl_map_function:NN \c__wstf_global_int_tl  \__wstf_int_init:N
+\tl_map_function:NN \c__wstf_global_bool_tl \__wstf_bool_init:N
+\int_gdecr:N \g__wstf_top_int
+\tl_gput_right:Nn \g__wstf_var_clear_tl
+  { \int_gdecr:N \g__wstf_top_int }
+\cs_new_protected_nopar:Npn \__wstf_clear:
+  {
+    \__wstf_clear_para_hook:
+    \__wstf_clear_kludge:
+    \__wstf_clear_variable:
+  }
+\cs_new_protected_nopar:Npn \__wstf_clear_variable:
+  {
+    \tl_use:N \g__wstf_var_clear_tl
+    \box_gclear:N \g__wstf_stuff_box
+  }
+\cs_new_protected_nopar:Npn \__wstf_clear_kludge:
+  {
+    \bool_if:NTF \g__wstf_next_bool
+      {
+        \skip_vertical:n
+          { \tex_baselineskip:D * \g__wstf_window_int }
+      }
+      {
+        \box_if_empty:NF \g__wstf_stuff_box
+          { \__wstf_clear_stuff_box: }
+      }
+  }
+\cs_new_protected_nopar:Npn \__wstf_clear_stuff_box:
+  {
+    \__wstf_ignore_depth:
+    \skip_set:Nn \l__wstf_last_skip
+      { \box_dp:N \strutbox }
+    \skip_vertical:N \l__wstf_last_skip
+    \box_use_drop:N \g__wstf_stuff_box
+    \skip_vertical:N \l__wstf_last_skip
+    \__wstf_ignore_depth:
+  }
+\cs_new_protected_nopar:Npn \__wstf_status_push:
+  {
+    \tl_clear:N \l__wstf_status_tl
+    \int_gincr:N \g__wstf_status_int
+    \exp_args:Ne \__wstf_status_push_aux:n
+      { \int_use:N \g__wstf_status_int }
+    \seq_gpush:No \g__wstf_status_seq { \l__wstf_status_tl }
+  }
+\cs_new_protected:Npn \__wstf_status_push_aux:n #1
+  {
+    \__wstf_push_cs:nN {#1} \__wstf_para_before:
+    \__wstf_push_cs:nN {#1} \__wstf_para_begin:
+    \__wstf_push_cs:nN {#1} \__wstf_para_end:
+    \__wstf_push_cs:nN {#1} \__wstf_display_hook:
+    \__wstf_push_box:N \g__wstf_stuff_box
+    \__wstf_push_var:
+  }
+\cs_new_protected:Npn \__wstf_push_cs:nN #1#2
+  {
+    \exp_args:NNc \__wstf_push_cs_aux:NN #2
+      { __wstf_ #1 _ \token_to_str:N #2 }
+  }
+\cs_new_protected:Npn \__wstf_push_cs_aux:NN #1#2
+  {
+    \cs_gset_eq:NN #2#1
+    \tl_put_right:Nn \l__wstf_status_tl
+      {
+        \cs_gset_eq:NN #1#2
+        \cs_undefine:N #2
+      }
+  }
+\cs_new_protected:Npn \__wstf_push_box:N #1
+  {
+    \hbox_gset:Nn \g__wstf_stauts_box
+      {
+        \hbox_unpack_drop:N \g__wstf_stauts_box
+        \box_use:N #1
+      }
+    \tl_put_right:Nn \l__wstf_status_tl
+      { \__wstf_pop_box:N #1 }
+  }
+\cs_new_protected:Npn \__wstf_pop_box:N #1
+  {
+    \hbox_gset:Nw \g__wstf_stauts_box
+      \hbox_unpack_drop:N \g__wstf_stauts_box
+      \box_gset_to_last:N #1
+    \__wstf_if_last_hlist:TF
+      { \hbox_gset_end: }
+      {
+        \hbox_gset_end:
+        \box_gclear:N \g__wstf_stauts_box
+      }
+  }
+\cs_new_protected_nopar:Npn \__wstf_push_var:
+  {
+    \tl_put_right:Nx \l__wstf_status_tl
+      { \g__wstf_var_push_tl }
+  }
+\cs_new_protected_nopar:Npn \__wstf_status_pop:
+  {
+    \seq_gpop:NNT \g__wstf_status_seq \l__wstf_status_tl
+      {
+        \int_gdecr:N \g__wstf_status_int
+        \tl_use:N \l__wstf_status_tl
+      }
+  }
+\cs_new_protected_nopar:Npn \__wstf_status_restore:
+  {
+    \__wstf_status_push:
+    \__wstf_clear_para_hook:
+    \__wstf_clear_display_hook:
+    \__wstf_clear_variable:
+    \group_insert_after:N \__wstf_status_pop:
+  }
+\cs_new_protected_nopar:Npn \__wstf_status_clear:
+  {
+    \bool_if:NT \g__wstf_next_bool
+      {
+        \__wstf_clear_para_hook:
+        \__wstf_clear_variable:
+      }
+  }
+\tl_new:N \l__wstf_status_tl
+\box_new:N \g__wstf_stauts_box
+\int_new:N \g__wstf_status_int
+\seq_new:N \g__wstf_status_seq
+\cs_new_protected_nopar:Npn \wrapstuff@parboxrestore
+  { \group_insert_after:N \__wstf_status_clear: }
+\cs_new_protected_nopar:Npn \__wstf_parbox_restore:
+  {
+    \cs_set_eq:NN
+      \wrapstuff@parboxrestore
+      \__wstf_status_restore:
+  }
+\g@addto@macro \@arrayparboxrestore
+  { \wrapstuff@parboxrestore }
+\group_begin:
+\cs_set:Npn \__wstf_tmp:nn #1
+  {
+    \exp_args:Ncc \__wstf_tmp_aux:NNn
+      { __wstf_if_last_ #1 : }
+      { c__wstf_ #1 _node }
+  }
+\cs_set:Npn \__wstf_tmp_aux:NNn #1#2#3
+  {
+    \int_const:Nn #2 {#3}
+    \prg_new_conditional:Npnn #1 { T , F , TF }
+      {
+        \if_int_compare:w \tex_lastnodetype:D = #2
+          \prg_return_true: \else: \prg_return_false: \fi:
+      }
+  }
+\__wstf_tmp:nn { none }    { -1 }
+\__wstf_tmp:nn { hlist }   {  1 }
+\__wstf_tmp:nn { whatsit } {  9 }
+\__wstf_tmp:nn { glue }    { 11 }
+\__wstf_tmp:nn { kern }    { 12 }
+\__wstf_tmp:nn { penalty } { 13 }
+\group_end:
+\cs_new_protected:Npn \__wstf_gadd_hook:nn #1
+  { \hook_gput_code:nnn {#1} { wrapstuff } }
+\cs_new_protected:Npn \__wstf_package_hook:nn #1
+  { \hook_gput_code:nnn { package/#1/after } { wrapstuff } }
+\cs_new_protected_nopar:Npn \__wstf_para_raw_end:
+  { \group_begin: \para_raw_end: \group_end: }
+\cs_new_protected:Npn \__wstf_gadd_ht:Nn #1#2
+  { \box_gset_ht:Nn #1 { \box_ht:N #1 + \dim_eval:n {#2} } }
+\NewDocumentEnvironment { wrapstuff } { O { } }
+  {
+    \__wstf_clear:
+    \int_set:Nn \l__wstf_top_int { -1 }
+    \tl_if_blank:nTF {#1}
+      { \tl_clear:N \l__wstf_main_kv_tl }
+      {
+        \keys_set_filter:nnnN { wrapstuff }
+          { main , ratio }
+          {#1} \l__wstf_main_kv_tl
+      }
+    \tl_set:Nx \l__wstf_type_tl { \l__wstf_type_tl }
+    \dim_set:Nn \l__wstf_width_dim { \l__wstf_width_tl }
+    \dim_set:Nn \l__wstf_height_dim { \l__wstf_height_tl }
+    \hbox_gset:Nw \g__wstf_stuff_box
+      \dim_compare:nNnTF \l__wstf_width_dim > \c_zero_dim
+        { \__wstf_minipage_begin: }
+        { \__wstf_hbox_begin: }
+  }
+  {
+    \dim_compare:nNnTF \l__wstf_width_dim > \c_zero_dim
+      { \__wstf_minipage_end: }
+      { \__wstf_hbox_end: }
+    \__wstf_set_vsep:
+    \__wstf_attach_label:
+    \tl_if_empty:NTF \l__wstf_main_kv_tl
+      { \tl_gclear:N \g__wstf_main_setting_tl }
+      { \__wstf_save_main_setting: }
+    \__wstf_set_top_line:
+    \dim_gset:Nn \g__wstf_stuff_wd_dim
+      { \box_wd:N \g__wstf_stuff_box }
+    \dim_gset:Nn \g__wstf_stuff_ht_dim
+      { \box_ht_plus_dp:N \g__wstf_stuff_box }
+    \dim_gset_eq:NN
+      \g__wstf_remaining_dim
+      \g__wstf_stuff_ht_dim
+    \__wstf_next_para:
+  }
+\__wstf_gadd_hook:nn { env/wrapstuff/before } { \par }
+\cs_new_protected_nopar:Npn \__wstf_minipage_begin:
+  {
+    \__wstf_floatrow_hook:
+    \dim_compare:nNnTF \l__wstf_height_dim > \c_zero_dim
+      { \begin { minipage } [b] [ \l__wstf_height_dim ] [c] { \l__wstf_width_dim } }
+      { \begin { minipage } [b] { \l__wstf_width_dim } }
+    \tl_if_empty:NF \l__wstf_type_tl
+      { \__wstf_set_float: }
+  }
+\cs_new_protected_nopar:Npn \__wstf_minipage_end:
+  {
+      \end { minipage }
+    \hbox_gset_end:
+    \__wstf_float_pos_hook:
+  }
+\cs_new_protected_nopar:Npn \__wstf_hbox_begin:
+  { \tex_ignorespaces:D }
+\cs_new_protected_nopar:Npn \__wstf_hbox_end:
+  {
+      \tex_unskip:D
+    \hbox_gset_end:
+    \dim_compare:nNnT \l__wstf_height_dim > \c_zero_dim
+      { \__wstf_gset_height: }
+  }
+\cs_new_protected_nopar:Npn \__wstf_gset_height:
+  {
+    \hbox_gset:Nn \g__wstf_stuff_box
+      {
+        \box_move_up:nn
+          {
+            (   \l__wstf_height_dim
+              - \box_ht:N \g__wstf_stuff_box
+              + \box_dp:N \g__wstf_stuff_box
+            ) / 2
+          }
+          { \box_use_drop:N \g__wstf_stuff_box }
+      }
+    \box_gset_ht:Nn \g__wstf_stuff_box { \l__wstf_height_dim }
+    \box_gset_dp:Nn \g__wstf_stuff_box { \c_zero_dim }
+  }
+\cs_new_protected_nopar:Npn \__wstf_set_vsep:
+  {
+    \__wstf_gadd_ht:Nn \g__wstf_stuff_box { \l__wstf_abovesep_tl }
+    \dim_set:Nn \l__wstf_shift_dim { \l__wstf_belowsep_tl }
+    \dim_compare:nNnF \l__wstf_shift_dim = \c_zero_dim
+      { \__wstf_set_belowsep: }
+  }
+\cs_new_protected_nopar:Npn \__wstf_set_belowsep:
+  {
+    \hbox_gset:Nn \g__wstf_stuff_box
+      {
+        \box_move_up:nn
+          { \l__wstf_shift_dim + \box_dp:N \g__wstf_stuff_box }
+          { \box_use_drop:N \g__wstf_stuff_box }
+      }
+    \box_gset_dp:Nn \g__wstf_stuff_box { \c_zero_dim }
+  }
+\tl_new:N \l__wstf_main_kv_tl
+\box_new:N \g__wstf_stuff_box
+\dim_new:N \l__wstf_shift_dim
+\dim_new:N \l__wstf_width_dim
+\dim_new:N \l__wstf_height_dim
+\cs_new_protected_nopar:Npn \__wstf_attach_label:
+  {
+    \stepcounter { wrapstuff }
+    \hbox_gset:Nn \g__wstf_stuff_box
+      {
+        \__wstf_write_label:
+        \box_use_drop:N \g__wstf_stuff_box
+      }
+  }
+\cs_new_protected_nopar:Npn \__wstf_write_label:
+  {
+    \exp_args:Nee \__wstf_write_label_aux:nn
+      { \__wstf_counter:n { wrapstuff } }
+      { \__wstf_counter:n { page } }
+  }
+\cs_new_protected:Npx \__wstf_write_label_aux:nn #1#2
+  {
+    \prop_gput_if_new:Nnn \exp_not:N \g__wstf_page_prop {#1} {#2}
+    \iow_shipout_x:Nn \exp_not:N \@auxout
+      {
+        \c_backslash_str wrapstuff@label
+          {#1}
+          { \exp_not:N \wrapstuff@counter { page } }
+      }
+  }
+\newcounter { wrapstuff }
+\cs_new:Npn \__wstf_counter:n #1
+  { \int_value:w \value {#1} }
+\cs_new_eq:NN \wrapstuff@counter \__wstf_counter:n
+\cs_new_protected_nopar:Npn \wrapstuff@label
+  { \prop_gput:Nnn \g__wstf_page_prop }
+\__wstf_gadd_hook:nn { begindocument }
+  {
+    \legacy_if:nTF { @filesw }
+      {
+        \iow_now:Nx \@mainaux
+          {
+            \c_backslash_str providecommand
+            \c_backslash_str wrapstuff@label [2] { }
+          }
+      }
+      { \cs_gset_eq:NN \__wstf_write_label: \__wstf_empty: }
+  }
+\__wstf_gadd_hook:nn { enddocument/afterlastpage }
+  {
+    \legacy_if:nT { @filesw }
+      { \prop_gclear:N \g__wstf_page_prop }
+  }
+\__wstf_gadd_hook:nn { enddocument/info }
+  {
+    \prop_if_empty:NF \g__wstf_rerun_prop
+      { \__wstf_rerun_check: }
+  }
+\cs_new_protected_nopar:Npn \__wstf_rerun_check:
+  {
+    \prop_map_inline:Nn \g__wstf_rerun_prop
+      {
+        \prop_get:NnN \g__wstf_page_prop { ##1 } \l__wstf_page_tl
+        \int_if_even:nF { \l__wstf_page_tl - ##2 }
+          { \prop_map_break:n { \__wstf_rerun_warning: } }
+      }
+  }
+\cs_new_protected_nopar:Npn \__wstf_rerun_warning:
+  { \msg_warning:nn { wstf } { rerun-required } }
+\msg_new:nnn { wstf } { rerun-required }
+  {
+    Page(s)~may~have~changed.\\
+    Rerun~to~get~i/o~setting~right.
+  }
+\tl_new:N \l__wstf_page_tl
+\prop_new:N \g__wstf_page_prop
+\prop_new:N \g__wstf_rerun_prop
+\cs_new_protected_nopar:Npn \__wstf_save_main_setting:
+  {
+    \exp_args:Nnno
+    \keys_set_filter:nnnN { wrapstuff }
+      { main }
+      { \l__wstf_main_kv_tl } \l__wstf_main_kv_tl
+    \bool_if:NTF \l__wstf_swap_bool
+      { \__wstf_swap_ratio: }
+      { \__wstf_set_ratio:N \l__wstf_ratio_fp }
+    \tl_if_empty:NF \l__wstf_main_kv_tl
+      { \__wstf_save_main_setting_aux: }
+  }
+\cs_new_protected:Npn \__wstf_set_ratio:N #1
+  {
+    \tl_gset:Nx \g__wstf_main_setting_tl
+      { \fp_set:Nn \exp_not:N \l__wstf_ratio_fp { \fp_use:N #1 } }
+  }
+\cs_new_protected:Npn \__wstf_set_ratio:n #1
+  {
+    \tl_gset:Nx \g__wstf_main_setting_tl
+      { \fp_set:Nn \exp_not:N \l__wstf_ratio_fp { \fp_eval:n {#1} } }
+  }
+\cs_new_protected_nopar:Npn \__wstf_save_main_setting_aux:
+  {
+    \exp_args:Nno
+    \keys_precompile:nnN
+      { wrapstuff }
+      { \l__wstf_main_kv_tl } \l__wstf_main_kv_tl
+    \tl_gconcat:NNN
+      \g__wstf_main_setting_tl
+      \g__wstf_main_setting_tl
+      \l__wstf_main_kv_tl
+  }
+\cs_new_protected_nopar:Npn \__wstf_set_top_line:
+  {
+    \int_compare:nNnF \l__wstf_top_int < \c_zero_int
+      {
+        \tl_gput_right:Nx \g__wstf_main_setting_tl
+          {
+            \int_set:Nn \l__wstf_top_int
+              { \int_use:N \l__wstf_top_int }
+          }
+      }
+  }
+\cs_new_protected_nopar:Npn \__wstf_swap_ratio:
+  {
+    \exp_args:Ne \__wstf_swap_ratio_aux:n
+      { \__wstf_counter:n { wrapstuff } }
+  }
+\cs_new_protected:Npn \__wstf_swap_ratio_aux:n #1
+  {
+    \fp_compare:nF
+      { \c_zero_fp < \l__wstf_ratio_fp < \c_one_fp }
+      { \fp_zero:N \l__wstf_ratio_fp }
+    \prop_get:NnNF \g__wstf_page_prop {#1} \l__wstf_page_tl
+      { \tl_set:Nx \l__wstf_page_tl { \__wstf_counter:n { page } } }
+    \int_if_odd:nTF { \l__wstf_page_tl }
+      { \bool_if:NTF \l__wstf_inner_bool }
+      { \bool_if:NTF \l__wstf_outer_bool }
+      { \__wstf_set_ratio:N \l__wstf_ratio_fp }
+      { \__wstf_set_ratio:n { \c_one_fp - \l__wstf_ratio_fp } }
+    \prop_gput:Nno \g__wstf_rerun_prop {#1} { \l__wstf_page_tl }
+  }
+\bool_new:N \l__wstf_swap_bool
+\bool_new:N \l__wstf_inner_bool
+\bool_new:N \l__wstf_outer_bool
+\__wstf_gadd_hook:nn { para/before } { \__wstf_para_before: }
+\__wstf_gadd_hook:nn { para/after }  { \__wstf_para_after: }
+\__wstf_gadd_hook:nn { para/begin }  { \__wstf_para_begin: }
+\__wstf_gadd_hook:nn { para/end }    { \__wstf_para_end: }
+\cs_new_protected_nopar:Npn \__wstf_next_para:
+  {
+    \cs_gset_eq:NN \__wstf_para_before: \__wstf_env_before:
+    \cs_gset_eq:NN \__wstf_para_begin:  \__wstf_env_begin:
+    \cs_gset_eq:NN \__wstf_para_end:    \__wstf_env_end:
+  }
+\cs_new_protected_nopar:Npn \__wstf_env_before:
+  { \dim_gset_eq:NN \g__wstf_prevdepth_dim \tex_prevdepth:D }
+\cs_new_protected_nopar:Npn \__wstf_env_begin:
+  { \begin { wrapstuff@par } }
+\cs_new_protected_nopar:Npn \__wstf_env_end:
+  { \end { wrapstuff@par } }
+\cs_new_protected_nopar:Npn \__wstf_clear_para_hook:
+  {
+    \cs_gset_eq:NN \__wstf_para_before: \__wstf_empty:
+    \cs_gset_eq:NN \__wstf_para_after:  \__wstf_empty:
+    \cs_gset_eq:NN \__wstf_para_begin:  \__wstf_empty:
+    \cs_gset_eq:NN \__wstf_para_end:    \__wstf_empty:
+  }
+\cs_new_protected_nopar:Npn \__wstf_empty:
+  { }
+\cs_new_eq:NN \__wstf_para_before: \__wstf_empty:
+\cs_new_eq:NN \__wstf_para_after:  \__wstf_empty:
+\cs_new_eq:NN \__wstf_para_begin:  \__wstf_empty:
+\cs_new_eq:NN \__wstf_para_end:    \__wstf_empty:
+\NewDocumentEnvironment { wrapstuff@par } { }
+  {
+    \tl_use:N \g__wstf_main_setting_tl
+    \dim_set:Nn \l__wstf_leftsep_dim { \l__wstf_leftsep_tl }
+    \dim_set:Nn \l__wstf_rightsep_dim { \l__wstf_rightsep_tl }
+    \dim_set:Nn \l__wstf_voffset_dim { \l__wstf_voffset_tl }
+    \dim_set:Nn \l__wstf_line_dim { \l__wstf_linewidth_tl }
+    \dim_set:Nn \l__wstf_min_dim { \box_dp:N \strutbox }
+    \dim_set_eq:NN \l__wstf_main_width_dim \l__wstf_line_dim
+    \dim_sub:Nn \l__wstf_line_dim
+      { \tex_leftskip:D + \tex_rightskip:D }
+    \dim_set:Nn \l__wstf_window_dim
+      { \l__wstf_line_dim - \g__wstf_stuff_wd_dim }
+    \fp_compare:nNnTF \l__wstf_ratio_fp > \c_zero_fp
+      {
+        \fp_compare:nNnTF \l__wstf_ratio_fp < \c_one_fp
+          { \__wstf_set_window: }
+          { \__wstf_set_hang_right: }
+      }
+      { \__wstf_set_hang_left: }
+    \int_compare:nNnTF \g__wstf_window_int > \c_zero_int
+      {
+        \int_set_eq:NN \l__wstf_window_int \g__wstf_window_int
+        \int_zero:N \l__wstf_top_int
+      }
+      { \__wstf_set_lines: }
+    \bool_if:NTF \l__wstf_hang_bool
+      {
+        \dim_set_eq:NN \l__wstf_display_dim \l__wstf_window_dim
+        \int_set_eq:NN \l__wstf_window_line_int \l__wstf_window_int
+      }
+      {
+        \dim_set_eq:NN \l__wstf_display_dim \l__wstf_l_dim
+        \int_set:Nn \l__wstf_window_int { \l__wstf_window_int * 2 }
+        \int_set:Nn \l__wstf_window_line_int
+          {
+            \bool_if:NTF \g__wstf_column_bool
+              { \l__wstf_window_int / 2 + \g__wstf_column_int }
+              { \l__wstf_window_int }
+          }
+      }
+    \cs_gset_eq:NN \__wstf_para_before: \__wstf_empty:
+    \cs_gset_eq:NN \__wstf_para_begin:  \__wstf_empty:
+    \__wstf_save_parshape:
+    \__wstf_parbox_restore:
+    \vbox_set:Nw \l__wstf_body_box
+      \__wstf_set_prevdepth:N \g__wstf_prevdepth_dim
+      \__wstf_save_tex_skip:
+      \__wstf_tex_parameter:
+      \__wstf_restore_parshape:
+      \__wstf_display_parameter:
+      \__wstf_make_main_parshape:
+      \para_raw_noindent:
+  }
+  {
+      \__wstf_save_hangfrom:
+      \__wstf_save_tex_skip:
+      \__wstf_group_kludge:
+      \__wstf_tex_parameter:
+      \__wstf_make_main_parshape:
+      \para_raw_end:
+      \int_gset_eq:NN \g__wstf_line_int \tex_prevgraf:D
+    \vbox_set_end:
+    \__wstf_adjust_tex_skip:
+    \cs_gset_eq:NN \__wstf_para_end:   \__wstf_empty:
+    \cs_gset_eq:NN \__wstf_para_after: \__wstf_empty:
+    \int_compare:nNnTF \g__wstf_line_int > \l__wstf_top_int
+      { \__wstf_build_par: }
+      { \__wstf_put_par: }
+  }
+\box_new:N \l__wstf_body_box
+\box_new:N \l__wstf_window_box
+\int_new:N \l__wstf_window_int
+\int_new:N \g__wstf_line_int
+\int_new:N \l__wstf_window_line_int
+\dim_new:N \l__wstf_l_dim
+\dim_new:N \l__wstf_r_dim
+\dim_new:N \l__wstf_min_dim
+\dim_new:N \l__wstf_line_dim
+\dim_new:N \l__wstf_window_dim
+\dim_new:N \l__wstf_display_dim
+\dim_new:N \l__wstf_voffset_dim
+\dim_new:N \l__wstf_leftsep_dim
+\dim_new:N \l__wstf_rightsep_dim
+\dim_new:N \l__wstf_main_width_dim
+\bool_new:N \l__wstf_hang_bool
+\cs_new_protected_nopar:Npn \__wstf_set_hang_left:
+  {
+    \bool_set_true:N \l__wstf_hang_bool
+    \__wstf_set_hoffset:N \l__wstf_rightsep_dim
+    \dim_zero:N \l__wstf_l_dim
+    \dim_set_eq:NN \l__wstf_r_dim \l__wstf_window_dim
+    \cs_set_eq:NN \__wstf_build_box: \__wstf_build_hang:
+  }
+\cs_new_protected_nopar:Npn \__wstf_set_hang_right:
+  {
+    \bool_set_true:N \l__wstf_hang_bool
+    \__wstf_set_hoffset:N \l__wstf_leftsep_dim
+    \dim_zero:N \l__wstf_r_dim
+    \dim_set_eq:NN \l__wstf_l_dim \l__wstf_window_dim
+    \cs_set_eq:NN \__wstf_build_box: \__wstf_build_hang:
+  }
+\cs_new_protected_nopar:Npn \__wstf_set_window:
+  {
+    \bool_set_false:N \l__wstf_hang_bool
+    \dim_sub:Nn \l__wstf_window_dim
+      { \l__wstf_leftsep_dim + \l__wstf_rightsep_dim }
+    \dim_set:Nn \l__wstf_l_dim
+      { \__wstf_ratio:Nn \l__wstf_ratio_fp { \l__wstf_window_dim } }
+    \dim_set:Nn \l__wstf_r_dim
+      { \l__wstf_window_dim - \l__wstf_l_dim }
+    \bool_if:NTF \l__wstf_column_bool
+      { \cs_set_eq:NN \__wstf_build_box: \__wstf_build_column: }
+      { \cs_set_eq:NN \__wstf_build_box: \__wstf_build_block: }
+  }
+\cs_new_protected:Npn \__wstf_set_hoffset:N #1
+  {
+    \dim_sub:Nn \l__wstf_window_dim {#1}
+    \group_begin:
+      \dim_set:Nn \l__wstf_width_dim { #1 + \g__wstf_stuff_wd_dim }
+      \cs_set_eq:NN \width \l__wstf_width_dim
+    \exp_args:NNNx \group_end:
+    \dim_add:Nn \l__wstf_window_dim
+      { \dim_eval:n { \l__wstf_hoffset_tl } }
+  }
+\cs_new_protected_nopar:Npn \__wstf_set_lines:
+  {
+    \bool_if:NTF \g__wstf_next_bool
+      { \tl_clear:N \l__wstf_lines_tl }
+      { \tl_set:Nx \l__wstf_lines_tl { \l__wstf_lines_tl } }
+    \int_set:Nn \l__wstf_window_int
+      {
+        \tl_if_empty:NTF \l__wstf_lines_tl
+          { \__wstf_unit:n { \g__wstf_remaining_dim + \l__wstf_min_dim } }
+          { \l__wstf_lines_tl }
+      }
+    \bool_if:NF \g__wstf_next_bool
+      { \__wstf_window_init: }
+    \int_compare:nNnTF \g__wstf_top_int < \c_zero_int
+      {
+        \int_compare:nNnT \l__wstf_top_int < \c_zero_int
+          { \int_zero:N \l__wstf_top_int }
+      }
+      { \int_set_eq:NN \l__wstf_top_int \g__wstf_top_int }
+  }
+\cs_new_protected_nopar:Npn \__wstf_window_init:
+  {
+    \int_gset_eq:NN \g__wstf_column_int \l__wstf_window_int
+    \dim_gset:Nn \g__wstf_window_ht_dim
+      { \tex_baselineskip:D * \g__wstf_column_int }
+    \tl_if_empty:NF \l__wstf_lines_tl
+      {
+        \dim_gset:Nn \g__wstf_remaining_dim
+          { \g__wstf_window_ht_dim - \box_ht:N \strutbox }
+        \dim_gset_eq:NN \g__wstf_stuff_ht_dim \g__wstf_remaining_dim
+      }
+  }
+\cs_new_protected_nopar:Npn \__wstf_make_main_parshape:
+  {
+    \dim_compare:nNnTF \g__wstf_hangindent_dim > \c_zero_dim
+      {
+        \int_compare:nNnTF \g__wstf_hangafter_int = \c_one_int
+          { \__wstf_make_hangfrom: }
+          { \__wstf_make_main_parshape_aux: }
+      }
+      { \__wstf_make_main_parshape_aux: }
+  }
+\cs_new_protected_nopar:Npn \__wstf_make_main_parshape_aux:
+  {
+    \bool_gset_false:N \g__wstf_hangfrom_bool
+    \tex_parshape:D
+      \int_eval:n { \l__wstf_top_int + 1 } ~
+      \prg_replicate:nn
+        { \l__wstf_top_int }
+        { \g__wstf_parshape_indent_dim \g__wstf_parshape_length_dim }
+      \c_zero_dim \c_max_dim
+  }
+\cs_new_protected_nopar:Npn \__wstf_save_parshape:
+  {
+    \int_gset_eq:NN \g__wstf_parshape_int \tex_parshape:D
+    \int_compare:nNnTF \g__wstf_parshape_int = \c_one_int
+      {
+        \dim_gset:Nn \g__wstf_parshape_indent_dim
+          { \tex_parshapeindent:D \c_one_int }
+        \dim_gset:Nn \g__wstf_parshape_length_dim
+          { \tex_parshapelength:D \c_one_int }
+      }
+      {
+        \int_gzero:N \g__wstf_parshape_int
+        \dim_gzero:N \g__wstf_parshape_indent_dim
+        \dim_gset_eq:NN \g__wstf_parshape_length_dim \l__wstf_main_width_dim
+        \int_gset_eq:NN \g__wstf_hangafter_int  \tex_hangafter:D
+        \dim_gset_eq:NN \g__wstf_hangindent_dim \tex_hangindent:D
+      }
+  }
+\cs_new_protected_nopar:Npn \__wstf_restore_parshape:
+  {
+    \int_compare:nNnTF \g__wstf_parshape_int = \c_one_int
+      {
+        \tex_parshape:D \g__wstf_parshape_int
+          \g__wstf_parshape_indent_dim
+          \g__wstf_parshape_length_dim
+      }
+      { \__wstf_restore_hangfrom: }
+  }
+\cs_new_protected_nopar:Npn \__wstf_parshape_kern:
+  {
+    \dim_compare:nNnT \l__wstf_l_dim = \c_zero_dim
+      {
+        \dim_compare:nNnF \g__wstf_parshape_indent_dim = \c_zero_dim
+          { \tex_kern:D - \g__wstf_parshape_indent_dim }
+      }
+  }
+\cs_new_protected_nopar:Npn \__wstf_make_hangfrom:
+  {
+    \bool_if:NTF \l__wstf_hang_bool
+      { \__wstf_make_hangfrom_aux: }
+      { \__wstf_make_main_parshape_aux: }
+  }
+\cs_new_protected_nopar:Npn \__wstf_make_hangfrom_aux:
+  {
+    \__wstf_restore_hangfrom:
+    \int_zero:N \tex_parshape:D
+    \bool_gset_true:N \g__wstf_hangfrom_bool
+    \dim_set_eq:NN \tex_hsize:D \l__wstf_window_dim
+  }
+\cs_new_protected_nopar:Npn \__wstf_save_hangfrom:
+  {
+    \int_gset_eq:NN \g__wstf_hangafter_int  \tex_hangafter:D
+    \dim_gset_eq:NN \g__wstf_hangindent_dim \tex_hangindent:D
+  }
+\cs_new_protected_nopar:Npn \__wstf_restore_hangfrom:
+  {
+    \int_set_eq:NN \tex_hangafter:D  \g__wstf_hangafter_int
+    \dim_set_eq:NN \tex_hangindent:D \g__wstf_hangindent_dim
+  }
+\bool_new:N \g__wstf_hangfrom_bool
+\int_new:N \g__wstf_parshape_int
+\int_new:N \g__wstf_hangafter_int
+\dim_new:N \g__wstf_hangindent_dim
+\cs_new_protected_nopar:Npn \__wstf_group_kludge:
+  {
+    \scan_stop:
+    \int_compare:nNnTF \tex_currentgrouptype:D = \c_one_int
+      {
+        \c_group_end_token
+        \cs_gset_eq:NN \__wstf_group_begin: \c_group_begin_token
+      }
+      { \cs_gset_eq:NN \__wstf_group_begin: \__wstf_empty: }
+    \legacy_if:nTF { @noitemarg }
+      { \cs_gset_eq:NN \__wstf_set_itemarg: \@noitemargtrue }
+      { \cs_gset_eq:NN \__wstf_set_itemarg: \__wstf_empty: }
+  }
+\cs_new_eq:NN \__wstf_set_itemarg: \__wstf_empty:
+\cs_new_eq:NN \__wstf_group_begin: \__wstf_empty:
+\__wstf_gadd_hook:nn { env/wrapstuff@par/after }
+  {
+    \__wstf_set_itemarg:
+    \__wstf_group_begin:
+  }
+\cs_new:Npn \__wstf_ratio:Nn #1#2
+  { \fp_to_dim:n { #1 \dim_to_fp:n {#2} } }
+\cs_new:Npn \__wstf_unit:n #1
+  {
+    \int_eval:n
+      {
+        \exp_last_unbraced:Ne \__wstf_unit_aux:w
+          { \dim_to_decimal_in_unit:nn {#1} { \tex_baselineskip:D } }
+        \s_stop
+      }
+  }
+\cs_new:Npn \__wstf_unit_aux:w #1 . #2 \s_stop
+  { #1 + 1 }
+\cs_new_protected_nopar:Npn \__wstf_save_tex_skip:
+  {
+    \skip_gset_eq:NN \g__wstf_left_skip \tex_leftskip:D
+    \skip_gset_eq:NN \g__wstf_right_skip \tex_rightskip:D
+    \skip_gset_eq:NN \g__wstf_parfill_skip \tex_parfillskip:D
+    \skip_gset_eq:NN \g__wstf_baseline_skip \tex_baselineskip:D
+    \skip_gset:Nn \g__wstf_main_left_skip { - \tex_leftskip:D }
+  }
+\cs_new_protected_nopar:Npn \__wstf_adjust_tex_skip:
+  {
+    \__wstf_adjust_skip:N \g__wstf_left_skip
+    \__wstf_adjust_skip:N \g__wstf_right_skip
+    \__wstf_adjust_skip:N \g__wstf_parfill_skip
+  }
+\cs_new_protected:Npn \__wstf_adjust_skip:N #1
+  { \skip_gsub:Nn #1 { \dim_eval:n {#1} } }
+\cs_new_protected_nopar:Npn \__wstf_tex_parameter:
+  {
+    \int_zero:N \tex_clubpenalty:D
+    \int_zero:N \tex_widowpenalty:D
+    \int_zero:N \tex_interlinepenalty:D
+    \int_zero:N \tex_displaywidowpenalty:D
+    \int_zero:N \tex_clubpenalties:D
+    \int_zero:N \tex_widowpenalties:D
+    \int_zero:N \tex_interlinepenalties:D
+    \int_zero:N \tex_displaywidowpenalties:D
+    \skip_set_eq:NN \tex_leftskip:D \g__wstf_left_skip
+    \skip_set_eq:NN \tex_rightskip:D \g__wstf_right_skip
+    \skip_set_eq:NN \tex_parfillskip:D \g__wstf_parfill_skip
+    \skip_set_eq:NN \tex_baselineskip:D \g__wstf_baseline_skip
+  }
+\skip_new:N \g__wstf_left_skip
+\skip_new:N \g__wstf_right_skip
+\skip_new:N \g__wstf_parfill_skip
+\skip_new:N \g__wstf_baseline_skip
+\skip_new:N \g__wstf_main_left_skip
+\cs_new_protected_nopar:Npn \__wstf_display_parameter:
+  {
+    \bool_gset_false:N \g__wstf_display_bool
+    \tex_everydisplay:D \exp_after:wN
+      {
+        \tex_the:D \tex_everydisplay:D
+        \__wstf_display_hook:
+      }
+  }
+\cs_new_protected_nopar:Npn \__wstf_display_hook:
+  {
+    \__wstf_test_leqno:
+    \dim_compare:nNnF \tex_displaywidth:D < \c_max_dim
+      {
+        \bool_gset_true:N \g__wstf_display_bool
+        \dim_set_eq:NN \tex_displaywidth:D \l__wstf_display_dim
+      }
+  }
+\cs_new_eq:NN \__wstf_test_leqno: \__wstf_empty:
+\cs_new_protected_nopar:Npn \__wstf_clear_display_hook:
+  { \cs_gset_eq:NN \__wstf_display_hook: \__wstf_empty: }
+\cs_new_protected_nopar:Npn \__wstf_split_parameter:
+  {
+    \skip_zero:N \tex_splittopskip:D
+    \dim_set_eq:NN \tex_vfuzz:D \c_max_dim
+    \int_set_eq:NN \tex_vbadness:D \c_max_int
+  }
+\cs_new_protected_nopar:Npn \__wstf_build_par:
+  {
+    \bool_if:NTF \g__wstf_hangfrom_bool
+      { \__wstf_build_box: }
+      { \__wstf_build_par_aux: }
+    \box_if_empty:NTF \l__wstf_window_box
+      { \__wstf_put_next_par: }
+      { \__wstf_put_box: }
+  }
+\cs_new_protected_nopar:Npn \__wstf_build_par_aux:
+  {
+    \__wstf_extract_display_hbox:NN \l__wstf_body_box \l__wstf_bottom_box
+    \int_compare:nNnT \l__wstf_top_int > \c_zero_int
+      { \__wstf_put_body_box: }
+    \box_if_empty:NTF \l__wstf_bottom_box
+      {
+        \box_if_empty:NF \g__wstf_display_box
+          { \__wstf_build_display_box: }
+      }
+      { \__wstf_build_body_box: }
+  }
+\box_new:N \l__wstf_bottom_box
+\cs_new_protected_nopar:Npn \__wstf_put_par:
+  {
+    \int_gset:Nn \g__wstf_top_int
+      { \l__wstf_top_int - \g__wstf_line_int }
+    \int_gzero:N \g__wstf_window_int
+    \__wstf_put_body_box:
+    \skip_zero:N \tex_parskip:D
+    \para_raw_noindent:
+    \__wstf_next_para:
+  }
+\cs_new_protected_nopar:Npn \__wstf_put_body_box:
+  {
+    \__wstf_para_raw_end:
+    \dim_compare:nNnTF { \box_wd:N \l__wstf_body_box } < \c_max_dim
+      { \__wstf_put_body_aux:N \l__wstf_body_box }
+      {
+        \__wstf_extract_hbox:NN \l__wstf_body_box \l__wstf_bottom_box
+        \__wstf_put_body_aux:N \l__wstf_body_box
+        \box_set_eq_drop:NN \l__wstf_body_box \l__wstf_bottom_box
+      }
+    \__wstf_para_raw_end:
+  }
+\cs_new_protected_nopar:Npn \__wstf_put_body_aux:N #1
+  {
+    \dim_gset:Nn \g__wstf_prevdepth_dim { \box_dp:N #1 }
+    \dim_compare:nNnT \g__wstf_prevdepth_dim = \c_zero_dim
+      { \__wstf_extract_depth:N #1 }
+    \vbox_unpack_drop:N #1
+    \__wstf_set_prevdepth:N \g__wstf_prevdepth_dim
+  }
+\cs_new_protected_nopar:Npn \__wstf_extract_depth:N #1
+  {
+    \vbox_set:Nn \l__wstf_last_box
+      {
+        \vbox_unpack:N #1
+        \__wstf_if_last_hlist:F
+          {
+            \tex_unskip:D \tex_unpenalty:D
+            \tex_unskip:D \tex_unpenalty:D
+          }
+        \__wstf_if_last_hlist:T
+          {
+            \box_set_to_last:N \l__wstf_last_box
+            \dim_gset:Nn \g__wstf_prevdepth_dim
+              { \box_dp:N \l__wstf_last_box }
+          }
+      }
+  }
+\cs_new_protected_nopar:Npn \__wstf_put_next_par:
+  {
+    \int_gzero:N \g__wstf_top_int
+    \int_gzero:N \g__wstf_window_int
+    \skip_zero:N \tex_parskip:D
+    \para_raw_noindent:
+    \__wstf_next_para:
+  }
+\cs_new_protected_nopar:Npn \__wstf_build_display_box:
+  {
+    \bool_set_true:N \l__wstf_display_bool
+    \bool_if:NTF \g__wstf_amsmath_bool
+      { \__wstf_build_display_amsmath: }
+      { \__wstf_build_display_normal: }
+    \box_if_empty:NTF \l__wstf_body_box
+      { \__wstf_build_display_auxi: }
+      { \__wstf_build_display_auxii: }
+  }
+\cs_new_protected_nopar:Npn \__wstf_build_display_amsmath:
+  {
+    \group_begin:
+      \vbox_gset:Nn \g__wstf_equation_box
+        {
+          \__wstf_break:
+          \vbox_unpack_drop:N \g__wstf_display_box
+          \skip_gset_eq:NN \g__wstf_pos_skip \tex_lastskip:D
+          \tex_unskip:D
+          \int_gset_eq:NN \g__wstf_pos_int \tex_lastpenalty:D
+          \tex_unpenalty:D
+          \skip_gadd:Nn \g__wstf_pos_skip { \tex_lastskip:D }
+          \tex_unskip:D
+          \tex_unpenalty:D
+        }
+      \__wstf_split_parameter:
+      \vbox_set_split_to_ht:NNn \l__wstf_last_box \g__wstf_equation_box
+        { \c_zero_dim }
+    \group_end:
+    \box_gset_wd:Nn \g__wstf_equation_box { \l__wstf_display_dim }
+    \vbox_gset:Nn \g__wstf_display_box
+      {
+        \tex_penalty:D \g__wstf_display_pre_int
+        \skip_vertical:N \g__wstf_display_pre_skip
+      }
+    \skip_gset_eq:NN \g__wstf_pre_skip \g__wstf_display_pre_skip
+  }
+\cs_new_protected_nopar:Npn \__wstf_build_display_normal:
+  {
+    \vbox_gset:Nn \g__wstf_display_box
+      {
+        \vbox_unpack_drop:N \g__wstf_display_box
+        \skip_gset_eq:NN \g__wstf_pos_skip \tex_lastskip:D
+        \tex_unskip:D
+        \int_gset_eq:NN \g__wstf_pos_int \tex_lastpenalty:D
+        \tex_unpenalty:D
+        \box_gset_to_last:N \g__wstf_equation_box
+        \skip_gset_eq:NN \g__wstf_pre_skip \tex_lastskip:D
+        \tex_unskip:D
+        \skip_gadd:Nn \g__wstf_pre_skip { \tex_lastskip:D }
+        \tex_unskip:D
+        \skip_vertical:N \g__wstf_pre_skip
+      }
+  }
+\cs_new_protected_nopar:Npn \__wstf_build_display_auxi:
+  {
+    \bool_if:NTF \g__wstf_amsmath_bool
+      { \box_set_eq_drop:NN \l__wstf_window_box \g__wstf_equation_box }
+      {
+        \hbox_set_to_wd:Nnn \l__wstf_window_box
+          { \l__wstf_display_dim }
+          {
+            \tex_hss:D
+              \__wstf_adjust_equation:
+              \box_use_drop:N \g__wstf_equation_box
+            \tex_hss:D
+          }
+      }
+    \dim_gset:Nn \g__wstf_ht_dim { \box_ht:N \l__wstf_window_box }
+    \dim_add:Nn \l__wstf_voffset_dim
+      { \box_ht:N \g__wstf_display_box / 2 }
+  }
+\cs_new_protected_nopar:Npn \__wstf_build_display_auxii:
+  {
+    \box_if_horizontal:NTF \l__wstf_body_box
+      {
+        \box_set_eq:NN \l__wstf_bottom_box \l__wstf_body_box
+        \__wstf_build_display_auxiii:
+      }
+      {
+        \__wstf_extract_hbox:NN \l__wstf_body_box \l__wstf_bottom_box
+        \str_if_eq:eeTF
+          {
+            \dim_eval:n { \box_ht:N \l__wstf_body_box }
+            \dim_eval:n { \box_dp:N \l__wstf_body_box }
+            \dim_eval:n { \box_ht:N \l__wstf_bottom_box }
+            \dim_eval:n { \box_dp:N \l__wstf_bottom_box }
+          }
+          { \c__wstf_zero_pt_str }
+          {
+            \vbox_unpack_drop:N \l__wstf_body_box
+            \box_clear:N \l__wstf_bottom_box
+            \__wstf_build_display_auxi:
+          }
+          { \__wstf_build_display_auxiii: }
+      }
+  }
+\str_const:Nx \c__wstf_zero_pt_str
+  {
+    \dim_use:N \c_zero_dim
+    \dim_use:N \c_zero_dim
+    \dim_use:N \c_zero_dim
+    \dim_use:N \c_zero_dim
+  }
+\cs_new_protected_nopar:Npn \__wstf_build_display_auxiii:
+  {
+    \bool_set_true:N \l__wstf_attach_equation_bool
+    \box_gclear:N \g__wstf_display_box
+    \bool_if:NF \g__wstf_amsmath_bool
+      { \__wstf_adjust_equation: }
+    \__wstf_build_body_box:
+  }
+\bool_new:N \l__wstf_display_bool
+\bool_new:N \l__wstf_attach_equation_bool
+\cs_new_protected:Npn \__wstf_attach_left:N #1
+  {
+    \__wstf_attach_equation:Nn #1
+      { \g__wstf_parshape_indent_dim }
+  }
+\cs_new_protected:Npn \__wstf_attach_right:N #1
+  {
+    \__wstf_attach_equation:Nn #1
+      {
+          \l__wstf_line_dim
+        - \l__wstf_display_dim
+        + \g__wstf_parshape_indent_dim
+      }
+  }
+\cs_new_protected:Npn \__wstf_attach_equation:Nn #1#2
+  {
+    \vbox_set:Nn \l__wstf_last_box
+      {
+        \vbox_unpack:N #1
+        \box_set_to_last:N \l__wstf_last_box
+        \bool_if:NTF \g__wstf_amsmath_bool
+          { \__wstf_attach_equation_amsmath:Nn }
+          { \__wstf_attach_equation_normal:Nn }
+        \l__wstf_last_box {#2}
+      }
+  }
+\cs_new_protected:Npn \__wstf_attach_equation_amsmath:Nn #1#2
+  {
+    \vbox_gset:Nn \g__wstf_equation_box
+      {
+        \__wstf_nobreak:
+        \skip_vertical:n
+          {
+              \g__wstf_display_pre_skip
+            + \g__wstf_display_pre_dim
+            - \box_dp:N #1
+          }
+        \box_move_right:nn {#2}
+          { \box_use_drop:N \g__wstf_equation_box }
+      }
+  }
+\cs_new_protected:Npn \__wstf_attach_equation_normal:Nn #1#2
+  {
+    \vbox_set:Nn \l__wstf_last_box
+      {
+        \__wstf_tex_parameter:
+        \dim_set_eq:NN \tex_hsize:D \l__wstf_display_dim
+        \para_raw_noindent:
+          \hbox_unpack_drop:N #1 \tex_unskip:D
+          \__wstf_insert_equation:
+        \para_raw_end:
+        \skip_gset_eq:NN \g__wstf_pos_skip \tex_lastskip:D
+        \tex_unskip:D
+        \int_gset_eq:NN \g__wstf_pos_int \tex_lastpenalty:D
+        \tex_unpenalty:D
+        \box_set_to_last:N \l__wstf_last_box
+        \skip_set_eq:NN \l__wstf_last_skip \tex_lastskip:D
+        \tex_unskip:D
+        \skip_add:Nn \l__wstf_last_skip { \tex_lastskip:D }
+        \vbox_gset:Nn \g__wstf_equation_box
+          {
+            \__wstf_nobreak:
+            \skip_vertical:N \l__wstf_last_skip
+            \box_move_right:nn {#2}
+              {
+                \hbox_to_wd:nn
+                  { \l__wstf_display_dim }
+                  {
+                    \tex_hss:D
+                      \box_use_drop:N \l__wstf_last_box
+                    \tex_hss:D
+                  }
+              }
+          }
+      }
+  }
+\cs_new_protected_nopar:Npn \__wstf_insert_equation:
+  {
+    \c_math_toggle_token \c_math_toggle_token
+      \dim_compare:nNnTF \tex_displaywidth:D = \l__wstf_display_dim
+        { \box_use_drop:N \g__wstf_equation_box }
+        {
+          \bool_if:NTF \g__wstf_eqnum_bool
+            { \__wstf_repack_equation: }
+            { \box_use_drop:N \g__wstf_equation_box }
+        }
+    \c_math_toggle_token \c_math_toggle_token
+  }
+\cs_new_protected_nopar:Npn \__wstf_repack_equation:
+  {
+    \box_gclear:N \g__wstf_equation_box
+    \box_use_drop:N \g__wstf_eqbody_box
+    \bool_if:NTF \g__wstf_leqno_bool
+      { \tex_leqno:D }
+      { \tex_eqno:D }
+    \box_use_drop:N \g__wstf_eqnum_box
+  }
+\cs_new_protected_nopar:Npn \__wstf_adjust_equation:
+  {
+    \__wstf_test_eqnum:
+    \bool_if:NT \g__wstf_eqnum_bool
+      { \__wstf_adjust_equation_width: }
+  }
+\cs_new_protected_nopar:Npn \__wstf_test_eqnum:
+  {
+    \hbox_set:Nn \l__wstf_last_box
+      {
+        \bool_gset_false:N \g__wstf_eqnum_bool
+        \hbox_unpack:N \g__wstf_equation_box
+        \__wstf_if_last_hlist:F { \use_none_delimit_by_s_stop:w }
+        \box_gset_to_last:N \g__wstf_eqnum_box
+        \__wstf_if_last_kern:F  { \use_none_delimit_by_s_stop:w }
+        \tex_unkern:D
+        \__wstf_if_last_hlist:F { \use_none_delimit_by_s_stop:w }
+        \box_gset_to_last:N \g__wstf_eqbody_box
+        \__wstf_if_last_none:F  { \use_none_delimit_by_s_stop:w }
+        \bool_gset_true:N \g__wstf_eqnum_bool
+        \use_none_delimit_by_s_stop:w \s_stop
+      }
+  }
+\cs_new_protected_nopar:Npn \__wstf_adjust_equation_width:
+  {
+    \bool_if:NTF \g__wstf_leqno_bool
+      { \__wstf_adjust_leqno: }
+      {
+        \box_gset_wd:Nn \g__wstf_equation_box
+          { \box_wd:N \g__wstf_eqbody_box }
+      }
+  }
+\cs_new_protected_nopar:Npn \__wstf_adjust_leqno:
+  {
+    \box_set_eq_drop:NN \l__wstf_last_box \g__wstf_eqnum_box
+    \box_gset_eq_drop:NN \g__wstf_eqnum_box \g__wstf_eqbody_box
+    \box_gset_eq_drop:NN \g__wstf_eqbody_box \l__wstf_last_box
+    \hbox_gset:Nn \g__wstf_equation_box
+      {
+        \skip_horizontal:n
+          {
+              \box_wd:N \g__wstf_eqbody_box
+            - \box_wd:N \g__wstf_equation_box
+          }
+        \box_use_drop:N \g__wstf_equation_box
+      }
+  }
+\box_new:N \g__wstf_eqbody_box
+\box_new:N \g__wstf_eqnum_box
+\box_new:N \g__wstf_equation_box
+\int_new:N \g__wstf_pos_int
+\skip_new:N \g__wstf_pos_skip
+\bool_new:N \g__wstf_eqnum_bool
+\cs_new_protected_nopar:Npn \__wstf_add_pos_kludge:
+  {
+    \dim_gset:Nn \g__wstf_prevdepth_dim
+      { \box_dp:N \l__wstf_window_box }
+    \bool_gset_false:N \g__wstf_equation_dp_bool
+    \bool_if:NTF \g__wstf_next_bool
+      {
+        \tex_vadjust:D
+          {
+            \box_if_empty:NF \g__wstf_equation_box
+              { \__wstf_output_equation_box: }
+            \__wstf_nobreak:
+            \bool_if:NT \l__wstf_display_bool
+              { \skip_vertical:N \g__wstf_pos_skip }
+          }
+      }
+      {
+        \bool_if:NT \l__wstf_display_bool
+          {
+            \tex_vadjust:D
+              {
+                \box_if_empty:NF \g__wstf_equation_box
+                  { \__wstf_output_equation_box: }
+                \tex_penalty:D \g__wstf_pos_int
+                \skip_vertical:N \g__wstf_pos_skip
+              }
+          }
+      }
+    \int_gzero:N \g__wstf_pos_int
+    \skip_gzero:N \g__wstf_pos_skip
+  }
+\cs_new_protected_nopar:Npn \__wstf_output_equation_box:
+  {
+    \cs_gset_eq:NN
+      \__wstf_para_after:
+      \__wstf_set_equation_depth:
+    \bool_gset_true:N \g__wstf_equation_dp_bool
+    \dim_gset:Nn \g__wstf_prevdepth_dim
+      { \box_dp:N \g__wstf_equation_box }
+    \vbox_unpack_drop:N \g__wstf_equation_box
+  }
+\cs_new_protected_nopar:Npn \__wstf_set_equation_depth:
+  {
+    \cs_gset_eq:NN \__wstf_para_after: \__wstf_empty:
+    \bool_gset_false:N \g__wstf_equation_dp_bool
+    \__wstf_set_prevdepth:N \g__wstf_prevdepth_dim
+  }
+\bool_new:N \g__wstf_equation_dp_bool
+\cs_new_protected_nopar:Npn \__wstf_build_body_box:
+  {
+    \box_set_eq:NN \l__wstf_save_body_box \l__wstf_bottom_box
+    \__wstf_build_window:
+    \int_compare:nNnTF \g__wstf_line_int > \l__wstf_window_line_int
+      { \__wstf_extract_hbox:NN \l__wstf_body_box \l__wstf_bottom_box }
+      { \box_clear:N \l__wstf_bottom_box }
+    \box_if_empty:NF \l__wstf_bottom_box
+      { \bool_set_false:N \l__wstf_attach_equation_bool }
+    \box_clear:N \l__wstf_window_box
+    \__wstf_build_box:
+  }
+\box_new:N \l__wstf_save_body_box
+\cs_new_protected_nopar:Npn \__wstf_build_window:
+  {
+    \vbox_set:Nn \l__wstf_body_box
+      {
+        \dim_zero:N \tex_emergencystretch:D
+        \dim_set_eq:NN \tex_hfuzz:D \c_max_dim
+        \dim_set_eq:NN \tex_vfuzz:D \c_max_dim
+        \int_set_eq:NN \tex_hbadness:D \c_max_int
+        \int_set_eq:NN \tex_vbadness:D \c_max_int
+        \int_set:Nn \tex_tolerance:D { 1000 }
+        \para_raw_noindent:
+          \hbox_unpack_drop:N \l__wstf_bottom_box
+          \__wstf_tex_parameter:
+          \__wstf_make_parshape:
+          \__wstf_interline_penalties:
+        \para_raw_end:
+        \int_gset_eq:NN \g__wstf_line_int \tex_prevgraf:D
+      }
+  }
+\cs_new_protected_nopar:Npn \__wstf_make_parshape:
+  {
+    \tex_parshape:D
+      \int_eval:n { \l__wstf_window_line_int + 1 } ~
+      \bool_if:NTF \l__wstf_hang_bool
+        {
+          \prg_replicate:nn
+            { \l__wstf_window_int }
+            { \c_zero_dim \l__wstf_window_dim }
+        }
+        {
+          \bool_if:NTF \l__wstf_column_bool
+            {
+              \prg_replicate:nn
+                { \l__wstf_window_int / 2 }
+                { \c_zero_dim \l__wstf_l_dim }
+              \prg_replicate:nn
+                {
+                  \bool_if:NTF \g__wstf_column_bool
+                    { \g__wstf_column_int }
+                    { \l__wstf_window_int / 2 }
+                }
+                { \c_zero_dim \l__wstf_r_dim }
+            }
+            {
+              \prg_replicate:nn
+                { \l__wstf_window_int / 2 }
+                {
+                  \c_zero_dim \l__wstf_l_dim
+                  \c_zero_dim \l__wstf_r_dim
+                }
+            }
+        }
+      \c_zero_dim \c_max_dim
+  }
+\cs_new_protected_nopar:Npn \__wstf_interline_penalties:
+  {
+    \bool_if:NF \l__wstf_hang_bool
+      {
+        \bool_if:NTF \l__wstf_column_bool
+          { \__wstf_column_penalties: }
+          { \__wstf_block_penalties: }
+      }
+  }
+\cs_new_protected_nopar:Npn \__wstf_column_penalties:
+  {
+    \tex_interlinepenalties:D
+      \int_eval:n { \l__wstf_window_int / 2 + \c_one_int } ~
+      \prg_replicate:nn
+        { \l__wstf_window_int / 2 - \c_one_int }
+        { \c__wstf_nobreak_int }
+      \c__wstf_break_int
+      \c_zero_int
+  }
+\cs_new_protected_nopar:Npn \__wstf_block_penalties:
+  {
+    \tex_interlinepenalties:D \l__wstf_window_int
+      \prg_replicate:nn
+        { \l__wstf_window_int - \c_one_int }
+        { \c__wstf_break_int }
+      \c_zero_int
+  }
+\cs_new_protected_nopar:Npn \__wstf_break:
+  { \tex_penalty:D \c__wstf_break_int }
+\cs_new_protected_nopar:Npn \__wstf_nobreak:
+  { \tex_penalty:D \c__wstf_nobreak_int }
+\int_const:Nn \c__wstf_break_int { -10000 }
+\int_const:Nn \c__wstf_nobreak_int { 10000 }
+\cs_new_protected_nopar:Npn \__wstf_build_block:
+  {
+    \vbox_set:Nn \l__wstf_window_box
+      {
+        \__wstf_split_parameter:
+        \skip_set_eq:NN \tex_baselineskip:D \g__wstf_baseline_skip
+        \__wstf_build_line:
+      }
+  }
+\cs_new_protected_nopar:Npn \__wstf_build_line:
+  {
+    \vbox_set_split_to_ht:NNn \l__wstf_l_box \l__wstf_body_box
+      { \g__wstf_baseline_skip }
+    \vbox_set_split_to_ht:NNn \l__wstf_r_box \l__wstf_body_box
+      { \g__wstf_baseline_skip }
+    \__wstf_build_line_repack:
+    \box_if_empty:NTF \l__wstf_body_box
+      { \__wstf_put_last_line: }
+      {
+        \__wstf_put_line_box:
+        \__wstf_build_line:
+      }
+  }
+\cs_new_protected_nopar:Npn \__wstf_build_line_repack:
+  {
+    \vbox_set:Nn \l__wstf_l_box
+      { \vbox_unpack_drop:N \l__wstf_l_box }
+    \box_if_empty:NF \l__wstf_r_box
+      {
+        \vbox_set:Nn \l__wstf_r_box
+          { \vbox_unpack_drop:N \l__wstf_r_box }
+      }
+    \__wstf_save_first_ht:
+  }
+\cs_new_protected_nopar:Npn \__wstf_put_last_line:
+  {
+    \bool_if:NT \l__wstf_attach_equation_bool
+      { \__wstf_attach_left:N \l__wstf_l_box }
+    \__wstf_put_line_box:
+  }
+\cs_new_protected_nopar:Npn \__wstf_put_line_box:
+  {
+    \hbox_to_wd:nn { \l__wstf_line_dim }
+      {
+        \box_use_drop:N \l__wstf_l_box
+        \tex_hfil:D
+        \box_use_drop:N \l__wstf_r_box
+      }
+  }
+\cs_new_protected_nopar:Npn \__wstf_save_first_ht:
+  {
+    \dim_gset:Nn \g__wstf_ht_dim
+      {
+        \dim_max:nn
+          { \box_ht:N \l__wstf_l_box }
+          { \box_ht:N \l__wstf_r_box }
+      }
+    \cs_set_eq:NN \__wstf_save_first_ht: \__wstf_empty:
+  }
+\dim_new:N \g__wstf_ht_dim
+\box_new:N \l__wstf_l_box
+\box_new:N \l__wstf_r_box
+\cs_new_protected_nopar:Npn \__wstf_build_column_fuzzy:
+  {
+    \hbox_set_to_wd:Nnn \l__wstf_window_box
+      { \l__wstf_line_dim }
+      {
+        \__wstf_split_parameter:
+        \__wstf_build_column_aux:
+        \box_if_empty:NT \l__wstf_bottom_box
+          { \__wstf_build_column_fuzzy_aux: }
+        \__wstf_repack_left_box:
+        \bool_if:NT \l__wstf_attach_equation_bool
+          { \__wstf_attach_left:N \l__wstf_l_box }
+        \box_use:N \l__wstf_l_box
+        \tex_hfil:D
+        \box_move_up:nn
+          { \box_ht:N \l__wstf_l_box - \box_ht:N \l__wstf_r_box }
+          { \box_use_drop:N \l__wstf_r_box }
+      }
+  }
+\cs_new_protected_nopar:Npn \__wstf_build_column_aux:
+  {
+    \vbox_set_split_to_ht:NNn \l__wstf_l_box \l__wstf_body_box
+      { \box_ht:N \l__wstf_body_box / 2 }
+    \vbox_set_top:Nn \l__wstf_l_box
+      { \vbox_unpack_drop:N \l__wstf_l_box }
+    \box_set_eq_drop:NN \l__wstf_r_box \l__wstf_body_box
+  }
+\cs_new_protected_nopar:Npn \__wstf_build_column_fuzzy_aux:
+  {
+    \dim_compare:nNnTF
+      {
+        \box_ht_plus_dp:N \l__wstf_r_box -
+        \box_ht_plus_dp:N \l__wstf_l_box
+      }
+      >
+      { \l__wstf_min_dim }
+      {
+        \box_if_empty:NF \l__wstf_last_l_box
+          {
+            \box_set_eq_drop:NN \l__wstf_l_box \l__wstf_last_l_box
+            \box_set_eq_drop:NN \l__wstf_r_box \l__wstf_last_r_box
+          }
+      }
+      { \__wstf_rebuild_window: }
+  }
+\cs_new_protected_nopar:Npn \__wstf_rebuild_window:
+  {
+    \int_compare:nNnT \l__wstf_window_int > { 2 }
+      { \__wstf_rebuild_window_aux: }
+  }
+\cs_new_protected_nopar:Npn \__wstf_rebuild_window_aux:
+  {
+    \int_sub:Nn \l__wstf_window_int { 2 }
+    \box_set_eq_drop:NN \l__wstf_last_l_box \l__wstf_l_box
+    \box_set_eq_drop:NN \l__wstf_last_r_box \l__wstf_r_box
+    \box_set_eq:NN \l__wstf_bottom_box \l__wstf_save_body_box
+    \int_set_eq:NN \l__wstf_window_line_int \l__wstf_window_int
+    \__wstf_build_window:
+    \__wstf_build_column_aux:
+    \__wstf_build_column_fuzzy_aux:
+  }
+\box_new:N \l__wstf_last_l_box
+\box_new:N \l__wstf_last_r_box
+\cs_new_protected_nopar:Npn \__wstf_build_column_strict:
+  {
+    \group_begin:
+      \__wstf_split_parameter:
+      \__wstf_build_column_aux:
+      \box_if_empty:NTF \l__wstf_r_box
+        { \__wstf_build_column_strict_auxi: }
+        {
+          \box_if_empty:NTF \l__wstf_bottom_box
+            { \__wstf_build_column_strict_auxii: }
+            {
+              \bool_if:NTF \g__wstf_column_bool
+                { \__wstf_build_column_strict_auxiii: }
+                { \__wstf_build_column_strict_auxiv: }
+            }
+        }
+    \group_end:
+    \box_set_eq_drop:NN \l__wstf_window_box \g__wstf_window_box
+  }
+\cs_new_protected_nopar:Npn \__wstf_build_column_strict_auxi:
+  {
+    \__wstf_repack_left_box:
+    \bool_if:NT \l__wstf_attach_equation_bool
+      { \__wstf_attach_left:N \l__wstf_l_box }
+    \box_gset_eq_drop:NN \g__wstf_window_box \l__wstf_l_box
+    \bool_gset_true:N \g__wstf_column_bool
+    \bool_if:NF \g__wstf_first_save_bool
+      {
+        \bool_gset_true:N \g__wstf_first_save_bool
+        \dim_gset:Nn \g__wstf_first_sep_dim
+          { \tex_baselineskip:D - \g__wstf_ht_dim }
+        \dim_gset_eq:NN \g__wstf_first_dp_dim \g__wstf_prevdepth_dim
+      }
+    \int_case:nnT { \g__wstf_window_int }
+      {
+        { \c_zero_int } { }
+        { \g__wstf_line_int } { }
+      }
+      { \__wstf_column_move_entire_aux: }
+  }
+\cs_new_protected_nopar:Npn \__wstf_column_move_entire_aux:
+  {
+    \bool_gset_true:N \g__wstf_entire_bool
+    \bool_gset_true:N \g__wstf_next_hang_bool
+  }
+\cs_new_protected_nopar:Npn \__wstf_column_move_entire:
+  {
+    \dim_gsub:Nn \g__wstf_first_sep_dim
+      { \box_dp:N \l__wstf_window_box }
+    \bool_gset_false:N \g__wstf_entire_bool
+    \dim_gzero:N \g__wstf_column_ht_dim
+    \dim_gset_eq:NN \g__wstf_prevdepth_dim \g__wstf_first_dp_dim
+    \__wstf_column_right_move_set:nn
+      { \g__wstf_stuff_ht_dim }
+      { \g__wstf_window_ht_dim }
+    \int_gset_eq:NN \g__wstf_window_int \g__wstf_column_int
+  }
+\cs_new_protected:Npn \__wstf_column_right_move_set:nn #1#2
+  {
+    \bool_gset_true:N \g__wstf_right_move_bool
+    \bool_gset_true:N \g__wstf_first_set_bool
+    \tl_gput_right:Nn \g__wstf_main_setting_tl
+      {
+        \bool_if:NTF \g__wstf_first_set_bool
+          {
+            \bool_gset_false:N \g__wstf_first_set_bool
+            \bool_set_true:N \l__wstf_first_move_bool
+          }
+          { \bool_set_false:N \l__wstf_first_move_bool }
+        \fp_zero:N \l__wstf_ratio_fp
+      }
+    \__wstf_make_next_stuff:nn
+      { \l__wstf_line_dim - \l__wstf_r_dim - \l__wstf_rightsep_dim }
+      {#1}
+    \dim_gset:Nn \g__wstf_column_room_dim {#2}
+    \int_gzero:N \g__wstf_top_int
+  }
+\cs_new_protected_nopar:Npn \__wstf_build_column_strict_auxii:
+  {
+    \bool_gset_false:N \g__wstf_entire_bool
+    \__wstf_repack_left_box:
+    \bool_if:NT \l__wstf_attach_equation_bool
+      { \__wstf_attach_right:N \l__wstf_r_box }
+    \dim_gset:Nn \g__wstf_hang_ht_dim
+      {
+        \g__wstf_stuff_ht_dim - \tex_baselineskip:D *
+          \__wstf_unit:n { \box_ht_plus_dp:N \l__wstf_r_box }
+        - \box_ht_plus_dp:N \g__wstf_equation_box
+        - \g__wstf_pos_skip
+      }
+    \dim_compare:nNnTF \g__wstf_hang_ht_dim > \c_zero_dim
+      { \__wstf_column_move_right: }
+      { \__wstf_column_put_right: }
+    \box_gset_ht:Nn \g__wstf_window_box { \box_ht:N \l__wstf_l_box }
+    \box_gset_dp:Nn \g__wstf_window_box { \box_dp:N \l__wstf_l_box }
+  }
+\cs_new_protected_nopar:Npn \__wstf_column_move_right:
+  {
+    \int_compare:nNnTF \g__wstf_window_int > \c_zero_int
+      {
+        \dim_gset:Nn \g__wstf_column_room_dim
+          {
+              \g__wstf_window_ht_dim
+            - \g__wstf_first_sep_dim
+            - \box_ht_plus_dp:N \l__wstf_r_box
+            - \box_ht_plus_dp:N \g__wstf_equation_box
+          }
+        \__wstf_next_hang_para:
+      }
+      {
+        \dim_gset:Nn \g__wstf_column_room_dim
+          {
+              \box_ht:N \l__wstf_l_box
+            - \box_ht_plus_dp:N \l__wstf_r_box
+            - \box_ht_plus_dp:N \g__wstf_equation_box
+          }
+        \dim_gset:Nn \g__wstf_first_sep_dim
+          { \tex_baselineskip:D - \g__wstf_ht_dim }
+        \bool_gset_true:N \g__wstf_right_move_bool
+        \bool_gset_true:N \g__wstf_next_hang_bool
+      }
+    \hbox_gset_to_wd:Nnn \g__wstf_window_box
+      { \l__wstf_line_dim }
+      {
+        \box_use:N \l__wstf_l_box
+        \tex_hfil:D
+        \box_move_up:nn
+          { \g__wstf_column_room_dim }
+          { \box_use:N \l__wstf_r_box }
+      }
+    \dim_gset:Nn \g__wstf_column_ht_dim
+      {
+          \box_ht_plus_dp:N \l__wstf_r_box
+        + \box_ht_plus_dp:N \g__wstf_equation_box
+        + \g__wstf_pos_skip
+      }
+  }
+\cs_new_protected_nopar:Npn \__wstf_column_put_right:
+  {
+    \hbox_gset_to_wd:Nnn \g__wstf_window_box
+      { \l__wstf_line_dim }
+      {
+        \box_use:N \l__wstf_l_box
+        \tex_hfil:D
+        \box_move_up:nn
+          {
+            \int_compare:nNnTF \g__wstf_window_int > \c_zero_int
+              { \g__wstf_window_ht_dim - \g__wstf_first_sep_dim }
+              { \box_ht:N \l__wstf_l_box }
+            - \box_ht:N \l__wstf_r_box
+          }
+          { \box_use:N \l__wstf_r_box }
+      }
+    \skip_gzero:N \g__wstf_pos_skip
+  }
+\cs_new_protected_nopar:Npn \__wstf_next_hang_para:
+  {
+    \bool_if:NTF \g__wstf_entire_bool
+      { \__wstf_column_move_entire: }
+      {
+        \__wstf_column_right_move_set:nn
+          { \g__wstf_hang_ht_dim }
+          { \g__wstf_column_room_dim }
+        \int_gzero:N \g__wstf_window_int
+      }
+    \bool_gset_false:N \g__wstf_next_hang_bool
+  }
+\cs_new_protected_nopar:Npn \__wstf_build_column_strict_auxiii:
+  {
+    \bool_gset_false:N \g__wstf_column_bool
+    \__wstf_repack_left_box:
+    \hbox_gset_to_wd:Nnn \g__wstf_window_box
+      { \l__wstf_line_dim }
+      {
+        \box_use:N \l__wstf_l_box
+        \tex_hfil:D
+        \box_use:N \l__wstf_r_box
+      }
+    \box_gset_ht:Nn \g__wstf_window_box
+      { \box_ht:N \l__wstf_l_box }
+  }
+\cs_new_protected_nopar:Npn \__wstf_build_column_strict_auxiv:
+  {
+    \__wstf_repack_left_box:
+    \hbox_gset_to_wd:Nnn \g__wstf_window_box
+      { \l__wstf_line_dim }
+      {
+        \box_use:N \l__wstf_l_box
+        \tex_hfil:D
+        \box_move_up:nn
+          { \box_ht:N \l__wstf_l_box - \box_ht:N \l__wstf_r_box }
+          { \box_use_drop:N \l__wstf_r_box }
+      }
+  }
+\cs_new_protected_nopar:Npn \__wstf_repack_left_box:
+  {
+    \dim_gset:Nn \g__wstf_ht_dim { \box_ht:N \l__wstf_l_box }
+    \vbox_set:Nn \l__wstf_l_box
+      { \vbox_unpack_drop:N \l__wstf_l_box }
+  }
+\box_new:N \g__wstf_window_box
+\bool_new:N \l__wstf_first_move_bool
+\bool_new:N \l__wstf_column_bool
+\cs_new_eq:NN \__wstf_build_column: \__wstf_build_column_strict:
+\cs_new_eq:NN \__wstf_build_box:    \__wstf_build_column:
+\cs_new_protected_nopar:Npn \__wstf_build_hang:
+  {
+    \bool_if:NTF \g__wstf_hangfrom_bool
+      { \__wstf_build_hangfrom: }
+      {
+        \vbox_set_top:Nn \l__wstf_window_box
+          { \vbox_unpack:N \l__wstf_body_box }
+        \dim_gset:Nn \g__wstf_ht_dim { \box_ht:N \l__wstf_window_box }
+      }
+    \box_set_eq_drop:NN \l__wstf_window_box \l__wstf_body_box
+    \bool_if:NT \l__wstf_attach_equation_bool
+      { \__wstf_build_hang_attach: }
+    \dim_compare:nNnT \g__wstf_column_room_dim > \c_zero_dim
+      { \__wstf_build_hang_move: }
+  }
+\cs_new_protected_nopar:Npn \__wstf_build_hang_attach:
+  {
+    \dim_compare:nNnTF \l__wstf_r_dim = \c_zero_dim
+      { \__wstf_attach_left:N  \l__wstf_window_box }
+      { \__wstf_attach_right:N \l__wstf_window_box }
+  }
+\cs_new_protected_nopar:Npn \__wstf_build_hang_move:
+  {
+    \dim_set:Nn \l__wstf_shift_dim
+      {
+        \dim_max:nn
+          { \box_ht:N \l__wstf_window_box }
+          { \tex_baselineskip:D * \g__wstf_line_int }
+        + \box_ht_plus_dp:N \g__wstf_equation_box
+        + \tex_parskip:D
+      }
+    \dim_gsub:Nn \g__wstf_column_room_dim { \l__wstf_shift_dim }
+    \dim_compare:nNnTF \g__wstf_column_room_dim > \c_zero_dim
+      {
+        \box_if_empty:NTF \l__wstf_bottom_box
+          { \bool_if:NT \g__wstf_right_move_bool { \__wstf_set_next_hang: } }
+      }
+      { \use:n }
+      {
+        \bool_gset_false:N \g__wstf_move_hang_bool
+        \bool_gset_false:N \g__wstf_right_move_bool
+      }
+  }
+\cs_new_protected_nopar:Npn \__wstf_set_next_hang:
+  {
+    \bool_if:NF \g__wstf_move_hang_bool
+      {
+        \bool_gset_true:N \g__wstf_move_hang_bool
+        \dim_gset_eq:NN \g__wstf_hang_ht_dim \g__wstf_remaining_dim
+      }
+    \dim_gsub:Nn \g__wstf_hang_ht_dim { \l__wstf_shift_dim }
+    \__wstf_column_right_move_set:nn
+      { \g__wstf_hang_ht_dim }
+      { \g__wstf_column_room_dim }
+    \int_gzero:N \g__wstf_window_int
+  }
+\cs_new_protected_nopar:Npn \__wstf_build_hangfrom:
+  {
+    \group_begin:
+      \vbox_gset:Nn \g__wstf_window_box
+        {
+          \__wstf_break:
+          \vbox_unpack:N \l__wstf_body_box
+        }
+      \__wstf_split_parameter:
+      \vbox_set_split_to_ht:NNn \l__wstf_last_box \g__wstf_window_box
+        { \c_zero_dim }
+      \dim_gset:Nn \g__wstf_ht_dim
+        {
+            \g__wstf_baseline_skip
+          - \g__wstf_prevdepth_dim
+          - \box_ht:N \l__wstf_body_box
+          + \box_ht:N \g__wstf_window_box
+        }
+    \group_end:
+    \box_set_eq_drop:NN \l__wstf_body_box \g__wstf_window_box
+  }
+\cs_new_protected_nopar:Npn \__wstf_put_box:
+  {
+    \__wstf_para_raw_end:
+    \dim_compare:nNnTF \g__wstf_prevdepth_dim > \c__wstf_ignore_depth_dim
+      { \__wstf_add_vskip: }
+      { \__wstf_set_vskip: }
+    \skip_set_eq:NN \l__wstf_par_skip \tex_parskip:D
+    \skip_zero:N \tex_parskip:D
+    \dim_set:Nn \l__wstf_window_ht_dim
+      { \box_ht_plus_dp:N \l__wstf_window_box }
+    \bool_if:NTF \g__wstf_right_move_bool
+      { \__wstf_put_box_aux: }
+      {
+        \box_if_empty:NTF \l__wstf_bottom_box
+          { \__wstf_put_next_test: }
+          { \__wstf_put_box_aux: }
+      }
+  }
+\dim_new:N \l__wstf_window_ht_dim
+\skip_new:N \l__wstf_par_skip
+\cs_new_protected_nopar:Npn \__wstf_put_next_test:
+  {
+    \box_if_empty:NF \g__wstf_equation_box
+      {
+        \dim_add:Nn \l__wstf_window_ht_dim
+          { \box_ht_plus_dp:N \g__wstf_equation_box + \g__wstf_pos_skip }
+      }
+    \dim_compare:nNnTF
+      { \g__wstf_remaining_dim + \g__wstf_pos_skip } > \l__wstf_window_ht_dim
+      { \__wstf_set_next: }
+      { \__wstf_put_box_aux: }
+  }
+\cs_new_protected_nopar:Npn \__wstf_put_box_aux:
+  {
+    \__wstf_output_window_box:
+    \box_if_empty:NTF \l__wstf_bottom_box
+      { \__wstf_put_trailer_box: }
+      { \__wstf_put_bottom_box: }
+  }
+\cs_new_protected_nopar:Npn \__wstf_put_trailer_box:
+  {
+    \bool_if:NTF \g__wstf_next_hang_bool
+      {
+        \__wstf_next_hang_para:
+        \__wstf_next_para_trailer:
+      }
+      {
+        \bool_if:NTF \g__wstf_right_move_bool
+          { \__wstf_next_para_trailer: }
+          {
+            \__wstf_add_pos_kludge:
+            \__wstf_put_pos_box:
+            \__wstf_clear_variable:
+          }
+      }
+  }
+\cs_new_protected_nopar:Npn \__wstf_put_bottom_box:
+  {
+    \__wstf_para_raw_end:
+    \para_raw_noindent:
+    \hbox_unpack_drop:N \l__wstf_bottom_box
+    \box_if_empty:NF \g__wstf_equation_box
+      { \__wstf_insert_equation: }
+    \__wstf_put_pos_box:
+    \__wstf_clear_variable:
+  }
+\cs_new_protected_nopar:Npn \__wstf_output_window_box:
+  {
+    \__wstf_hbox:n
+      {
+        \__wstf_put_window_box:
+        \bool_if:NF \g__wstf_next_bool
+          { \__wstf_output_stuff_box: }
+      }
+  }
+\cs_new_protected_nopar:Npn \__wstf_put_pos_box:
+  {
+    \box_if_empty:NF \g__wstf_pos_box
+      { \__wstf_output_pos_box: }
+  }
+\cs_new_protected_nopar:Npn \__wstf_output_pos_box:
+  {
+    \__wstf_if_last_none:F
+      { \__wstf_output_pos_box_aux: }
+    \hbox_unpack_drop:N \g__wstf_pos_box
+  }
+\cs_new_protected_nopar:Npn \__wstf_output_pos_box_aux:
+  {
+    \__wstf_para_raw_end:
+    \bool_if:NT \g__wstf_equation_dp_bool
+      { \__wstf_set_equation_depth: }
+    \para_raw_noindent:
+  }
+\cs_new_protected:Npn \__wstf_hbox:n #1
+  {
+    \para_raw_noindent:
+    \hbox_gset:Nn \g__wstf_last_box {#1}
+    \box_gset_wd:Nn \g__wstf_last_box { \l__wstf_line_dim }
+    \box_use_drop:N \g__wstf_last_box
+  }
+\cs_new_protected_nopar:Npn \__wstf_put_window_box:
+  {
+    \dim_compare:nNnF \l__wstf_l_dim > \c_zero_dim
+      { \skip_horizontal:n { \l__wstf_line_dim - \l__wstf_r_dim } }
+    \box_use:N \l__wstf_window_box
+  }
+\cs_new_protected_nopar:Npn \__wstf_output_stuff_box:
+  {
+    \hbox_gset:Nn \g__wstf_stuff_box
+      {
+        \__wstf_parshape_kern:
+        \box_move_up:nn
+          {
+              \box_dp:N \g__wstf_stuff_box
+            + \box_ht:N \l__wstf_window_box
+            - (   \l__wstf_window_ht_dim
+                + \box_ht_plus_dp:N \g__wstf_stuff_box ) / 2
+            + \l__wstf_voffset_dim
+          }
+          { \box_use_drop:N \g__wstf_stuff_box }
+      }
+    \box_gset_ht:Nn \g__wstf_stuff_box { \c_zero_dim }
+    \box_gset_dp:Nn \g__wstf_stuff_box { \c_zero_dim }
+    \skip_horizontal:n
+      {
+        \dim_compare:nNnTF \l__wstf_r_dim > \c_zero_dim
+          {
+            \dim_compare:nNnTF
+              { \box_wd:N \l__wstf_window_box }
+              <
+              { \l__wstf_window_dim }
+              { \l__wstf_leftsep_dim }
+              {
+                - \l__wstf_r_dim
+                - \l__wstf_rightsep_dim
+                - \g__wstf_stuff_wd_dim
+              }
+          }
+          { \l__wstf_leftsep_dim }
+      }
+    \box_use_drop:N \g__wstf_stuff_box
+  }
+\cs_new_protected_nopar:Npn \__wstf_add_vskip:
+  {
+    \box_if_empty:NTF \g__wstf_display_box
+      { \__wstf_add_vskip_auxi: }
+      { \__wstf_add_vskip_display: }
+  }
+\cs_new_protected_nopar:Npn \__wstf_add_vskip_display:
+  {
+    \bool_set_true:N \l__wstf_display_pre_bool
+    \vbox_unpack_drop:N \g__wstf_display_box
+    \__wstf_ignore_depth:
+  }
+\cs_new_protected_nopar:Npn \__wstf_add_vskip_auxi:
+  {
+    \dim_compare:nNnTF \tex_pagegoal:D < \c_max_dim
+      { \__wstf_add_vskip_auxii: }
+      {
+        \bool_if:NTF \g__wstf_next_bool
+          { \__wstf_add_vskip_auxii: }
+          { \__wstf_add_vskip_auxiii: }
+      }
+  }
+\cs_new_protected_nopar:Npn \__wstf_add_vskip_auxii:
+  {
+    \__wstf_add_vskip_auxiv:
+    \bool_if:NTF \l__wstf_first_move_bool
+      { \__wstf_first_move_skip: }
+      { \skip_vertical:N \g__wstf_pre_skip }
+    \__wstf_ignore_depth:
+  }
+\cs_new_protected_nopar:Npn \__wstf_add_vskip_auxiii:
+  {
+    \__wstf_add_vskip_auxiv:
+    \skip_vertical:N \g__wstf_pre_skip
+    \dim_compare:nNnTF \tex_topskip:D > \g__wstf_ht_dim
+      {
+        \skip_sub:Nn \tex_topskip:D { \g__wstf_ht_dim }
+        \tex_hrule:D height \c_zero_dim \scan_stop:
+      }
+      { \__wstf_ignore_depth: }
+  }
+\cs_new_protected_nopar:Npn \__wstf_add_vskip_auxiv:
+  {
+    \skip_gset:Nn \g__wstf_pre_skip
+      {
+          \g__wstf_baseline_skip
+        - \g__wstf_prevdepth_dim
+        - \g__wstf_ht_dim
+      }
+    \dim_compare:nNnT \g__wstf_pre_skip < \tex_lineskiplimit:D
+      { \skip_gset_eq:NN \g__wstf_pre_skip \tex_lineskip:D }
+  }
+\cs_new_protected_nopar:Npn \__wstf_first_move_skip:
+  {
+    \skip_vertical:n
+      {
+          \g__wstf_first_sep_dim
+        - \g__wstf_window_ht_dim
+        - \tex_parskip:D
+        \dim_compare:nNnT \g__wstf_column_ht_dim > \c_zero_dim
+          { + \g__wstf_column_ht_dim + \g__wstf_pre_skip }
+      }
+  }
+\skip_new:N \g__wstf_pre_skip
+\bool_new:N \l__wstf_display_pre_bool
+\cs_new_protected_nopar:Npn \__wstf_set_vskip:
+  {
+    \box_if_empty:NTF \g__wstf_display_box
+      {
+        \skip_gset:Nn \g__wstf_pre_skip
+          { \g__wstf_baseline_skip - \g__wstf_ht_dim }
+      }
+      { \__wstf_add_vskip_display: }
+  }
+\cs_new_protected_nopar:Npn \__wstf_ignore_depth:
+  { \dim_set_eq:NN \tex_prevdepth:D \c__wstf_ignore_depth_dim }
+\cs_new_protected_nopar:Npn \__wstf_set_prevdepth:N
+  { \dim_set_eq:NN \tex_prevdepth:D }
+\dim_const:Nn \c__wstf_ignore_depth_dim { -1000pt }
+\cs_new_protected_nopar:Npn \__wstf_set_next:
+  {
+    \dim_set:Nn \l__wstf_height_dim
+      {
+        \bool_if:NT \g__wstf_next_bool { \l__wstf_par_skip }
+        + \g__wstf_pre_skip
+        + \l__wstf_window_ht_dim
+      }
+    \dim_gadd:Nn \g__wstf_total_ht_dim { \l__wstf_height_dim }
+    \dim_set:Nn \l__wstf_shift_dim
+      { \g__wstf_remaining_dim - \l__wstf_height_dim }
+    \dim_compare:nNnTF
+      { - \l__wstf_shift_dim } < \l__wstf_min_dim
+      { \__wstf_set_next_para: }
+      { \__wstf_set_next_output: }
+  }
+\cs_new_protected_nopar:Npn \__wstf_set_next_para:
+  {
+    \int_gset:Nn \g__wstf_window_int
+      {
+        \dim_compare:nNnTF \l__wstf_shift_dim > \c_zero_dim
+          { \__wstf_unit:n { \l__wstf_shift_dim } }
+          { \c_one_int }
+      }
+    \__wstf_set_next_verify:
+    \__wstf_output_window_box:
+    \__wstf_make_next_stuff:nn
+      { \g__wstf_stuff_wd_dim }
+      { \l__wstf_shift_dim }
+    \int_gzero:N \g__wstf_top_int
+    \__wstf_next_para_trailer:
+  }
+\cs_new_protected_nopar:Npn \__wstf_set_next_output:
+  {
+    \__wstf_output_window_box:
+    \__wstf_add_pos_kludge:
+    \__wstf_put_pos_box:
+    \__wstf_clear_variable:
+  }
+\cs_new_protected_nopar:Npn \__wstf_set_next_verify:
+  {
+    \dim_set:Nn \l__wstf_height_dim
+      { \g__wstf_window_ht_dim - \g__wstf_total_ht_dim - \l__wstf_min_dim }
+    \dim_while_do:nNnn
+      { \tex_baselineskip:D * \g__wstf_window_int + \l__wstf_par_skip }
+      <
+      { \l__wstf_height_dim }
+      { \int_gincr:N \g__wstf_window_int }
+    \bool_if:NF \g__wstf_next_bool
+      {
+        \dim_add:Nn \l__wstf_window_ht_dim
+          { \tex_baselineskip:D * \g__wstf_window_int + \l__wstf_par_skip }
+      }
+  }
+\cs_new_protected_nopar:Npn \__wstf_next_para_trailer:
+  {
+    \__wstf_add_pos_kludge:
+    \box_if_empty:NTF \g__wstf_pos_box
+      { \__wstf_next_para: }
+      {
+        \__wstf_env_begin:
+          \hbox_unpack_drop:N \g__wstf_pos_box
+        \__wstf_env_end:
+      }
+  }
+\cs_new_protected:Npn \__wstf_make_next_stuff:nn #1#2
+  {
+    \bool_gset_true:N \g__wstf_next_bool
+    \dim_gset:Nn \g__wstf_stuff_wd_dim  {#1}
+    \dim_gset:Nn \g__wstf_remaining_dim {#2}
+  }
+\cs_new_protected:Npn \__wstf_extract_display_hbox:NN #1
+  {
+    \box_gclear:N \g__wstf_pos_box
+    \vbox_set:Nn #1
+      {
+        \vbox_unpack_drop:N #1
+        \bool_if:NTF \g__wstf_display_bool
+          { \__wstf_test_display_math: }
+          { \box_gclear:N \g__wstf_display_box }
+        \box_if_empty:NTF \g__wstf_display_box
+          {
+            \bool_gset_false:N \g__wstf_amsmath_bool
+            \__wstf_extract_last_hbox:N \g__wstf_last_box
+          }
+          { \box_gclear:N \g__wstf_last_box }
+      }
+    \box_if_empty:NF \g__wstf_display_box
+      { \dim_gset:Nn \g__wstf_display_pre_dim { \box_dp:N #1 } }
+    \__wstf_extract_hbox_aux:N
+  }
+\cs_new_protected:Npn \__wstf_extract_hbox:NN #1
+  {
+    \vbox_set:Nn #1
+      {
+        \vbox_unpack_drop:N #1
+        \__wstf_extract_last_hbox:N \g__wstf_last_box
+      }
+    \__wstf_extract_hbox_aux:N
+  }
+\cs_new_protected:Npn \__wstf_extract_hbox_aux:N #1
+  {
+    \box_if_empty:NTF \g__wstf_last_box
+      { \box_clear:N #1 }
+      { \__wstf_repack_hbox:N #1 }
+  }
+\cs_new_protected:Npn \__wstf_repack_hbox:N #1
+  {
+    \hbox_set:Nn #1
+      {
+        \skip_if_eq:nnF
+          { \g__wstf_main_left_skip } { \c_zero_skip }
+          { \skip_horizontal:N \g__wstf_main_left_skip }
+        \hbox_unpack_drop:N \g__wstf_last_box
+        \tex_unskip:D \tex_unskip:D \tex_unpenalty:D
+      }
+  }
+\cs_new_protected:Npn \__wstf_extract_last_hbox:N #1
+  {
+    \__wstf_if_last_hlist:TF
+      {
+        \box_gset_to_last:N #1
+        \tex_unskip:D
+      }
+      { \box_gclear:N #1 }
+  }
+\box_new:N \g__wstf_last_box
+\box_new:N \g__wstf_display_box
+\dim_new:N \g__wstf_display_pre_dim
+\cs_new_protected_nopar:Npn \__wstf_test_display_math:
+  {
+    \__wstf_if_last_hlist:T { \__wstf_extract_pos_hbox: }
+    \box_clear:N \l__wstf_add_box
+    \box_gclear:N \g__wstf_display_box
+    \skip_gzero:N \g__wstf_last_skip
+    \skip_gzero:N \g__wstf_display_pre_skip
+    \bool_gset_false:N \g__wstf_amsmath_bool
+    \__wstf_add_last_skip:w
+    \__wstf_add_last_penalty:w
+    \__wstf_add_last_box:w
+    \__wstf_add_last_skip:w
+    \__wstf_add_last_skip:w
+    \__wstf_add_last_penalty:w
+    \__wstf_add_last_finalise:w \s_stop
+  }
+\cs_new_protected_nopar:Npn \__wstf_extract_pos_hbox:
+  {
+    \box_gset_to_last:N \g__wstf_last_box
+    \__wstf_repack_hbox:N \l__wstf_last_box
+    \box_gset_eq_drop:NN \g__wstf_pos_box \l__wstf_last_box
+    \tex_unskip:D
+  }
+\box_new:N \l__wstf_add_box
+\box_new:N \g__wstf_pos_box
+\cs_new_protected_nopar:Npn \__wstf_add_last_stop:w
+  {
+    \vbox_unpack_drop:N \l__wstf_add_box
+    \use_none_delimit_by_s_stop:w
+  }
+\cs_new_protected_nopar:Npn \__wstf_add_last_skip:w
+  {
+    \__wstf_if_last_glue:TF
+      {
+        \skip_set_eq:NN \l__wstf_last_skip \tex_lastskip:D
+        \vbox_set:Nn \l__wstf_add_box
+          {
+            \skip_vertical:N \l__wstf_last_skip
+            \vbox_unpack_drop:N \l__wstf_add_box
+          }
+        \tex_unskip:D
+        \skip_gadd:Nn \g__wstf_last_skip { \l__wstf_last_skip }
+      }
+      { \__wstf_skip_stop:w }
+  }
+\skip_new:N \l__wstf_last_skip
+\skip_new:N \g__wstf_last_skip
+\cs_new_eq:NN \__wstf_skip_stop:w \__wstf_add_last_stop:w
+\cs_new_protected_nopar:Npn \__wstf_add_last_penalty:w
+  {
+    \__wstf_if_last_penalty:TF
+      {
+        \int_set_eq:NN \l__wstf_last_int \tex_lastpenalty:D
+        \vbox_set:Nn \l__wstf_add_box
+          {
+            \tex_penalty:D \l__wstf_last_int
+            \vbox_unpack_drop:N \l__wstf_add_box
+          }
+        \tex_unpenalty:D
+        \skip_gset_eq:NN \g__wstf_pre_skip \g__wstf_last_skip
+        \skip_gzero:N \g__wstf_last_skip
+      }
+      { \__wstf_penalty_stop:w }
+  }
+\int_new:N \l__wstf_last_int
+\cs_new_eq:NN \__wstf_penalty_stop:w \__wstf_add_last_stop:w
+\cs_new_protected_nopar:Npn \__wstf_add_last_box:w
+  {
+    \__wstf_if_last_hlist:TF
+      {
+        \skip_gzero:N \g__wstf_last_skip
+        \box_set_to_last:N \l__wstf_last_box
+        \vbox_set:Nn \l__wstf_add_box
+          {
+            \box_use_drop:N \l__wstf_last_box
+            \vbox_unpack_drop:N \l__wstf_add_box
+          }
+      }
+      { \__wstf_box_stop:w }
+  }
+\box_new:N \l__wstf_last_box
+\cs_new_eq:NN \__wstf_box_stop:w \__wstf_add_last_stop:w
+\cs_new_protected_nopar:Npn \__wstf_add_last_finalise:w
+  {
+    \int_gset_eq:NN \g__wstf_display_pre_int \l__wstf_last_int
+    \skip_gadd:Nn \g__wstf_display_pre_skip { \g__wstf_pre_skip }
+    \int_case:nnTF { \tex_lastnodetype:D }
+      {
+        { \c__wstf_hlist_node }   { }
+        { \c__wstf_none_node }    { }
+        { \c__wstf_whatsit_node } { }
+      }
+      { \box_gset_eq_drop:NN \g__wstf_display_box \l__wstf_add_box }
+      { \vbox_unpack_drop:N \l__wstf_add_box }
+    \use_none_delimit_by_s_stop:w
+  }
+\int_new:N \g__wstf_display_pre_int
+\skip_new:N \g__wstf_display_pre_skip
+\cs_new_protected_nopar:Npn \__wstf_amsmath_boot:w
+  {
+    \__wstf_add_last_skip:w
+    \__wstf_add_last_penalty:w
+    \cs_set_eq:NN \__wstf_box_stop:w \__wstf_add_last_stop:w
+    \__wstf_add_last_box:w
+    \bool_gset_true:N \g__wstf_amsmath_bool
+    \cs_set_eq:NN \__wstf_skip_stop:w \__wstf_amsmath_multline:w
+    \cs_set_eq:NN \__wstf_penalty_stop:w \__wstf_amsmath_stop:NN
+    \__wstf_amsmath_recursion:w
+  }
+\cs_new_protected_nopar:Npn \__wstf_amsmath_recursion:w
+  {
+    \__wstf_add_last_skip:w
+    \__wstf_add_last_skip:w
+    \__wstf_add_last_penalty:w
+    \__wstf_add_last_box:w
+    \__wstf_amsmath_recursion:w
+  }
+\cs_new_protected:Npn \__wstf_amsmath_stop:NN #1#2
+  {
+    \cs_set_eq:NN \__wstf_skip_stop:w \__wstf_add_last_stop:w
+    \cs_set_eq:NN \__wstf_penalty_stop:w \__wstf_add_last_stop:w
+  }
+\bool_new:N \g__wstf_amsmath_bool
+\cs_new_protected_nopar:Npn \__wstf_amsmath_multline:w
+  {
+    \__wstf_amsmath_stop:NN ? ?
+    \__wstf_add_last_penalty:w
+    \skip_gset_eq:NN \g__wstf_display_pre_skip
+                     \g__wstf_pre_skip
+    \__wstf_add_last_skip:w
+    \__wstf_add_last_penalty:w
+    \__wstf_add_last_finalise:w
+  }
+\cs_new_protected_nopar:Npn \__wstf_amsmath_leqno:
+  {
+    \legacy_if:nTF { tagsleft@ }
+      { \bool_gset_true:N  \g__wstf_leqno_bool }
+      { \bool_gset_false:N \g__wstf_leqno_bool }
+  }
+\__wstf_package_hook:nn { amsmath }
+  {
+    \cs_gset_eq:NN \__wstf_box_stop:w
+                   \__wstf_amsmath_boot:w
+    \cs_gset_eq:NN \__wstf_test_leqno:
+                   \__wstf_amsmath_leqno:
+  }
+\cs_new_protected_nopar:Npn \__wstf_set_float:
+  {
+    \cs_set_eq:NN \@captype \l__wstf_type_tl
+    \__wstf_float_pre_hook:
+    \__wstf_caption_hook:
+    \@floatboxreset
+  }
+\cs_new_eq:NN \__wstf_float_pre_hook: \__wstf_empty:
+\cs_new_eq:NN \__wstf_float_pos_hook: \__wstf_empty:
+\__wstf_package_hook:nn { float }
+  {
+    \bool_new:N \g__wstf_float_pos_bool
+    \cs_gset_protected_nopar:Npn \__wstf_float_pre_hook:
+      { \exp_args:No \__wstf_float_pre_aux:n { \l__wstf_type_tl } }
+    \cs_new_protected:Npn \__wstf_float_pre_aux:n #1
+      {
+        \cs_if_exist_use:cTF { fst@ #1 }
+          {
+            \@float@setevery {#1}
+            \bool_gset_true:N \g__wstf_float_pos_bool
+          }
+          { \bool_gset_false:N \g__wstf_float_pos_bool }
+      }
+    \cs_gset_protected_nopar:Npn \__wstf_float_pos_hook:
+      {
+        \bool_if:NT \g__wstf_float_pos_bool
+          { \exp_args:No \__wstf_float_pos_aux:n { \l__wstf_type_tl } }
+      }
+    \cs_new_protected:Npn \__wstf_float_pos_aux:n #1
+      {
+        \hbox_gset:Nn \g__wstf_stuff_box
+          {
+            \use:c { fst@ #1 }
+            \cs_set_eq:NN \@currbox \g__wstf_stuff_box
+            \vbox_gset:Nn \g__wstf_stuff_box
+              { \box_use_drop:N \g__wstf_stuff_box }
+            \exp_args:Ne \float@makebox
+              { \dim_eval:n { \box_wd:N \g__wstf_stuff_box } }
+          }
+      }
+  }
+\cs_new_eq:NN \__wstf_floatrow_hook: \__wstf_empty:
+\__wstf_package_hook:nn { floatrow }
+  {
+    \cs_gset_protected_nopar:Npn \__wstf_floatrow_hook:
+      {
+        \cs_set_eq:NN \@captype \l__wstf_type_tl
+        \killfloatstyle
+        \FR@redefs
+        \dim_zero:N \FBc@wd
+        \exp_args:Ne \flrow@setlist
+          {
+            { \l__wstf_type_tl }
+            { wrapfloat }
+            { wrap \l__wstf_type_tl }
+          }
+        \FRifFBOX \@@setframe \relax \@@FStrue
+        \hbox_gset:Nw \g__wstf_stuff_box
+          \tl_set:Nx \FBB@wd { \dim_use:N \l__wstf_width_dim }
+          \FB@fs@wd
+          \dim_set:Nn \l__wstf_width_dim { \FBo@wd }
+      }
+    \cs_gset_protected_nopar:Npn \__wstf_float_pre_hook:
+      { \the \FR@everyfloat }
+    \cs_gset_protected_nopar:Npn \__wstf_float_pos_hook:
+      {
+        \legacy_if:nTF { FBbuild }
+          {
+            \cs_set_eq:NN \@currbox \g__wstf_stuff_box
+            \vbox_gset:Nn \g__wstf_stuff_box
+              { \box_use_drop:N \g__wstf_stuff_box }
+            \flrow@FB { \l__wstf_width_dim }
+          }
+          {
+            \cs_undefine:N \flrow@typ@tmpset
+            \box_use_drop:N \g__wstf_stuff_box
+          }
+        \hbox_gset_end:
+      }
+  }
+\cs_new_eq:NN \__wstf_caption_hook: \__wstf_empty:
+\__wstf_package_hook:nn { caption }
+  {
+    \cs_gset_protected_nopar:Npn \__wstf_caption_hook:
+      { \exp_args:No \__wstf_caption_aux:n { \l__wstf_type_tl } }
+    \cs_new_protected:Npn \__wstf_caption_aux:n #1
+      {
+        \caption@settype {#1}
+        \caption@clearmargin
+        \caption@setoptions { wrap #1 }
+      }
+  }
+\keys_define:nn { wrapstuff }
+  {
+    abovesep   .tl_set:N = \l__wstf_abovesep_tl ,
+    belowsep   .tl_set:N = \l__wstf_belowsep_tl ,
+    leftsep    .tl_set:N = \l__wstf_leftsep_tl ,
+    rightsep   .tl_set:N = \l__wstf_rightsep_tl ,
+    linewidth  .tl_set:N = \l__wstf_linewidth_tl ,
+    lines      .tl_set:N = \l__wstf_lines_tl ,
+    width      .tl_set:N = \l__wstf_width_tl ,
+    height     .tl_set:N = \l__wstf_height_tl ,
+    hoffset    .tl_set:N = \l__wstf_hoffset_tl ,
+    voffset    .tl_set:N = \l__wstf_voffset_tl ,
+    type       .tl_set:N = \l__wstf_type_tl ,
+    ratio      .fp_set:N = \l__wstf_ratio_fp ,
+    top       .int_set:N = \l__wstf_top_int ,
+    i            .code:n = \__wstf_swap_true:N \c_true_bool ,
+    o            .code:n = \__wstf_swap_true:N \c_false_bool ,
+    l            .code:n = \__wstf_swap_false:N \c_zero_fp ,
+    r            .code:n = \__wstf_swap_false:N \c_one_fp ,
+    c            .code:n = \__wstf_swap_false:N \c__wstf_c_fp ,
+    column     .choice: ,
+    column/true  .code:n =
+      {
+        \bool_set_true:N \l__wstf_column_bool
+        \cs_set_eq:NN \__wstf_build_column:
+                      \__wstf_build_column_strict:
+      } ,
+    column/par   .code:n =
+      {
+        \bool_set_true:N \l__wstf_column_bool
+        \cs_set_eq:NN \__wstf_build_column:
+                      \__wstf_build_column_fuzzy:
+      } ,
+    column/false .code:n =
+      { \bool_set_false:N \l__wstf_column_bool } ,
+    hsep         .code:n =
+      {
+        \tl_set:Nn \l__wstf_leftsep_tl {#1}
+        \tl_set_eq:NN \l__wstf_rightsep_tl
+                      \l__wstf_leftsep_tl
+      } ,
+    vsep         .code:n =
+      {
+        \tl_set:Nn \l__wstf_abovesep_tl {#1}
+        \tl_set_eq:NN \l__wstf_belowsep_tl
+                      \l__wstf_abovesep_tl
+      } ,
+    unknown      .code:n =
+      { \exp_args:No \__wstf_unknown_key:n { \l_keys_key_str } } ,
+    leftsep    .groups:n = main ,
+    rightsep   .groups:n = main ,
+    hsep       .groups:n = main ,
+    linewidth  .groups:n = main ,
+    lines      .groups:n = main ,
+    column     .groups:n = main ,
+    hoffset    .groups:n = main ,
+    voffset    .groups:n = main ,
+    top        .groups:n = stuff ,
+    abovesep   .groups:n = stuff ,
+    belowsep   .groups:n = stuff ,
+    vsep       .groups:n = stuff ,
+    width      .groups:n = stuff ,
+    height     .groups:n = stuff ,
+    float      .groups:n = stuff ,
+    ratio      .groups:n = ratio ,
+    l          .groups:n = ratio ,
+    r          .groups:n = ratio ,
+    c          .groups:n = ratio ,
+    i          .groups:n = ratio ,
+    o          .groups:n = ratio ,
+    column    .default:n = true ,
+    column    .initial:n = true ,
+    abovesep  .initial:n = \c_zero_dim ,
+    belowsep  .initial:n = \c_zero_dim ,
+    leftsep   .initial:n = 1em ,
+    rightsep  .initial:n = 1em ,
+    linewidth .initial:n = \linewidth ,
+    hoffset   .initial:n = \c_zero_dim ,
+    voffset   .initial:n = \c_zero_dim ,
+    width     .initial:n = \c_zero_dim ,
+    height    .initial:n = \c_zero_dim ,
+    ratio     .initial:n = \c_one_fp ,
+    abovesep  .value_required:n = true ,
+    belowsep  .value_required:n = true ,
+    leftsep   .value_required:n = true ,
+    rightsep  .value_required:n = true ,
+    linewidth .value_required:n = true ,
+    width     .value_required:n = true ,
+    height    .value_required:n = true ,
+    hoffset   .value_required:n = true ,
+    voffset   .value_required:n = true ,
+    hsep      .value_required:n = true ,
+    vsep      .value_required:n = true ,
+    l        .value_forbidden:n = true ,
+    r        .value_forbidden:n = true ,
+    c        .value_forbidden:n = true ,
+    i        .value_forbidden:n = true ,
+    o        .value_forbidden:n = true
+  }
+\fp_const:Nn \c__wstf_c_fp { 0.5 }
+\cs_new_protected:Npn \__wstf_swap_true:N #1
+  {
+    \bool_set_true:N \l__wstf_swap_bool
+    \bool_set_eq:NN \l__wstf_inner_bool #1
+    \bool_if:NTF \l__wstf_inner_bool
+      { \bool_set_false:N \l__wstf_outer_bool }
+      { \bool_set_true:N  \l__wstf_outer_bool }
+  }
+\cs_new_protected_nopar:Npn \__wstf_swap_false:N
+  {
+    \bool_set_false:N \l__wstf_swap_bool
+    \fp_set_eq:NN \l__wstf_ratio_fp
+  }
+\cs_new_protected:Npn \__wstf_unknown_key:n #1
+  {
+    \regex_match:NnTF \c__wstf_integer_regex {#1}
+      { \int_set:Nn \l__wstf_top_int }
+      { \__wstf_unknown_key_error:n }
+      {#1}
+  }
+\regex_const:Nn \c__wstf_integer_regex { \A \d+ \Z }
+\cs_new_protected_nopar:Npn \__wstf_unknown_key_error:n
+  { \msg_error:nnn { wstf } { unknown-key } }
+\msg_new:nnnn { wstf } { unknown-key }
+  { The~key~"#1"~is~unknown~and~is~being~ignored. }
+  {
+    The~package~wrapstuff~does~not~have~a~key~called~"#1".\\
+    Check~that~you~have~spelled~the~key~name~correctly.
+  }
+\NewDocumentCommand \wrapstuffset { m }
+  { \keys_set:nn { wrapstuff } {#1} }
+\NewDocumentCommand \wrapstuffclear { }
+  {
+    \par
+    \__wstf_clear:
+  }
+\cs_if_exist:NTF \ProcessKeyOptions
+  { \ProcessKeyOptions [ wrapstuff ] }
+  {
+    \RequirePackage { l3keys2e }
+    \ProcessKeysOptions { wrapstuff }
+  }
+%% 
+%%     This work consists of the file  wrapstuff.dtx,
+%%               and the derived files wrapstuff.pdf,
+%%                                     wrapstuff.sty,
+%%                                     wrapstuff.ins and
+%%                                     README.md.
+%%
+%% End of file `wrapstuff.sty'.

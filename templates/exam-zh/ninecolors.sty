@@ -1,0 +1,412 @@
+%%%  -*- coding: utf-8 -*-
+%%% ----------------------------------------------------------------------------
+%%% Ninecolors: Select colors with proper WCAG color contrast
+%%% Author    : Jianrui Lyu <tolvjr@163.com> and Nan Geng <nangeng@nwafu.edu.cn>
+%%% Repository: https://github.com/lvjr/ninecolors
+%%% License   : The LaTeX Project Public License 1.3
+%%% ----------------------------------------------------------------------------
+
+\NeedsTeXFormat{LaTeX2e}
+\ProvidesExplPackage{ninecolors}{2022-02-13}{v2022D}
+  {Select colors with proper color contrast}
+
+%% We have to make ninecolors package support TeX Live 2020,
+%% because tabularray still supports TeX Live 2020 and it depends on this package.
+%% Therefore we need to load xparse package first.
+
+\RequirePackage{xcolor}
+\RequirePackage{xparse}
+
+%% Old versions of l3color don't work if color model contains a colon.
+%% This bug has been fixed in LaTeX3 release 2021-07-12.
+%% See https://github.com/latex3/latex3/issues/962
+%% and https://github.com/lvjr/ninecolors/issues/1
+%% Therefore we only define latex3 colors in newer LaTeX3 releases.
+%% Note that l3color was moved from l3experimental to l3kernel on 2021-02-18,
+%% hence we don't need to load l3color package first.
+
+\bool_new:N \l__ninecolors_define_latex_three_bool
+
+\@ifpackagelater{expl3}{2021-07-12} % need expl3 which is loaded by xparse
+  { \bool_set_true:N \l__ninecolors_define_latex_three_bool } { }
+
+\cs_new_protected_nopar:Npn \__ninecolors_define_colors_mono:
+  {
+    \__ninecolors_define_one:nnn {gray1} {gray} {0.14}
+    \__ninecolors_define_one:nnn {gray2} {gray} {0.23}
+    \__ninecolors_define_one:nnn {gray3} {gray} {0.30}
+    \__ninecolors_define_one:nnn {gray4} {gray} {0.38}
+    \__ninecolors_define_one:nnn {gray5} {gray} {0.46}
+    \__ninecolors_define_one:nnn {gray6} {gray} {0.55}
+    \__ninecolors_define_one:nnn {gray7} {gray} {0.64}
+    \__ninecolors_define_one:nnn {gray8} {gray} {0.75}
+    \__ninecolors_define_one:nnn {gray9} {gray} {0.87}
+  }
+
+\cs_new_protected_nopar:Npn \__ninecolors_define_colors_low:
+  {
+    \__ninecolors_define_one:nnn {red1} {rgb:Hsb} {0,0.67,0.26}
+    \__ninecolors_define_one:nnn {red2} {rgb:Hsb} {0,0.67,0.41}
+    \__ninecolors_define_one:nnn {red3} {rgb:Hsb} {0,0.67,0.54}
+    \__ninecolors_define_one:nnn {red4} {rgb:Hsb} {0,0.67,0.67}
+    \__ninecolors_define_one:nnn {red5} {rgb:Hsb} {0,0.60,0.77}
+    \__ninecolors_define_one:nnn {red6} {rgb:Hsb} {0,0.46,0.81}
+    \__ninecolors_define_one:nnn {red7} {rgb:Hsb} {0,0.34,0.86}
+    \__ninecolors_define_one:nnn {red8} {rgb:Hsb} {0,0.22,0.90}
+    \__ninecolors_define_one:nnn {red9} {rgb:Hsb} {0,0.11,0.95}
+    \__ninecolors_define_one:nnn {brown1} {rgb:Hsb} {30,0.67,0.19}
+    \__ninecolors_define_one:nnn {brown2} {rgb:Hsb} {30,0.67,0.31}
+    \__ninecolors_define_one:nnn {brown3} {rgb:Hsb} {30,0.67,0.41}
+    \__ninecolors_define_one:nnn {brown4} {rgb:Hsb} {30,0.67,0.51}
+    \__ninecolors_define_one:nnn {brown5} {rgb:Hsb} {30,0.67,0.62}
+    \__ninecolors_define_one:nnn {brown6} {rgb:Hsb} {30,0.67,0.74}
+    \__ninecolors_define_one:nnn {brown7} {rgb:Hsb} {30,0.49,0.80}
+    \__ninecolors_define_one:nnn {brown8} {rgb:Hsb} {30,0.32,0.86}
+    \__ninecolors_define_one:nnn {brown9} {rgb:Hsb} {30,0.15,0.93}
+    \__ninecolors_define_one:nnn {yellow1} {rgb:Hsb} {60,0.67,0.15}
+    \__ninecolors_define_one:nnn {yellow2} {rgb:Hsb} {60,0.67,0.23}
+    \__ninecolors_define_one:nnn {yellow3} {rgb:Hsb} {60,0.67,0.31}
+    \__ninecolors_define_one:nnn {yellow4} {rgb:Hsb} {60,0.67,0.39}
+    \__ninecolors_define_one:nnn {yellow5} {rgb:Hsb} {60,0.67,0.47}
+    \__ninecolors_define_one:nnn {yellow6} {rgb:Hsb} {60,0.67,0.56}
+    \__ninecolors_define_one:nnn {yellow7} {rgb:Hsb} {60,0.67,0.66}
+    \__ninecolors_define_one:nnn {yellow8} {rgb:Hsb} {60,0.59,0.77}
+    \__ninecolors_define_one:nnn {yellow9} {rgb:Hsb} {60,0.27,0.88}
+    \__ninecolors_define_one:nnn {olive1} {rgb:Hsb} {90,0.67,0.16}
+    \__ninecolors_define_one:nnn {olive2} {rgb:Hsb} {90,0.67,0.25}
+    \__ninecolors_define_one:nnn {olive3} {rgb:Hsb} {90,0.67,0.33}
+    \__ninecolors_define_one:nnn {olive4} {rgb:Hsb} {90,0.67,0.42}
+    \__ninecolors_define_one:nnn {olive5} {rgb:Hsb} {90,0.67,0.51}
+    \__ninecolors_define_one:nnn {olive6} {rgb:Hsb} {90,0.67,0.60}
+    \__ninecolors_define_one:nnn {olive7} {rgb:Hsb} {90,0.67,0.71}
+    \__ninecolors_define_one:nnn {olive8} {rgb:Hsb} {90,0.48,0.81}
+    \__ninecolors_define_one:nnn {olive9} {rgb:Hsb} {90,0.22,0.90}
+    \__ninecolors_define_one:nnn {green1} {rgb:Hsb} {120,0.67,0.16}
+    \__ninecolors_define_one:nnn {green2} {rgb:Hsb} {120,0.67,0.26}
+    \__ninecolors_define_one:nnn {green3} {rgb:Hsb} {120,0.67,0.35}
+    \__ninecolors_define_one:nnn {green4} {rgb:Hsb} {120,0.67,0.44}
+    \__ninecolors_define_one:nnn {green5} {rgb:Hsb} {120,0.67,0.53}
+    \__ninecolors_define_one:nnn {green6} {rgb:Hsb} {120,0.67,0.63}
+    \__ninecolors_define_one:nnn {green7} {rgb:Hsb} {120,0.67,0.74}
+    \__ninecolors_define_one:nnn {green8} {rgb:Hsb} {120,0.42,0.83}
+    \__ninecolors_define_one:nnn {green9} {rgb:Hsb} {120,0.19,0.91}
+    \__ninecolors_define_one:nnn {teal1} {rgb:Hsb} {150,0.67,0.16}
+    \__ninecolors_define_one:nnn {teal2} {rgb:Hsb} {150,0.67,0.26}
+    \__ninecolors_define_one:nnn {teal3} {rgb:Hsb} {150,0.67,0.34}
+    \__ninecolors_define_one:nnn {teal4} {rgb:Hsb} {150,0.67,0.43}
+    \__ninecolors_define_one:nnn {teal5} {rgb:Hsb} {150,0.67,0.52}
+    \__ninecolors_define_one:nnn {teal6} {rgb:Hsb} {150,0.67,0.62}
+    \__ninecolors_define_one:nnn {teal7} {rgb:Hsb} {150,0.67,0.73}
+    \__ninecolors_define_one:nnn {teal8} {rgb:Hsb} {150,0.44,0.82}
+    \__ninecolors_define_one:nnn {teal9} {rgb:Hsb} {150,0.20,0.91}
+    \__ninecolors_define_one:nnn {cyan1} {rgb:Hsb} {180,0.67,0.16}
+    \__ninecolors_define_one:nnn {cyan2} {rgb:Hsb} {180,0.67,0.25}
+    \__ninecolors_define_one:nnn {cyan3} {rgb:Hsb} {180,0.67,0.33}
+    \__ninecolors_define_one:nnn {cyan4} {rgb:Hsb} {180,0.67,0.42}
+    \__ninecolors_define_one:nnn {cyan5} {rgb:Hsb} {180,0.67,0.51}
+    \__ninecolors_define_one:nnn {cyan6} {rgb:Hsb} {180,0.67,0.60}
+    \__ninecolors_define_one:nnn {cyan7} {rgb:Hsb} {180,0.67,0.71}
+    \__ninecolors_define_one:nnn {cyan8} {rgb:Hsb} {180,0.47,0.81}
+    \__ninecolors_define_one:nnn {cyan9} {rgb:Hsb} {180,0.21,0.90}
+    \__ninecolors_define_one:nnn {azure1} {rgb:Hsb} {210,0.67,0.22}
+    \__ninecolors_define_one:nnn {azure2} {rgb:Hsb} {210,0.67,0.35}
+    \__ninecolors_define_one:nnn {azure3} {rgb:Hsb} {210,0.67,0.47}
+    \__ninecolors_define_one:nnn {azure4} {rgb:Hsb} {210,0.67,0.59}
+    \__ninecolors_define_one:nnn {azure5} {rgb:Hsb} {210,0.67,0.71}
+    \__ninecolors_define_one:nnn {azure6} {rgb:Hsb} {210,0.56,0.78}
+    \__ninecolors_define_one:nnn {azure7} {rgb:Hsb} {210,0.41,0.83}
+    \__ninecolors_define_one:nnn {azure8} {rgb:Hsb} {210,0.27,0.88}
+    \__ninecolors_define_one:nnn {azure9} {rgb:Hsb} {210,0.13,0.94}
+    \__ninecolors_define_one:nnn {blue1} {rgb:Hsb} {240,0.67,0.34}
+    \__ninecolors_define_one:nnn {blue2} {rgb:Hsb} {240,0.67,0.53}
+    \__ninecolors_define_one:nnn {blue3} {rgb:Hsb} {240,0.67,0.70}
+    \__ninecolors_define_one:nnn {blue4} {rgb:Hsb} {240,0.58,0.77}
+    \__ninecolors_define_one:nnn {blue5} {rgb:Hsb} {240,0.48,0.81}
+    \__ninecolors_define_one:nnn {blue6} {rgb:Hsb} {240,0.39,0.84}
+    \__ninecolors_define_one:nnn {blue7} {rgb:Hsb} {240,0.29,0.87}
+    \__ninecolors_define_one:nnn {blue8} {rgb:Hsb} {240,0.19,0.91}
+    \__ninecolors_define_one:nnn {blue9} {rgb:Hsb} {240,0.10,0.95}
+    \__ninecolors_define_one:nnn {violet1} {rgb:Hsb} {270,0.67,0.29}
+    \__ninecolors_define_one:nnn {violet2} {rgb:Hsb} {270,0.67,0.45}
+    \__ninecolors_define_one:nnn {violet3} {rgb:Hsb} {270,0.67,0.60}
+    \__ninecolors_define_one:nnn {violet4} {rgb:Hsb} {270,0.67,0.75}
+    \__ninecolors_define_one:nnn {violet5} {rgb:Hsb} {270,0.54,0.79}
+    \__ninecolors_define_one:nnn {violet6} {rgb:Hsb} {270,0.43,0.82}
+    \__ninecolors_define_one:nnn {violet7} {rgb:Hsb} {270,0.32,0.86}
+    \__ninecolors_define_one:nnn {violet8} {rgb:Hsb} {270,0.21,0.90}
+    \__ninecolors_define_one:nnn {violet9} {rgb:Hsb} {270,0.11,0.95}
+    \__ninecolors_define_one:nnn {magenta1} {rgb:Hsb} {300,0.67,0.23}
+    \__ninecolors_define_one:nnn {magenta2} {rgb:Hsb} {300,0.67,0.37}
+    \__ninecolors_define_one:nnn {magenta3} {rgb:Hsb} {300,0.67,0.49}
+    \__ninecolors_define_one:nnn {magenta4} {rgb:Hsb} {300,0.67,0.61}
+    \__ninecolors_define_one:nnn {magenta5} {rgb:Hsb} {300,0.67,0.74}
+    \__ninecolors_define_one:nnn {magenta6} {rgb:Hsb} {300,0.51,0.80}
+    \__ninecolors_define_one:nnn {magenta7} {rgb:Hsb} {300,0.37,0.84}
+    \__ninecolors_define_one:nnn {magenta8} {rgb:Hsb} {300,0.24,0.89}
+    \__ninecolors_define_one:nnn {magenta9} {rgb:Hsb} {300,0.12,0.94}
+    \__ninecolors_define_one:nnn {purple1} {rgb:Hsb} {330,0.67,0.25}
+    \__ninecolors_define_one:nnn {purple2} {rgb:Hsb} {330,0.67,0.39}
+    \__ninecolors_define_one:nnn {purple3} {rgb:Hsb} {330,0.67,0.52}
+    \__ninecolors_define_one:nnn {purple4} {rgb:Hsb} {330,0.67,0.65}
+    \__ninecolors_define_one:nnn {purple5} {rgb:Hsb} {330,0.63,0.76}
+    \__ninecolors_define_one:nnn {purple6} {rgb:Hsb} {330,0.48,0.81}
+    \__ninecolors_define_one:nnn {purple7} {rgb:Hsb} {330,0.35,0.85}
+    \__ninecolors_define_one:nnn {purple8} {rgb:Hsb} {330,0.23,0.90}
+    \__ninecolors_define_one:nnn {purple9} {rgb:Hsb} {330,0.11,0.95}
+  }
+
+\cs_new_protected_nopar:Npn \__ninecolors_define_colors_medium:
+  {
+    \__ninecolors_define_one:nnn {red1} {rgb:Hsb} {0,0.79,0.28}
+    \__ninecolors_define_one:nnn {red2} {rgb:Hsb} {0,0.79,0.44}
+    \__ninecolors_define_one:nnn {red3} {rgb:Hsb} {0,0.79,0.58}
+    \__ninecolors_define_one:nnn {red4} {rgb:Hsb} {0,0.79,0.72}
+    \__ninecolors_define_one:nnn {red5} {rgb:Hsb} {0,0.72,0.84}
+    \__ninecolors_define_one:nnn {red6} {rgb:Hsb} {0,0.54,0.87}
+    \__ninecolors_define_one:nnn {red7} {rgb:Hsb} {0,0.40,0.90}
+    \__ninecolors_define_one:nnn {red8} {rgb:Hsb} {0,0.26,0.93}
+    \__ninecolors_define_one:nnn {red9} {rgb:Hsb} {0,0.13,0.97}
+    \__ninecolors_define_one:nnn {brown1} {rgb:Hsb} {30,0.79,0.21}
+    \__ninecolors_define_one:nnn {brown2} {rgb:Hsb} {30,0.79,0.33}
+    \__ninecolors_define_one:nnn {brown3} {rgb:Hsb} {30,0.79,0.43}
+    \__ninecolors_define_one:nnn {brown4} {rgb:Hsb} {30,0.79,0.54}
+    \__ninecolors_define_one:nnn {brown5} {rgb:Hsb} {30,0.79,0.66}
+    \__ninecolors_define_one:nnn {brown6} {rgb:Hsb} {30,0.79,0.78}
+    \__ninecolors_define_one:nnn {brown7} {rgb:Hsb} {30,0.63,0.86}
+    \__ninecolors_define_one:nnn {brown8} {rgb:Hsb} {30,0.41,0.90}
+    \__ninecolors_define_one:nnn {brown9} {rgb:Hsb} {30,0.20,0.95}
+    \__ninecolors_define_one:nnn {yellow1} {rgb:Hsb} {60,0.79,0.15}
+    \__ninecolors_define_one:nnn {yellow2} {rgb:Hsb} {60,0.79,0.23}
+    \__ninecolors_define_one:nnn {yellow3} {rgb:Hsb} {60,0.79,0.31}
+    \__ninecolors_define_one:nnn {yellow4} {rgb:Hsb} {60,0.79,0.39}
+    \__ninecolors_define_one:nnn {yellow5} {rgb:Hsb} {60,0.79,0.48}
+    \__ninecolors_define_one:nnn {yellow6} {rgb:Hsb} {60,0.79,0.57}
+    \__ninecolors_define_one:nnn {yellow7} {rgb:Hsb} {60,0.79,0.66}
+    \__ninecolors_define_one:nnn {yellow8} {rgb:Hsb} {60,0.79,0.77}
+    \__ninecolors_define_one:nnn {yellow9} {rgb:Hsb} {60,0.46,0.89}
+    \__ninecolors_define_one:nnn {olive1} {rgb:Hsb} {90,0.79,0.16}
+    \__ninecolors_define_one:nnn {olive2} {rgb:Hsb} {90,0.79,0.25}
+    \__ninecolors_define_one:nnn {olive3} {rgb:Hsb} {90,0.79,0.34}
+    \__ninecolors_define_one:nnn {olive4} {rgb:Hsb} {90,0.79,0.42}
+    \__ninecolors_define_one:nnn {olive5} {rgb:Hsb} {90,0.79,0.51}
+    \__ninecolors_define_one:nnn {olive6} {rgb:Hsb} {90,0.79,0.61}
+    \__ninecolors_define_one:nnn {olive7} {rgb:Hsb} {90,0.79,0.72}
+    \__ninecolors_define_one:nnn {olive8} {rgb:Hsb} {90,0.76,0.83}
+    \__ninecolors_define_one:nnn {olive9} {rgb:Hsb} {90,0.34,0.92}
+    \__ninecolors_define_one:nnn {green1} {rgb:Hsb} {120,0.79,0.17}
+    \__ninecolors_define_one:nnn {green2} {rgb:Hsb} {120,0.79,0.26}
+    \__ninecolors_define_one:nnn {green3} {rgb:Hsb} {120,0.79,0.35}
+    \__ninecolors_define_one:nnn {green4} {rgb:Hsb} {120,0.79,0.44}
+    \__ninecolors_define_one:nnn {green5} {rgb:Hsb} {120,0.79,0.53}
+    \__ninecolors_define_one:nnn {green6} {rgb:Hsb} {120,0.79,0.63}
+    \__ninecolors_define_one:nnn {green7} {rgb:Hsb} {120,0.79,0.74}
+    \__ninecolors_define_one:nnn {green8} {rgb:Hsb} {120,0.64,0.85}
+    \__ninecolors_define_one:nnn {green9} {rgb:Hsb} {120,0.28,0.93}
+    \__ninecolors_define_one:nnn {teal1} {rgb:Hsb} {150,0.79,0.16}
+    \__ninecolors_define_one:nnn {teal2} {rgb:Hsb} {150,0.79,0.26}
+    \__ninecolors_define_one:nnn {teal3} {rgb:Hsb} {150,0.79,0.35}
+    \__ninecolors_define_one:nnn {teal4} {rgb:Hsb} {150,0.79,0.43}
+    \__ninecolors_define_one:nnn {teal5} {rgb:Hsb} {150,0.79,0.53}
+    \__ninecolors_define_one:nnn {teal6} {rgb:Hsb} {150,0.79,0.62}
+    \__ninecolors_define_one:nnn {teal7} {rgb:Hsb} {150,0.79,0.73}
+    \__ninecolors_define_one:nnn {teal8} {rgb:Hsb} {150,0.68,0.85}
+    \__ninecolors_define_one:nnn {teal9} {rgb:Hsb} {150,0.30,0.93}
+    \__ninecolors_define_one:nnn {cyan1} {rgb:Hsb} {180,0.79,0.16}
+    \__ninecolors_define_one:nnn {cyan2} {rgb:Hsb} {180,0.79,0.25}
+    \__ninecolors_define_one:nnn {cyan3} {rgb:Hsb} {180,0.79,0.34}
+    \__ninecolors_define_one:nnn {cyan4} {rgb:Hsb} {180,0.79,0.42}
+    \__ninecolors_define_one:nnn {cyan5} {rgb:Hsb} {180,0.79,0.51}
+    \__ninecolors_define_one:nnn {cyan6} {rgb:Hsb} {180,0.79,0.61}
+    \__ninecolors_define_one:nnn {cyan7} {rgb:Hsb} {180,0.79,0.71}
+    \__ninecolors_define_one:nnn {cyan8} {rgb:Hsb} {180,0.77,0.83}
+    \__ninecolors_define_one:nnn {cyan9} {rgb:Hsb} {180,0.32,0.92}
+    \__ninecolors_define_one:nnn {azure1} {rgb:Hsb} {210,0.79,0.24}
+    \__ninecolors_define_one:nnn {azure2} {rgb:Hsb} {210,0.79,0.38}
+    \__ninecolors_define_one:nnn {azure3} {rgb:Hsb} {210,0.79,0.51}
+    \__ninecolors_define_one:nnn {azure4} {rgb:Hsb} {210,0.79,0.64}
+    \__ninecolors_define_one:nnn {azure5} {rgb:Hsb} {210,0.79,0.77}
+    \__ninecolors_define_one:nnn {azure6} {rgb:Hsb} {210,0.67,0.85}
+    \__ninecolors_define_one:nnn {azure7} {rgb:Hsb} {210,0.50,0.88}
+    \__ninecolors_define_one:nnn {azure8} {rgb:Hsb} {210,0.33,0.92}
+    \__ninecolors_define_one:nnn {azure9} {rgb:Hsb} {210,0.17,0.96}
+    \__ninecolors_define_one:nnn {blue1} {rgb:Hsb} {240,0.79,0.41}
+    \__ninecolors_define_one:nnn {blue2} {rgb:Hsb} {240,0.79,0.64}
+    \__ninecolors_define_one:nnn {blue3} {rgb:Hsb} {240,0.77,0.83}
+    \__ninecolors_define_one:nnn {blue4} {rgb:Hsb} {240,0.65,0.85}
+    \__ninecolors_define_one:nnn {blue5} {rgb:Hsb} {240,0.54,0.87}
+    \__ninecolors_define_one:nnn {blue6} {rgb:Hsb} {240,0.43,0.90}
+    \__ninecolors_define_one:nnn {blue7} {rgb:Hsb} {240,0.33,0.92}
+    \__ninecolors_define_one:nnn {blue8} {rgb:Hsb} {240,0.22,0.94}
+    \__ninecolors_define_one:nnn {blue9} {rgb:Hsb} {240,0.11,0.97}
+    \__ninecolors_define_one:nnn {violet1} {rgb:Hsb} {270,0.79,0.33}
+    \__ninecolors_define_one:nnn {violet2} {rgb:Hsb} {270,0.79,0.52}
+    \__ninecolors_define_one:nnn {violet3} {rgb:Hsb} {270,0.79,0.69}
+    \__ninecolors_define_one:nnn {violet4} {rgb:Hsb} {270,0.76,0.83}
+    \__ninecolors_define_one:nnn {violet5} {rgb:Hsb} {270,0.62,0.86}
+    \__ninecolors_define_one:nnn {violet6} {rgb:Hsb} {270,0.49,0.88}
+    \__ninecolors_define_one:nnn {violet7} {rgb:Hsb} {270,0.37,0.91}
+    \__ninecolors_define_one:nnn {violet8} {rgb:Hsb} {270,0.25,0.94}
+    \__ninecolors_define_one:nnn {violet9} {rgb:Hsb} {270,0.13,0.97}
+    \__ninecolors_define_one:nnn {magenta1} {rgb:Hsb} {300,0.79,0.25}
+    \__ninecolors_define_one:nnn {magenta2} {rgb:Hsb} {300,0.79,0.39}
+    \__ninecolors_define_one:nnn {magenta3} {rgb:Hsb} {300,0.79,0.52}
+    \__ninecolors_define_one:nnn {magenta4} {rgb:Hsb} {300,0.79,0.65}
+    \__ninecolors_define_one:nnn {magenta5} {rgb:Hsb} {300,0.79,0.78}
+    \__ninecolors_define_one:nnn {magenta6} {rgb:Hsb} {300,0.62,0.86}
+    \__ninecolors_define_one:nnn {magenta7} {rgb:Hsb} {300,0.44,0.89}
+    \__ninecolors_define_one:nnn {magenta8} {rgb:Hsb} {300,0.29,0.93}
+    \__ninecolors_define_one:nnn {magenta9} {rgb:Hsb} {300,0.14,0.96}
+    \__ninecolors_define_one:nnn {purple1} {rgb:Hsb} {330,0.79,0.27}
+    \__ninecolors_define_one:nnn {purple2} {rgb:Hsb} {330,0.79,0.42}
+    \__ninecolors_define_one:nnn {purple3} {rgb:Hsb} {330,0.79,0.56}
+    \__ninecolors_define_one:nnn {purple4} {rgb:Hsb} {330,0.79,0.70}
+    \__ninecolors_define_one:nnn {purple5} {rgb:Hsb} {330,0.76,0.83}
+    \__ninecolors_define_one:nnn {purple6} {rgb:Hsb} {330,0.57,0.87}
+    \__ninecolors_define_one:nnn {purple7} {rgb:Hsb} {330,0.42,0.90}
+    \__ninecolors_define_one:nnn {purple8} {rgb:Hsb} {330,0.27,0.93}
+    \__ninecolors_define_one:nnn {purple9} {rgb:Hsb} {330,0.14,0.96}
+  }
+
+\cs_new_protected_nopar:Npn \__ninecolors_define_colors_high:
+  {
+    \__ninecolors_define_one:nnn {red1} {rgb:Hsb} {0,0.89,0.30}
+    \__ninecolors_define_one:nnn {red2} {rgb:Hsb} {0,0.89,0.46}
+    \__ninecolors_define_one:nnn {red3} {rgb:Hsb} {0,0.89,0.61}
+    \__ninecolors_define_one:nnn {red4} {rgb:Hsb} {0,0.89,0.76}
+    \__ninecolors_define_one:nnn {red5} {rgb:Hsb} {0,0.87,0.90}
+    \__ninecolors_define_one:nnn {red6} {rgb:Hsb} {0,0.62,0.93}
+    \__ninecolors_define_one:nnn {red7} {rgb:Hsb} {0,0.45,0.95}
+    \__ninecolors_define_one:nnn {red8} {rgb:Hsb} {0,0.30,0.96}
+    \__ninecolors_define_one:nnn {red9} {rgb:Hsb} {0,0.15,0.98}
+    \__ninecolors_define_one:nnn {brown1} {rgb:Hsb} {30,0.89,0.22}
+    \__ninecolors_define_one:nnn {brown2} {rgb:Hsb} {30,0.89,0.34}
+    \__ninecolors_define_one:nnn {brown3} {rgb:Hsb} {30,0.89,0.46}
+    \__ninecolors_define_one:nnn {brown4} {rgb:Hsb} {30,0.89,0.57}
+    \__ninecolors_define_one:nnn {brown5} {rgb:Hsb} {30,0.89,0.69}
+    \__ninecolors_define_one:nnn {brown6} {rgb:Hsb} {30,0.89,0.82}
+    \__ninecolors_define_one:nnn {brown7} {rgb:Hsb} {30,0.77,0.91}
+    \__ninecolors_define_one:nnn {brown8} {rgb:Hsb} {30,0.51,0.94}
+    \__ninecolors_define_one:nnn {brown9} {rgb:Hsb} {30,0.25,0.97}
+    \__ninecolors_define_one:nnn {yellow1} {rgb:Hsb} {60,0.89,0.15}
+    \__ninecolors_define_one:nnn {yellow2} {rgb:Hsb} {60,0.89,0.23}
+    \__ninecolors_define_one:nnn {yellow3} {rgb:Hsb} {60,0.89,0.31}
+    \__ninecolors_define_one:nnn {yellow4} {rgb:Hsb} {60,0.89,0.39}
+    \__ninecolors_define_one:nnn {yellow5} {rgb:Hsb} {60,0.89,0.48}
+    \__ninecolors_define_one:nnn {yellow6} {rgb:Hsb} {60,0.89,0.57}
+    \__ninecolors_define_one:nnn {yellow7} {rgb:Hsb} {60,0.89,0.66}
+    \__ninecolors_define_one:nnn {yellow8} {rgb:Hsb} {60,0.89,0.77}
+    \__ninecolors_define_one:nnn {yellow9} {rgb:Hsb} {60,0.89,0.90}
+    \__ninecolors_define_one:nnn {olive1} {rgb:Hsb} {90,0.89,0.16}
+    \__ninecolors_define_one:nnn {olive2} {rgb:Hsb} {90,0.89,0.26}
+    \__ninecolors_define_one:nnn {olive3} {rgb:Hsb} {90,0.89,0.34}
+    \__ninecolors_define_one:nnn {olive4} {rgb:Hsb} {90,0.89,0.43}
+    \__ninecolors_define_one:nnn {olive5} {rgb:Hsb} {90,0.89,0.52}
+    \__ninecolors_define_one:nnn {olive6} {rgb:Hsb} {90,0.89,0.61}
+    \__ninecolors_define_one:nnn {olive7} {rgb:Hsb} {90,0.89,0.72}
+    \__ninecolors_define_one:nnn {olive8} {rgb:Hsb} {90,0.89,0.84}
+    \__ninecolors_define_one:nnn {olive9} {rgb:Hsb} {90,0.52,0.94}
+    \__ninecolors_define_one:nnn {green1} {rgb:Hsb} {120,0.89,0.17}
+    \__ninecolors_define_one:nnn {green2} {rgb:Hsb} {120,0.89,0.27}
+    \__ninecolors_define_one:nnn {green3} {rgb:Hsb} {120,0.89,0.35}
+    \__ninecolors_define_one:nnn {green4} {rgb:Hsb} {120,0.89,0.44}
+    \__ninecolors_define_one:nnn {green5} {rgb:Hsb} {120,0.89,0.54}
+    \__ninecolors_define_one:nnn {green6} {rgb:Hsb} {120,0.89,0.64}
+    \__ninecolors_define_one:nnn {green7} {rgb:Hsb} {120,0.89,0.75}
+    \__ninecolors_define_one:nnn {green8} {rgb:Hsb} {120,0.89,0.87}
+    \__ninecolors_define_one:nnn {green9} {rgb:Hsb} {120,0.39,0.95}
+    \__ninecolors_define_one:nnn {teal1} {rgb:Hsb} {150,0.89,0.17}
+    \__ninecolors_define_one:nnn {teal2} {rgb:Hsb} {150,0.89,0.26}
+    \__ninecolors_define_one:nnn {teal3} {rgb:Hsb} {150,0.89,0.35}
+    \__ninecolors_define_one:nnn {teal4} {rgb:Hsb} {150,0.89,0.44}
+    \__ninecolors_define_one:nnn {teal5} {rgb:Hsb} {150,0.89,0.53}
+    \__ninecolors_define_one:nnn {teal6} {rgb:Hsb} {150,0.89,0.63}
+    \__ninecolors_define_one:nnn {teal7} {rgb:Hsb} {150,0.89,0.74}
+    \__ninecolors_define_one:nnn {teal8} {rgb:Hsb} {150,0.89,0.86}
+    \__ninecolors_define_one:nnn {teal9} {rgb:Hsb} {150,0.43,0.95}
+    \__ninecolors_define_one:nnn {cyan1} {rgb:Hsb} {180,0.89,0.16}
+    \__ninecolors_define_one:nnn {cyan2} {rgb:Hsb} {180,0.89,0.25}
+    \__ninecolors_define_one:nnn {cyan3} {rgb:Hsb} {180,0.89,0.34}
+    \__ninecolors_define_one:nnn {cyan4} {rgb:Hsb} {180,0.89,0.42}
+    \__ninecolors_define_one:nnn {cyan5} {rgb:Hsb} {180,0.89,0.51}
+    \__ninecolors_define_one:nnn {cyan6} {rgb:Hsb} {180,0.89,0.61}
+    \__ninecolors_define_one:nnn {cyan7} {rgb:Hsb} {180,0.89,0.71}
+    \__ninecolors_define_one:nnn {cyan8} {rgb:Hsb} {180,0.89,0.83}
+    \__ninecolors_define_one:nnn {cyan9} {rgb:Hsb} {180,0.50,0.94}
+    \__ninecolors_define_one:nnn {azure1} {rgb:Hsb} {210,0.89,0.26}
+    \__ninecolors_define_one:nnn {azure2} {rgb:Hsb} {210,0.89,0.41}
+    \__ninecolors_define_one:nnn {azure3} {rgb:Hsb} {210,0.89,0.55}
+    \__ninecolors_define_one:nnn {azure4} {rgb:Hsb} {210,0.89,0.69}
+    \__ninecolors_define_one:nnn {azure5} {rgb:Hsb} {210,0.89,0.83}
+    \__ninecolors_define_one:nnn {azure6} {rgb:Hsb} {210,0.77,0.91}
+    \__ninecolors_define_one:nnn {azure7} {rgb:Hsb} {210,0.58,0.93}
+    \__ninecolors_define_one:nnn {azure8} {rgb:Hsb} {210,0.39,0.95}
+    \__ninecolors_define_one:nnn {azure9} {rgb:Hsb} {210,0.20,0.98}
+    \__ninecolors_define_one:nnn {blue1} {rgb:Hsb} {240,0.89,0.48}
+    \__ninecolors_define_one:nnn {blue2} {rgb:Hsb} {240,0.89,0.73}
+    \__ninecolors_define_one:nnn {blue3} {rgb:Hsb} {240,0.84,0.90}
+    \__ninecolors_define_one:nnn {blue4} {rgb:Hsb} {240,0.70,0.92}
+    \__ninecolors_define_one:nnn {blue5} {rgb:Hsb} {240,0.58,0.93}
+    \__ninecolors_define_one:nnn {blue6} {rgb:Hsb} {240,0.47,0.94}
+    \__ninecolors_define_one:nnn {blue7} {rgb:Hsb} {240,0.36,0.96}
+    \__ninecolors_define_one:nnn {blue8} {rgb:Hsb} {240,0.25,0.97}
+    \__ninecolors_define_one:nnn {blue9} {rgb:Hsb} {240,0.13,0.98}
+    \__ninecolors_define_one:nnn {violet1} {rgb:Hsb} {270,0.89,0.37}
+    \__ninecolors_define_one:nnn {violet2} {rgb:Hsb} {270,0.89,0.57}
+    \__ninecolors_define_one:nnn {violet3} {rgb:Hsb} {270,0.89,0.75}
+    \__ninecolors_define_one:nnn {violet4} {rgb:Hsb} {270,0.85,0.90}
+    \__ninecolors_define_one:nnn {violet5} {rgb:Hsb} {270,0.68,0.92}
+    \__ninecolors_define_one:nnn {violet6} {rgb:Hsb} {270,0.54,0.94}
+    \__ninecolors_define_one:nnn {violet7} {rgb:Hsb} {270,0.41,0.95}
+    \__ninecolors_define_one:nnn {violet8} {rgb:Hsb} {270,0.28,0.97}
+    \__ninecolors_define_one:nnn {violet9} {rgb:Hsb} {270,0.14,0.98}
+    \__ninecolors_define_one:nnn {magenta1} {rgb:Hsb} {300,0.89,0.26}
+    \__ninecolors_define_one:nnn {magenta2} {rgb:Hsb} {300,0.89,0.41}
+    \__ninecolors_define_one:nnn {magenta3} {rgb:Hsb} {300,0.89,0.54}
+    \__ninecolors_define_one:nnn {magenta4} {rgb:Hsb} {300,0.89,0.67}
+    \__ninecolors_define_one:nnn {magenta5} {rgb:Hsb} {300,0.89,0.80}
+    \__ninecolors_define_one:nnn {magenta6} {rgb:Hsb} {300,0.76,0.91}
+    \__ninecolors_define_one:nnn {magenta7} {rgb:Hsb} {300,0.52,0.94}
+    \__ninecolors_define_one:nnn {magenta8} {rgb:Hsb} {300,0.33,0.96}
+    \__ninecolors_define_one:nnn {magenta9} {rgb:Hsb} {300,0.17,0.98}
+    \__ninecolors_define_one:nnn {purple1} {rgb:Hsb} {330,0.89,0.29}
+    \__ninecolors_define_one:nnn {purple2} {rgb:Hsb} {330,0.89,0.45}
+    \__ninecolors_define_one:nnn {purple3} {rgb:Hsb} {330,0.89,0.59}
+    \__ninecolors_define_one:nnn {purple4} {rgb:Hsb} {330,0.89,0.73}
+    \__ninecolors_define_one:nnn {purple5} {rgb:Hsb} {330,0.89,0.88}
+    \__ninecolors_define_one:nnn {purple6} {rgb:Hsb} {330,0.66,0.92}
+    \__ninecolors_define_one:nnn {purple7} {rgb:Hsb} {330,0.47,0.94}
+    \__ninecolors_define_one:nnn {purple8} {rgb:Hsb} {330,0.31,0.96}
+    \__ninecolors_define_one:nnn {purple9} {rgb:Hsb} {330,0.16,0.98}
+  }
+
+\cs_new_protected_nopar:Npn \__ninecolors_define_colors:n #1
+  {
+    \cs_set_eq:NN \__ninecolors_define_one:nnn \definecolor
+    \use:c { __ninecolors_define_colors_ #1 : }
+    \bool_if:NT \l__ninecolors_define_latex_three_bool
+      {
+        \cs_set_eq:NN \__ninecolors_define_one:nnn \color_set:nnn
+        \use:c { __ninecolors_define_colors_ #1 : }
+      }
+  }
+
+\__ninecolors_define_colors:n { mono }
+\__ninecolors_define_colors:n { medium }
+
+\tl_new:N \l__ninecolors_sat_tl
+
+\keys_define:nn {ninecolors}
+  {
+    saturation .choice:,
+    saturation .value_required:n = true,
+    saturation .choices:nn = { low, medium, high }
+      { \tl_set_eq:NN \l__ninecolors_sat_tl \l_keys_choice_tl },
+    saturation .initial:n = medium,
+  }
+
+\NewDocumentCommand \NineColors {m}
+  {
+    \keys_set:nn {ninecolors} {#1}
+    \exp_args:NV \__ninecolors_define_colors:n \l__ninecolors_sat_tl
+  }
+

@@ -188,8 +188,11 @@ def copy_app_files():
     files_to_copy = [
         "main.py",
         "database.py",
+        "paper_helper.py",
         "sync_helper.py",
         "search_questions.py",
+        "migrate_fillin.py",
+        "migrate_choice_parentheses.py",
         ".env.example"
     ]
     for f in files_to_copy:
@@ -204,6 +207,14 @@ def copy_app_files():
         os.path.join(BUILD_DIR, "static"),
         dirs_exist_ok=True
     )
+
+    # Copy templates folder if exists
+    if os.path.exists(os.path.join(BASE_DIR, "templates")):
+        shutil.copytree(
+            os.path.join(BASE_DIR, "templates"),
+            os.path.join(BUILD_DIR, "templates"),
+            dirs_exist_ok=True
+        )
 
 def create_launcher():
     print("📝 Creating launcher batch file...")
@@ -296,8 +307,11 @@ def zip_macos_release():
     files_to_copy = [
         "main.py",
         "database.py",
+        "paper_helper.py",
         "sync_helper.py",
         "search_questions.py",
+        "migrate_fillin.py",
+        "migrate_choice_parentheses.py",
         ".env.example",
         "requirements.txt",
         "启动题库系统.command"
@@ -314,6 +328,14 @@ def zip_macos_release():
         os.path.join(macos_build_dir, "static"),
         dirs_exist_ok=True
     )
+    
+    # Copy templates folder if exists
+    if os.path.exists(os.path.join(BASE_DIR, "templates")):
+        shutil.copytree(
+            os.path.join(BASE_DIR, "templates"),
+            os.path.join(macos_build_dir, "templates"),
+            dirs_exist_ok=True
+        )
     
     # Make sure launcher is executable in build directory
     launcher_path = os.path.join(macos_build_dir, "启动题库系统.command")

@@ -1,0 +1,439 @@
+%
+% Copyright (c) 2024 Kangwei Xia
+% Released under the LaTeX Project Public License v1.3c License.
+% Repository: https://github.com/xkwxdyy/exam-zh
+%            https://gitee.com/xkwxdyy/exam-zh (mirror)
+%
+
+\NeedsTeXFormat{LaTeX2e}
+
+\RequirePackage{expl3}
+\RequirePackage { exam-zh-counter }
+
+\ProvidesExplPackage {exam-zh-math} {2026-07-12} {v0.3.0}
+  {exam-zh math module}
+
+\RequirePackage { tabularray }
+\RequirePackage { varwidth }
+\RequirePackage { graphicx }
+\RequirePackage { filehook }
+\file_if_exist:nT { wrapstuff.sty }
+  {
+    \RequirePackage { wrapstuff }
+    \AtEndOfPackageFile* { exam-zh-choices }
+      {
+        \AddToHook { env / choices / before }
+          { \wrapstuffclear }
+      }
+  }
+
+
+\keys_define:nn { exam-zh }
+  { calculations .meta:nn = { exam-zh / calculations } {#1} }
+
+%% calculations 环境 %%
+
+
+% 图片相对于 label 的方位
+\str_new:N \l__examzh_calculations_figure_position_str
+% coffin type 的对齐方式
+\str_new:N \l__examzh_calculations_coffin_align_str
+% tblr 单元格按首行/中部/末行基线对齐
+\str_new:N \l__examzh_calculations_tblr_valign_str
+% calculations 是否直接作为 list item 的首个段落内容出现
+\bool_new:N \l__examzh_calculations_first_item_paragraph_bool
+
+
+\keys_define:nn { exam-zh / calculations }
+  {
+    % calculations 环境的 label 从几开始（但是其实是 index +  seq 函数的 ##1 才是最终的 index）
+    index .int_set:N = \l__examzh_calculations_label_index_shift_int,
+    % 每行多少个（等价于有多少列）
+    columns .int_set:N = \l__examzh_calculations_column_int,
+    % 图片相对于文字的位置（上下左右）
+    fig-pos .choices:nn =
+      { top, above, bottom, below, left, right, left-top }
+      { \str_set:Nx \l__examzh_calculations_figure_position_str { \l_keys_choice_tl } },
+    % 环境上方的额外距离
+    top-sep .skip_set:N = \l__examzh_calculations_top_sep_skip,
+    % 环境下方的额外距离
+    bottom-sep .skip_set:N = \l__examzh_calculations_bottom_sep_skip,
+    % 两列之间的水平间距
+    hsep .skip_set:N = \l__examzh_calculations_hsep_skip,
+    % 两行之间的垂直间距
+    vsep .skip_set:N = \l__examzh_calculations_vsep_skip,
+    % 整体的偏移量
+    xshift .dim_set:N = \l__examzh_calculations_xshift_dim,
+    hshift .dim_set:N = \l__examzh_calculations_xshift_dim,
+    yshift .dim_set:N = \l__examzh_calculations_yshift_dim,
+    vshift .dim_set:N = \l__examzh_calculations_yshift_dim,
+    % label 的偏移量
+    label-xshift .dim_set:N = \l__examzh_calculations_label_xshift_dim,
+    label-hshift .dim_set:N = \l__examzh_calculations_label_xshift_dim,
+    label-yshift .dim_set:N = \l__examzh_calculations_label_yshift_dim,
+    label-vshift .dim_set:N = \l__examzh_calculations_label_yshift_dim,
+    % 对齐方式
+    align .choices:nn = 
+      { t, m, b }
+      { \str_set:Nx \l__examzh_calculations_coffin_align_str { \l_keys_choice_tl } }
+  }
+\keys_set:nn { exam-zh / calculations }
+  {
+    index        = 0,
+    columns      = 2,
+    fig-pos      = left-top,
+    xshift       = 2em,
+    hsep         = 2em,
+    vsep         = 0pt,
+    label-xshift = 0pt,
+    align        = t,
+    top-sep      = 1ex plus .5ex minus .5ex,
+    bottom-sep   = 0pt,
+  }
+
+% item 的 index 指标（即第几个 item）
+\int_new:N \l__examzh_calculations_item_index_int
+% 将拼接后的 coffin 存到 seq 里
+\seq_new:N \l__examzh_calculations_store_seq
+% 上面的 seq 的 item 数
+\int_new:N \l__examzh_calculations_store_seq_item_int
+% 最终放在 tblr 里的内容
+\tl_new:N \l__examzh_calculations_tblr_content_tl
+
+
+
+% #1: 设置 calculations
+% #2: 设置里面的 tblr
+\NewDocumentEnvironment { calculations } { O{ } +O{ } }
+  {
+    \group_begin:
+      \RenewDocumentCommand \item { O{ } }
+        { \__examzh_calculations_item:n {##1} }
+      \int_set:Nn \l__examzh_calculations_item_index_int {0}
+      \seq_clear:N \l__examzh_calculations_store_seq
+      \tl_clear:N \l__examzh_calculations_tblr_content_tl
+      \keys_set:nn { exam-zh / calculations } {#1}
+      \legacy_if:nTF { @inlabel }
+        { \bool_set_true:N \l__examzh_calculations_first_item_paragraph_bool }
+        { \bool_set_false:N \l__examzh_calculations_first_item_paragraph_bool }
+  }
+  {
+      % 结束收集
+        \unskip
+      \end{varwidth}
+      % \end{minipage}
+      \hcoffin_set_end:
+      % 拼接 label 和 figure
+      \__examzh_calculations_coffin_join:
+      % 输出
+      \__examzh_calculations_coffin_typeset:n {#2}
+      % \par \int_use:N \l__examzh_calculations_item_index_int
+    \group_end:
+  }
+% 拼接 label 和 figure
+\cs_new:Npn \__examzh_calculations_coffin_join:
+  {
+    \int_step_inline:nn { \l__examzh_calculations_item_index_int }
+      {
+        \__examzh_calculations_coffin_join_position_set:n {##1}
+        \seq_gput_right:Nn \l__examzh_calculations_store_seq
+          {
+            \__examzh_calculations_coffin_align_set:n {##1}
+            \kern\l__examzh_calculations_hsep_skip
+          }
+      }
+  }
+\cs_new:Npn \__examzh_calculations_coffin_align_set:n #1
+  {
+    \str_case:Vn \l__examzh_calculations_coffin_align_str
+      {
+        {t} { \__examzh_calculations_coffin_align_set_t:n {#1} }
+        {m} { \__examzh_calculations_coffin_align_set_m:n {#1} }
+        {b} { \__examzh_calculations_coffin_align_set_b:n {#1} }
+      }
+  }
+\cs_new:Npn \__examzh_calculations_coffin_align_set_t:n #1
+  {
+    \coffin_typeset:cnnnn
+      { l__examzh_calculations_figure_ \int_to_roman:n { #1 } _coffin }
+      { l } { H }  % align = t：首行基线
+      { \l__examzh_calculations_xshift_dim } { \l__examzh_calculations_yshift_dim }
+  }
+\cs_new:Npn \__examzh_calculations_coffin_align_set_m:n #1
+  {
+    \coffin_typeset:cnnnn
+      { l__examzh_calculations_figure_ \int_to_roman:n { #1 } _coffin }
+      { l } { vc }  % align = m
+      { \l__examzh_calculations_xshift_dim } { \l__examzh_calculations_yshift_dim }
+  }
+\cs_new:Npn \__examzh_calculations_coffin_align_set_b:n #1
+  {
+    \coffin_typeset:cnnnn
+      { l__examzh_calculations_figure_ \int_to_roman:n { #1 } _coffin }
+      { l } { b }   % align = b
+      { \l__examzh_calculations_xshift_dim } { \l__examzh_calculations_yshift_dim }
+  }
+\cs_new:Npn \__examzh_calculations_coffin_join_position_set:n #1
+  {
+    \use:c { __examzh_calculations_coffin_join_position_set_ \l__examzh_calculations_figure_position_str :n } {#1}
+  }
+\cs_new:cpn { __examzh_calculations_coffin_join_position_set_left-top :n } #1
+  {
+    \coffin_join:cnncnnnn
+      { l__examzh_calculations_figure_ \int_to_roman:n {#1} _ coffin }
+      { l } { t }
+      { l__examzh_calculations_label_ \int_to_roman:n {#1} _ coffin }
+      { r } { b }
+      { \l__examzh_calculations_label_xshift_dim }
+      { \l__examzh_calculations_label_yshift_dim -10.6pt}
+  }
+\cs_new:Npn \__examzh_calculations_coffin_join_position_set_top:n #1
+  {
+    \coffin_join:cnncnnnn
+      { l__examzh_calculations_figure_ \int_to_roman:n {#1} _ coffin }
+      { hc } { b }
+      { l__examzh_calculations_label_ \int_to_roman:n {#1} _ coffin }
+      { hc } { t }
+      { \l__examzh_calculations_label_xshift_dim }
+      { \l__examzh_calculations_label_yshift_dim - 6pt }
+  }
+\cs_set_eq:NN 
+  \__examzh_calculations_coffin_join_position_set_above:n 
+  \__examzh_calculations_coffin_join_position_set_top:n
+\cs_new:Npn \__examzh_calculations_coffin_join_position_set_bottom:n #1
+  {
+    \coffin_join:cnncnnnn
+      { l__examzh_calculations_figure_ \int_to_roman:n {#1} _ coffin }
+      { hc } { t }
+      { l__examzh_calculations_label_ \int_to_roman:n {#1} _ coffin }
+      { hc } { b }
+      { \l__examzh_calculations_label_xshift_dim }
+      { \l__examzh_calculations_label_yshift_dim + 6pt }
+  }
+\cs_set_eq:NN 
+  \__examzh_calculations_coffin_join_position_set_below:n 
+  \__examzh_calculations_coffin_join_position_set_bottom:n
+\cs_new:Npn \__examzh_calculations_coffin_join_position_set_left:n #1
+  {
+    \coffin_join:cnncnnnn
+      { l__examzh_calculations_figure_ \int_to_roman:n {#1} _ coffin }
+      { l } { vc }
+      { l__examzh_calculations_label_ \int_to_roman:n {#1} _ coffin }
+      { r } { vc }
+      { \l__examzh_calculations_label_xshift_dim - 6pt }
+      { \l__examzh_calculations_label_yshift_dim }
+  }
+\cs_new:Npn \__examzh_calculations_coffin_join_position_set_right:n #1
+  {
+    \coffin_join:cnncnnnn
+      { l__examzh_calculations_figure_ \int_to_roman:n {#1} _ coffin }
+      { r } { vc }
+      { l__examzh_calculations_label_ \int_to_roman:n {#1} _ coffin }
+      { l } { vc }
+      { \l__examzh_calculations_label_xshift_dim + 2pt }
+      { \l__examzh_calculations_label_yshift_dim }
+  }
+\cs_new:Npn \__examzh_calculations_coffin_typeset:n #1
+  {
+    \__examzh_calculations_coffin_typeset_count:
+    \seq_map_indexed_inline:Nn \l__examzh_calculations_store_seq
+      % ##1: index
+      % ##2: content
+      {
+        \int_compare:nNnTF { \int_mod:nn {##1} { \l__examzh_calculations_column_int } } = {0}
+          {
+            \tl_gput_right:Nn \l__examzh_calculations_tblr_content_tl 
+              { ##2 \\[\l__examzh_calculations_vsep_skip] }
+          }
+          {
+            \tl_gput_right:Nn \l__examzh_calculations_tblr_content_tl 
+              { ##2 & }
+          }
+      }
+    % 如果 seq 的 item 比 column 多且不整除 column 的话，要补 &
+    \int_compare:nNnT { \l__examzh_calculations_store_seq_item_int } > { \l__examzh_calculations_column_int }
+      {
+        \int_compare:nNnF { \l__examzh_calculations_item_num_mod_column_left_int } = { 0 }
+          {
+            \tl_gput_right:Nx \l__examzh_calculations_tblr_content_tl
+              {
+                \prg_replicate:nn { \l__examzh_calculations_item_num_mod_column_left_int -1 } {&}
+              }
+            % \int_use:N \l__examzh_calculations_item_num_mod_column_left_int
+          }
+      }
+    \par 
+    \vspace*{ \l__examzh_calculations_top_sep_skip }
+    \noindent
+    % list 的首段会额外应用 \itemindent；calculations 自身已有 xshift，
+    % 因此在环境直接跟在 \item 后时抵消这一次首段缩进，使其与题干后使用一致。
+    \bool_if:NT \l__examzh_calculations_first_item_paragraph_bool
+      { \hspace*{ -\itemindent } }
+    % \centering
+    % \SetTblrInner
+    %   {
+    %     rowsep = 4pt,
+    %     % colsep = 0pt
+    %   }
+    \str_set:Nx \l__examzh_calculations_tblr_valign_str
+      {
+        \str_case:Vn \l__examzh_calculations_coffin_align_str
+          {
+            {t} {h}
+            {m} {m}
+            {b} {f}
+          }
+      }
+    \exp_args:NV \__examzh_calculations_tblr_typeset:nn
+      \l__examzh_calculations_tblr_valign_str {#1}
+    \vspace*{ \l__examzh_calculations_bottom_sep_skip }
+    \par
+  }
+\cs_new_protected:Npn \__examzh_calculations_tblr_typeset:nn #1#2
+  {
+    \begin{tblr}
+      [ expand = \l__examzh_calculations_tblr_content_tl ]
+      {
+        width = \linewidth,
+        columns =
+          {
+            l,
+            leftsep = 0em,
+            rightsep = 0pt,
+          },
+        rows =
+          {
+            #1,
+            ht = \baselineskip,
+            abovesep = 0pt,
+            belowsep = 0pt,
+          },
+        stretch = 0,
+        #2
+      }
+      \l__examzh_calculations_tblr_content_tl
+    \end{tblr}
+  }
+\int_new:N \l__examzh_calculations_item_num_mod_column_left_int
+\cs_new:Npn \__examzh_calculations_coffin_typeset_count:
+  {
+    % 计算 seq 有多少项
+    \int_set:Nn \l__examzh_calculations_store_seq_item_int
+      { \seq_count:N \l__examzh_calculations_store_seq }
+    % seq 项数小于 column 的话，column 设置为 seq 项数
+    \int_compare:nNnTF { \l__examzh_calculations_store_seq_item_int } < { \l__examzh_calculations_column_int }
+      { \int_set_eq:NN \l__examzh_calculations_column_int \l__examzh_calculations_store_seq_item_int }
+      {
+        % 计算 \l__examzh_calculations_store_seq_item_int mod \l__examzh_calculations_column_int 的余数，用于补 &
+        \int_set:Nn \l__examzh_calculations_item_num_mod_column_left_int { \int_mod:nn { \l__examzh_calculations_store_seq_item_int } { \l__examzh_calculations_column_int } }
+      }
+  }
+
+\cs_new:Npn \__examzh_calculations_item:n #1
+  {
+    % 增加指标（g 是关键）
+    \int_gincr:N \l__examzh_calculations_item_index_int
+    % 新建 coffin
+    \__examzh_calculations_item_new_coffin:
+    % 储存 label（一直出不来的原因是因为没改成 gset）
+    \hcoffin_gset:cn 
+      { l__examzh_calculations_label_ \int_to_roman:n { \l__examzh_calculations_item_index_int } _coffin } 
+      {
+        % 加上 index 键值设置的偏移量才是最终的 index
+        % （\int_eval:n { \l__examzh_calculations_item_index_int + \l__examzh_calculations_label_index_shift_int - 1} ）
+        % 如果 \item 的[] 中没内容，则需要把 label 升高
+        % \tl_if_blank:nTF {#1} 
+        %   {
+        %     \box_move_up:nn  { 2.7pt } { \hbox{\__examzh_calculations_the_label:} }
+        %     \space
+        %     #1
+        %   } 
+        %   {
+        %     \__examzh_calculations_the_label: #1
+        %   }
+        % \IfBooleanTF{#1}{#1 yes}{#1 no}
+        % \IfNoValueTF{#1}
+        %   {
+        %     \dim_set:Nn \l__examzh_calculations_label_yshift_dim { 4pt }
+        %   }{#1 yes}
+      }
+    % 储存 figure
+    \int_compare:nNnF { \l__examzh_calculations_item_index_int } = {1}
+      {
+          \unskip
+          \end{varwidth}
+          % \end{minipage}
+        % 结束上一个 item 的收集
+        \hcoffin_set_end:
+      }
+    % 收集
+    \hcoffin_set:cw { l__examzh_calculations_figure_ \int_to_roman:n { \l__examzh_calculations_item_index_int } _coffin }
+      % \begin{varwidth}{\hsize}
+    % 根据 columns 个数设置宽度
+    \__examzh_calculations_item_varwidth_width_set:
+      \begin{varwidth}[t]{\l__examzh_calculations_item_varwidth_width_dim}
+      % \begin{minipage}{8cm}
+        \ignorespaces
+        \makebox[0em]{\rule{0pt}{\baselineskip}}
+        \__examzh_calculations_the_label:
+  }
+\dim_new:N \l__examzh_calculations_item_varwidth_width_dim
+\cs_new:Npn \__examzh_calculations_item_varwidth_width_set:
+  {
+    \int_case:nnF { \l__examzh_calculations_column_int }
+      {
+        {1} { \dim_set:Nn \l__examzh_calculations_item_varwidth_width_dim {0.8 \textwidth} }
+        {2} { \dim_set:Nn \l__examzh_calculations_item_varwidth_width_dim {0.45 \textwidth} }
+        {3} { \dim_set:Nn \l__examzh_calculations_item_varwidth_width_dim {0.3 \textwidth} }
+        {4} { \dim_set:Nn \l__examzh_calculations_item_varwidth_width_dim {0.2 \textwidth} }
+      }
+      { \dim_set:Nn \l__examzh_calculations_item_varwidth_width_dim { \hsize } }
+  }
+
+% 新建 coffin
+\cs_new:Npn \__examzh_calculations_item_new_coffin:
+  {
+    % 放图片的 coffin
+    \coffin_if_exist:cF { l__examzh_calculations_figure_ \int_to_roman:n { \l__examzh_calculations_item_index_int } _coffin }
+      { \coffin_new:c { l__examzh_calculations_figure_ \int_to_roman:n { \l__examzh_calculations_item_index_int } _coffin } }
+    % 放 label 的 coffin
+    \coffin_if_exist:cF { l__examzh_calculations_label_ \int_to_roman:n { \l__examzh_calculations_item_index_int } _coffin }
+      { \coffin_new:c { l__examzh_calculations_label_ \int_to_roman:n { \l__examzh_calculations_item_index_int } _coffin } }
+  }
+
+\tl_new:N \l__examzh_calculations_counters_commands_set_tl
+
+\keys_define:nn { exam-zh / calculations }
+  {
+    label .tl_set:N = \l__examzh_calculations_label_tl
+  }
+\keys_set:nn { exam-zh / calculations }
+  {
+    label = \arabic*
+  }
+  
+\cs_new:Npn \__examzh_calculations_the_label:
+  {
+    \group_begin:
+      % 定义计数器相关的命令函数
+      \l__examzh_calculations_counters_commands_set_tl
+      % 输出处理后的 label
+      \l__examzh_calculations_label_tl
+    \group_end:
+  }
+
+\NewDocumentCommand \AddCalculationsCounter { m m }
+  {
+    \__examzh_counter_register:NNNnn
+      \l__examzh_calculations_counters_commands_set_tl #1 #2 { calculations }
+      {
+        \l__examzh_calculations_item_index_int
+        + \l__examzh_calculations_label_index_shift_int
+      }
+  }
+
+\AddCalculationsCounter \arabic \@arabic
+\AddCalculationsCounter \alph   \@alph
+\AddCalculationsCounter \Alph   \@Alph
+\AddCalculationsCounter \roman  \@roman
+\AddCalculationsCounter \Roman  \@Roman

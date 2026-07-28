@@ -1799,8 +1799,12 @@ const PAGE_LIMIT = 20;
             // Replace all non-math LaTeX line breaks with HTML br tags
             tempText = tempText.replace(/\\\\/g, '<br>');
             
-            // 5. Parse markdown with marked and sanitize with DOMPurify for XSS Protection
-            let html = DOMPurify.sanitize(marked.parse(tempText));
+            // Auto-heal single newlines before proof/solution steps (e.g., (1), 解：, 证明：, 因为, 所以, 故, 【) into double newlines
+            // NOTE: Uses capture groups instead of lookbehind for Safari compatibility!
+            tempText = tempText.replace(/([^\n])\n(?=[（(]?[0-9一二三四五六七八九十]+[）\.\)]|解[:：]|证明[:：]|已知|因为|所以|故|又因为|由|综上|因此|得|【)/g, '$1\n\n');
+
+            // 5. Parse markdown with marked (with breaks: true so single newlines convert to <br>) and sanitize with DOMPurify for XSS Protection
+            let html = DOMPurify.sanitize(marked.parse(tempText, { breaks: true, gfm: true }));
             
             // 6. Restore all math blocks literally with HTML escaping
             function escapeHtml(str) {

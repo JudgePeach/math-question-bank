@@ -1,0 +1,686 @@
+%
+% Copyright (c) 2024 Zeping Lee and AlphaZTX
+% Released under the LaTeX Project Public License v1.3c License.
+% Repository: https://github.com/xkwxdyy/exam-zh
+%            https://gitee.com/xkwxdyy/exam-zh (mirror)
+%
+
+\NeedsTeXFormat{LaTeX2e}
+
+\RequirePackage{expl3}
+\RequirePackage{xparse}
+
+\ProvidesExplPackage {exam-zh-font} {2026-07-12} {v0.3.0}
+  {exam-zh font module}
+
+\RequirePackage { unicode-math }
+\RequirePackage { filehook }
+\RequirePackage { etoolbox }
+
+\tl_new:N \g__examzh_font_font_tl
+\tl_new:N \g__examzh_font_math_font_tl
+
+\keys_define:nn { exam-zh }
+  {
+    font .choices:nn =
+      {
+        garamond ,
+        libertinus ,
+        lm ,
+        newcm ,
+        pala ,
+        stix ,
+        termes ,
+        times ,
+        xits ,
+        none
+      }
+      {
+        \tl_gset_eq:NN \g__examzh_font_font_tl \l_keys_choice_tl
+        \use:c { examzh_font_set_font_ \g__examzh_font_font_tl : }
+      } ,
+    math-font .choices:nn =
+      {
+        asana ,
+        cambria ,
+        garamond ,
+        libertinus ,
+        lm ,
+        newcm ,
+        pala ,
+        stix ,
+        termes ,
+        xits ,
+        none
+      }
+      {
+        \tl_gset_eq:NN \g__examzh_font_math_font_tl \l_keys_choice_tl
+        \use:c { examzh_font_set_math_font_ \g__examzh_font_math_font_tl : }
+      } ,
+  }
+
+% 修改 \varnothing 的默认样式
+\AtBeginDocument
+  {
+    \setmathfont [ range = \varnothing ] { Asana-Math.otf }
+  }
+
+% New Computer Modern
+\cs_new:Npn \examzh_font_set_font_newcm:
+  {
+    \setmainfont { NewCM10 }
+      [
+        Extension      = .otf ,
+        UprightFont    = *-Book ,
+        BoldFont       = *-Bold ,
+        ItalicFont     = *-BookItalic ,
+        BoldItalicFont = *-BoldItalic ,
+      ]
+    \setsansfont { NewCMSans10 }
+      [
+        Extension         = .otf ,
+        UprightFont       = *-Book ,
+        BoldFont          = *-Bold ,
+        ItalicFont        = *-BookOblique ,
+        BoldItalicFont    = *-BoldOblique ,
+      ]
+    \setmonofont { NewCMMono10 }
+      [
+        Extension           = .otf ,
+        UprightFont         = *-Book ,
+        ItalicFont          = *-BookItalic ,
+        BoldFont            = *-Bold ,
+        BoldItalicFont      = *-BoldOblique ,
+      ]
+  }
+
+
+% Latin Modern
+\cs_new:Npn \examzh_font_set_font_lm:
+  {
+    \setmainfont { lmroman10 }
+      [
+        Extension      = .otf ,
+        UprightFont    = *-regular ,
+        BoldFont       = *-bold ,
+        ItalicFont     = *-italic ,
+        BoldItalicFont = *-bolditalic ,
+      ]
+    \setsansfont { lmsans10 }
+      [
+        Extension      = .otf ,
+        UprightFont    = *-regular ,
+        BoldFont       = *-bold ,
+        ItalicFont     = *-oblique ,
+        BoldItalicFont = *-boldoblique ,
+      ]
+    \setmonofont { lmmonolt10 }
+      [
+        Extension      = .otf ,
+        UprightFont    = *-regular ,
+        BoldFont       = *-bold ,
+        ItalicFont     = *-oblique ,
+        BoldItalicFont = *-boldoblique ,
+      ]
+  }
+
+
+% Times New Roman + Arial
+\cs_new:Npn \examzh_font_set_font_times:
+  {
+    \setmainfont { Times~ New~ Roman }
+    \setsansfont { Arial } [ Scale = MatchLowercase ]
+    \setmonofont { Courier~ New } [ Scale = MatchLowercase ]
+  }
+
+
+% TeX Gyre Termes
+\cs_new:Npn \examzh_font_set_font_termes:
+  {
+    \setmainfont { texgyretermes }
+      [
+        Extension      = .otf ,
+        UprightFont    = *-regular ,
+        BoldFont       = *-bold ,
+        ItalicFont     = *-italic ,
+        BoldItalicFont = *-bolditalic ,
+      ]
+    \examzh_font_set_tex_gyre_sans_mono:
+  }
+
+
+% Garamond (实际上是 EB Garamond)
+\cs_new:Npn \examzh_font_set_font_garamond:
+  {
+    \setmainfont { EBGaramond }
+      [
+        Extension      = .otf ,
+        UprightFont    = *-Regular ,
+        BoldFont       = *-Bold ,
+        ItalicFont     = *-Italic ,
+        BoldItalicFont = *-BoldItalic ,
+      ]
+    \setsansfont { LinBiolinum }
+      [
+        Extension      = .otf ,
+        UprightFont    = *_R ,
+        BoldFont       = *_RB ,
+        ItalicFont     = *_RI ,
+        BoldItalicFont = *_RBO ,
+      ]
+    \setmonofont { texgyrecursor }
+      [
+        Extension      = .otf ,
+        UprightFont    = *-regular ,
+        BoldFont       = *-bold ,
+        ItalicFont     = *-italic ,
+        BoldItalicFont = *-bolditalic ,
+      ]
+  }
+
+
+% Palatino (TeX Gyre Pagella)
+\cs_new:Npn \examzh_font_set_font_pala:
+  {
+    \setmainfont { texgyrepagella }
+      [
+        Extension      = .otf ,
+        UprightFont    = *-regular ,
+        BoldFont       = *-bold ,
+        ItalicFont     = *-italic ,
+        BoldItalicFont = *-bolditalic ,
+      ]
+    \examzh_font_set_tex_gyre_sans_mono:
+  }
+
+% TeX Gyre Heros / Cursor
+\cs_new:Npn \examzh_font_set_tex_gyre_sans_mono:
+  {
+    \setsansfont { texgyreheros }
+      [
+        Extension      = .otf ,
+        UprightFont    = *-regular ,
+        BoldFont       = *-bold ,
+        ItalicFont     = *-italic ,
+        BoldItalicFont = *-bolditalic ,
+        Scale          = MatchLowercase ,
+      ]
+    \setmonofont { texgyrecursor }
+      [
+        Extension      = .otf ,
+        UprightFont    = *-regular ,
+        BoldFont       = *-bold ,
+        ItalicFont     = *-italic ,
+        BoldItalicFont = *-bolditalic ,
+        Scale          = MatchLowercase ,
+        Ligatures      = CommonOff ,
+      ]
+  }
+
+
+% STIX Two 字体。
+% STIX 文件名在 v2.10 2020-12-19 从
+% \file{STIX2Text-Regular.otf}、\file{STIX2Math.otf} 分别改为
+% \file{STIXTwoText-Regular.otf}、\file{STIXTwoMath-Regular.otf}。
+\tl_new:N \g__examzh_font_font_family_stix_tl
+\tl_new:N \g__examzh_font_font_name_stix_math_tl
+\cs_new:Npn \examzh_font_set_stix_names:
+  {
+    \tl_if_empty:NT \g__examzh_font_font_family_stix_tl
+      {
+        \fontspec_font_if_exist:nTF { STIXTwoText-Regular.otf }
+          {
+            \tl_gset:Nn \g__examzh_font_font_family_stix_tl { STIXTwoText }
+            \tl_gset:Nn \g__examzh_font_font_name_stix_math_tl { STIXTwoMath-Regular }
+          }
+          {
+            \tl_gset:Nn \g__examzh_font_font_family_stix_tl { STIX2Text }
+            \tl_gset:Nn \g__examzh_font_font_name_stix_math_tl { STIX2Math }
+          }
+      }
+  }
+
+\cs_new:Npn \examzh_font_set_font_stix:
+  {
+    \examzh_font_set_stix_names:
+    \setmainfont { \g__examzh_font_font_family_stix_tl }
+      [
+        Extension      = .otf ,
+        UprightFont    = *-Regular ,
+        BoldFont       = *-Bold ,
+        ItalicFont     = *-Italic ,
+        BoldItalicFont = *-BoldItalic ,
+      ]
+    \examzh_font_set_tex_gyre_sans_mono:
+  }
+
+
+% XITS 字体。
+% XITS 的文件名在 v1.109 2018-09-30
+% 从 \file{xits-regular.otf}、\file{xits-math.otf} 分别改为
+% \file{XITS-Regular.otf}、\file{XITSMath-Regular.otf}。
+\tl_new:N \g__examzh_font_font_family_xits_tl
+\tl_new:N \g__examzh_font_font_style_xits_rm_tl
+\tl_new:N \g__examzh_font_font_style_xits_bf_tl
+\tl_new:N \g__examzh_font_font_style_xits_it_tl
+\tl_new:N \g__examzh_font_font_style_xits_bfit_tl
+\tl_new:N \g__examzh_font_font_name_xits_math_tl
+
+\cs_new:Npn \examzh_font_set_xits_names:
+  {
+    \tl_if_empty:NT \g__examzh_font_font_family_xits_tl
+      {
+        \fontspec_font_if_exist:nTF { XITSMath-Regular.otf }
+          {
+            \tl_gset:Nn \g__examzh_font_font_family_xits_tl { XITS }
+            \tl_gset:Nn \g__examzh_font_font_style_xits_rm_tl { Regular }
+            \tl_gset:Nn \g__examzh_font_font_style_xits_bf_tl { Bold }
+            \tl_gset:Nn \g__examzh_font_font_style_xits_it_tl { Italic }
+            \tl_gset:Nn \g__examzh_font_font_style_xits_bfit_tl { BoldItalic }
+            \tl_gset:Nn \g__examzh_font_font_name_xits_math_tl { XITSMath-Regular }
+          }
+          {
+            \tl_gset:Nn \g__examzh_font_font_family_xits_tl { xits }
+            \tl_gset:Nn \g__examzh_font_font_style_xits_rm_tl { regular }
+            \tl_gset:Nn \g__examzh_font_font_style_xits_bf_tl { bold }
+            \tl_gset:Nn \g__examzh_font_font_style_xits_it_tl { italic }
+            \tl_gset:Nn \g__examzh_font_font_style_xits_bfit_tl { bolditalic }
+            \tl_gset:Nn \g__examzh_font_font_name_xits_math_tl { xits-math }
+          }
+      }
+  }
+
+\cs_new:Npn \examzh_font_set_font_xits:
+  {
+    \examzh_font_set_xits_names:
+    \setmainfont { \g__examzh_font_font_family_xits_tl }
+      [
+        Extension      = .otf ,
+        UprightFont    = *-\g__examzh_font_font_style_xits_rm_tl ,
+        BoldFont       = *-\g__examzh_font_font_style_xits_bf_tl ,
+        ItalicFont     = *-\g__examzh_font_font_style_xits_it_tl ,
+        BoldItalicFont = *-\g__examzh_font_font_style_xits_bfit_tl ,
+      ]
+    \examzh_font_set_tex_gyre_sans_mono:
+  }
+
+
+% Libertinus 的文件名在 v6.7 2019-04-03 从小写改为驼峰式，
+% 在大小写敏感的平台上需要进行判断。
+\tl_new:N \g__examzh_font_font_family_libertinus_serif_tl
+\tl_new:N \g__examzh_font_font_family_libertinus_sans_tl
+\tl_new:N \g__examzh_font_font_style_libertinus_rm_tl
+\tl_new:N \g__examzh_font_font_style_libertinus_bf_tl
+\tl_new:N \g__examzh_font_font_style_libertinus_it_tl
+\tl_new:N \g__examzh_font_font_style_libertinus_bfit_tl
+\tl_new:N \g__examzh_font_font_name_libertinus_math_tl
+
+\cs_new:Npn \examzh_font_set_libertinus_names:
+  {
+    \tl_if_empty:NT \g__examzh_font_font_family_libertinus_serif_tl
+      {
+        \fontspec_font_if_exist:nTF { LibertinusSerif-Regular.otf }
+          {
+            \tl_gset:Nn \g__examzh_font_font_family_libertinus_serif_tl { LibertinusSerif }
+            \tl_gset:Nn \g__examzh_font_font_family_libertinus_sans_tl { LibertinusSans }
+            \tl_gset:Nn \g__examzh_font_font_style_libertinus_rm_tl { Regular }
+            \tl_gset:Nn \g__examzh_font_font_style_libertinus_bf_tl { Bold }
+            \tl_gset:Nn \g__examzh_font_font_style_libertinus_it_tl { Italic }
+            \tl_gset:Nn \g__examzh_font_font_style_libertinus_bfit_tl { BoldItalic }
+            \tl_gset:Nn \g__examzh_font_font_name_libertinus_math_tl { LibertinusMath-Regular }
+          }
+          {
+            \tl_gset:Nn \g__examzh_font_font_family_libertinus_serif_tl { libertinusserif }
+            \tl_gset:Nn \g__examzh_font_font_family_libertinus_sans_tl { libertinussans }
+            \tl_gset:Nn \g__examzh_font_font_style_libertinus_rm_tl { regular }
+            \tl_gset:Nn \g__examzh_font_font_style_libertinus_bf_tl { bold }
+            \tl_gset:Nn \g__examzh_font_font_style_libertinus_it_tl { italic }
+            \tl_gset:Nn \g__examzh_font_font_style_libertinus_bfit_tl { bolditalic }
+            \tl_gset:Nn \g__examzh_font_font_name_libertinus_math_tl { libertinusmath-regular }
+          }
+      }
+  }
+
+\cs_new:Npn \examzh_font_set_font_libertinus:
+  {
+    \examzh_font_set_libertinus_names:
+    \setmainfont { \g__examzh_font_font_family_libertinus_serif_tl }
+      [
+        Extension      = .otf ,
+        UprightFont    = *-\g__examzh_font_font_style_libertinus_rm_tl ,
+        BoldFont       = *-\g__examzh_font_font_style_libertinus_bf_tl ,
+        ItalicFont     = *-\g__examzh_font_font_style_libertinus_it_tl ,
+        BoldItalicFont = *-\g__examzh_font_font_style_libertinus_bfit_tl ,
+      ]
+    \setsansfont { \g__examzh_font_font_family_libertinus_sans_tl }
+      [
+        Extension      = .otf ,
+        UprightFont    = *-\g__examzh_font_font_style_libertinus_rm_tl ,
+        BoldFont       = *-\g__examzh_font_font_style_libertinus_bf_tl ,
+        ItalicFont     = *-\g__examzh_font_font_style_libertinus_it_tl ,
+      ]
+    \setmonofont { lmmonolt10 }
+      [
+        Extension      = .otf ,
+        UprightFont    = *-regular ,
+        BoldFont       = *-bold ,
+        ItalicFont     = *-oblique ,
+        BoldItalicFont = *-boldoblique ,
+      ]
+  }
+
+
+% 数学字体
+
+% 按照国标样式配置 unicode-math
+
+\tl_new:N \l__examzh_save_leq_tl
+\tl_new:N \l__examzh_save_geq_tl
+
+\AtEndOfPackageFile* { unicode-math }
+  {
+    \unimathsetup
+      {
+        math-style = ISO ,
+        bold-style = ISO ,
+        partial    = upright ,
+      }
+    \AtBeginDocument
+      {
+        \tl_set_eq:NN \leq \l__examzh_save_leq_tl
+        \tl_set_eq:NN \geq \l__examzh_save_geq_tl
+        \tl_set_eq:NN \leq \leqslant
+        \tl_set_eq:NN \geq \geqslant
+      }
+    \cs_set_protected:Npn \mathellipsis { \mathinner { \unicodecdots } }
+  }
+
+
+% 数学符号样式
+
+% \tl_new:N \l__examzh_font_uppercase_greek_tl
+% \tl_new:N \l__examzh_font_leq_style_tl
+\tl_new:N \l__examzh_font_integral_style_tl
+% \bool_new:N \l__examzh_font_integral_limits_bool
+% \tl_new:N \l__examzh_font_partial_style_tl
+% \tl_new:N \l__examzh_font_math_ellipsis_tl
+% \tl_new:N \l__examzh_font_real_part_tl
+
+\tl_set:Nn \l__examzh_font_integral_style_tl { upright }
+
+% \keys_define:nn { exam-zh }
+%   {
+%     math-style .choices:nn =
+%       { GB , ISO , TeX }
+%       { \exp_args:NV \examzh_font_set_math_style:n \l_keys_choice_tl } ,
+%     uppercase-greek .choices:nn =
+%       { italic , upright }
+%       { \tl_set_eq:NN \l__examzh_font_uppercase_greek_tl \l_keys_choice_tl } ,
+%     less-than-or-equal .choices:nn =
+%       { slanted , horizontal }
+%       { \tl_set_eq:NN \l__examzh_font_leq_style_tl \l_keys_choice_tl } ,
+%     integral .choices:nn =
+%       { upright , slanted }
+%       { \tl_set_eq:NN \l__examzh_font_integral_style_tl \l_keys_choice_tl } ,
+%     integral-limits .bool_set:N = \l__examzh_font_integral_limits_bool ,
+%     partial .choices:nn =
+%       { upright , slanted }
+%       { \tl_set_eq:NN \l__examzh_font_partial_style_tl \l_keys_choice_tl } ,
+%     math-ellipsis .choices:nn =
+%       { centered , lower , AMS }
+%       { \tl_set_eq:NN \l__examzh_font_math_ellipsis_tl \l_keys_choice_tl } ,
+%     real-part .choices:nn =
+%       { roman , fraktur }
+%       { \tl_set_eq:NN \l__examzh_font_real_part_tl \l_keys_choice_tl } ,
+%   }
+
+
+
+% New Computer Modern Math
+
+\tl_new:N \l__examzh_font_stylistic_set_tl
+
+\cs_new:Npn \examzh_font_set_math_font_newcm:
+  {
+    % \examzh_font_load_unimath:
+    % \examzh_font_set_unimath_style:
+    \tl_if_eq:NnTF \l__examzh_font_integral_style_tl { upright }
+      { \tl_set:Nn \l__examzh_font_stylistic_set_tl { 2 } }
+      { \tl_clear:N \l__examzh_font_stylistic_set_tl }
+    \setmathfont { NewCMMath-Book }
+      [
+        Extension    = .otf,
+        StylisticSet = \l__examzh_font_stylistic_set_tl ,
+      ]
+    \setmathfont { NewCMMath-Book }
+      [
+        Extension    = .otf,
+        StylisticSet = 1,
+        range        = { scr , bfscr } ,
+      ]
+    \examzh_font_set_stix_names:
+    \setmathfont { \g__examzh_font_font_name_stix_math_tl }
+      [
+        Extension    = .otf,
+        range        = { \complement, \bigstar } ,
+      ]
+    \setmathrm { NewCM10 }
+      [
+        Extension      = .otf,
+        UprightFont    = *-Book,
+        BoldFont       = *-Bold,
+        ItalicFont     = *-BookItalic,
+        BoldItalicFont = *-BoldItalic,
+      ]
+    \setmathsf { NewCMSans10 }
+      [
+        Extension      = .otf,
+        UprightFont    = *-Book,
+        BoldFont       = *-Bold,
+        ItalicFont     = *-BookOblique,
+        BoldItalicFont = *-BoldOblique,
+      ]
+    \setmathtt { NewCMMono10 }
+      [
+        Extension      = .otf,
+        UprightFont    = *-Book,
+        ItalicFont     = *-BookItalic,
+        BoldFont       = *-Bold,
+        BoldItalicFont = *-BoldOblique,
+      ]
+  }
+
+
+% Latin Modern Math
+\cs_new:Npn \examzh_font_set_math_font_lm:
+  {
+    % \examzh_font_load_unimath:
+    % \examzh_font_set_unimath_style:
+    \setmathfont { latinmodern-math } [ Extension = .otf ]
+    \examzh_font_set_stix_names:
+    \setmathfont { \g__examzh_font_font_name_stix_math_tl }
+      [
+        Extension    = .otf,
+        range        = { \complement, \bigstar } ,
+      ]
+    \setmathrm { lmroman10 }
+      [
+        Extension      = .otf,
+        UprightFont    = *-regular,
+        BoldFont       = *-bold,
+        ItalicFont     = *-italic,
+        BoldItalicFont = *-bolditalic,
+      ]
+    \setmathsf { lmsans10 }
+      [
+        Extension      = .otf,
+        UprightFont    = *-regular,
+        BoldFont       = *-bold,
+        ItalicFont     = *-oblique,
+        BoldItalicFont = *-boldoblique,
+      ]
+    \setmathtt { lmmonolt10 }
+      [
+        Extension      = .otf,
+        UprightFont    = *-regular,
+        BoldFont       = *-bold,
+        ItalicFont     = *-oblique,
+        BoldItalicFont = *-boldoblique,
+      ]
+  }
+
+
+% STIX Two Math
+\cs_new:Npn \examzh_font_set_math_font_stix:
+  {
+    % \examzh_font_load_unimath:
+    % \examzh_font_set_unimath_style:
+    \examzh_font_set_stix_names:
+    \tl_if_eq:NnTF \l__examzh_font_integral_style_tl { upright }
+      { \tl_set:Nn \l__examzh_font_stylistic_set_tl { 8 } }
+      { \tl_clear:N \l__examzh_font_stylistic_set_tl }
+    \setmathfont { \g__examzh_font_font_name_stix_math_tl }
+      [
+        Extension    = .otf,
+        StylisticSet = \l__examzh_font_stylistic_set_tl,
+      ]
+    \setmathfont { \g__examzh_font_font_name_stix_math_tl }
+      [
+        Extension    = .otf,
+        StylisticSet = 1,
+        range        = { scr , bfscr },
+      ]
+  }
+
+
+% XITS Math
+\cs_new:Npn \examzh_font_set_math_font_xits:
+  {
+    % \examzh_font_load_unimath:
+    % \examzh_font_set_unimath_style:
+    \examzh_font_set_xits_names:
+    \tl_if_eq:NnTF \l__examzh_font_integral_style_tl { upright }
+      { \tl_set:Nn \l__examzh_font_stylistic_set_tl { 8 } }
+      { \tl_clear:N \l__examzh_font_stylistic_set_tl }
+    \setmathfont { \g__examzh_font_font_name_xits_math_tl }
+      [
+        Extension    = .otf ,
+        StylisticSet = \l__examzh_font_stylistic_set_tl ,
+      ]
+    \setmathfont { \g__examzh_font_font_name_xits_math_tl }
+      [
+        Extension    = .otf ,
+        StylisticSet = 1 ,
+        range        = { cal , bfcal } ,
+      ]
+  }
+
+% Libertinus Math
+\cs_new:Npn \examzh_font_set_math_font_libertinus: {
+  % \examzh_font_load_unimath:
+  % \examzh_font_set_unimath_style:
+  \examzh_font_set_libertinus_names:
+  \tl_if_eq:NnTF \l__examzh_font_integral_style_tl { slanted }
+    { \tl_set:Nn \l__examzh_font_stylistic_set_tl { 8 } }
+    { \tl_clear:N \l__examzh_font_stylistic_set_tl }
+  \setmathfont { \g__examzh_font_font_name_libertinus_math_tl }
+    [
+      Extension    = .otf,
+      StylisticSet = \l__examzh_font_stylistic_set_tl,
+    ]
+  \examzh_font_set_stix_names:
+  \setmathfont { \g__examzh_font_font_name_stix_math_tl }
+    [
+      Extension    = .otf,
+      range        = { \complement } ,
+    ]
+}
+
+
+% Cambria Math
+\cs_new:Npn \examzh_font_set_math_font_cambria: {
+  % \examzh_font_load_unimath:
+  % \examzh_font_set_unimath_style:
+  \setmathfont { Cambria~ Math }
+  \examzh_font_set_stix_names:
+  \setmathfont { \g__examzh_font_font_name_stix_math_tl }
+    [
+      Extension    = .otf,
+      range        = { \complement, \bigstar } ,
+    ]
+  \message
+    {
+      Please~note~that~the~Cambria~font~family~cannot~be~used~on~commercial~purpose~unless~you~are~using~Windows~7/8/10/11~PROFESSIONAL.
+    }
+}
+
+% 新增的 asana, garamond, pala
+\cs_new:Npn \examzh_font_set_math_font_asana: 
+  {
+    \setmathfont { Asana-Math.otf }
+    \examzh_font_set_stix_names:
+    \setmathfont { \g__examzh_font_font_name_stix_math_tl }
+      [
+        Extension    = .otf,
+        range        = { \complement } ,
+      ]
+  }
+
+\cs_new:Npn \examzh_font_set_math_font_garamond: 
+  {
+    \setmathfont { Garamond-Math.otf }
+    \examzh_font_set_stix_names:
+    \setmathfont { \g__examzh_font_font_name_stix_math_tl }
+      [
+        Extension    = .otf,
+        range        = { \complement } ,
+      ]
+  }
+
+\cs_new:Npn \examzh_font_set_math_font_pala: 
+  {
+    \setmathfont { texgyrepagella-math.otf }
+    \examzh_font_set_stix_names:
+    \setmathfont { \g__examzh_font_font_name_stix_math_tl }
+      [
+        Extension    = .otf,
+        range        = { \complement, \bigstar } ,
+      ]
+  }
+
+
+
+\AtEndPreamble
+  {
+    \tl_if_empty:NT \g__examzh_font_font_tl
+      { \keys_set:nn { exam-zh } { font = newcm } }
+    \tl_if_empty:NT \g__examzh_font_math_font_tl
+      { \keys_set:nn { exam-zh } { math-font = newcm } }
+  }
+
+
+% unicode-math 的配置
+
+% 兼容旧的粗体命令：\pkg{bm} 的 \cs{bm} 和 \pkg{amsmath} 的 \cs{boldsymbol}。
+\AtEndOfPackageFile* { unicode-math }
+  {
+    \NewDocumentCommand \bm { m } 
+      { 
+        \tl_if_head_eq_catcode:nNTF { ##1 } A 
+          { \symbfit{#1} }
+          { 
+            #1 
+            \PackageWarning { exam-zh-font } 
+              { 
+                Do~not~use~\string\bm \space ~with~`unicode-math',~normal~font~instead. 
+              }
+          }
+      }
+    \RenewDocumentCommand \boldsymbol { } { \bm }
+    % 兼容 \pkg{amsfonts} 和 \pkg{amssymb} 中的一些命令。
+    \NewDocumentCommand \square { } { \mdlgwhtsquare }
+    \NewDocumentCommand \blacksquare { } { \mdlgblksquare }
+    \AtBeginDocument { \RenewDocumentCommand \checkmark { } { \ensuremath{ ✓ } } }
+  }
+
+\endinput

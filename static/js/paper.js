@@ -377,25 +377,25 @@
         });
 
         container.innerHTML = `
-            <div class="space-y-3 glass-card p-4 rounded-2xl">
+            <div class="space-y-2 bg-white dark:bg-slate-900 border border-slate-200/80 dark:border-slate-800 p-3 rounded-2xl shadow-xs">
                 <!-- Top Row: Paper Metadata -->
-                <div class="grid grid-cols-1 md:grid-cols-3 gap-3">
+                <div class="grid grid-cols-1 md:grid-cols-3 gap-2">
                     <div>
-                        <label class="block text-2xs font-semibold text-slate-500 dark:text-slate-400 mb-1">主标题</label>
+                        <label class="block text-xs font-semibold text-slate-500 dark:text-slate-400 mb-0.5">主标题</label>
                         <input type="text" id="paperMetaTitle" value="${escapeHtml(meta.title)}" 
                             oninput="updatePaperMeta('title', this.value)" onchange="updatePaperMeta('title', this.value)"
-                            class="glass-input w-full px-3 py-1.5 text-xs rounded-xl" placeholder="如：2026年高中数学模拟考试试卷">
+                            class="glass-input w-full px-2 py-1 text-xs rounded-lg" placeholder="如：2026年高中数学期末考试">
                     </div>
                     <div>
-                        <label class="block text-2xs font-semibold text-slate-500 dark:text-slate-400 mb-1">副标题 / 备注</label>
+                        <label class="block text-xs font-semibold text-slate-500 dark:text-slate-400 mb-0.5">副标题 / 备注</label>
                         <input type="text" id="paperMetaSubtitle" value="${escapeHtml(meta.subtitle)}" 
                             oninput="updatePaperMeta('subtitle', this.value)" onchange="updatePaperMeta('subtitle', this.value)"
-                            class="glass-input w-full px-3 py-1.5 text-xs rounded-xl" placeholder="">
+                            class="glass-input w-full px-2 py-1 text-xs rounded-lg" placeholder="可选副标题/说明...">
                     </div>
                     <div>
-                        <label class="block text-2xs font-semibold text-slate-500 dark:text-slate-400 mb-1">试卷类型预设</label>
+                        <label class="block text-xs font-semibold text-slate-500 dark:text-slate-400 mb-0.5">试卷类型预设</label>
                         <select id="paperMetaType" onchange="updatePaperMeta('paper_type', this.value)"
-                            class="glass-select w-full px-3 py-1.5 text-xs rounded-xl">
+                            class="glass-select w-full px-2 py-1 text-xs rounded-lg">
                             <option value="exam_19" ${meta.paper_type === 'exam_19' ? 'selected' : ''}>19题高考卷 (含答题卡)</option>
                             <option value="exam" ${meta.paper_type === 'exam' ? 'selected' : ''}>常规试卷</option>
                             <option value="quiz" ${meta.paper_type === 'quiz' ? 'selected' : ''}>日常小练</option>
@@ -404,25 +404,25 @@
                 </div>
 
                 <!-- Middle Row 1: 3-Level Cascade Curriculum Dropdowns (学段 -> 章节 -> 小节/知识点) -->
-                <div class="grid grid-cols-1 sm:grid-cols-3 gap-2 pt-2 border-t border-slate-100 dark:border-slate-700/60">
+                <div class="grid grid-cols-1 sm:grid-cols-3 gap-2 pt-1.5 border-t border-slate-100 dark:border-slate-800/60">
                     <div>
-                        <label class="block text-2xs font-semibold text-slate-400 mb-0.5 dark:text-slate-400">学段</label>
+                        <label class="block text-xs font-semibold text-slate-500 dark:text-slate-400 mb-0.5">学段</label>
                         <select id="paperFilterCompulsory" onchange="onPaperFilterChange('compulsory', this.value)"
-                            class="glass-select w-full px-2.5 py-1.5 text-xs rounded-xl">
+                            class="glass-select w-full px-2 py-1 text-xs rounded-lg">
                             ${bookOptions}
                         </select>
                     </div>
                     <div>
-                        <label class="block text-2xs font-semibold text-slate-400 mb-0.5 dark:text-slate-400">章节</label>
+                        <label class="block text-xs font-semibold text-slate-500 dark:text-slate-400 mb-0.5">章节</label>
                         <select id="paperFilterChapter" onchange="onPaperFilterChange('chapter', this.value)" ${isChapterDisabled ? 'disabled' : ''}
-                            class="glass-select w-full px-2.5 py-1.5 text-xs rounded-xl disabled:opacity-50">
+                            class="glass-select w-full px-2 py-1 text-xs rounded-lg disabled:opacity-50">
                             ${chapterOptions}
                         </select>
                     </div>
                     <div>
-                        <label class="block text-2xs font-semibold text-slate-400 mb-0.5 dark:text-slate-400">小节 / 知识点</label>
+                        <label class="block text-xs font-semibold text-slate-500 dark:text-slate-400 mb-0.5">小节 / 知识点</label>
                         <select id="paperFilterKnowledge" onchange="onPaperFilterChange('knowledge', this.value)" ${isKnowledgeDisabled ? 'disabled' : ''}
-                            class="glass-select w-full px-2.5 py-1.5 text-xs rounded-xl disabled:opacity-50">
+                            class="glass-select w-full px-2 py-1 text-xs rounded-lg disabled:opacity-50">
                             ${knowledgeOptions}
                         </select>
                     </div>
@@ -431,40 +431,40 @@
                 <!-- Middle Row 2: Question Type, Difficulty & Search Input -->
                 <div class="grid grid-cols-2 sm:grid-cols-4 gap-2">
                     <div>
-                        <label class="block text-2xs font-semibold text-slate-400 mb-0.5 dark:text-slate-400">题型</label>
+                        <label class="block text-xs font-semibold text-slate-500 dark:text-slate-400 mb-0.5">题型</label>
                         <select id="paperFilterType" onchange="onPaperFilterChange('question_type', this.value)"
-                            class="glass-select w-full px-2.5 py-1.5 text-xs rounded-xl">
+                            class="glass-select w-full px-2 py-1 text-xs rounded-lg">
                             ${qTypeOptions}
                         </select>
                     </div>
                     <div>
-                        <label class="block text-2xs font-semibold text-slate-400 mb-0.5 dark:text-slate-400">难度</label>
+                        <label class="block text-xs font-semibold text-slate-500 dark:text-slate-400 mb-0.5">难度</label>
                         <select id="paperFilterDifficulty" onchange="onPaperFilterChange('difficulty', this.value)"
-                            class="glass-select w-full px-2.5 py-1.5 text-xs rounded-xl">
+                            class="glass-select w-full px-2 py-1 text-xs rounded-lg">
                             ${diffOptions}
                         </select>
                     </div>
                     <div class="col-span-2">
-                        <label class="block text-2xs font-semibold text-slate-400 mb-0.5 dark:text-slate-400">来源 / 自定义标签 / 关键词</label>
+                        <label class="block text-xs font-semibold text-slate-500 dark:text-slate-400 mb-0.5">来源 / 自定义标签 / 关键词</label>
                         <div class="relative">
-                            <i class="fa-solid fa-magnifying-glass text-slate-400 absolute left-3 top-1/2 -translate-y-1/2 text-xs"></i>
+                            <i class="fa-solid fa-magnifying-glass text-slate-400 absolute left-2.5 top-1/2 -translate-y-1/2 text-xs"></i>
                             <input type="text" id="paperFilterKeyword" value="${escapeHtml(f.keyword)}"
                                 oninput="onPaperFilterChange('keyword', this.value)"
-                                class="glass-input w-full pl-8 pr-3 text-xs rounded-xl" placeholder="搜索题干内容 / 来源 / 标签 / 批注...">
+                                class="glass-input w-full pl-7 pr-2.5 py-1 text-xs rounded-lg" placeholder="搜索题干内容 / 来源 / 标签 / 批注...">
                         </div>
                     </div>
                 </div>
 
                 <!-- Bottom Row: AI Prompt Selection Bar -->
-                <div class="pt-2 border-t border-slate-100 dark:border-slate-700/60 flex items-center space-x-2">
+                <div class="pt-1.5 border-t border-slate-100 dark:border-slate-800/60 flex items-center space-x-2">
                     <div class="relative flex-1">
-                        <i class="fa-solid fa-wand-magic-sparkles text-brand-500 absolute left-3 top-1/2 -translate-y-1/2 text-xs"></i>
+                        <i class="fa-solid fa-wand-magic-sparkles text-brand-500 absolute left-2.5 top-1/2 -translate-y-1/2 text-2xs"></i>
                         <input type="text" id="paperAiPromptInput" 
-                            class="glass-input w-full pl-8 pr-3 text-xs rounded-xl border-brand-200/80" 
+                            class="glass-input w-full pl-7 pr-2.5 py-1 text-2xs rounded-lg border-brand-200/80" 
                             placeholder="智能一键抽卷：例如“帮我抽 5 道难度中等的函数选择题”"
                             onkeypress="if(event.key==='Enter') triggerAiPaperSelect()">
                     </div>
-                    <button onclick="triggerAiPaperSelect()" class="glass-btn-primary h-[34px] px-3.5 rounded-xl text-xs font-semibold flex items-center space-x-1 shrink-0">
+                    <button onclick="triggerAiPaperSelect()" class="glass-btn-primary h-[28px] px-3 rounded-lg text-2xs font-semibold flex items-center space-x-1 shrink-0">
                         <span>智能抽取</span>
                     </button>
                 </div>
@@ -759,7 +759,7 @@
 
                     <!-- Full Question Render Content -->
                     <div class="question-full-render-box text-sm leading-relaxed text-slate-800 dark:text-slate-100 overflow-x-auto select-text" id="paper-q-render-${q.id}">
-                        ${formatQuestionContentHtml(q.content, q.id, getQuestionFigAlign(q))}
+                        ${formatQuestionContentHtml(q.content, q.id, getQuestionFigAlign(q), false, false)}
                     </div>
                 </div>
             `;
@@ -792,15 +792,25 @@
         const container = document.getElementById('paperCanvasSection');
         if (!container) return;
 
+        // 保存更新前的 A4 画布与外层 Section 滚动位置，解决重绘导致的视口跳回第一页问题
+        const oldSheet = document.getElementById('a4PaperPreviewSheet');
+        const savedSheetScrollTop = oldSheet ? oldSheet.scrollTop : 0;
+        const savedContainerScrollTop = container ? container.scrollTop : 0;
+
         const cart = window.PaperStore.cart;
         const meta = window.PaperStore.meta;
 
-        const totalScore = cart.reduce((sum, item) => sum + (parseInt(item.score, 10) || 5), 0);
-        const totalCount = cart.length;
+        const validCartStats = cart.filter(item => {
+            const q = window.PaperStore.questionsMap[item.id];
+            return q && q.content && q.content.trim().length > 0;
+        });
+
+        const totalScore = validCartStats.reduce((sum, item) => sum + (parseInt(item.score, 10) || 5), 0);
+        const totalCount = validCartStats.length;
 
         // Calculate difficulty ratio
         let easyCount = 0, medCount = 0, hardCount = 0;
-        cart.forEach(item => {
+        validCartStats.forEach(item => {
             const q = window.PaperStore.questionsMap[item.id];
             if (q) {
                 if (q.difficulty === 'easy' || q.difficulty === 'normal') easyCount++;
@@ -834,102 +844,103 @@
 
         container.innerHTML = `
             ${aiAnalysisBanner}
-            <!-- Top Studio Action Bar (Two Rows Layout) -->
-            <div class="glass-card p-3.5 rounded-2xl mb-5 flex flex-col space-y-3">
-                <!-- Row 1: Left Stats + Right Paper Management -->
-                <div class="flex items-center justify-between flex-wrap gap-2 pb-2.5 border-b border-slate-100 dark:border-slate-700/60">
-                    <!-- Left Stats -->
-                    <div class="flex items-center space-x-3">
-                        <div class="flex items-center space-x-1.5 px-3 py-1 rounded-xl bg-brand-50 text-brand-700 font-bold text-xs border border-brand-200/60 dark:bg-brand-900/40 dark:text-brand-300 dark:border-brand-800">
-                            <span>总分: ${totalScore} 分</span>
-                            <span class="text-slate-400 font-normal">|</span>
-                            <span>${totalCount} 题</span>
-                        </div>
-                        <!-- Difficulty ratio bar -->
-                        <div class="hidden xl:flex items-center space-x-1.5 text-xs">
-                            <span class="text-slate-400 font-medium">难度比:</span>
-                            <div class="w-20 h-2 rounded-full bg-slate-200 overflow-hidden flex dark:bg-slate-700" title="普通题: ${easyPct}% | 挑战题: ${medPct}% | 强基题: ${hardPct}%">
-                                <div class="bg-emerald-500 h-full" style="width: ${easyPct}%"></div>
-                                <div class="bg-amber-500 h-full" style="width: ${medPct}%"></div>
-                                <div class="bg-rose-500 h-full" style="width: ${hardPct}%"></div>
+            <!-- Part 1: Top Fixed Control Section (Non-scrolling Studio Panel) -->
+            <div class="shrink-0 mb-3">
+                <div class="bg-white dark:bg-slate-900 border border-slate-200/80 dark:border-slate-800 p-3 rounded-2xl flex flex-col space-y-2.5 shadow-xs">
+                    <!-- Row 1: Header Stats & Solution Space Config -->
+                    <div class="flex items-center justify-between flex-wrap gap-2 pb-2 border-b border-slate-100 dark:border-slate-800/60">
+                        <div class="flex items-center space-x-3">
+                            <div class="flex items-center space-x-1.5 px-3 py-1 rounded-xl bg-brand-50 text-brand-700 font-bold text-xs border border-brand-200/60 dark:bg-brand-900/40 dark:text-brand-300 dark:border-brand-800">
+                                <span>总分: ${totalScore} 分</span>
+                                <span class="text-slate-400 font-normal">|</span>
+                                <span>${totalCount} 题</span>
                             </div>
-                        </div>
-                        <!-- Solution Space Selector (Right of Difficulty Ratio) -->
-                        <div class="flex items-center space-x-1 text-xs">
-                            <span class="text-slate-500 font-semibold dark:text-slate-300 flex items-center space-x-1">
-                                <i class="fa-solid fa-arrows-up-down text-brand-500"></i>
-                                <span>留白:</span>
-                            </span>
-                            <select onchange="window.updateGlobalSolutionSpace(this.value)"
-                                class="px-2 py-1 text-xs rounded-xl border border-brand-200/80 bg-brand-50/60 text-brand-900 font-bold focus:ring-2 focus:ring-brand-500 focus:outline-none dark:bg-brand-950/50 dark:border-brand-800 dark:text-brand-200">
-                                ${meta.paper_type === 'exam_19' ? `
-                                    <option value="0.0" ${(parseFloat(meta.solution_space_default !== undefined ? meta.solution_space_default : '0.0') === 0.0) ? 'selected' : ''}>0 cm (不留白)</option>
-                                    <option value="3.0" ${(parseFloat(meta.solution_space_default !== undefined ? meta.solution_space_default : '0.0') === 3.0) ? 'selected' : ''}>3 cm (紧凑留白)</option>
-                                ` : `
-                                    <option value="0.0" ${(parseFloat(meta.solution_space_default !== undefined ? meta.solution_space_default : '7.0') === 0.0) ? 'selected' : ''}>0 cm (不留白)</option>
-                                    <option value="7.0" ${(parseFloat(meta.solution_space_default !== undefined ? meta.solution_space_default : '7.0') === 7.0) ? 'selected' : ''}>7 cm (标准留白)</option>
-                                `}
-                            </select>
+                            <!-- Difficulty ratio bar -->
+                            <div class="hidden xl:flex items-center space-x-1.5 text-xs">
+                                <span class="text-slate-400 font-medium">难度比:</span>
+                                <div class="w-20 h-2 rounded-full bg-slate-200 overflow-hidden flex dark:bg-slate-700" title="普通题: ${easyPct}% | 挑战题: ${medPct}% | 强基题: ${hardPct}%">
+                                    <div class="bg-emerald-500 h-full" style="width: ${easyPct}%"></div>
+                                    <div class="bg-amber-500 h-full" style="width: ${medPct}%"></div>
+                                    <div class="bg-rose-500 h-full" style="width: ${hardPct}%"></div>
+                                </div>
+                            </div>
+                            <!-- Solution Space Selector -->
+                            <div class="flex items-center space-x-1 text-xs">
+                                <span class="text-slate-500 font-semibold dark:text-slate-300 flex items-center space-x-1">
+                                    <i class="fa-solid fa-arrows-up-down text-brand-500"></i>
+                                    <span>留白:</span>
+                                </span>
+                                <select onchange="window.updateGlobalSolutionSpace(this.value)"
+                                    class="px-2 py-1 text-xs rounded-xl border border-brand-200/80 bg-brand-50/60 text-brand-900 font-bold focus:ring-2 focus:ring-brand-500 focus:outline-none dark:bg-brand-950/50 dark:border-brand-800 dark:text-brand-200">
+                                    ${meta.paper_type === 'exam_19' ? `
+                                        <option value="0.0" ${(parseFloat(meta.solution_space_default !== undefined ? meta.solution_space_default : '0.0') === 0.0) ? 'selected' : ''}>0 cm (不留白)</option>
+                                        <option value="3.0" ${(parseFloat(meta.solution_space_default !== undefined ? meta.solution_space_default : '0.0') === 3.0) ? 'selected' : ''}>3 cm (紧凑留白)</option>
+                                    ` : `
+                                        <option value="0.0" ${(parseFloat(meta.solution_space_default !== undefined ? meta.solution_space_default : '7.0') === 0.0) ? 'selected' : ''}>0 cm (不留白)</option>
+                                        <option value="7.0" ${(parseFloat(meta.solution_space_default !== undefined ? meta.solution_space_default : '7.0') === 7.0) ? 'selected' : ''}>7 cm (标准留白)</option>
+                                    `}
+                                </select>
+                            </div>
                         </div>
                     </div>
 
-                    <!-- Right Paper Management Actions -->
-                    <div class="flex items-center space-x-4 sm:space-x-6">
+                    <!-- Row 2: Paper Management Actions (Clear, Save, History) -->
+                    <div class="flex items-center justify-between gap-2.5 pb-2 border-b border-slate-100 dark:border-slate-800/60">
                         ${totalCount > 0 ? `
-                            <button onclick="clearCart()" class="w-28 sm:w-32 py-1.5 justify-center rounded-xl text-xs font-semibold bg-rose-50/80 text-rose-600 border border-rose-200/70 hover:bg-rose-100/80 active:scale-95 transition-all flex items-center space-x-1.5 whitespace-nowrap dark:bg-rose-950/40 dark:border-rose-800/60 dark:text-rose-300" title="清空当前试卷中的所有已选题目">
+                            <button onclick="clearCart()" class="flex-1 py-1.5 justify-center rounded-xl text-xs font-semibold bg-rose-50/80 text-rose-600 border border-rose-200/70 hover:bg-rose-100/80 active:scale-95 transition-all flex items-center space-x-1.5 whitespace-nowrap dark:bg-rose-950/40 dark:border-rose-800/60 dark:text-rose-300" title="清空当前试卷中的所有已选题目">
                                 <i class="fa-solid fa-trash-can"></i>
                                 <span>清空卷面</span>
                             </button>
                         ` : ''}
-                        <button onclick="savePaperToDb()" class="w-28 sm:w-32 py-1.5 justify-center rounded-xl text-xs font-semibold bg-emerald-600 text-white shadow-xs hover:bg-emerald-700 active:scale-95 transition-all flex items-center space-x-1.5 whitespace-nowrap" title="将此试卷归档保存至系统数据库，并自动更新题目的引用使用次数">
+                        <button onclick="savePaperToDb()" class="flex-1 py-1.5 justify-center rounded-xl text-xs font-semibold bg-emerald-600 text-white shadow-xs hover:bg-emerald-700 active:scale-95 transition-all flex items-center space-x-1.5 whitespace-nowrap" title="将此试卷归档保存至系统数据库，并自动更新题目的引用使用次数">
                             <i class="fa-solid fa-floppy-disk"></i>
                             <span>保存试卷</span>
                         </button>
-                        <button onclick="openSavedPapersModal()" class="w-28 sm:w-32 py-1.5 justify-center rounded-xl text-xs font-semibold bg-amber-500 text-white shadow-xs hover:bg-amber-600 active:scale-95 transition-all flex items-center space-x-1.5 whitespace-nowrap" title="打开历史试卷归档库，查阅、删除或一键载入重新导出">
+                        <button onclick="openSavedPapersModal()" class="flex-1 py-1.5 justify-center rounded-xl text-xs font-semibold bg-amber-500 text-white shadow-xs hover:bg-amber-600 active:scale-95 transition-all flex items-center space-x-1.5 whitespace-nowrap" title="打开历史试卷归档库，查阅、删除或一键载入重新导出">
                             <i class="fa-solid fa-folder-open"></i>
                             <span>历史试卷库</span>
                         </button>
                     </div>
-                </div>
 
-                <!-- Row 2: Preview & Export Options (All Uniform Light Grey) -->
-                <div class="flex items-center ${meta.paper_type === 'exam_19' ? 'space-x-2.5' : 'space-x-4 sm:space-x-6'}">
-                    ${meta.paper_type === 'exam_19' ? `
-                        <button onclick="exportPaperPdf('paper')" class="px-3 py-1.5 rounded-xl text-xs font-semibold bg-slate-100 text-slate-700 border border-slate-200 hover:bg-slate-200/80 active:scale-95 transition-all flex items-center space-x-1.5 whitespace-nowrap dark:bg-slate-800 dark:text-slate-200 dark:border-slate-700 dark:hover:bg-slate-700" title="编译并打开试卷 PDF 预览">
-                            <i class="fa-solid fa-file-pdf"></i>
-                            <span>试卷 PDF 预览</span>
-                        </button>
-                        <button onclick="exportPaperPdf('sheet')" class="px-3 py-1.5 rounded-xl text-xs font-semibold bg-slate-100 text-slate-700 border border-slate-200 hover:bg-slate-200/80 active:scale-95 transition-all flex items-center space-x-1.5 whitespace-nowrap dark:bg-slate-800 dark:text-slate-200 dark:border-slate-700 dark:hover:bg-slate-700" title="编译并打开 A3 双面答题卡 PDF 预览">
-                            <i class="fa-solid fa-file-lines"></i>
-                            <span>答题卡 PDF 预览</span>
-                        </button>
-                        <button onclick="exportPaperTex()" class="px-3 py-1.5 rounded-xl text-xs font-semibold bg-slate-100 text-slate-700 border border-slate-200 hover:bg-slate-200/80 active:scale-95 transition-all flex items-center space-x-1.5 whitespace-nowrap dark:bg-slate-800 dark:text-slate-200 dark:border-slate-700 dark:hover:bg-slate-700" title="打包导出完整的 LaTeX 源码与关联插图 Zip 压缩包">
-                            <i class="fa-solid fa-file-zipper"></i>
-                            <span>LaTeX 导出</span>
-                        </button>
-                        <button onclick="exportPaperBundle()" class="px-3 py-1.5 rounded-xl text-xs font-semibold bg-slate-100 text-slate-700 border border-slate-200 hover:bg-slate-200/80 active:scale-95 transition-all flex items-center space-x-1.5 whitespace-nowrap dark:bg-slate-800 dark:text-slate-200 dark:border-slate-700 dark:hover:bg-slate-700" title="LaTeX与PDF合并打包">
-                            <i class="fa-solid fa-box-archive"></i>
-                            <span>合并导出</span>
-                        </button>
-                    ` : `
-                        <button onclick="exportPaperPdf('paper')" class="w-28 sm:w-32 py-1.5 justify-center rounded-xl text-xs font-semibold bg-slate-100 text-slate-700 border border-slate-200 hover:bg-slate-200/80 active:scale-95 transition-all flex items-center space-x-1.5 whitespace-nowrap dark:bg-slate-800 dark:text-slate-200 dark:border-slate-700 dark:hover:bg-slate-700" title="编译并打开高清 PDF 预览">
-                            <i class="fa-solid fa-file-pdf"></i>
-                            <span>PDF 预览</span>
-                        </button>
-                        <button onclick="exportPaperTex()" class="w-28 sm:w-32 py-1.5 justify-center rounded-xl text-xs font-semibold bg-slate-100 text-slate-700 border border-slate-200 hover:bg-slate-200/80 active:scale-95 transition-all flex items-center space-x-1.5 whitespace-nowrap dark:bg-slate-800 dark:text-slate-200 dark:border-slate-700 dark:hover:bg-slate-700" title="打包导出完整的 LaTeX 源码与关联插图 Zip 压缩包">
-                            <i class="fa-solid fa-file-zipper"></i>
-                            <span>LaTeX 导出</span>
-                        </button>
-                        <button onclick="exportPaperBundle()" class="w-28 sm:w-32 py-1.5 justify-center rounded-xl text-xs font-semibold bg-slate-100 text-slate-700 border border-slate-200 hover:bg-slate-200/80 active:scale-95 transition-all flex items-center space-x-1.5 whitespace-nowrap dark:bg-slate-800 dark:text-slate-200 dark:border-slate-700 dark:hover:bg-slate-700" title="LaTeX与PDF合并打包">
-                            <i class="fa-solid fa-box-archive"></i>
-                            <span>合并导出</span>
-                        </button>
-                    `}
+                    <!-- Row 3: Preview & Export Options -->
+                    <div class="flex items-center justify-between gap-2 sm:gap-2.5">
+                        ${meta.paper_type === 'exam_19' ? `
+                            <button onclick="exportPaperPdf('paper')" class="flex-1 px-2.5 py-1.5 justify-center rounded-xl text-xs font-semibold bg-slate-100 text-slate-700 border border-slate-200 hover:bg-slate-200/80 active:scale-95 transition-all flex items-center space-x-1.5 whitespace-nowrap dark:bg-slate-800 dark:text-slate-200 dark:border-slate-700 dark:hover:bg-slate-700" title="编译并打开试卷 PDF 预览">
+                                <i class="fa-solid fa-file-pdf"></i>
+                                <span>试卷 PDF 预览</span>
+                            </button>
+                            <button onclick="exportPaperPdf('sheet')" class="flex-1 px-2.5 py-1.5 justify-center rounded-xl text-xs font-semibold bg-slate-100 text-slate-700 border border-slate-200 hover:bg-slate-200/80 active:scale-95 transition-all flex items-center space-x-1.5 whitespace-nowrap dark:bg-slate-800 dark:text-slate-200 dark:border-slate-700 dark:hover:bg-slate-700" title="编译并打开 A3 双面答题卡 PDF 预览">
+                                <i class="fa-solid fa-file-lines"></i>
+                                <span>答题卡 PDF 预览</span>
+                            </button>
+                            <button onclick="exportPaperTex()" class="flex-1 px-2.5 py-1.5 justify-center rounded-xl text-xs font-semibold bg-slate-100 text-slate-700 border border-slate-200 hover:bg-slate-200/80 active:scale-95 transition-all flex items-center space-x-1.5 whitespace-nowrap dark:bg-slate-800 dark:text-slate-200 dark:border-slate-700 dark:hover:bg-slate-700" title="打包导出完整的 LaTeX 源码与关联插图 Zip 压缩包">
+                                <i class="fa-solid fa-file-zipper"></i>
+                                <span>LaTeX 导出</span>
+                            </button>
+                            <button onclick="exportPaperBundle()" class="flex-1 px-2.5 py-1.5 justify-center rounded-xl text-xs font-semibold bg-slate-100 text-slate-700 border border-slate-200 hover:bg-slate-200/80 active:scale-95 transition-all flex items-center space-x-1.5 whitespace-nowrap dark:bg-slate-800 dark:text-slate-200 dark:border-slate-700 dark:hover:bg-slate-700" title="LaTeX与PDF合并打包">
+                                <i class="fa-solid fa-box-archive"></i>
+                                <span>合并导出</span>
+                            </button>
+                        ` : `
+                            <button onclick="exportPaperPdf('paper')" class="flex-1 py-1.5 justify-center rounded-xl text-xs font-semibold bg-slate-100 text-slate-700 border border-slate-200 hover:bg-slate-200/80 active:scale-95 transition-all flex items-center space-x-1.5 whitespace-nowrap dark:bg-slate-800 dark:text-slate-200 dark:border-slate-700 dark:hover:bg-slate-700" title="编译并打开高清 PDF 预览">
+                                <i class="fa-solid fa-file-pdf"></i>
+                                <span>PDF 预览</span>
+                            </button>
+                            <button onclick="exportPaperTex()" class="flex-1 py-1.5 justify-center rounded-xl text-xs font-semibold bg-slate-100 text-slate-700 border border-slate-200 hover:bg-slate-200/80 active:scale-95 transition-all flex items-center space-x-1.5 whitespace-nowrap dark:bg-slate-800 dark:text-slate-200 dark:border-slate-700 dark:hover:bg-slate-700" title="打包导出完整的 LaTeX 源码与关联插图 Zip 压缩包">
+                                <i class="fa-solid fa-file-zipper"></i>
+                                <span>LaTeX 导出</span>
+                            </button>
+                            <button onclick="exportPaperBundle()" class="flex-1 py-1.5 justify-center rounded-xl text-xs font-semibold bg-slate-100 text-slate-700 border border-slate-200 hover:bg-slate-200/80 active:scale-95 transition-all flex items-center space-x-1.5 whitespace-nowrap dark:bg-slate-800 dark:text-slate-200 dark:border-slate-700 dark:hover:bg-slate-700" title="LaTeX与PDF合并打包">
+                                <i class="fa-solid fa-box-archive"></i>
+                                <span>合并导出</span>
+                            </button>
+                        `}
+                    </div>
                 </div>
             </div>
 
-            <!-- A4 Desk Canvas Paper Container -->
-            <div class="flex flex-col items-center pb-10" id="a4PaperPreviewSheet">
+            <!-- Part 2: Independent Scrollable A4 Desk Canvas Paper Container -->
+            <div class="flex-1 overflow-y-auto custom-scrollbar pt-1 pb-10 flex flex-col items-center" id="a4PaperPreviewSheet">
                 ${generateA4PaperPagesHtml(cart, meta, totalCount, totalScore)}
             </div>
         `;
@@ -948,6 +959,23 @@
                     throwOnError: false
                 });
             } catch (e) { }
+        }
+
+        // 恢复更新前的滚动位置，保证调排版/留白/格式时在原视口位置零跳跃渲染
+        const restoreScroll = () => {
+            const newSheet = document.getElementById('a4PaperPreviewSheet');
+            if (newSheet && savedSheetScrollTop > 0) {
+                newSheet.scrollTop = savedSheetScrollTop;
+            }
+            const curContainer = document.getElementById('paperCanvasSection');
+            if (curContainer && savedContainerScrollTop > 0) {
+                curContainer.scrollTop = savedContainerScrollTop;
+            }
+        };
+
+        restoreScroll();
+        if (typeof requestAnimationFrame === 'function') {
+            requestAnimationFrame(restoreScroll);
         }
     };
 
@@ -1039,14 +1067,20 @@
             `;
         }
 
-        const cartItemsWithIndex = cart.map((item, idx) => ({ ...item, cartIndex: idx }));
+        const validCart = cart.filter(item => {
+            const q = window.PaperStore.questionsMap[item.id];
+            return q && q.content && q.content.trim().length > 0;
+        });
+
+        const cartItemsWithIndex = validCart.map((item, idx) => ({ ...item, cartIndex: idx }));
 
         const typeOrder = ['single_choice', 'multi_choice', 'fill_in_blank', 'detailed_answer'];
         const grouped = {};
 
         cartItemsWithIndex.forEach(item => {
             const q = window.PaperStore.questionsMap[item.id];
-            const qType = q ? q.question_type : 'single_choice';
+            if (!q) return;
+            const qType = q.question_type || 'single_choice';
             if (!grouped[qType]) grouped[qType] = [];
             grouped[qType].push(item);
         });
@@ -1644,11 +1678,7 @@
         saveCartToStorage();
         window.renderPaperCanvas();
         if (window.showToast) {
-            if (window.PaperStore.meta.paper_type === 'exam_19') {
-                window.showToast(`提示：当前为高考含答题卡模式（不留白），切换为「试卷」或「小练」即可生效`, 'warning');
-            } else {
-                window.showToast(`解答题全局留白设为 ${spaceVal} cm（点击 PDF 预览可即时生效）`, 'success');
-            }
+            window.showToast(`解答题全局留白设为 ${spaceVal} cm（点击 PDF 预览可即时生效）`, 'success');
         }
     };
 
@@ -2369,7 +2399,7 @@
         }, 50);
     };
 
-    function formatQuestionContentHtml(raw, qid = null, figAlign = 'right', embedInSolSpace = false) {
+    function formatQuestionContentHtml(raw, qid = null, figAlign = 'right', embedInSolSpace = false, showControls = true) {
         if (!raw) return embedInSolSpace ? { stemHtml: '', imgHtml: null } : '';
         let html = raw.trim();
         figAlign = figAlign || 'right';
@@ -2414,23 +2444,33 @@
             const qidAttr = qid ? qid : 0;
             const countTag = imgSrcList.length > 1 ? ` (${imgSrcList.length}图)` : '';
 
-            const imgsHtml = imgSrcList.map((src, idx) => `
-                <img src="${src}" class="${imgSrcList.length > 1 ? 'max-w-[150px] max-h-[140px]' : 'max-w-[200px] max-h-[170px]'} object-contain rounded-lg border border-slate-200 shadow-xs cursor-pointer hover:ring-2 hover:ring-brand-500 hover:scale-[1.02] transition-all inline-block"
+            const imgClass = showControls 
+                ? `${imgSrcList.length > 1 ? 'max-w-[150px] max-h-[140px]' : 'max-w-[200px] max-h-[170px]'} object-contain rounded-lg border border-slate-200 shadow-xs cursor-pointer hover:ring-2 hover:ring-brand-500 hover:scale-[1.02] transition-all inline-block`
+                : `${imgSrcList.length > 1 ? 'max-w-[150px] max-h-[140px]' : 'max-w-[200px] max-h-[170px]'} object-contain rounded-lg border border-slate-200 shadow-xs inline-block`;
+
+            const imgsHtml = imgSrcList.map((src, idx) => {
+                const imgEvents = showControls ? `
                     onclick="event.stopPropagation(); window.showFigureAlignPopover(event, ${qidAttr})"
                     oncontextmenu="event.preventDefault(); event.stopPropagation(); window.showFigureAlignPopover(event, ${qidAttr})"
-                    title="点击或右击可切换插图排版位置 (图${idx + 1} 当前: ${currentLabel})">
-            `).join('');
+                    title="点击或右击可切换插图排版位置 (图${idx + 1} 当前: ${currentLabel})"
+                ` : '';
+                return `<img src="${src}" class="${imgClass}" ${imgEvents}>`;
+            }).join('');
+
+            const btnHtml = showControls ? `
+                <div class="mt-1 ${effectiveAlign === 'center' ? 'text-center' : 'text-right'}">
+                    <button onclick="event.stopPropagation(); window.showFigureAlignPopover(event, ${qidAttr})" class="inline-flex items-center text-[10px] font-sans text-brand-700 bg-brand-50 hover:bg-brand-100 border border-brand-200/80 rounded-md px-1.5 py-0.5 transition-colors shadow-2xs">
+                        <i class="fa-solid ${iconClass} text-[9px] mr-1 text-brand-500"></i> ${currentLabel}${countTag} <i class="fa-solid fa-chevron-down text-[8px] ml-1 opacity-70"></i>
+                    </button>
+                </div>
+            ` : '';
 
             const imgControlHtml = `
                 <div class="inline-block relative group/fig">
                     <div class="flex flex-wrap items-center ${effectiveAlign === 'center' ? 'justify-center' : 'justify-end'} gap-2">
                         ${imgsHtml}
                     </div>
-                    <div class="mt-1 ${effectiveAlign === 'center' ? 'text-center' : 'text-right'}">
-                        <button onclick="event.stopPropagation(); window.showFigureAlignPopover(event, ${qidAttr})" class="inline-flex items-center text-[10px] font-sans text-brand-700 bg-brand-50 hover:bg-brand-100 border border-brand-200/80 rounded-md px-1.5 py-0.5 transition-colors shadow-2xs">
-                            <i class="fa-solid ${iconClass} text-[9px] mr-1 text-brand-500"></i> ${currentLabel}${countTag} <i class="fa-solid fa-chevron-down text-[8px] ml-1 opacity-70"></i>
-                        </button>
-                    </div>
+                    ${btnHtml}
                 </div>
             `;
 

@@ -4,8 +4,12 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>判桃MATH</title>
-    <link rel="icon" type="image/png" href="/static/favicon.png?v=3">
-    <link rel="apple-touch-icon" sizes="180x180" href="/static/apple-touch-icon.png?v=3">
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg">
+    <link rel="icon" type="image/png" sizes="256x256" href="/static/favicon.png">
+    <link rel="icon" type="image/x-icon" href="/favicon.ico">
+    <link rel="shortcut icon" href="/favicon.ico">
+    <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png">
+    <link rel="mask-icon" href="/favicon.svg" color="#F59E0B">
     
     <!-- Tailwind CSS -->
     <script src="/static/lib/tailwind/tailwind.min.js"></script>
@@ -79,7 +83,7 @@
         <div class="flex items-center space-x-3">
             <!-- 1. Absolute Top-Left Anchor: Logo & Title -->
             <div class="h-10 w-10 rounded-xl overflow-hidden shadow-sm shrink-0 flex items-center justify-center">
-                <img src="/static/favicon.png?v=3" alt="MathBank Logo" class="w-full h-full object-cover">
+                <img src="/static/favicon.png" alt="MathBank Logo" class="w-full h-full object-cover">
             </div>
             <div class="relative" id="workspaceDropdownContainer">
                 <div onclick="toggleWorkspaceDropdown(event)" id="workspaceDropdownBtn" class="group cursor-pointer rounded-xl px-2 py-1 -mx-2 hover:bg-slate-200/50 dark:hover:bg-slate-800/60 active:scale-95 transition-all" title="点击切换工作台">
@@ -407,10 +411,6 @@
                             <i class="fa-solid fa-file-signature text-slate-400"></i>
                             <span>题干内容录入</span>
                         </h3>
-                        <span class="text-xs text-slate-400 flex items-center space-x-1">
-                            <i class="fa-solid fa-info-circle"></i>
-                            <span>支持混合公式与 Markdown 排版</span>
-                        </span>
                     </div>
 
                     <!-- Horizontal tabs for Question Content - Apple Glass Style -->
@@ -835,7 +835,11 @@
                                     <select id="editRelatedQuestion" class="flex-1 min-w-0 h-10 px-2.5 rounded-xl text-xs truncate border border-slate-200 focus:border-brand-500 focus:ring-2 focus:ring-brand-100 transition-all">
                                         <option value="">-- 选择要关联的题目 (可选) --</option>
                                     </select>
-                                    <button type="button" onclick="clearRelatedQuestion()" class="h-10 px-2.5 rounded-xl text-xs flex items-center justify-center shrink-0 text-red-400 hover:text-red-600 hover:bg-red-50 border border-red-200 transition-all" title="清除关联">
+                                    <button type="button" onclick="associateRelatedQuestion()" class="h-10 px-3 rounded-xl text-xs flex items-center justify-center space-x-1 shrink-0 bg-brand-50 hover:bg-brand-100 text-brand-700 font-bold border border-brand-200 shadow-2xs hover:shadow-xs transition-all active:scale-95" title="点击确认将选中的题目与当前题目绑定关联">
+                                        <i class="fa-solid fa-link text-brand-600"></i>
+                                        <span>关联</span>
+                                    </button>
+                                    <button type="button" onclick="clearRelatedQuestion()" class="h-10 px-2.5 rounded-xl text-xs flex items-center justify-center shrink-0 text-rose-500 hover:text-rose-700 hover:bg-rose-50 border border-rose-200 transition-all active:scale-95" title="解除当前题目的关联关系">
                                         <i class="fa-solid fa-link-slash"></i>
                                     </button>
                                 </div>
@@ -956,14 +960,14 @@
             <!-- Left Side: Parts ② & ③ (60% width) -->
             <div class="w-[60%] flex flex-col h-full border-r border-slate-200/80 dark:border-slate-800 shrink-0 bg-slate-50/50 dark:bg-slate-900/50">
                 <!-- Part ②: Collapsible Control Bar -->
-                <div id="paperFilterSection" class="p-4 transition-all duration-300 shrink-0">
+                <div id="paperFilterSection" class="p-2.5 sm:p-3 transition-all duration-300 shrink-0">
                     <!-- Rendered by paper.js -->
                 </div>
 
                 <!-- Part ② & ③ Boundary Collapse Toggle Bar -->
-                <div class="px-4 py-1.5 bg-slate-100/40 dark:bg-slate-900/60 border-y border-slate-200/50 dark:border-slate-800/80 flex items-center justify-between shrink-0">
+                <div class="px-3 py-1 bg-slate-100/40 dark:bg-slate-900/60 border-y border-slate-200/50 dark:border-slate-800/80 flex items-center justify-between shrink-0">
                     <button onclick="togglePaperFilterBar()" id="togglePaperFilterBtn" class="text-2xs font-semibold text-slate-500 hover:text-brand-600 dark:text-slate-400 dark:hover:text-brand-300 flex items-center space-x-1.5 transition-colors">
-                        <i id="paperFilterToggleIcon" class="fa-solid fa-chevron-up text-xs"></i>
+                        <i id="paperFilterToggleIcon" class="fa-solid fa-chevron-up text-2xs"></i>
                         <span id="paperFilterToggleTxt">收起组卷配置栏</span>
                     </button>
                 </div>
@@ -975,7 +979,7 @@
             </div>
 
             <!-- Right Side: Part ④ (40% width) -->
-            <div class="w-[40%] flex flex-col h-full bg-slate-100/60 dark:bg-slate-950 p-4 overflow-y-auto custom-scrollbar shrink-0" id="paperCanvasSection">
+            <div class="w-[40%] flex flex-col h-full bg-slate-100/60 dark:bg-slate-950 p-4 overflow-hidden shrink-0" id="paperCanvasSection">
                 <!-- Rendered by paper.js -->
             </div>
         </div>
@@ -1572,11 +1576,17 @@
                         <input type="text" id="pdfPageRange" placeholder="如: 1-6" class="w-24 px-2 py-1.5 border border-slate-200 focus:border-brand-500 outline-none rounded-lg text-xs font-mono text-center bg-white shadow-sm transition-all shrink-0">
                     </div>
 
-                    <!-- Step 4: Run AI Parse button - Apple Glass Style -->
-                    <button onclick="runAIPaperParse()" id="runParseBtn" class="w-full shrink-0 glass-btn-primary flex items-center justify-center space-x-2 py-3 rounded-xl font-bold text-sm">
-                        <i class="fa-solid fa-wand-magic-sparkles"></i>
-                        <span>一键 AI 智能拆解并关联</span>
-                    </button>
+                    <!-- Step 4: Run AI Parse & Reset buttons -->
+                    <div class="flex items-center space-x-2.5 shrink-0 pt-1">
+                        <button onclick="runAIPaperParse()" id="runParseBtn" class="flex-1 glass-btn-primary flex items-center justify-center space-x-2 py-3 rounded-xl font-bold text-sm">
+                            <i class="fa-solid fa-wand-magic-sparkles"></i>
+                            <span>一键 AI 智能拆解并关联</span>
+                        </button>
+                        <button onclick="confirmClearAllParsed()" id="resetAllImportBtn" class="px-4 py-3 rounded-xl bg-slate-100 hover:bg-rose-50 hover:text-rose-600 text-slate-600 font-bold text-xs border border-slate-200 hover:border-rose-200 transition-all active:scale-95 flex items-center space-x-1.5 shrink-0" title="清空试卷源码、图片映射与右侧拆分出的题目草稿，恢复初始待拆解状态">
+                            <i class="fa-solid fa-rotate-left text-slate-400 group-hover:text-rose-500"></i>
+                            <span>清空重置</span>
+                        </button>
+                    </div>
                 </div>
 
                 <!-- Right Pane: AI Review Lists -->

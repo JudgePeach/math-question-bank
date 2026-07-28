@@ -42,7 +42,49 @@ def clean_choice_stem_parentheses(text: str) -> str:
         
     return cleaned
 
-def clean_content_for_latex(content: str, q_type: str = "") -> str:
+def format_stem_paragraphs(stem_text: str) -> str:
+    """
+    Safely assemble question stem lines into coherent LaTeX paragraphs.
+    1. Preserves explicit double line breaks (empty lines) intended by the user.
+    2. Identifies sub-question & note starts ONLY at line start (e.g. (1), (2), (a), (b), ①, ②, 注：, 提示：),
+       placing each into a separate LaTeX paragraph with standard 2em indentation.
+    3. Keeps block LaTeX environments (e.g. \begin{...}, \end{...}, $$) intact without inline space merging.
+    4. Recombines single line breaks inside the same paragraph into a space for continuous TeX wrapping.
+    """
+    if not stem_text:
+        return ""
+        
+    lines_list = stem_text.split('\n')
+    paragraphs = []
+    current_para = []
+
+    for line in lines_list:
+        line_str = line.strip()
+        
+        # 遇到显式空行，代表原作者故意留下的独立段落，直接收尾当前段落
+        if not line_str:
+            if current_para:
+                paragraphs.append(" ".join(current_para))
+                current_para = []
+            continue
+            
+        # 判定是否为小问或独立提示/注记开头
+        is_sub_start = bool(re.match(r'^([（(]?[0-9a-zA-Z一二三四五六七八九十]+[）\.\)]|①|②|③|④|⑤|【|注[:：]|提示[:：])', line_str))
+        # 判定是否为独立块级 TeX 环境
+        is_block_env = bool(re.match(r'^(\$\||\\begin\{|\\end\{)', line_str))
+        
+        if (is_sub_start or is_block_env) and current_para:
+            paragraphs.append(" ".join(current_para))
+            current_para = [line_str]
+        else:
+            current_para.append(line_str)
+
+    if current_para:
+        paragraphs.append(" ".join(current_para))
+
+    return "\n\n".join(paragraphs)
+
+def clean_content_for_latex(content: str, q_type: str = "", is_answer: bool = False) -> str:
     """
     Clean markdown/LaTeX question content for exam-zh LaTeX document export based on 试卷类模板.tex.
     Preserves math delimiters $...$ and $$...$$, tikz code, and handles choices & \paren environments.
@@ -97,6 +139,13 @@ def clean_content_for_latex(content: str, q_type: str = "") -> str:
         else:
             stem = clean_choice_stem_parentheses(text)
             text = stem + r" \paren"
+
+    if is_answer:
+        # 解答/解析步骤（is_answer=True）：在带小问/解答步骤前自动补全空行
+        text = re.sub(r'([^\n])\n(?=[（(]?[0-9一二三四五六七八九十]+[）\.\)]|解[:：]|证明[:：]|因为|所以|故|又因为|由|综上|因此|得|【)', r'\1\n\n', text)
+    else:
+        # 题干文本处理：安全地按行首拆分与段落重组
+        text = format_stem_paragraphs(text)
 
     return text
 
@@ -329,7 +378,10 @@ def build_latex_document(
                     lines.append(f"  {fig_body}")
                     lines.append(r"\end{flushright}")
                 else:  # default "right"
-                    lines.append(r"\begin{minipage}[t]{\dimexpr\linewidth-5.8cm\relax}")
+                    lines.append(r"\noindent\begin{minipage}[t]{\dimexpr\linewidth-5.8cm\relax}")
+                    lines.append(r"  \setlength{\parindent}{2em}")
+                    lines.append(r"  \hangindent=0pt")
+                    lines.append(r"  \hangafter=0")
                     lines.append(f"  {stem_text}")
                     lines.append(r"\end{minipage}%")
                     lines.append(r"\hfill")
@@ -498,6 +550,15 @@ def extract_figures_for_answer_sheet(content: str) -> str:
         if d not in figs:
             figs.append(d)
     return "\n".join(figs)
+
+def clear_pdf_cache():
+    """Clear all entries in PDF compilation LRU cache."""
+    with _PDF_CACHE_LOCK:
+        _PDF_CACHE.clear()
+        print("[PDF_CACHE] 🧹 PDF LRU Memory Cache Cleared Successfully!", flush=True)
+
+# 清空历史旧 PDF 缓存，确保最新段落与排版算法秒级生效
+clear_pdf_cache()
 
 def build_answer_sheet_latex(title: str, subtitle: str, questions_data: list) -> str:
     """

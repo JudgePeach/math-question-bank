@@ -1,0 +1,1109 @@
+%%
+%% This is file `xeCJKfntef.sty',
+%% generated with the docstrip utility.
+%%
+%% The original source files were:
+%%
+%% xeCJK.dtx  (with options: `fntef')
+%% 
+%%     Copyright (C) 2007--2010 by Wenchang Sun <sunwch@nankai.edu.cn>
+%%     Copyright (C) 2009--2022 by Leo Liu <leoliu.pku@gmail.com>
+%%     Copyright (C) 2012--2022 by Qing Lee <sobenlee@gmail.com>
+%% ----------------------------------------------------------------------
+%% 
+%%     This work may be distributed and/or modified under the
+%%     conditions of the LaTeX Project Public License, either
+%%     version 1.3c of this license or (at your option) any later
+%%     version. This version of this license is in
+%%        http://www.latex-project.org/lppl/lppl-1-3c.txt
+%%     and the latest version of this license is in
+%%        http://www.latex-project.org/lppl.txt
+%%     and version 1.3 or later is part of all distributions of
+%%     LaTeX version 2005/12/01 or later.
+%% 
+%%     This work has the LPPL maintenance status "maintained".
+%% 
+%%     The Current Maintainers of this work are Leo Liu and Qing Lee.
+%% 
+%% ----------------------------------------------------------------------
+%% 
+\NeedsTeXFormat{LaTeX2e}
+\RequirePackage{expl3}
+\GetIdInfo$Id: xeCJK.dtx c4ccfae 2022-08-05 21:02:32 +0800 Qing Lee <sobenlee@gmail.com> $
+  {xeCJK font effect}
+\ProvidesExplPackage{xeCJKfntef}
+  {\ExplFileDate}{3.9.1}{\ExplFileDescription}
+\PassOptionsToPackage { normalem } { ulem }
+\DeclareOption* { \PassOptionsToPackage { \CurrentOption } { ulem } }
+\ProcessOptions \scan_stop:
+\RequirePackage { xeCJK }
+\RequirePackage { ulem }
+\addto@hook \UL@hook { \xeCJK_hook_for_ulem: }
+\cs_new_protected:Npn \xeCJK_hook_for_ulem:
+  {
+    \xeCJK_ulem_detect_node:
+    \l__xeCJK_ulem_text_format_tl
+    \bool_if:NF \l__xeCJK_ulem_hook_used_bool
+      {
+        \bool_set_true:N \l__xeCJK_ulem_hook_used_bool
+        \__xeCJK_ulem_hook:
+      }
+    \xeCJK_ulem_begin_node:
+  }
+\cs_new_protected:Npn \__xeCJK_ulem_hook:
+  {
+    \__xeCJK_ulem_initial:
+    \bool_if:NT \l__xeCJK_ulem_subtract_bool
+      {
+        \xeCJK_swap_cs:NN \UL@leaders \xeCJK_ulem_leaders:
+        \cs_set_eq:NN \__xeCJK_ulem_var_leaders: \xeCJK_ulem_var_leaders:
+        \cs_set_eq:NN \xeCJK_ulem_right_skip: \__xeCJK_ulem_right_skip:
+      }
+    \bool_if:NT \l__xeCJK_ulem_hidden_bool
+      { \cs_set_eq:NN \UL@putbox \__xeCJK_ulem_hidden_box: }
+    \bool_if:NTF \l__xeCJK_ulem_skip_bool
+      {
+        \cs_set_eq:NN \__xeCJK_ulem_putbox: \UL@putbox
+        \cs_set_eq:NN \__xeCJK_ulem_hskip_aux:n \xeCJK_ulem_hskip:n
+      }
+      {
+        \xeCJK_swap_cs:NN \__xeCJK_punct_hskip:n \__xeCJK_ulem_punct_hskip:n
+        \xeCJK_cs_clear:N \__xeCJK_ulem_skip_punct_begin:
+        \xeCJK_cs_clear:N \__xeCJK_ulem_skip_punct_end:
+      }
+    \xeCJK_glue_to_skip:nN
+      {
+        \cs_set_eq:NN \  \tex_space:D
+        \cs_set_eq:NN \penalty \tex_penalty:D
+        \cs_set_eq:NN \hskip \skip_horizontal:N
+        \CJKglue
+      } \l__xeCJK_ccglue_skip
+    \xeCJK_glue_to_skip:nN
+      {
+        \cs_set_eq:NN \  \tex_space:D
+        \cs_set_eq:NN \penalty \tex_penalty:D
+        \cs_set_eq:NN \hskip \skip_horizontal:N
+        \CJKecglue
+      } \l__xeCJK_ecglue_skip
+    \xeCJK_glue_to_skip:nN { \xeCJK_space_glue: } \l__xeCJK_space_skip
+    \cs_set_protected:Npn \CJKglue
+      { \__xeCJK_ulem_glue:n \l__xeCJK_ccglue_skip }
+    \cs_set_protected:Npn \CJKecglue
+      { \__xeCJK_ulem_glue:n \l__xeCJK_ecglue_skip }
+    \cs_set_protected:Npn \xeCJK_space_glue:
+      { \__xeCJK_ulem_glue:n \l__xeCJK_space_skip }
+    \cs_set_eq:NN \xeCJK_punct_node:N \use_none:n
+    \cs_set_eq:NN \xeCJK_if_last_punct:TF \use_ii:nn
+    \keys_set:nn { xeCJK / options }
+      { CheckFullRight = false , xCJKecglue = false }
+  }
+\skip_new:N \l__xeCJK_space_skip
+\bool_new:N \l__xeCJK_ulem_hook_used_bool
+\cs_new_protected:Npn \xeCJK_ulem_word:nw #1 ~
+  {
+    \__xeCJK_ulem_start:w #1 ~
+    \exp_after:wN \if_meaning:w \exp_after:wN \UL@end #1
+      \exp_after:wN \__xeCJK_ulem_end:
+    \else:
+      \exp_after:wN \__xeCJK_ulem_loop:nw
+    \fi:
+  }
+\cs_new_protected:Npn \__xeCJK_ulem_end:
+  {
+        \c_group_end_token
+      \c_group_end_token
+      \tex_unskip:D \tex_unskip:D \tex_unskip:D
+      \xeCJK_ulem_right_skip:
+    \xeCJK_ulem_group_end:
+    \xeCJK_ulem_right_node:
+    \int_set:Nn \tex_spacefactor:D { \UL@spfactor }
+  }
+\cs_new_protected:Npn \__xeCJK_ulem_loop:nw
+  {
+    \reverse_if:N \if_mode_math:
+      \reverse_if:N \if_dim:w \tex_lastskip:D = \c_zero_dim
+        \skip_gset_eq:NN \UL@skip \tex_lastskip:D
+        \tex_unskip:D
+        \UL@stop \UL@leaders
+      \fi:
+    \fi:
+    \xeCJK_ulem_word:nw \prg_do_nothing:
+  }
+\cs_new_protected:Npn \__xeCJK_ulem_start:w
+  { \exp_after:wN \UL@start }
+\cs_set_eq:NN \UL@word \xeCJK_ulem_word:nw
+\cs_new_protected:Npn \xeCJK_ulem_left:
+  {
+    \xeCJK_ulem_left_node:
+    \xeCJK_make_group_tag:
+  }
+\cs_new_eq:NN \xeCJK_ulem_left_node: \prg_do_nothing:
+\cs_new_protected:Npn \xeCJK_ulem_detect_node:
+  {
+    \scan_stop:
+    \dim_compare:nNnTF \tex_lastkern:D = \c_zero_dim
+      {
+        \xeCJK_cs_clear:N \xeCJK_ulem_left_node:
+        \xeCJK_cs_clear:N \xeCJK_ulem_begin_node:
+        \cs_set_eq:NN \__xeCJK_ulem_hskip:n \xeCJK_ulem_hskip:n
+      }
+      {
+        \dim_set_eq:NN \l__xeCJK_tmp_dim \tex_lastkern:D
+        \tex_unkern:D
+        \dim_compare:nNnTF \tex_lastkern:D = { - \l__xeCJK_tmp_dim }
+          {
+            \tex_unkern:D
+            \cs_set_protected:Npx \xeCJK_ulem_left_node:
+              {
+                \tex_kern:D - \dim_use:N \l__xeCJK_tmp_dim \exp_stop_f:
+                \tex_kern:D   \dim_use:N \l__xeCJK_tmp_dim \exp_stop_f:
+              }
+            \cs_set_protected:Npn \xeCJK_ulem_begin_node:
+              { { \xeCJK_make_node:n { ulem-begin } } }
+            \cs_set_eq:NN \__xeCJK_ulem_hskip:n \__xeCJK_ulem_hskip_first:n
+          }
+          {
+            \tex_kern:D \l__xeCJK_tmp_dim
+            \xeCJK_cs_clear:N \xeCJK_ulem_left_node:
+            \xeCJK_cs_clear:N \xeCJK_ulem_begin_node:
+            \cs_set_eq:NN \__xeCJK_ulem_hskip:n \xeCJK_ulem_hskip:n
+          }
+      }
+  }
+\xeCJK_declare_node:n { ulem-begin }
+\cs_new_eq:NN \xeCJK_ulem_begin_node: \prg_do_nothing:
+\cs_new_protected:Npn \__xeCJK_ulem_hskip_first:n #1
+  {
+    \xeCJK_if_last_node:nTF { ulem-begin }
+      {
+        \xeCJK_remove_node:
+        \skip_horizontal:n {#1}
+      }
+      { \xeCJK_ulem_hskip:n {#1} }
+    \cs_set_eq:NN \__xeCJK_ulem_hskip:n \xeCJK_ulem_hskip:n
+  }
+\cs_new_eq:NN \__xeCJK_ulem_hskip:n \__xeCJK_ulem_hskip_first:n
+\cs_new_protected:Npn \xeCJK_ulem_hskip:n #1
+  { { \skip_set:Nn \UL@skip {#1} \UL@leaders } }
+\cs_new_protected:Npn \xeCJK_ulem_right:
+  {
+    \scan_stop:
+    \dim_compare:nNnTF \tex_lastkern:D = \c_zero_dim
+      { \xeCJK_cs_gclear:N \xeCJK_ulem_right_node: }
+      {
+        \dim_compare:nNnTF \tex_lastkern:D = { 3sp }
+          { \xeCJK_cs_gclear:N \xeCJK_ulem_right_node: }
+          {
+            \exp_args:NNo \tex_unkern:D
+            \__xeCJK_ulem_right_aux:n { \dim_use:N \tex_lastkern:D }
+          }
+      }
+  }
+\cs_new_protected:Npn \__xeCJK_ulem_right_aux:n #1
+  {
+    \dim_compare:nNnTF \tex_lastkern:D = { - #1 }
+      {
+        \tex_unkern:D
+        \cs_gset_protected:Npn \xeCJK_ulem_right_node:
+          {
+            \tex_kern:D - #1 \exp_stop_f:
+            \tex_kern:D   #1 \exp_stop_f:
+          }
+        \tl_gset:Nx \UL@spfactor { \int_use:N \tex_spacefactor:D }
+      }
+      {
+        \tex_kern:D #1 \exp_stop_f:
+        \xeCJK_cs_gclear:N \xeCJK_ulem_right_node:
+      }
+  }
+\cs_new_eq:NN \xeCJK_ulem_right_node: \prg_do_nothing:
+\cs_new_protected:Npn \xeCJK_ulem_leaders:
+  { \__xeCJK_ulem_var_leaders: }
+\cs_new_protected:Npn \xeCJK_ulem_var_leaders:
+  {
+    \scan_stop:
+    \skip_if_eq:nnF { \UL@skip } { \c_zero_skip }
+      {
+        \UL@leadtype \skip_horizontal:n { \UL@skip + \UL@pixel }
+        \skip_horizontal:n { - \UL@pixel }
+        \cs_gset_eq:NN \__xeCJK_ulem_var_leaders: \xeCJK_ulem_leaders:
+      }
+  }
+\cs_new_eq:NN \__xeCJK_ulem_var_leaders: \xeCJK_ulem_var_leaders:
+\cs_new_eq:NN \xeCJK_ulem_right_skip: \prg_do_nothing:
+\cs_new_protected:Npn \__xeCJK_ulem_right_skip:
+  {
+    \int_case:nn { \tex_lastnodetype:D }
+      {
+        { \c__xeCJK_hlist_node }   { \__xeCJK_ulem_right_skip_hbox: }
+        { \c__xeCJK_glue_node }    { \__xeCJK_ulem_right_skip_glue: }
+        { \c__xeCJK_penalty_node } { \__xeCJK_ulem_right_skip_penalty: }
+      }
+  }
+\cs_new_protected:Npn \__xeCJK_ulem_right_skip_hbox:
+  {
+    \box_set_to_last:N \l__xeCJK_tmp_box
+    \__xeCJK_if_last_kern:TF
+      { \__xeCJK_ulem_right_skip_kern: }
+      { \__xeCJK_ulem_right_skip_glue: }
+    \box_use_drop:N \l__xeCJK_tmp_box
+  }
+\cs_new_protected:Npn \__xeCJK_ulem_right_skip_kern:
+  {
+    \dim_set:Nn \l__xeCJK_tmp_dim { - \box_wd:N \l__xeCJK_tmp_box }
+    \dim_compare:nNnT \tex_lastkern:D = \l__xeCJK_tmp_dim
+      {
+        \tex_unkern:D
+        \__xeCJK_ulem_right_skip_glue:
+        \tex_kern:D \l__xeCJK_tmp_dim
+      }
+  }
+\cs_new_protected:Npn \__xeCJK_ulem_right_skip_glue:
+  {
+    \skip_if_eq:nnT { \tex_lastskip:D } { - \UL@pixel }
+      {
+        \tex_unskip:D
+        \skip_set:Nn \l__xeCJK_tmp_skip { \tex_lastskip:D - \UL@pixel }
+        \tex_unskip:D
+        \UL@leadtype \skip_horizontal:N \l__xeCJK_tmp_skip
+      }
+  }
+\cs_new_protected:Npn \__xeCJK_ulem_right_skip_penalty:
+  {
+    \int_set_eq:NN \l__xeCJK_tmp_int \tex_lastpenalty:D
+    \tex_unpenalty:D
+    \__xeCJK_if_last_hlist:T
+      { \__xeCJK_ulem_right_skip_hbox: }
+    \tex_penalty:D \l__xeCJK_tmp_int
+  }
+\cs_new_protected:Npn \__xeCJK_ulem_hidden_box:
+  {
+    \tl_if_empty:NF \UL@start
+      {
+        \box_set_ht:Nn \l__xeCJK_hidden_box { \box_ht:N \UL@box }
+        \box_set_dp:Nn \l__xeCJK_hidden_box { \box_dp:N \UL@box }
+        \box_use:N \l__xeCJK_hidden_box
+        \xeCJK_no_break:
+        \xeCJK_ulem_hskip:n { \box_wd:N \UL@box }
+        \box_use:N \l__xeCJK_hidden_box
+      }
+  }
+\box_new:N \l__xeCJK_hidden_box
+\hbox_set:Nn \l__xeCJK_hidden_box { }
+\cs_new_protected:Npn \__xeCJK_ulem_skip_punct_begin:
+  {
+    \cs_set_eq:NN \UL@putbox \__xeCJK_ulem_skip_putbox:
+    \cs_set_eq:NN \xeCJK_ulem_hskip:n \skip_horizontal:n
+  }
+\cs_new_protected:Npn \__xeCJK_ulem_skip_punct_end:
+  {
+    \cs_set_eq:NN \UL@putbox \__xeCJK_ulem_putbox:
+    \cs_set_eq:NN \xeCJK_ulem_hskip:n \__xeCJK_ulem_hskip_aux:n
+  }
+\cs_new_eq:NN \__xeCJK_ulem_putbox: \UL@putbox
+\cs_new_protected:Npn \__xeCJK_ulem_skip_putbox:
+  {
+    \tl_if_empty:NF \UL@start
+      { \box_use_drop:N \UL@box }
+  }
+\cs_new_protected:Npn \__xeCJK_ulem_initial:
+  {
+    \__xeCJK_ulem_swap_cs:NN
+    \xeCJK_FullLeft_and_Default:   \__xeCJK_ulem_FullLeft_and_Default:
+    \xeCJK_FullLeft_and_CJK:       \__xeCJK_ulem_FullLeft_and_CJK:
+    \xeCJK_FullLeft_and_Boundary:  \__xeCJK_ulem_FullLeft_and_Boundary:
+    \xeCJK_FullRight_and_Default:  \__xeCJK_ulem_FullRight_and_Default:
+    \xeCJK_FullRight_and_CJK:      \__xeCJK_ulem_FullRight_and_CJK:
+    \xeCJK_FullRight_and_Boundary: \__xeCJK_ulem_FullRight_and_Boundary:
+    \xeCJK_CJK_and_CJK:N           \__xeCJK_ulem_CJK_and_CJK:N
+    \xeCJK_CJK_and_Boundary:w      \__xeCJK_ulem_CJK_and_Boundary:w
+    \xeCJK@fix@penalty             \__xeCJK_ulem_fix_penalty:
+    \__xeCJK_punct_breakable_kern:n       \__xeCJK_ulem_punct_breakable_kern:n
+    \__xeCJK_Default_and_FullLeft_glue:N  \__xeCJK_ulem_Default_and_FullLeft_glue:N
+    \__xeCJK_Default_and_FullRight_glue:N \__xeCJK_ulem_Default_and_FullRight_glue:N
+    \__xeCJK_CJK_and_FullLeft_glue:N      \__xeCJK_ulem_CJK_and_FullLeft_glue:N
+    \__xeCJK_CJK_and_FullRight_glue:N     \__xeCJK_ulem_CJK_and_FullRight_glue:N
+    \__xeCJK_Boundary_and_FullLeft_glue:N \__xeCJK_ulem_Boundary_and_FullLeft_glue:N
+    \q_recursion_tail \q_nil \q_recursion_stop
+    \seq_map_inline:Nn \g__xeCJK_CJK_sub_class_seq
+      {
+        \seq_map_inline:Nn \g__xeCJK_CJK_sub_class_seq
+          {
+            \str_if_eq:nnTF {##1} {####1}
+              {
+                \xeCJK_inter_class_toks:nnn { CJK } { CJK/##1 }
+                  { \__xeCJK_ulem_between_CJK_blocks:nnN { CJK } {##1} }
+                \xeCJK_inter_class_toks:nnn { CJK/##1 } { CJK/##1 }
+                  { \__xeCJK_ulem_between_CJK_blocks:nnN { CJK } {##1} }
+              }
+              {
+                \xeCJK_inter_class_toks:nnn { CJK/##1 } { CJK/####1 }
+                  { \__xeCJK_ulem_between_CJK_blocks:nnN {##1} {####1} }
+              }
+          }
+      }
+  }
+\cs_new_protected:Npn \__xeCJK_ulem_swap_cs:NN #1#2
+  {
+    \quark_if_recursion_tail_stop:N #1
+    \xeCJK_swap_cs:NN #1#2
+    \__xeCJK_ulem_swap_cs:NN
+  }
+\cs_new:Npn \xeCJK_if_ulem_patch:TF
+  {
+    \if_meaning:w \  \LA@space
+      \exp_after:wN \use_ii:nn
+    \else:
+      \exp_after:wN \use_i:nn
+    \fi:
+  }
+\cs_new_protected:Npn \__xeCJK_ulem_CJK_and_Boundary:w
+  {
+    \xeCJK_if_ulem_patch:TF
+      {
+        \xeCJK_peek_catcode_ignore_spaces:NTF \c_math_toggle_token
+          { \xeCJK_class_group_end: \CJKecglue }
+          {
+            \bool_if:NTF \l__xeCJK_peek_ignore_spaces_bool
+              { \__xeCJK_ulem_peek_math:w }
+              { \__xeCJK_ulem_group_end:n { CJK } }
+          }
+      }
+      { \__xeCJK_ulem_CJK_and_Boundary:w }
+  }
+\cs_new_protected:Npn \__xeCJK_ulem_group_end:n #1
+  {
+    \xeCJK_class_group_end: \UL@stop
+    \UL@start { \xeCJK_make_node:n {#1} }
+    \xeCJK_make_group_tag:
+  }
+\cs_new_protected:Npn \__xeCJK_ulem_peek_math:w
+  {
+    \cs_set_eq:NN \__xeCJK_ulem_start:w \__xeCJK_ulem_exp_stop:w
+    \exp_after:wN \peek_after:Nw
+    \exp_after:wN \__xeCJK_ulem_peek_math_branches:w
+    \exp:w \exp_end_continue_f:w
+  }
+\cs_new_protected:Npn \__xeCJK_ulem_peek_math_branches:w
+  {
+    \token_if_math_toggle:NTF \l_peek_token
+      { \xeCJK_class_group_end: \CJKecglue }
+      { \__xeCJK_ulem_group_end:n { CJK-space } }
+  }
+\cs_new_protected:Npn \__xeCJK_ulem_exp_stop:w
+  {
+    \cs_if_eq:NNTF \UL@start \@empty
+      { \exp_after:wN \exp_stop_f: }
+      { \exp_after:wN \UL@start }
+  }
+\cs_new_protected:Npn \__xeCJK_ulem_fix_penalty:
+  {
+    \xeCJK_if_ulem_patch:TF
+      { \fix@penalty }
+      { \__xeCJK_ulem_fix_penalty: }
+  }
+\cs_new_protected:Npn \__xeCJK_ulem_CJK_and_CJK:N
+  {
+    \xeCJK_if_ulem_patch:TF
+      {
+        \xeCJK_class_group_end:
+        \UL@stop \__xeCJK_ulem_ccglue: \UL@start
+        \__xeCJK_ulem_class_group_begin:
+        \xeCJK_select_font:
+        \xeCJK_fallback_symbol:NN
+        \CJKsymbol
+      }
+      { \__xeCJK_ulem_CJK_and_CJK:N }
+  }
+\cs_new_protected:Npn \__xeCJK_ulem_class_group_begin:
+  {
+    \xeCJK_class_group_begin:
+    \xeCJK_clear_Boundary_and_CJK_toks:
+  }
+\cs_new_protected:Npn \__xeCJK_ulem_between_CJK_blocks:nnN #1#2
+  {
+    \xeCJK_if_ulem_patch:TF
+      {
+        \xeCJK_class_group_end:
+        \UL@stop \__xeCJK_ulem_ccglue: \UL@start
+        \xeCJK_class_group_begin:
+        \xeCJK_clear_Boundary_and_CJK_toks:
+        \__xeCJK_switch_font:nn {#1} {#2}
+        \xeCJK_fallback_symbol:NN
+        \CJKsymbol
+      }
+      {
+        \skip_horizontal:N \l__xeCJK_ccglue_skip
+        \__xeCJK_switch_font:nn {#1} {#2}
+        \xeCJK_fallback_symbol:NN
+        \CJKsymbol
+      }
+  }
+\cs_new_protected:Npn \__xeCJK_ulem_Default_and_FullLeft_glue:N #1
+  {
+    \xeCJK_if_ulem_patch:TF
+      {
+        \UL@stop
+        \__xeCJK_ulem_skip_punct_begin:
+        \__xeCJK_punct_glue:NN \c__xeCJK_left_tl #1
+        \UL@start
+      }
+      { \__xeCJK_ulem_Default_and_FullLeft_glue:N #1 }
+  }
+\cs_new_protected:Npn \__xeCJK_ulem_Boundary_and_FullLeft_glue:N #1
+  {
+    \xeCJK_if_ulem_patch:TF
+      {
+        \UL@stop
+        \__xeCJK_ulem_skip_punct_begin:
+        \__xeCJK_punct_glue:NN \c__xeCJK_left_tl #1
+        \UL@start
+      }
+      { \__xeCJK_ulem_Boundary_and_FullLeft_glue:N #1 }
+  }
+\cs_new_protected:Npn \__xeCJK_ulem_CJK_and_FullLeft_glue:N #1
+  {
+    \xeCJK_if_ulem_patch:TF
+      {
+        \xeCJK_class_group_end:
+        \UL@stop
+        \__xeCJK_ulem_skip_punct_begin:
+        \__xeCJK_ulem_punct_ccglue:
+        \__xeCJK_punct_glue:NN \c__xeCJK_left_tl #1
+        \UL@start
+        \__xeCJK_ulem_class_group_begin:
+        \xeCJK_select_punct_font:
+      }
+      { \__xeCJK_ulem_CJK_and_FullLeft_glue:N #1 }
+  }
+\cs_new_protected:Npn \__xeCJK_ulem_Default_and_FullRight_glue:N #1
+  {
+    \xeCJK_if_ulem_patch:TF
+      {
+        \UL@stop
+        \__xeCJK_ulem_skip_punct_begin:
+        \__xeCJK_punct_if_long:NTF #1
+          { \xeCJK_allow_break: }
+          { \xeCJK_no_break: }
+        \__xeCJK_punct_if_middle:NT #1
+          {
+            \__xeCJK_punct_glue:NN \c__xeCJK_right_tl #1
+            \__xeCJK_punct_rule:NN \c__xeCJK_left_tl #1
+          }
+        \UL@start
+      }
+      { \__xeCJK_ulem_Default_and_FullRight_glue:N #1 }
+  }
+\cs_new_protected:Npn \__xeCJK_ulem_CJK_and_FullRight_glue:N #1
+  {
+    \xeCJK_if_ulem_patch:TF
+      {
+        \xeCJK_class_group_end:
+        \UL@stop
+        \__xeCJK_ulem_skip_punct_begin:
+        \__xeCJK_punct_if_long:NTF #1
+          { \xeCJK_allow_break: }
+          { \xeCJK_no_break: }
+        \__xeCJK_punct_if_middle:NT #1
+          {
+            \__xeCJK_ulem_punct_ccglue:
+            \__xeCJK_punct_glue:NN \c__xeCJK_right_tl #1
+            \__xeCJK_punct_rule:NN \c__xeCJK_left_tl #1
+          }
+        \UL@start
+        \__xeCJK_ulem_class_group_begin:
+        \xeCJK_select_punct_font:
+      }
+      { \__xeCJK_ulem_CJK_and_FullRight_glue:N #1 }
+  }
+\cs_new_protected:Npn \__xeCJK_ulem_FullLeft_and_Default:
+  {
+    \xeCJK_if_ulem_patch:TF
+      {
+        \__xeCJK_punct_if_middle:NTF \g__xeCJK_last_punct_tl
+          {
+            \xeCJK_get_punct_bounds:No \c__xeCJK_left_tl \g__xeCJK_last_punct_tl
+            \__xeCJK_punct_rule:NN \c__xeCJK_right_tl \g__xeCJK_last_punct_tl
+            \xeCJK_class_group_end: \UL@stop \xeCJK_no_break:
+            \__xeCJK_punct_glue:NN \c__xeCJK_left_tl  \g__xeCJK_last_punct_tl
+          }
+          { \xeCJK_class_group_end: \UL@stop }
+        \__xeCJK_ulem_skip_punct_end:
+        \xeCJK_no_break:
+        \UL@start
+      }
+      { \__xeCJK_ulem_FullLeft_and_Default: }
+  }
+\cs_new_protected:Npn \__xeCJK_ulem_FullLeft_and_Boundary:
+  {
+    \xeCJK_if_ulem_patch:TF
+      {
+        \__xeCJK_punct_if_middle:NTF \g__xeCJK_last_punct_tl
+          {
+            \xeCJK_get_punct_bounds:No \c__xeCJK_left_tl \g__xeCJK_last_punct_tl
+            \__xeCJK_punct_rule:NN \c__xeCJK_right_tl \g__xeCJK_last_punct_tl
+            \xeCJK_class_group_end: \UL@stop \xeCJK_no_break:
+            \__xeCJK_punct_glue:NN \c__xeCJK_left_tl  \g__xeCJK_last_punct_tl
+          }
+          { \xeCJK_class_group_end: \UL@stop }
+        \__xeCJK_ulem_skip_punct_end:
+        \xeCJK_no_break:
+        \UL@start
+        \tex_ignorespaces:D
+      }
+      { \__xeCJK_ulem_FullLeft_and_Boundary: }
+  }
+\cs_new_protected:Npn \__xeCJK_ulem_FullLeft_and_CJK:
+  {
+    \xeCJK_if_ulem_patch:TF
+      {
+        \xeCJK_FullLeft_and_Default:
+        \__xeCJK_ulem_class_group_begin:
+        \xeCJK_select_font:
+      }
+      { \__xeCJK_ulem_FullLeft_and_CJK: }
+  }
+\cs_new_protected:Npn \__xeCJK_ulem_FullRight_and_Default:
+  {
+    \xeCJK_if_ulem_patch:TF
+      {
+        \__xeCJK_punct_rule:NN \c__xeCJK_right_tl \g__xeCJK_last_punct_tl
+        \xeCJK_class_group_end:
+        \UL@stop
+        \__xeCJK_punct_glue:NN \c__xeCJK_right_tl \g__xeCJK_last_punct_tl
+        \__xeCJK_ulem_skip_punct_end:
+        \UL@start
+      }
+      { \__xeCJK_ulem_FullRight_and_Default: }
+  }
+\cs_new_protected:Npn \__xeCJK_ulem_FullRight_and_Boundary:
+  {
+    \xeCJK_if_ulem_patch:TF
+      {
+        \__xeCJK_punct_rule:NN \c__xeCJK_right_tl \g__xeCJK_last_punct_tl
+        \xeCJK_class_group_end:
+        \UL@stop
+        \__xeCJK_punct_glue:NN \c__xeCJK_right_tl \g__xeCJK_last_punct_tl
+        \__xeCJK_ulem_skip_punct_end:
+        \UL@start
+        \tex_ignorespaces:D
+      }
+      { \__xeCJK_ulem_FullRight_and_Boundary: }
+  }
+\cs_new_protected:Npn \__xeCJK_ulem_FullRight_and_CJK:
+  {
+    \xeCJK_if_ulem_patch:TF
+      {
+        \__xeCJK_punct_rule:NN \c__xeCJK_right_tl \g__xeCJK_last_punct_tl
+        \xeCJK_class_group_end:
+        \UL@stop
+        \__xeCJK_punct_glue:NN \c__xeCJK_right_tl \g__xeCJK_last_punct_tl
+        \__xeCJK_ulem_punct_ccglue:
+        \__xeCJK_ulem_skip_punct_end:
+        \UL@start
+        \__xeCJK_ulem_class_group_begin:
+        \xeCJK_select_font:
+      }
+      { \__xeCJK_ulem_FullRight_and_CJK: }
+  }
+\cs_new_protected:Npn \__xeCJK_ulem_punct_hskip:n
+  {
+    \xeCJK_if_ulem_patch:TF
+      { \xeCJK_ulem_hskip:n }
+      { \__xeCJK_ulem_punct_hskip:n }
+  }
+\cs_new_protected:Npn \__xeCJK_ulem_punct_breakable_kern:n #1
+  {
+    \xeCJK_if_ulem_patch:TF
+      {
+        \xeCJK_class_group_end:
+        \UL@stop \xeCJK_ulem_hskip:n {#1} \UL@start
+        \__xeCJK_ulem_class_group_begin:
+        \xeCJK_select_punct_font:
+      }
+      { \__xeCJK_ulem_punct_breakable_kern:n {#1} }
+  }
+\cs_new_protected:Npn \__xeCJK_ulem_glue:n #1
+  {
+    \xeCJK_if_ulem_patch:TF
+      {
+        \tl_if_empty:NTF \l__xeCJK_group_tag_tl
+          { \UL@stop \__xeCJK_ulem_hskip:n {#1} \UL@start }
+          {
+            \str_if_eq:eeTF { \l__xeCJK_group_tag_tl } { \c__xeCJK_group_tag_tl }
+              { \UL@stop \__xeCJK_ulem_hskip:n {#1} \UL@start }
+              { \skip_horizontal:n {#1} }
+          }
+      }
+      { \skip_horizontal:n {#1} }
+  }
+\cs_new_protected:Npn \xeCJK_make_group_tag:
+  { \tl_set:Nx \l__xeCJK_group_tag_tl { \c__xeCJK_group_tag_tl } }
+\tl_new:N \l__xeCJK_group_tag_tl
+\tl_const:Nn \c__xeCJK_group_tag_tl
+  {
+    T \int_use:N \tex_currentgrouptype:D
+    L \int_use:N \tex_currentgrouplevel:D
+  }
+\cs_new_protected:Npn \__xeCJK_ulem_ccglue:
+  { { \skip_set_eq:NN \UL@skip \l__xeCJK_ccglue_skip \UL@leaders } }
+\cs_new_protected:Npn \__xeCJK_ulem_punct_ccglue:
+  { \__xeCJK_punct_hskip:n { \l__xeCJK_ccglue_skip } }
+\cs_new_protected:Npn \xeCJK_ulem_group_begin:
+  {
+    \mode_leave_vertical:
+    \c_group_begin_token
+  }
+\cs_new_protected:Npn \xeCJK_ulem_group_end:
+  { \c_group_end_token }
+\cs_new_protected:Npn \xeCJK_ulem_on:n
+  { \ULon }
+\cs_new_eq:NN \__xeCJK_ulem_on:n \UL@on
+\cs_set_protected:Npn \UL@on #1
+  { \__xeCJK_ulem_on:n { \xeCJK_ulem_left: #1 \xeCJK_ulem_right: } }
+\NewDocumentCommand \xeCJKfntefon { s t- s o }
+  {
+    \mode_leave_vertical:
+    \xeCJK_ulem_boot:NNNn #1#2#3 {#4}
+    \xeCJK_ulem_on:n
+  }
+\NewDocumentCommand \CJKunderline { s t- s o }
+  {
+    \xeCJK_ulem_group_begin:
+      \xeCJK_fntef_boot:nnNNNn { underline } { uline } #1#2#3 {#4}
+      \xeCJK_fntef_initial:nnn
+        { \l__xeCJK_uline_depth_tl }
+        { \l__xeCJK_uline_sep_tl }
+        {
+          \l__xeCJK_uline_format_tl
+          \tex_vrule:D
+            height \dim_eval:n { \l__xeCJK_uline_thickness_tl }
+            depth \c_zero_dim
+            width .2em
+        }
+      \xeCJK_ulem_on:n
+  }
+\NewDocumentCommand \varCJKunderline { }
+  { \CJKunderline - }
+\NewDocumentCommand \CJKunderwave { s t- s o }
+  {
+    \xeCJK_ulem_group_begin:
+      \xeCJK_fntef_boot:nnNNNn { underwave } { uwave } #1#2#3 {#4}
+      \xeCJK_fntef_initial:nnn
+        { \l__xeCJK_uwave_depth_tl }
+        { \l__xeCJK_uwave_sep_tl }
+        { \l__xeCJK_uwave_format_tl \l__xeCJK_uwave_symbol_tl }
+      \xeCJK_ulem_on:n
+  }
+\NewDocumentCommand \CJKunderdblline { s t- s o }
+  {
+    \xeCJK_ulem_group_begin:
+      \xeCJK_fntef_boot:nnNNNn { underdblline } { udbline } #1#2#3 {#4}
+      \xeCJK_fntef_initial:nnn
+        { \l__xeCJK_udbline_depth_tl }
+        { \l__xeCJK_udbline_sep_tl }
+        {
+          \l__xeCJK_udbline_format_tl
+          \vbox_top:n
+            {
+              \tex_hrule:D
+                height \dim_eval:n { \l__xeCJK_udbline_thickness_tl }
+                depth \c_zero_dim
+                width .2em
+              \tex_kern:D \dim_eval:n { \l__xeCJK_udbline_gap_tl }
+              \tex_hrule:D
+                height \dim_eval:n { \l__xeCJK_udbline_thickness_tl }
+                depth \c_zero_dim
+                width .2em
+            }
+        }
+      \xeCJK_ulem_on:n
+  }
+\NewDocumentCommand \CJKsout { s t- s o }
+  {
+    \xeCJK_ulem_group_begin:
+      \xeCJK_fntef_boot:nnNNNn { sout } { sout } #1#2#3 {#4}
+      \xeCJK_fntef_initial:nn
+        {
+          \l__xeCJK_sout_format_tl
+          \tex_vrule:D
+            height \dim_eval:n { \l__xeCJK_sout_thickness_tl }
+            depth \c_zero_dim
+            width .2em
+        }
+        {
+          \box_move_up:nn
+            { \l__xeCJK_sout_height_tl - \box_ht:N \l__xeCJK_fntef_box / 2 }
+            { \box_use:N \l__xeCJK_fntef_box }
+        }
+      \xeCJK_ulem_on:n
+  }
+\NewDocumentCommand \CJKxout { s t- s o }
+  {
+    \xeCJK_ulem_group_begin:
+      \xeCJK_fntef_boot:nnNNNn { xout } { xout } #1#2#3 {#4}
+      \xeCJK_fntef_initial:nn
+        {
+          \l__xeCJK_xout_format_tl
+          \tex_kern:D -.1 em $/$
+          \tex_kern:D -.1 em
+        }
+        {
+          \box_move_up:nn
+            { \box_dp:N \l__xeCJK_fntef_box / 2 }
+            { \box_use:N \l__xeCJK_fntef_box }
+        }
+      \xeCJK_ulem_on:n
+  }
+\NewDocumentCommand \CJKunderanyline { s t- s o m m }
+  {
+    \xeCJK_ulem_group_begin:
+      \xeCJK_ulem_boot:NNNn #1#2#3 {#4}
+      \xeCJK_fntef_initial:nn
+        {#6}
+        {
+          \box_move_down:nn
+            {#5}
+            { \box_use:N \l__xeCJK_fntef_box }
+        }
+      \tl_if_empty:NF \l__xeCJK_ulem_boxdepth_tl
+        { \box_set_dp:Nn \ULC@box { \l__xeCJK_ulem_boxdepth_tl } }
+      \tl_if_empty:NF \l__xeCJK_ulem_sep_tl
+        {
+          \bool_set_true:N \l__xeCJK_fntef_bool
+          \dim_set:Nn \l__xeCJK_fntef_dim
+            { \l__xeCJK_ulem_sep_tl + \box_dp:N \ULC@box }
+        }
+      \xeCJK_ulem_on:n
+  }
+\cs_new_protected:Npn \xeCJK_fntef_boot:nnNNNn #1#2#3#4#5#6
+  {
+    \bool_lazy_or:nnT {#3} {#5}
+      { \bool_set_false:c { l__xeCJK_#2_skip_bool } }
+    \bool_if:NT #4
+      { \bool_set_true:c { l__xeCJK_#2_subtract_bool } }
+    \tl_if_novalue:nF {#6}
+      { \keys_set:nn { xeCJK / options / #1 } {#6} }
+    \bool_set_eq:Nc \l__xeCJK_ulem_skip_bool { l__xeCJK_#2_skip_bool }
+    \bool_set_eq:Nc \l__xeCJK_ulem_hidden_bool { l__xeCJK_#2_hidden_bool }
+    \bool_set_eq:Nc \l__xeCJK_ulem_subtract_bool { l__xeCJK_#2_subtract_bool }
+    \tl_set_eq:Nc \l__xeCJK_ulem_text_format_tl { l__xeCJK_#2_text_format_tl }
+  }
+\cs_new_protected:Npn \xeCJK_ulem_boot:NNNn #1#2#3#4
+  {
+    \bool_lazy_or:nnT {#1} {#3}
+      { \bool_set_false:N \l__xeCJK_ulem_skip_bool }
+    \bool_if:NT #2
+      { \bool_set_true:N \l__xeCJK_ulem_subtract_bool }
+    \tl_if_novalue:nF {#4}
+      { \keys_set:nn { xeCJK / options / ulem } {#4} }
+  }
+\cs_new_protected:Npn \xeCJK_fntef_initial:n
+  {
+    \bool_if:NTF \l__xeCJK_nest_bool
+      { \__xeCJK_warning:n { fntef-nesting } }
+      {
+        \bool_set_true:N \l__xeCJK_nest_bool
+        \__xeCJK_restore_shipout_fntef:
+      }
+    \xeCJK_fntef_sbox:n
+  }
+\cs_new_protected:Npn \xeCJK_fntef_initial:nn #1
+  {
+    \xeCJK_fntef_initial:n {#1}
+    \bool_if:NF \l__xeCJK_fntef_bool
+      { \dim_zero:N \l__xeCJK_fntef_dim }
+    \markoverwith
+  }
+\cs_new_protected:Npn \xeCJK_fntef_initial:nnn #1#2#3
+  {
+    \xeCJK_fntef_initial:n {#3}
+    \bool_if:NF \l__xeCJK_fntef_bool
+      {
+        \bool_set_true:N \l__xeCJK_fntef_bool
+        \dim_set:Nn \l__xeCJK_fntef_dim {#1}
+      }
+    \markoverwith
+      {
+        \box_move_down:nn
+          { \l__xeCJK_fntef_dim + \box_ht:N \l__xeCJK_fntef_box }
+          { \box_use:N \l__xeCJK_fntef_box }
+      }
+    \dim_set:Nn \l__xeCJK_fntef_dim { #2 + \box_dp:N \ULC@box }
+  }
+\box_new:N \l__xeCJK_fntef_box
+\cs_new_eq:NN \xeCJKfntefbox \l__xeCJK_fntef_box
+\bool_new:N \l__xeCJK_nest_bool
+\bool_new:N \l__xeCJK_fntef_bool
+\__xeCJK_msg_new:nn { fntef-nesting }
+  { Nesting~is~not~supported. }
+\cs_new_eq:NN \l__xeCJK_fntef_dim \ULdepth
+\cs_new_protected:Npn \xeCJK_fntef_sbox:n #1
+  {
+    \hbox_set:Nn \l__xeCJK_fntef_box
+      { \color_ensure_current: #1 }
+  }
+\keys_define:nn { xeCJK / options }
+  {
+    underdot / symbol          .tl_set:N = \l__xeCJK_udot_symbol_tl ,
+    underdot / depth           .tl_set:N = \l__xeCJK_udot_depth_tl ,
+    underdot / sep             .tl_set:N = \l__xeCJK_udot_sep_tl ,
+    underdot / format          .tl_set:N = \l__xeCJK_udot_format_tl ,
+    underdot / textformat      .tl_set:N = \l__xeCJK_udot_text_format_tl ,
+    underdot / boxdepth        .tl_set:N = \l__xeCJK_udot_boxdepth_tl ,
+    symbol / sep               .tl_set:N = \l__xeCJK_symbol_sep_tl ,
+    symbol / boxdepth          .tl_set:N = \l__xeCJK_symbol_boxdepth_tl ,
+    symbol / textformat        .tl_set:N = \l__xeCJK_symbol_text_format_tl ,
+    underline / skip         .bool_set:N = \l__xeCJK_uline_skip_bool ,
+    underline / hidden       .bool_set:N = \l__xeCJK_uline_hidden_bool ,
+    underline / subtract     .bool_set:N = \l__xeCJK_uline_subtract_bool ,
+    underline / thickness      .tl_set:N = \l__xeCJK_uline_thickness_tl ,
+    underline / depth          .tl_set:N = \l__xeCJK_uline_depth_tl ,
+    underline / sep            .tl_set:N = \l__xeCJK_uline_sep_tl ,
+    underline / format         .tl_set:N = \l__xeCJK_uline_format_tl ,
+    underline / textformat     .tl_set:N = \l__xeCJK_uline_text_format_tl ,
+    underdblline / skip      .bool_set:N = \l__xeCJK_udbline_skip_bool ,
+    underdblline / hidden    .bool_set:N = \l__xeCJK_udbline_hidden_bool ,
+    underdblline / subtract  .bool_set:N = \l__xeCJK_udbline_subtract_bool ,
+    underdblline / thickness   .tl_set:N = \l__xeCJK_udbline_thickness_tl ,
+    underdblline / depth       .tl_set:N = \l__xeCJK_udbline_depth_tl ,
+    underdblline / sep         .tl_set:N = \l__xeCJK_udbline_sep_tl ,
+    underdblline / format      .tl_set:N = \l__xeCJK_udbline_format_tl ,
+    underdblline / textformat  .tl_set:N = \l__xeCJK_udbline_text_format_tl ,
+    underdblline / gap         .tl_set:N = \l__xeCJK_udbline_gap_tl ,
+    underwave / skip         .bool_set:N = \l__xeCJK_uwave_skip_bool ,
+    underwave / hidden       .bool_set:N = \l__xeCJK_uwave_hidden_bool ,
+    underwave / subtract     .bool_set:N = \l__xeCJK_uwave_subtract_bool ,
+    underwave / symbol         .tl_set:N = \l__xeCJK_uwave_symbol_tl ,
+    underwave / depth          .tl_set:N = \l__xeCJK_uwave_depth_tl ,
+    underwave / sep            .tl_set:N = \l__xeCJK_uwave_sep_tl ,
+    underwave / format         .tl_set:N = \l__xeCJK_uwave_format_tl ,
+    underwave / textformat     .tl_set:N = \l__xeCJK_uwave_text_format_tl ,
+    sout / skip              .bool_set:N = \l__xeCJK_sout_skip_bool ,
+    sout / hidden            .bool_set:N = \l__xeCJK_sout_hidden_bool ,
+    sout / subtract          .bool_set:N = \l__xeCJK_sout_subtract_bool ,
+    sout / thickness           .tl_set:N = \l__xeCJK_sout_thickness_tl ,
+    sout / height              .tl_set:N = \l__xeCJK_sout_height_tl ,
+    sout / format              .tl_set:N = \l__xeCJK_sout_format_tl ,
+    sout / textformat          .tl_set:N = \l__xeCJK_sout_text_format_tl ,
+    xout / skip              .bool_set:N = \l__xeCJK_xout_skip_bool ,
+    xout / hidden            .bool_set:N = \l__xeCJK_xout_hidden_bool ,
+    xout / subtract          .bool_set:N = \l__xeCJK_xout_subtract_bool ,
+    xout / format              .tl_set:N = \l__xeCJK_xout_format_tl ,
+    xout / textformat          .tl_set:N = \l__xeCJK_xout_text_format_tl ,
+    ulem / skip              .bool_set:N = \l__xeCJK_ulem_skip_bool ,
+    ulem / hidden            .bool_set:N = \l__xeCJK_ulem_hidden_bool ,
+    ulem / subtract          .bool_set:N = \l__xeCJK_ulem_subtract_bool ,
+    ulem / sep                 .tl_set:N = \l__xeCJK_ulem_sep_tl ,
+    ulem / boxdepth            .tl_set:N = \l__xeCJK_ulem_boxdepth_tl ,
+    ulem / textformat          .tl_set:N = \l__xeCJK_ulem_text_format_tl
+  }
+\clist_map_inline:nn
+  { underdot , underline , underdblline , underwave , sout , xout , ulem }
+  {
+    \keys_define:nn { xeCJK / options }
+      { #1 .meta:nn = { xeCJK / options / #1 } { ##1 } }
+  }
+\keys_set:nn { xeCJK / options }
+  {
+    underdot / symbol        = \normalfont . ,
+    underdot / depth         = 0.20 em ,
+    underdot / sep           = 0.04 em ,
+    symbol / sep             = \c_zero_dim ,
+    underline / skip         = true ,
+    underline / thickness    = \ULthickness ,
+    underline / depth        = 0.20 em ,
+    underline / sep          = 0.07 em ,
+    underdblline / skip      = true ,
+    underdblline / thickness = \ULthickness ,
+    underdblline / depth     = 0.20 em ,
+    underdblline / sep       = 0.17 em ,
+    underdblline / gap       = 1.1 pt ,
+    underwave / skip         = true ,
+    underwave / symbol       = \sixly \tex_char:D 58 \exp_stop_f: ,
+    underwave / depth        = 0.20 em ,
+    underwave / sep          = 0.00 em ,
+    sout / skip              = true ,
+    sout / thickness         = \ULthickness ,
+    sout / height            = 0.35 em ,
+    xout / skip              = true
+  }
+\NewDocumentCommand \CJKunderanysymbol { o m m m }
+  {
+    \xeCJK_under_symbol:nnnnnn { symbol } { symbol } {#1} {#2} {#3} {#4}
+    \tex_ignorespaces:D
+  }
+\NewDocumentCommand \CJKunderdot { o m }
+  {
+    \xeCJK_under_symbol:nnnnnn { underdot } { udot }
+      {#1}
+      { \l__xeCJK_udot_depth_tl }
+      { \l__xeCJK_udot_format_tl \l__xeCJK_udot_symbol_tl }
+      {#2}
+    \tex_ignorespaces:D
+  }
+\cs_new_protected:Npn \xeCJK_under_symbol:nnnnnn
+  {
+    \xeCJK_if_ulem_patch:TF
+      { \__xeCJK_under_symbol_auxi:nnnnnn }
+      { \__xeCJK_under_symbol_auxii:nnnnnn }
+  }
+\cs_new_protected:Npn \__xeCJK_under_symbol_auxi:nnnnnn #1#2#3#4#5#6
+  {
+    \xeCJK_ulem_right: \UL@stop
+    \group_begin:
+      \xeCJK_under_symbol_initial:nnnnn {#1} {#2} {#3} {#4} {#5}
+      \use:c { l__xeCJK_#2_text_format_tl }
+      \UL@start \xeCJK_ulem_right_node:
+        #6
+      \xeCJK_ulem_right: \UL@stop
+    \group_end:
+    \UL@start \xeCJK_ulem_right_node:
+  }
+\cs_new_protected:Npn \__xeCJK_under_symbol_auxii:nnnnnn #1#2#3#4#5#6
+  {
+    \mode_leave_vertical:
+    \group_begin:
+      \xeCJK_under_symbol_initial:nnnnn {#1} {#2} {#3} {#4} {#5}
+      \__xeCJK_under_symbol_text_format:c { l__xeCJK_#2_text_format_tl }
+      #6
+      \xeCJK_ulem_right:
+    \group_end:
+    \xeCJK_ulem_right_node:
+  }
+\cs_new_protected:Npn \xeCJK_under_symbol_initial:nnnnn #1#2#3#4#5
+  {
+    \tl_if_novalue:nF {#3}
+      { \keys_set:nn { xeCJK / options / #1 } {#3} }
+    \xeCJK_fntef_sbox:n {#5}
+    \bool_if:NTF \l__xeCJK_fntef_bool
+      { \xeCJK_make_under_symbol:n { \l__xeCJK_fntef_dim } }
+      {
+        \bool_set_true:N \l__xeCJK_fntef_bool
+        \xeCJK_make_under_symbol:n {#4}
+      }
+    \tl_if_empty:cF { l__xeCJK_#2_boxdepth_tl }
+      {
+        \box_set_dp:Nn \l__xeCJK_under_symbol_box
+          { \use:c { l__xeCJK_#2_boxdepth_tl } }
+      }
+    \dim_set:Nn \l__xeCJK_fntef_dim
+      { \use:c { l__xeCJK_#2_sep_tl } + \box_dp:N \l__xeCJK_under_symbol_box }
+    \xeCJK_swap_cs:NN \CJKsymbol \__xeCJK_under_CJKsymbol:N
+    \__xeCJK_restore_shipout_CJKsymbol:
+  }
+\cs_new_protected:Npn \__xeCJK_under_symbol_text_format:N #1
+  {
+    \tl_if_empty:NF #1
+      { \xeCJK_ulem_right: #1 \xeCJK_ulem_right_node: }
+  }
+\cs_generate_variant:Nn \__xeCJK_under_symbol_text_format:N { c }
+\box_new:N \l__xeCJK_under_symbol_box
+\cs_new_protected:Npn \xeCJK_make_under_symbol:n #1
+  {
+    \hbox_set:Nn \l__xeCJK_under_symbol_box
+      {
+        \box_move_down:nn { #1 + \box_ht:N \l__xeCJK_fntef_box }
+          {
+            \hbox_to_zero:n
+              {
+                \xeCJK_select_font:
+                \tex_kern:D \tex_fontcharwd:D \tex_font:D "4E00 \exp_stop_f:
+                \tex_hss:D \box_use:N \l__xeCJK_fntef_box \tex_hss:D
+              }
+          }
+      }
+  }
+\cs_new_protected:Npn \__xeCJK_restore_shipout_CJKsymbol:
+  {
+    \tl_put_right:Nn \l__xeCJK_fntef_shipout_tl
+      { \xeCJK_swap_cs:NN \CJKsymbol \__xeCJK_under_CJKsymbol:N }
+    \__xeCJK_restore_shipout_fntef:
+    \xeCJK_cs_clear:N \__xeCJK_restore_shipout_CJKsymbol:
+  }
+\cs_new_protected:Npn \__xeCJK_restore_shipout_fntef:
+  {
+    \tl_put_right:Nn \l__xeCJK_fntef_shipout_tl
+      {
+        \bool_set_false:N \l__xeCJK_fntef_bool
+        \dim_zero:N \l__xeCJK_fntef_dim
+      }
+    \xeCJK_cs_clear:N \__xeCJK_restore_shipout_fntef:
+  }
+\tl_new:N \l__xeCJK_fntef_shipout_tl
+\xeCJK_add_to_shipout:n { \l__xeCJK_fntef_shipout_tl }
+\cs_new_protected:Npn \__xeCJK_under_CJKsymbol:N
+  {
+    \box_use:N \l__xeCJK_under_symbol_box
+    \xeCJK_no_break: \__xeCJK_under_CJKsymbol:N
+  }
+\NewDocumentEnvironment { CJKfilltwosides } { O { c } m }
+  {
+    \use:e { \exp_not:N \minipage [#1] { \dim_eval:n {#2} } }
+    \cs_set_eq:NN \CJKglue \xeCJK_fntef_hfilll:
+  }
+  {
+    \endminipage
+    \ignorespacesafterend
+  }
+\NewDocumentEnvironment { CJKfilltwosides* } { O { c } m +b }
+  {
+    \mode_leave_vertical:
+    \cs_set_eq:NN \CJKglue \xeCJK_fntef_hfilll:
+    \tl_set:Nn \arraystretch { 1 }
+    \cs_if_free:NF \extrarowheight
+      { \cs_set_eq:NN \extrarowheight \c_zero_dim }
+    \use:e { \__xeCJK_fill_two_sides:nnn {#1} { \dim_eval:n {#2} } } {#3}
+  }
+  { \ignorespacesafterend }
+\cs_new_protected:Npn \__xeCJK_fill_two_sides:nnn #1#2#3
+  {
+    \dim_compare:nNnTF {#2} > \c_zero_dim
+      {
+        \hbox_set:Nn \l__xeCJK_tmp_box
+          { \tabular [#1] { @ { } c @ { } }      #3 \endtabular }
+        \dim_compare:nNnTF {#2} > { \box_wd:N \l__xeCJK_tmp_box }
+          { \tabular [#1] { @ { } p {#2} @ { } } #3 \endtabular }
+          { \box_use:N \l__xeCJK_tmp_box }
+      }
+      { \tabular [#1] { @ { } c @ { } }          #3 \endtabular }
+  }
+\cs_new_protected:Npn \xeCJK_fntef_hfilll:
+  { \skip_horizontal:N \c__xeCJK_filll_skip }
+\skip_const:Nn \c__xeCJK_filll_skip { \c_zero_dim plus 1 filll }
+%% 
+%%     This package consists of the files xeCJK.dtx,
+%%                                        full-stop.map,
+%%                                        fullwidth-stop.map,
+%%                                        han-simp.map,
+%%                                        han-trad.map,
+%%                  and the derived files xeCJK.pdf,
+%%                                        xeCJK.sty,
+%%                                        xeCJK.cfg,
+%%                                        xeCJK.ins,
+%%                                        xeCJKfntef.sty,
+%%                                        xeCJK-listings.sty,
+%%                                        xunicode-addon.sty,
+%%                                        xunicode-extra.def,
+%%                                        xeCJK-example-autofake.tex,
+%%                                        xeCJK-example-fallback.tex,
+%%                                        xeCJK-example-subCJKblock.tex,
+%%                                        xeCJK-example-CJKecglue.tex,
+%%                                        xeCJK-example-checksingle.tex,
+%%                                        xeCJK-example-CJKfntef.tex,
+%%                                        xeCJK-example-punctstyle.tex,
+%%                                        xeCJK-example-verbatim.tex,
+%%                                        xeCJK-example-CM.tex,
+%%                                        xeCJK-example-listings.tex,
+%%                                        xeCJK-example-mathblock.tex,
+%%                                        xunicode-symbols.tex,
+%%                                        xunicode-commands.tex,
+%%                                        xunicode-combine-marks.tex,
+%%                                        xunicode-symbols.pdf,
+%%                                        full-stop.tec,
+%%                                        fullwidth-stop.tec,
+%%                                        han-simp.tec,
+%%                                        han-trad.tec, and
+%%                                        README.md.
+%%
+%% End of file `xeCJKfntef.sty'.

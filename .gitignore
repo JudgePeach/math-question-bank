@@ -50,3 +50,10 @@ venv/
 # 9. 忽略组卷导出的本地 PDF 与 ZIP 归档文件（防误保存至项目目录）
 *.pdf
 *.zip
+
+# 10. 忽略根目录下开发测试产生的临时调试图片
+*_test.png
+*_cropped.png
+test_*.png
+*_comparison*.png
+

@@ -121,12 +121,19 @@ class Paper(Base):
     created_at = Column(DateTime, default=datetime.datetime.utcnow)
 
     def to_dict(self):
+        meta = {}
+        try:
+            meta = json.loads(self.metadata_json or "{}")
+        except Exception:
+            meta = {}
         return {
             "id": self.id,
             "title": self.title,
             "subtitle": self.subtitle,
             "paper_type": self.paper_type,
             "total_score": self.total_score,
+            "show_secret": meta.get("show_secret", True),
+            "show_notice": meta.get("show_notice", True),
             "metadata_json": self.metadata_json,
             "created_at": (self.created_at.isoformat() + "Z") if self.created_at else None
         }

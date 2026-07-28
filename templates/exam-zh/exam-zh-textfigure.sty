@@ -1,0 +1,730 @@
+%
+% Copyright (c) 2024 Kangwei Xia
+% Released under the LaTeX Project Public License v1.3c License.
+% Repository: https://github.com/xkwxdyy/exam-zh
+%            https://gitee.com/xkwxdyy/exam-zh (mirror)
+%
+\NeedsTeXFormat{LaTeX2e}
+
+\RequirePackage{expl3}
+
+\ProvidesExplPackage {exam-zh-textfigure} {2026-07-12} {v0.3.0}
+  {exam-zh text with figure module}
+
+
+\RequirePackage { tabularray }
+\RequirePackage { varwidth }
+\RequirePackage { graphicx }
+\RequirePackage { filehook }
+\file_if_exist:nT { wrapstuff.sty }
+  {
+    \RequirePackage { wrapstuff }
+    \AtEndOfPackageFile* { exam-zh-choices }
+      {
+        \AddToHook { env / choices / before }
+          { \wrapstuffclear }
+      }
+  }
+
+
+%% multifigures 环境，排版多张图片 %%
+
+% \begin{multifigures}
+%   \item[题 9 图：勾股数] \includegraphics[width=3cm]{example-image.png}
+%   \item[题 11 图：圆锥曲线] \includegraphics[width=3cm]{example-image.png}
+% \end{multifigures}
+
+% 图片相对于 label 的方位
+\str_new:N \l__examzh_multifigures_figure_position_str
+% coffin type 的对齐方式
+\str_new:N \l__examzh_multifigures_coffin_align_str
+% 图片网格列间距（透传为 tabularray 的 colsep）
+\dim_new:N \l__examzh_multifigures_column_gap_dim
+
+
+\keys_define:nn { exam-zh / multifigures }
+  {
+    % 每行多少个（等价于有多少列）
+    columns .int_set:N = \l__examzh_multifigures_column_int,
+    % 图片相对于文字的位置（上下左右）
+    fig-pos .choices:nn =
+      { top, above, bottom, below, left, right }
+      { \str_set:Nx \l__examzh_multifigures_figure_position_str { \l_keys_choice_tl } },
+    % 环境上方的额外距离
+    top-sep .skip_set:N = \l__examzh_multifigures_top_sep_skip,
+    % 环境下方的额外距离
+    bottom-sep .skip_set:N = \l__examzh_multifigures_bottom_sep_skip,
+    % 图片网格的列间距；与 hshift 不同，不会逐项平移图片
+    column-gap .dim_set:N = \l__examzh_multifigures_column_gap_dim,
+    % 整体的偏移量
+    xshift .dim_set:N = \l__examzh_multifigures_xshift_dim,
+    hshift .dim_set:N = \l__examzh_multifigures_xshift_dim,
+    yshift .dim_set:N = \l__examzh_multifigures_yshift_dim,
+    vshift .dim_set:N = \l__examzh_multifigures_yshift_dim,
+    % label 的偏移量
+    label-xshift .dim_set:N = \l__examzh_multifigures_label_xshift_dim,
+    label-hshift .dim_set:N = \l__examzh_multifigures_label_xshift_dim,
+    label-yshift .dim_set:N = \l__examzh_multifigures_label_yshift_dim,
+    label-vshift .dim_set:N = \l__examzh_multifigures_label_yshift_dim,
+    % 对齐方式
+    align .choices:nn = 
+      { t, m, b }
+      { \str_set:Nx \l__examzh_multifigures_coffin_align_str { \l_keys_choice_tl } }
+  }
+\keys_set:nn { exam-zh / multifigures }
+  {
+    columns      = 3,
+    fig-pos      = above,
+    label-xshift = 0pt,
+    label-yshift = 0pt,
+    align        = b,
+    top-sep      = 1ex plus .5ex minus .5ex,
+    bottom-sep   = 0pt,
+    column-gap   = 6pt,
+  }
+
+% item 的 index 指标（即第几个 item）
+\int_new:N \l__examzh_multifigures_item_index_int
+% 将拼接后的 coffin 存到 seq 里
+\seq_new:N \l__examzh_multifigures_store_seq
+% 上面的 seq 的 item 数
+\int_new:N \l__examzh_multifigures_store_seq_item_int
+% 最终放在 tblr 里的内容
+\tl_new:N \l__examzh_multifigures_tblr_content_tl
+
+\NewDocumentEnvironment { multifigures } { O{ } +O{ } }
+  {
+    \group_begin:
+      \RenewDocumentCommand \item { O{ } }
+        { \__examzh_multifigures_item:n {##1} }
+      \int_set:Nn \l__examzh_multifigures_item_index_int {0}
+      \seq_clear:N \l__examzh_multifigures_store_seq
+      \tl_clear:N \l__examzh_multifigures_tblr_content_tl
+      \keys_set:nn { exam-zh / multifigures } {#1}
+  }
+  {
+      % 结束收集
+        \unskip
+      \end{varwidth}
+      \hcoffin_set_end:
+      % 拼接 label 和 figure
+      \__examzh_multifigures_coffin_join:
+      % 输出
+      \__examzh_multifigures_coffin_typeset:n {#2}
+      % \par \int_use:N \l__examzh_multifigures_item_index_int
+    \group_end:
+  }
+% 拼接 label 和 figure
+\cs_new:Npn \__examzh_multifigures_coffin_join:
+  {
+    \int_step_inline:nn { \l__examzh_multifigures_item_index_int }
+      {
+        \__examzh_multifigures_coffin_join_position_set:n {##1}
+        \seq_gput_right:Nn \l__examzh_multifigures_store_seq
+          {
+            \__examzh_multifigures_coffin_align_set:n {##1}
+          }
+      }
+  }
+\cs_new:Npn \__examzh_multifigures_coffin_align_set:n #1
+  {
+    \str_case:Vn \l__examzh_multifigures_coffin_align_str
+      {
+        {t} { \__examzh_multifigures_coffin_align_set_t:n {#1} }
+        {m} { \__examzh_multifigures_coffin_align_set_m:n {#1} }
+        {b} { \__examzh_multifigures_coffin_align_set_b:n {#1} }
+      }
+  }
+\cs_new:Npn \__examzh_multifigures_coffin_align_set_t:n #1
+  {
+    \coffin_typeset:cnnnn
+      { l__examzh_multifigures_figure_ \int_to_roman:n { #1 } _coffin }
+      { l } { t }  % align = t
+      { \l__examzh_multifigures_xshift_dim } { \l__examzh_multifigures_yshift_dim + 1em }
+  }
+\cs_new:Npn \__examzh_multifigures_coffin_align_set_m:n #1
+  {
+    \coffin_typeset:cnnnn
+      { l__examzh_multifigures_figure_ \int_to_roman:n { #1 } _coffin }
+      { l } { vc }  % align = m
+      { \l__examzh_multifigures_xshift_dim } { \l__examzh_multifigures_yshift_dim }
+  }
+\cs_new:Npn \__examzh_multifigures_coffin_align_set_b:n #1
+  {
+    \coffin_typeset:cnnnn
+      { l__examzh_multifigures_figure_ \int_to_roman:n { #1 } _coffin }
+      { l } { b }   % align = b
+      { \l__examzh_multifigures_xshift_dim } { \l__examzh_multifigures_yshift_dim }
+  }
+\cs_new:Npn \__examzh_multifigures_coffin_join_position_set:n #1
+  {
+    \use:c { __examzh_multifigures_coffin_join_position_set_ \l__examzh_multifigures_figure_position_str :n } {#1}
+  }
+\cs_new:Npn \__examzh_multifigures_coffin_join_position_set_top:n #1
+  {
+    \coffin_join:cnncnnnn
+      { l__examzh_multifigures_figure_ \int_to_roman:n {#1} _ coffin }
+      { hc } { b }
+      { l__examzh_multifigures_label_ \int_to_roman:n {#1} _ coffin }
+      { hc } { t }
+      { \l__examzh_multifigures_label_xshift_dim }
+      { \l__examzh_multifigures_label_yshift_dim - 6pt }
+  }
+\cs_set_eq:NN 
+  \__examzh_multifigures_coffin_join_position_set_above:n 
+  \__examzh_multifigures_coffin_join_position_set_top:n
+\cs_new:Npn \__examzh_multifigures_coffin_join_position_set_bottom:n #1
+  {
+    \coffin_join:cnncnnnn
+      { l__examzh_multifigures_figure_ \int_to_roman:n {#1} _ coffin }
+      { hc } { t }
+      { l__examzh_multifigures_label_ \int_to_roman:n {#1} _ coffin }
+      { hc } { b }
+      { \l__examzh_multifigures_label_xshift_dim }
+      { \l__examzh_multifigures_label_yshift_dim + 6pt }
+  }
+\cs_set_eq:NN 
+  \__examzh_multifigures_coffin_join_position_set_below:n 
+  \__examzh_multifigures_coffin_join_position_set_bottom:n
+\cs_new:Npn \__examzh_multifigures_coffin_join_position_set_left:n #1
+  {
+    \coffin_join:cnncnnnn
+      { l__examzh_multifigures_figure_ \int_to_roman:n {#1} _ coffin }
+      { l } { vc }
+      { l__examzh_multifigures_label_ \int_to_roman:n {#1} _ coffin }
+      { r } { vc }
+      { \l__examzh_multifigures_label_xshift_dim - 6pt }
+      { \l__examzh_multifigures_label_yshift_dim }
+  }
+\cs_new:Npn \__examzh_multifigures_coffin_join_position_set_right:n #1
+  {
+    \coffin_join:cnncnnnn
+      { l__examzh_multifigures_figure_ \int_to_roman:n {#1} _ coffin }
+      { r } { vc }
+      { l__examzh_multifigures_label_ \int_to_roman:n {#1} _ coffin }
+      { l } { vc }
+      { \l__examzh_multifigures_label_xshift_dim + 2pt }
+      { \l__examzh_multifigures_label_yshift_dim }
+  }
+\cs_new:Npn \__examzh_multifigures_coffin_typeset:n #1
+  {
+    \__examzh_multifigures_coffin_typeset_count:
+    \seq_map_indexed_inline:Nn \l__examzh_multifigures_store_seq
+      % ##1: index
+      % ##2: content
+      {
+        \int_compare:nNnTF { \int_mod:nn {##1} { \l__examzh_multifigures_column_int } } = {0}
+          {
+            \tl_gput_right:Nn \l__examzh_multifigures_tblr_content_tl { ##2 \\ }
+          }
+          {
+            \tl_gput_right:Nn \l__examzh_multifigures_tblr_content_tl { ##2 & }
+          }
+      }
+    % 如果 seq 的 item 比 column 多且不整除 column 的话，要补 &
+    \int_compare:nNnT { \l__examzh_multifigures_store_seq_item_int } > { \l__examzh_multifigures_column_int }
+      {
+        \int_compare:nNnF { \l__examzh_multifigures_item_num_mod_column_left_int } = { 0 }
+          {
+            \tl_gput_right:Nx \l__examzh_multifigures_tblr_content_tl
+              {
+                \prg_replicate:nn { \l__examzh_multifigures_item_num_mod_column_left_int -1 } {&}
+              }
+            % \int_use:N \l__examzh_multifigures_item_num_mod_column_left_int
+          }
+      }
+    \par 
+    \vspace*{ \l__examzh_multifigures_top_sep_skip }
+    \noindent \centering
+    % \SetTblrInner
+    %   {
+    %     rowsep = 4pt,
+    %     % colsep = 0pt
+    %   }
+    \begin{tblr}
+      [ expand = \l__examzh_multifigures_tblr_content_tl ]
+      {
+        width = \textwidth,
+        cells = {c},
+        colsep = \l__examzh_multifigures_column_gap_dim,
+        column{1} = {leftsep = 0pt},
+        column{Z} = {rightsep = 0pt},
+        rows = 
+          {
+            abovesep = 0pt,
+            belowsep = 0pt,
+          },
+        % vlines,hlines,
+        #1
+      }
+      \l__examzh_multifigures_tblr_content_tl
+    \end{tblr}
+    \vspace*{ \l__examzh_multifigures_bottom_sep_skip }
+    \par
+  }
+\int_new:N \l__examzh_multifigures_item_num_mod_column_left_int
+\cs_new:Npn \__examzh_multifigures_coffin_typeset_count:
+  {
+    % 计算 seq 有多少项
+    \int_set:Nn \l__examzh_multifigures_store_seq_item_int
+      { \seq_count:N \l__examzh_multifigures_store_seq }
+    % seq 项数小于 column 的话，column 设置为 seq 项数
+    \int_compare:nNnTF { \l__examzh_multifigures_store_seq_item_int } < { \l__examzh_multifigures_column_int }
+      { \int_set_eq:NN \l__examzh_multifigures_column_int \l__examzh_multifigures_store_seq_item_int }
+      {
+        % 计算 \l__examzh_multifigures_store_seq_item_int mod \l__examzh_multifigures_column_int 的余数，用于补 &
+        \int_set:Nn \l__examzh_multifigures_item_num_mod_column_left_int { \int_mod:nn { \l__examzh_multifigures_store_seq_item_int } { \l__examzh_multifigures_column_int } }
+      }
+  }
+\cs_new:Npn \__examzh_multifigures_item:n #1
+  {
+    % 增加指标（g 是关键）
+    \int_gincr:N \l__examzh_multifigures_item_index_int
+    % 新建 coffin
+    \__examzh_multifigures_item_new_coffin:
+    % 储存 label（一直出不来的原因是因为没改成 gset）
+    \hcoffin_gset:cn { l__examzh_multifigures_label_ \int_to_roman:n { \l__examzh_multifigures_item_index_int } _coffin } {#1}
+    % 储存 figure
+    \int_compare:nNnF { \l__examzh_multifigures_item_index_int } = {1}
+      {
+          \unskip
+          \end{varwidth}
+        % 结束上一个 item 的收集
+        \hcoffin_set_end:
+      }
+    % 收集
+    \hcoffin_set:cw { l__examzh_multifigures_figure_ \int_to_roman:n { \l__examzh_multifigures_item_index_int } _coffin }
+      \begin{varwidth}{\hsize}
+        \ignorespaces
+  }
+
+% 新建 coffin
+\cs_new:Npn \__examzh_multifigures_item_new_coffin:
+  {
+    % 放图片的 coffin
+    \coffin_if_exist:cF { l__examzh_multifigures_figure_ \int_to_roman:n { \l__examzh_multifigures_item_index_int } _coffin }
+      { \coffin_new:c { l__examzh_multifigures_figure_ \int_to_roman:n { \l__examzh_multifigures_item_index_int } _coffin } }
+    % 放 label 的 coffin
+    \coffin_if_exist:cF { l__examzh_multifigures_label_ \int_to_roman:n { \l__examzh_multifigures_item_index_int } _coffin }
+      { \coffin_new:c { l__examzh_multifigures_label_ \int_to_roman:n { \l__examzh_multifigures_item_index_int } _coffin } }
+  }
+
+
+
+%% \textfigure 
+
+
+\coffin_new:N \l__examzh_textfigure_text_coffin        % 用于存文本
+\coffin_new:N \l__examzh_textfigure_figure_coffin         % 用于存图片
+
+\str_new:N \l__examzh_textfigure_current_figure_position_str    % 用来存当前的 anchor值
+
+\fp_new:N \l__examzh_textfigure_text_ratio_fp              % 文本的比例
+
+\dim_new:N \l__examzh_textfigure_text_width_dim            % 文本的宽度
+\dim_new:N \l__examzh_textfigure_text_coffin_width_dim     % 文本c offin 的宽度
+\dim_new:N \l__examzh_textfigure_figure_width_dim      % 图片的 varwidth 环境的宽度
+\dim_new:N \l__examzh_textfigure_min_text_width_dim    % 自动分栏时文本的最小宽度
+\dim_new:N \l__examzh_textfigure_column_gap_dim        % 左右图文之间的距离
+\bool_new:N \l__examzh_textfigure_auto_text_width_bool % 是否按图片实宽计算文本宽度
+
+% 用于 top-center, top-right, bottom-center, bottom-right 的水平偏移量储存
+\dim_new:N \l__examzh_textfigure_figure_coffin_horizontal_transform_dim
+\dim_new:N \l__examzh_textfigure_tmpa_dim              % 临时变量
+
+\skip_new:N \l__examzh_textfigure_tmpa_skip            % 临时变量
+
+
+\keys_define:nn { exam-zh }
+  {
+    textfigure  .meta:nn = { exam-zh / textfigure } {#1}
+  }
+
+\keys_define:nn { exam-zh / textfigure }
+  {
+    % fig-pos为图片位于文本的方位
+    fig-pos .choices:nn =
+      { 
+        left , right , top , bottom ,
+        top-left , top-right , top-center ,
+        top-flushright , bottom-flushright , 
+        bottom-left , bottom-right , bottom-center ,
+        right-top , right-bottom , right-center ,
+        left-top , left-bottom , left-center
+      }
+      {
+        \str_set:NV \l__examzh_textfigure_current_figure_position_str \l_keys_choice_tl
+      },
+    pos .choices:nn =
+      { 
+        left , right , top , bottom ,
+        top-left , top-right , top-center ,
+        top-flushright , bottom-flushright , 
+        bottom-left , bottom-right , bottom-center ,
+        right-top , right-bottom , right-center ,
+        left-top , left-bottom , left-center
+      }
+      {
+        \str_set:NV \l__examzh_textfigure_current_figure_position_str \l_keys_choice_tl
+      },
+    % figure-yshift：调整图片的垂直额外偏移量
+    figure-yshift .dim_set:N = \l__examzh_textfigure_figure_yshift_dim,
+    figure-vshift .dim_set:N = \l__examzh_textfigure_figure_yshift_dim,
+    % figure-xshift：调整图片的水平额外偏移量
+    figure-xshift .dim_set:N = \l__examzh_textfigure_figure_xshift_dim,
+    figure-hshift .dim_set:N = \l__examzh_textfigure_figure_xshift_dim,
+    % yshift：调整整体的垂直额外偏移量
+    yshift .dim_set:N = \l__examzh_textfigure_yshift_dim,
+    vshift .dim_set:N = \l__examzh_textfigure_yshift_dim,
+    % xshift：调整整体的水平额外偏移量
+    xshift .dim_set:N = \l__examzh_textfigure_xshift_dim,
+    hshift .dim_set:N = \l__examzh_textfigure_xshift_dim,
+    % text-width：手动设置文本的 varwidth 环境的宽度
+    text-width .dim_set:N = \l__examzh_textfigure_text_width_dim,
+    % 自动按图片实际宽度分配左右布局的文本宽度
+    auto-text-width .bool_set:N = \l__examzh_textfigure_auto_text_width_bool,
+    min-text-width .dim_set:N = \l__examzh_textfigure_min_text_width_dim,
+    column-gap .dim_set:N = \l__examzh_textfigure_column_gap_dim,
+    % figure-width：手动设置 figure 的 varwidth 环境的宽度
+    figure-width .dim_set:N = \l__examzh_textfigure_figure_width_dim,
+    % ratio / text-ratio：文本 coffin 占行宽的比例，范围0-1
+    ratio .fp_set:N = \l__examzh_textfigure_text_ratio_fp,
+    text-ratio .fp_set:N = \l__examzh_textfigure_text_ratio_fp,
+    % 环境上方的额外距离
+    top-sep .skip_set:N = \l__examzh_textfigure_top_sep_skip,
+    % 环境下方的额外距离
+    bottom-sep .skip_set:N = \l__examzh_textfigure_bottom_sep_skip,
+    % 类似于 wrapstuff 的 top
+    top .int_set:N = \l__examzh_textfigure_top_int,
+    parindent .dim_set:N = \l__examzh_textfigure_text_parindent_dim
+  }
+
+\keys_set:nn { exam-zh / textfigure }
+  {
+    fig-pos         = bottom-right,
+    yshift          = 0pt,
+    text-width      = \textwidth,
+    auto-text-width = false,
+    min-text-width  = .35\linewidth,
+    column-gap      = 1em,
+    figure-width    = \columnwidth,
+    text-ratio      = 1,
+    top-sep         = 0pt,
+    bottom-sep      = 1.5ex plus .5ex minus 0.5ex,
+    top             = 0,
+    parindent       = 0em 
+  }
+
+
+% 【已解决】判断anchor是不是west或者east，是的话就自动调整调整一下text-ratio
+% - 问题在于要知道key-val设置了什么anchor才能判断
+% - 但是这个key-val设置和手动设置ratio是同一接口
+% - 理想是：
+%   - 先用户设置anchor
+%   - 然后自动判断是否是west或者east，并自动调整ratio
+%    【思考】其实也就是说anchor的时候要判断是否是east和west来设置ratio（关键）
+%   - 然后用户手动的话以手动的为准
+% 【解决关键】既然不可能中途处理，那只能在 key-val 设置的时候就要处理掉这个自动的ratio，所以重新设计了anchor键值代码
+
+\NewDocumentCommand{ \textfigure }{ O{} +m +m }
+  {
+    \group_begin:
+      \keys_set:nn { exam-zh / textfigure } {#1}
+      \par 
+      \vspace*{ \l__examzh_textfigure_top_sep_skip }
+      \noindent
+      \__examzh_textfigure_output:nnn {#1} {#2} {#3}
+      \vspace*{ \l__examzh_textfigure_bottom_sep_skip }
+    \group_end:
+  }
+
+
+% 最终的拼接命令
+\cs_new:Npn \__examzh_textfigure_output:nnn #1#2#3
+  {
+    % issue：https://gitee.com/xkwxdyy/text-figure/issues/I4RVQX
+    % 关键点在于要离开垂直模式
+    % https://ask.latexstudio.net/ask/question/7238.html
+    \mode_leave_vertical:
+    % 先存储并测量图片；auto-text-width 模式会使用图片的实际宽度。
+    \__examzh_textfigure_figure_coffin_store:n {#3}
+    \__examzh_textfigure_text_width_dim_set:n {#1}
+    \__examzh_textfigure_text_coffin_store:n {#2}
+    % coffin 的拼接
+    \__examzh_textfigure_coffin_join:
+    % coffin 的 typeset
+    \__examzh_textfigure_coffin_typeset:
+  }
+\cs_new:Npn \__examzh_textfigure_text_width_dim_set:n #1
+  {
+    \str_case:VnT \l__examzh_textfigure_current_figure_position_str 
+      {
+        {bottom-flushright} {}
+        {bottom-left} {}
+        {bottom-right} {}
+        {bottom-center} {}
+      }
+      { \fp_set:Nn \l__examzh_textfigure_text_ratio_fp {1} }
+    \fp_compare:nNnF { \l__examzh_textfigure_text_ratio_fp } = { 1 }
+      {
+        \str_case:VnT \l__examzh_textfigure_current_figure_position_str 
+          {
+            {left} {}
+            {right} {}
+            {left-center} {}
+            {right-center} {}
+            {right-top} {}
+            {right-bottom} {}
+            {left-top} {}
+            {left-bottom} {}
+          }
+          { \fp_set:Nn \l__examzh_textfigure_text_ratio_fp {0.7} }
+      }
+    \keys_set:nn { exam-zh / textfigure } {#1}
+    \dim_set_eq:NN \l__examzh_textfigure_tmpa_dim  \l__examzh_textfigure_text_width_dim
+    \dim_set:Nn \l__examzh_textfigure_text_width_dim
+      {
+        \l__examzh_textfigure_tmpa_dim * \dim_ratio:nn { \fp_use:N \l__examzh_textfigure_text_ratio_fp pt } { 1 pt }
+      }
+    \bool_if:NT \l__examzh_textfigure_auto_text_width_bool
+      {
+        \str_case:VnT \l__examzh_textfigure_current_figure_position_str
+          {
+            {left}         {}
+            {right}        {}
+            {left-center}  {}
+            {right-center} {}
+            {left-top}     {}
+            {right-top}    {}
+            {left-bottom}  {}
+            {right-bottom} {}
+          }
+          { \__examzh_textfigure_auto_text_width_dim_set: }
+      }
+  }
+\cs_new_protected:Npn \__examzh_textfigure_auto_text_width_dim_set:
+  {
+    \dim_set:Nn \l__examzh_textfigure_text_width_dim
+      {
+        \linewidth
+        - \coffin_wd:N \l__examzh_textfigure_figure_coffin
+        - \l__examzh_textfigure_column_gap_dim
+      }
+    \dim_compare:nNnT
+      { \l__examzh_textfigure_text_width_dim }
+      < { \l__examzh_textfigure_min_text_width_dim }
+      {
+        \dim_set_eq:NN
+          \l__examzh_textfigure_text_width_dim
+          \l__examzh_textfigure_min_text_width_dim
+      }
+    \dim_compare:nNnT
+      { \l__examzh_textfigure_text_width_dim } > { \linewidth }
+      { \dim_set:Nn \l__examzh_textfigure_text_width_dim { \linewidth } }
+  }
+\cs_new:Npn \__examzh_textfigure_text_coffin_store:n #1
+  {
+    \hcoffin_set:Nn \l__examzh_textfigure_text_coffin 
+      {
+        % 顶部对齐让 coffin 的 H pole 落在首行基线上；正文首行包含
+        % 分式等较高内容时，基线也不会随包围盒高度漂移。
+        \begin{varwidth}[t]{ \l__examzh_textfigure_text_width_dim }
+          \dim_set:Nn \parindent { \l__examzh_textfigure_text_parindent_dim }
+          \ignorespaces
+          #1
+          \unskip
+        \end{varwidth}
+      }
+  }
+\cs_new:Npn \__examzh_textfigure_figure_coffin_store:n #1
+  {
+    \hcoffin_set:Nn \l__examzh_textfigure_figure_coffin 
+      {
+        \begin{varwidth}{ \l__examzh_textfigure_figure_width_dim }
+          \centering
+          \ignorespaces
+          #1
+          \unskip
+        \end{varwidth}
+      }
+  }
+\cs_new:Npn \__examzh_textfigure_coffin_join:
+  {
+    \use:c { __examzh_textfigure_fig_pos_set_ \l__examzh_textfigure_current_figure_position_str :NN }
+      \l__examzh_textfigure_text_coffin
+      \l__examzh_textfigure_figure_coffin
+  }
+\cs_new:Npn \__examzh_textfigure_coffin_typeset:
+  {
+    \coffin_typeset:Nnnnn \l__examzh_textfigure_text_coffin
+      { l } { H }
+      { \l__examzh_textfigure_xshift_dim } 
+      { \l__examzh_textfigure_yshift_dim }
+  }
+
+% top表示位于文本正上方
+\cs_new_protected:cpn { __examzh_textfigure_fig_pos_set_top:NN } #1#2
+  {
+    \coffin_join:NnnNnnnn
+      #1 { t } { hc }
+      #2 { b } { hc }
+      { \l__examzh_textfigure_figure_xshift_dim } 
+      { 1em + \l__examzh_textfigure_figure_yshift_dim }
+  }
+% top-center表示位于文本上方，但是处于水平的中线处
+\cs_new_protected:cpn { __examzh_textfigure_fig_pos_set_top-center:NN } #1#2
+  {
+    \dim_set:Nn \l__examzh_textfigure_tmpa_dim 
+      { \coffin_wd:N #1 }
+    \dim_set:Nn \l__examzh_textfigure_figure_coffin_horizontal_transform_dim
+      {
+        \linewidth * \dim_ratio:nn { 1 pt } { 2 pt } 
+        - 
+        \l__examzh_textfigure_tmpa_dim * \dim_ratio:nn { 1 pt } { 2 pt } 
+      }
+    \coffin_join:NnnNnnnn
+      #1 { t } { hc }
+      #2 { b } { hc }
+      { \l__examzh_textfigure_figure_coffin_horizontal_transform_dim + \l__examzh_textfigure_figure_xshift_dim } 
+      { 1em + \l__examzh_textfigure_figure_yshift_dim }
+  }
+% bottom-center表示位于文本下方，但是处于水平的中线处
+\cs_new_protected:cpn { __examzh_textfigure_fig_pos_set_bottom-center:NN } #1#2
+  {
+    \dim_set:Nn \l__examzh_textfigure_tmpa_dim 
+      { \coffin_wd:N #1 }
+    \dim_set:Nn \l__examzh_textfigure_figure_coffin_horizontal_transform_dim
+      {
+        \linewidth * \dim_ratio:nn { 1 pt } { 2 pt } 
+        - 
+        \l__examzh_textfigure_tmpa_dim * \dim_ratio:nn { 1 pt } { 2 pt } 
+      }
+    \coffin_join:NnnNnnnn
+      #1 { b } { hc }
+      #2 { t } { hc }
+      { \l__examzh_textfigure_figure_coffin_horizontal_transform_dim + \l__examzh_textfigure_figure_xshift_dim }
+      { -1em + \l__examzh_textfigure_figure_yshift_dim }
+  }
+% bottom 表示位于文本正下方
+\cs_new_protected:cpn { __examzh_textfigure_fig_pos_set_bottom:NN } #1#2
+  {
+    \coffin_join:NnnNnnnn
+      #1 { b } { hc }
+      #2 { t } { hc }
+      { \l__examzh_textfigure_figure_xshift_dim }
+      { -1em + \l__examzh_textfigure_figure_yshift_dim }
+  }
+\cs_new_protected:cpn { __examzh_textfigure_fig_pos_set_left:NN } #1#2
+  {
+    \coffin_join:NnnNnnnn
+      #1 { vc } { l }
+      #2 { vc } { r }
+      { -\l__examzh_textfigure_column_gap_dim + \l__examzh_textfigure_figure_xshift_dim }
+      { \l__examzh_textfigure_figure_yshift_dim }
+  }
+\cs_set_eq:cc { __examzh_textfigure_fig_pos_set_left-center:NN } { __examzh_textfigure_fig_pos_set_left:NN }
+\cs_new_protected:cpn { __examzh_textfigure_fig_pos_set_left-top:NN } #1#2
+  {
+    \dim_set:Nn \l__examzh_textfigure_tmpa_dim
+      { \baselineskip * \dim_ratio:nn { \int_use:N \l__examzh_textfigure_top_int pt } { 1pt } }
+    \coffin_join:NnnNnnnn
+      #1 { t } { l }
+      #2 { t } { r }
+      { -\l__examzh_textfigure_column_gap_dim + \l__examzh_textfigure_figure_xshift_dim }
+      { - \l__examzh_textfigure_tmpa_dim + \l__examzh_textfigure_figure_yshift_dim }
+  }
+\cs_new_protected:cpn { __examzh_textfigure_fig_pos_set_left-bottom:NN } #1#2
+  {
+    \coffin_join:NnnNnnnn
+      #1 { b } { l }
+      #2 { b } { r }
+      { -\l__examzh_textfigure_column_gap_dim + \l__examzh_textfigure_figure_xshift_dim }
+      { 0pt + \l__examzh_textfigure_figure_yshift_dim }
+  }
+\cs_new_protected:cpn { __examzh_textfigure_fig_pos_set_right-top:NN } #1#2
+  {
+    \dim_set:Nn \l__examzh_textfigure_tmpa_dim
+      { \baselineskip * \dim_ratio:nn { \int_use:N \l__examzh_textfigure_top_int pt } { 1pt } }
+    \coffin_join:NnnNnnnn
+      #1 { t } { r }
+      #2 { t } { l }
+      { \l__examzh_textfigure_column_gap_dim + \l__examzh_textfigure_figure_xshift_dim }
+      { - \l__examzh_textfigure_tmpa_dim + \l__examzh_textfigure_figure_yshift_dim }
+  }
+\cs_new_protected:cpn { __examzh_textfigure_fig_pos_set_right-center:NN } #1#2
+  {
+    \coffin_join:NnnNnnnn
+      #1 { vc } { r }
+      #2 { vc } { l }
+      { \l__examzh_textfigure_column_gap_dim + \l__examzh_textfigure_figure_xshift_dim }
+      { 0pt + \l__examzh_textfigure_figure_yshift_dim }
+  }
+\cs_new_protected:cpn { __examzh_textfigure_fig_pos_set_right-bottom:NN } #1#2
+  {
+    \coffin_join:NnnNnnnn
+      #1 { b } { r }
+      #2 { b } { l }
+      { \l__examzh_textfigure_column_gap_dim + \l__examzh_textfigure_figure_xshift_dim }
+      { 0pt + \l__examzh_textfigure_figure_yshift_dim }
+  }
+\cs_set_eq:cc { __examzh_textfigure_fig_pos_set_right:NN } { __examzh_textfigure_fig_pos_set_right-center:NN }
+% top-flushright：文本上方，水平方向是在行尾
+\cs_new_protected:cpn { __examzh_textfigure_fig_pos_set_top-flushright:NN } #1#2
+  {
+    \dim_set:Nn \l__examzh_textfigure_tmpa_dim 
+      { \coffin_wd:N #1 }
+    \dim_set:Nn \l__examzh_textfigure_figure_coffin_horizontal_transform_dim
+      { \linewidth - \l__examzh_textfigure_tmpa_dim }
+    \coffin_join:NnnNnnnn
+      #1 { t } { r }
+      #2 { b } { r }
+      { \l__examzh_textfigure_figure_coffin_horizontal_transform_dim  + \l__examzh_textfigure_figure_xshift_dim }
+      { 1em + \l__examzh_textfigure_figure_yshift_dim }
+  }
+\cs_new_protected:cpn { __examzh_textfigure_fig_pos_set_top-right:NN } #1#2
+  {
+    \coffin_join:NnnNnnnn
+      #1 { t } { r }
+      #2 { b } { r }
+      { \l__examzh_textfigure_figure_xshift_dim }
+      { 1em + \l__examzh_textfigure_figure_yshift_dim }
+  }
+% bottom-flushright：文本下方，水平方向在行尾
+\cs_new_protected:cpn { __examzh_textfigure_fig_pos_set_bottom-flushright:NN } #1#2
+  {
+    \dim_set:Nn \l__examzh_textfigure_tmpa_dim 
+      { \coffin_wd:N #1 }
+    \dim_set:Nn \l__examzh_textfigure_figure_coffin_horizontal_transform_dim
+      { \linewidth - \l__examzh_textfigure_tmpa_dim  }
+    \coffin_join:NnnNnnnn
+      #1 { b } { r }
+      #2 { t } { r }
+      { \l__examzh_textfigure_figure_coffin_horizontal_transform_dim + \l__examzh_textfigure_figure_xshift_dim }
+      { -1em + \l__examzh_textfigure_figure_yshift_dim }
+  }
+\cs_new_protected:cpn { __examzh_textfigure_fig_pos_set_bottom-right:NN } #1#2
+  {
+    \coffin_join:NnnNnnnn
+      #1 { b } { r }
+      #2 { t } { r }
+      { \l__examzh_textfigure_figure_xshift_dim }
+      { -1em + \l__examzh_textfigure_figure_yshift_dim }
+  }
+\cs_new_protected:cpn { __examzh_textfigure_fig_pos_set_top-left:NN } #1#2
+  {
+    \coffin_join:NnnNnnnn
+      #1 { t } { l }
+      #2 { b } { l }
+      { 0pt + \l__examzh_textfigure_figure_xshift_dim }
+      { 1em + \l__examzh_textfigure_figure_yshift_dim }
+  }
+\cs_new_protected:cpn { __examzh_textfigure_fig_pos_set_bottom-left:NN } #1#2
+  {
+    \coffin_join:NnnNnnnn
+      #1 { b } { l }
+      #2 { t } { l }
+      { 0pt + \l__examzh_textfigure_figure_xshift_dim }
+      { -1em + \l__examzh_textfigure_figure_yshift_dim }
+  }
+
+\endinput

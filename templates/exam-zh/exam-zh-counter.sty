@@ -1,0 +1,102 @@
+%
+% Copyright (c) 2024 Kangwei Xia
+% Released under the LaTeX Project Public License v1.3c License.
+% Repository: https://github.com/xkwxdyy/exam-zh
+%            https://gitee.com/xkwxdyy/exam-zh (mirror)
+%
+
+\NeedsTeXFormat{LaTeX2e}
+
+\RequirePackage { expl3 }
+\RequirePackage { xparse }
+\RequirePackage { exam-zh-circlednumber }
+
+\ProvidesExplPackage {exam-zh-counter} {2026-07-12} {v0.3.0}
+  {exam-zh shared counter registry}
+
+\cs_new:Npn \__examzh_counter_value:n #1
+  {
+    \int_if_exist:cTF { c@ #1 }
+      { \int_use:c { c@ #1 } }
+      { \int_eval:n {#1} }
+  }
+
+\msg_new:nnn { exam-zh / counter } { deprecated-circlednumber-star }
+  {
+    The~command~\token_to_str:N \circlednumber*~is~deprecated;~
+    use~\token_to_str:N \tikzcirclednumber~instead.
+  }
+
+% Both public commands accept a LaTeX counter name or an integer expression.
+% The starred legacy form is retained for compatibility during deprecation.
+\NewDocumentCommand \circlednumber { s m }
+  {
+    \IfBooleanTF {#1}
+      {
+        \msg_warning:nn { exam-zh / counter }
+          { deprecated-circlednumber-star }
+        \exp_args:Nx \__examzh_tikz_circled_number:n
+          { \__examzh_counter_value:n {#2} }
+      }
+      {
+        \exp_args:Nx \__examzh_font_circled_number:n
+          { \__examzh_counter_value:n {#2} }
+      }
+  }
+
+\NewDocumentCommand \tikzcirclednumber { m }
+  {
+    \exp_args:Nx \__examzh_tikz_circled_number:n
+      { \__examzh_counter_value:n {#1} }
+  }
+
+% #1: token list containing the local counter bindings
+% #2: public formatter command
+% #3: implementation command
+% #4: registry namespace
+% #5: current item index expression
+\cs_new_protected:Npn \__examzh_counter_register:NNNnn #1#2#3#4#5
+  {
+    \tl_put_right:Nn #1
+      { \__examzh_counter_bind:NNnn #2 #3 {#4} {#5} }
+    \cs_set_eq:cN { __examzh_counter_ #4 _save_ \cs_to_str:N #2 : } #3
+    \cs_set_eq:cN { __examzh_counter_ #4 _save_ \cs_to_str:N #3 : } #3
+  }
+
+% Locally turn both the public and implementation commands into label parsers.
+\cs_new_protected:Npn \__examzh_counter_bind:NNnn #1#2#3#4
+  {
+    \cs_set:Npn #1 { \__examzh_counter_format:Nnnn #2 {#3} {#4} }
+    \cs_set:Npn #2 { \__examzh_counter_format:Nnnn #2 {#3} {#4} }
+  }
+
+\cs_new:Npn \__examzh_counter_format:Nnnn #1#2#3#4
+  {
+    \tl_if_eq:nnTF {#4} { * }
+      {
+        \use:c { __examzh_counter_ #2 _save_ \cs_to_str:N #1 : }
+          { \int_eval:n {#3} }
+      }
+      {
+        \use:c { __examzh_counter_ #2 _save_ \cs_to_str:N #1 : }
+          { \__examzh_counter_value:n {#4} }
+      }
+  }
+
+% enumitem uses the same `\formatter*` placeholder syntax.  Register both
+% unambiguous commands when enumitem is present, without requiring it here.
+\cs_new_protected:Npn \__examzh_counter_register_enumitem:
+  {
+    \cs_if_exist:NT \AddEnumerateCounter
+      {
+        \AddEnumerateCounter \circlednumber
+          \__examzh_font_circled_number:n { 50 }
+        \AddEnumerateCounter \tikzcirclednumber
+          \__examzh_tikz_circled_number:n { 100 }
+      }
+  }
+
+\AddToHook { begindocument / before }
+  { \__examzh_counter_register_enumitem: }
+
+\endinput

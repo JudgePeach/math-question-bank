@@ -1,39 +1,49 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="100%" height="100%">
   <defs>
-    <!-- Premium Gradient Background -->
-    <linearGradient id="bgGrad" x1="0%" y1="0%" x2="100%" y2="100%">
-      <stop offset="0%" stop-color="#A855F7" />
-      <stop offset="50%" stop-color="#6366F1" />
-      <stop offset="100%" stop-color="#2563EB" />
+    <!-- Background Gradient -->
+    <linearGradient id="darkBg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#0F172A" />
+      <stop offset="50%" stop-color="#1E1B4B" />
+      <stop offset="100%" stop-color="#311042" />
     </linearGradient>
-    
-    <!-- Soft Glow / Drop Shadow for Math Symbols -->
-    <filter id="shadow" x="-10%" y="-10%" width="130%" height="130%">
-      <feDropShadow dx="0" dy="8" stdDeviation="10" flood-color="#000000" flood-opacity="0.25" />
-    </feDropShadow>
-    
-    <!-- Semi-transparent White Inner Border -->
-    <linearGradient id="borderGrad" x1="0%" y1="0%" x2="0%" y2="100%">
-      <stop offset="0%" stop-color="#FFFFFF" stop-opacity="0.25" />
-      <stop offset="100%" stop-color="#FFFFFF" stop-opacity="0.05" />
+
+    <!-- Golden Ratio Spiral & Letter P Gradient -->
+    <linearGradient id="goldGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#FBBF24" />
+      <stop offset="40%" stop-color="#F59E0B" />
+      <stop offset="80% stop-color="#EC4899" />
+      <stop offset="100%" stop-color="#8B5CF6" />
     </linearGradient>
+
+    <linearGradient id="strokeGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#FFFFFF" stop-opacity="0.8" />
+      <stop offset="100%" stop-color="#F59E0B" stop-opacity="0.3" />
+    </linearGradient>
+
+    <!-- Soft Drop Shadow -->
+    <filter id="glow" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="6" stdDeviation="12" flood-color="#F59E0B" flood-opacity="0.35" />
+    </filter>
   </defs>
 
-  <!-- Squircle-like smooth rounded rectangle base -->
-  <rect x="10" y="10" width="492" height="492" rx="110" fill="url(#bgGrad)" />
-  <rect x="10" y="10" width="492" height="492" rx="110" fill="none" stroke="url(#borderGrad)" stroke-width="5" />
+  <!-- Background Base Squircle -->
+  <rect x="16" y="16" width="480" height="480" rx="110" fill="url(#darkBg)" />
+  <rect x="16" y="16" width="480" height="480" rx="110" fill="none" stroke="url(#strokeGrad)" stroke-width="4" opacity="0.4" />
 
-  <!-- Math Symbols Group with shadow -->
-  <g filter="url(#shadow)" stroke="white" stroke-linecap="round" stroke-linejoin="round" fill="none">
-    <!-- Square Root Symbol: √ -->
-    <path d="M 110 260 L 145 260 L 185 370 L 240 140 L 400 140" stroke-width="24" />
-    
-    <!-- Greek Letter Pi: π inside root -->
-    <!-- Top Bar -->
-    <path d="M 265 210 L 375 210" stroke-width="19" />
-    <!-- Left Leg -->
-    <path d="M 295 210 L 295 300 C 295 320, 275 325, 275 325" stroke-width="19" />
-    <!-- Right Leg -->
-    <path d="M 345 210 L 345 305 C 345 320, 365 325, 365 325" stroke-width="19" />
+  <!-- Main Golden Ratio Geometric Shapes & Spiral P -->
+  <g filter="url(#glow)">
+    <!-- Golden Spiral Reference Arcs (Subtle Geometry lines) -->
+    <path d="M 140 370 A 230 230 0 0 1 370 140" fill="none" stroke="#F59E0B" stroke-width="3" stroke-dasharray="6 6" opacity="0.35" />
+    <path d="M 370 140 A 142 142 0 0 1 370 282" fill="none" stroke="#EC4899" stroke-width="3" stroke-dasharray="6 6" opacity="0.35" />
+
+    <!-- Main Bold Stylized Letter P based on Golden Spiral -->
+    <!-- Vertical Stem -->
+    <path d="M 155 130 L 155 382" stroke="url(#goldGrad)" stroke-width="44" stroke-linecap="round" fill="none" />
+
+    <!-- Upper Golden Bowl Arc -->
+    <path d="M 155 130 H 260 C 330 130, 375 168, 375 226 C 375 284, 330 322, 260 322 H 155" stroke="url(#goldGrad)" stroke-width="44" stroke-linecap="round" stroke-linejoin="round" fill="none" />
+
+    <!-- Golden Ratio Inner Spiral Accent Path -->
+    <path d="M 155 322 C 220 322, 295 305, 305 226 C 315 155, 230 160, 210 160 C 180 160, 180 200, 205 200 C 225 200, 230 185, 220 185" fill="none" stroke="#FFFFFF" stroke-width="12" stroke-linecap="round" opacity="0.9" />
   </g>
 </svg>

@@ -25,6 +25,7 @@
   - 所有选择题在入库和存储时，选项部分必须统一格式化为 LaTeX 的 `choices` 环境（使用 `\begin{choices}` 和 `\item` 包裹，且剥离原本的 A., B., C., D. 等标号前缀）。
   - **选择题题干末尾括号自动净化 (Choice Stem Parentheses Cleanup & Self-Healing)**：后端 `paper_helper.py` (`clean_choice_stem_parentheses`)、前端 KaTeX 预编译 (`cleanChoiceStemParentheses`) 与全量自愈脚本 (`migrate_choice_parentheses.py`) 会自动物理抹除题干末尾录入的各种全角/半角供填答用空括号（如 `(\quad)`、`(   )`、`（  ）`），防止与 LaTeX 模板右侧自动生成的 `\paren` 宏产生二次重叠。
   - **填空题 \fillin 规范与自动自愈 (Fillin Macro Standardization & Self-Healing)**：系统在多模态 OCR 识图（SiliconFlow / 阿里百炼 / 中展 AI）Prompt、试卷 AI 智能拆卷 Prompt 中均强制要求将填空题下划线生成为 `\fillin` 宏。同时在后端录入/修改/拆题逻辑中内置了 `normalize_fillin_macro` 自愈清洗器，会自动将 `______` 或 `\underline{\hspace{...}}` 等旧格式静默升级为标准的 `\fillin`。前端 `preprocessFormulaForKaTeX` 默认将纯 `\fillin` 转化为 1.5cm 标准精美下划线渲染。
+  - **LaTeX/Markdown 换行规范与右侧插图顶格组装算法 (Line Break Rules & Right-Aligned Minipage Hangindent Reset)**：在 LaTeX 试卷导出中，引入了 `format_stem_paragraphs` 算法结合 `\noindent\begin{minipage}` 容器及内部 `\hangindent=0pt\setlength{\parindent}{2em}` 参数重置。消除了外层 `problem` 环境施加给 `minipage` 盒子的外层 2em 缩进偏移以及折行悬挂缩进，既保证了在 `minipage` 右侧插图窄版下同一段落内的自然续行（如 `AC=BC, D, E分别为...`）与全宽题完全一致地 **100% 绝对顶格对齐**，又使小问另起新行并保留 2em 标准首行缩进，且绝不破坏公式或坐标点。
   - **前端渲染**：前端将自动依据选项最长字符数 `maxLen` 自适应网格排版（小于等于 10 字为 1行4列，大于 10 且小于等于 24 字为 2行2列，大于 24 字为 1行1列），并自动补全 `A.`, `B.`, `C.`, `D.` 标号。
   - **AI 题库转换**：后端导出 AI 专属只读题库时，会自动将此 `choices` 环境清洗为 Markdown 标准列表 `- A.` / `- B.` 形式，防止干扰大模型。
 - **级联目录体系**：
@@ -108,7 +109,7 @@
 
 > [!WARNING]
 > - **禁用正则后行断言**：为了确保与旧版本 Safari / 移动端 WebView 的极致兼容，前端代码中**严禁使用正则后行断言 `(?<!...)` 与 `(?<=...)`**，此类语法在不支持的设备上会导致 fatal `SyntaxError` 并挂起 `DOMContentLoaded`。必须使用捕获组配合 callback 或普通字符比对进行替代。
-> - **版本号自动缓存击穿 (Cache Busting)**：系统已在 Python 后端（`main.py` 的首页路由 `read_index` 中）实现自动缓存击穿机制。每次浏览器请求首页时，后端会自动获取前端 JS 文件的最新修改时间戳作为版本号后缀（如 `?v=时间戳`）注入 HTML。开发者无需手动修改 HTML 中的版本号。
+> - **版本号自动缓存击穿 (Cache Busting)**：系统已在 Python 后端（`main.py` 的首页路由 `read_index` 中）实现自动缓存击穿机制。每次浏览器请求首页时，后端会自动获取前端 JS 文件、CSS 以及 Favicon 图标文件（`favicon.png`/`favicon.ico`）的最新修改时间戳作为版本号后缀（如 `?v=时间戳`）注入 HTML。开发者无需手动修改 HTML 中的版本号。
 > - **Tailwind 色彩 Alpha 透明度适配**：在 `tailwind.config` 中扩展自定义颜色（如品牌色 `brand` 等）时，由于颜色变量中带逗号（如 `124, 58, 237`），**严禁写成 `rgb(var(--brand-xxx-rgb) / <alpha-value>)`** 语法。这类混用语法会导致浏览器在解析带透明度修饰符的类名时判定为无效规则，最终按钮背景将不可见。必须写成 `rgba(var(--brand-xxx-rgb), <alpha-value>)` 格式以确保高兼容。
 
 ### 3.7 启动端口竞态自愈与前端级联防挂起重试机制
@@ -129,7 +130,7 @@
 
 ### 3.10 批量图片上传与 AI 智能拆卷/解析系统
 - **批量图片分发**：用户可在前端一次性拖入多张截图，通过 `/api/upload/batch` 瞬间在后台保存，并返回形如 `[图片1]` 的占位符映射表，方便在解析文本中插入对应位置。
-- **大模型文本切片与拆解**：用户提交完整的试卷 LaTeX/Markdown 文本及图片映射后，`/api/ai/parse-paper` 接口调用 `.env` 配置文件中的 `PREFER_PARSE_MODEL` 将文本按题目智能切片，自动识别其类型、章节、难度、题干与配图，并可选择是否同步生成详细的解答解析，最终整卷产出结构化 JSON 存入草稿箱或导入题库。
+- **大模型文本切片与两阶段解耦拆解**：用户提交完整的试卷 LaTeX/Markdown 文本及图片映射后，`/api/ai/parse-paper` 接口调用 `.env` 配置文件中的 `PREFER_PARSE_MODEL` 将文本按题目智能切片，自动识别其类型、章节、难度、题干与配图，并提取原版答案（秒级返回）。若勾选自动生成解答，第二阶段由前端发起并发队列（上限 3）异步调用 `/api/ai/solve` 为无答案题目平滑推导解析，彻底解决 Output Token 溢出与 HTTP 超时问题。
 
 ### 3.11 PDF 试卷多模态拆解与手动截图系统
 - **切片与异步任务**：支持上传 PDF 文件，后端在后台利用 `fitz` (PyMuPDF) 将 PDF 栅格化为高清图片。利用 ThreadPoolExecutor 并行发起 VLM 多模态 OCR 转译。
@@ -172,6 +173,15 @@
   - 后端 `_PDF_CACHE` 容量为 20，基于全套 LaTeX 源码 MD5 哈希与关联插图文件修改时间戳进行防碰撞校验。相同源码 0ms 复用已有 PDF 字节流，极大减轻本地 CPU 编译开销。
 - **多格式导出能力**：
   - 支持单 PDF 字节流快速下载，以及完整 LaTeX 源码包（`.tex` 主文件与相关配图打包为 `.zip`）导出，供线下 XeLaTeX 高级排版微调。
+- **Windows 编码与宏包依赖自愈与智能诊断 (Windows Encoding & Missing Package Diagnostics)**：
+  - **进程级 UTF-8/GBK 智能平滑解码**：Python 后端对 `xelatex` 的 `proc.stdout`、`proc.stderr` 及 `paper.log` 日志文件全量以 `bytes` 字节流捕获，并采用 `_safe_decode_bytes()` (优先 UTF-8，失败降级 GBK) 进行安全解码；同时在 `main.py` 与 `paper_helper.py` 启动入口配置 `sys.stdout.reconfigure(encoding="utf-8", errors="replace")`，彻底清除终端日志打印非 GBK Emoji (如 `⚡`, `🚀`) 触发的 `UnicodeEncodeError` 崩溃。
+  - **`exam-zh.cls` 与 21 个扩展宏包零依赖内置自愈**：项目已将 `exam-zh` 完整宏包（`exam-zh.cls` 及 `exam-zh-*.sty`）以及关联的 21 个第三方 helper 宏包（`tabularray.sty`, `ninecolors.sty`, `varwidth.sty`, `linegoal.sty`, `wrapstuff.sty`, `filehook.sty`, `environ.sty`, `trimspaces.sty`, `xeCJKfntef.sty`, `ulem.sty` 等）全量内置放置在 `templates/exam-zh/` 目录中。每次编译 PDF 或导出全量 ZIP 包时，后端会自动将其动态注入复制到临时编译目录与 Zip 压缩包中。即使 Windows 电脑安装的是旧版 TeX Live (如 2018/2021) 且完全未安装 `exam-zh` 宏包，也可实现 100% 零依赖免配置成功编译！
+- **组卷工作台右侧上下解耦与静态沉稳面板 (Split Right Panel & Grounded Studio Panel)**：
+  - 右侧 `paperCanvasSection` 重构为 `overflow-hidden flex flex-col` 上下完全独立分离架构。
+  - 顶部控制面板为静态固定节点 (`shrink-0 mb-3`)，使用纯粹实底卡片 (`bg-white dark:bg-slate-900 border`) 替代半透明玻璃悬浮，并禁用了 `:hover` 起伏/位移动画 (`transform: none`)，移动鼠标时完全静止沉稳。
+  - 下方 A4 试卷 Live Preview 画布使用独立滚动条 (`flex-1 overflow-y-auto custom-scrollbar`)，滚动试卷时试卷平滑隐入独立区域上边界，完全杜绝了向控制栏底部的重叠与遮挡。
+- **左侧组卷配置栏极简高利用率重构 (Compact Configuration Panel & 12px Typography)**：
+  - 左侧 `paperFilterSection` 布局精细化压缩重构，通过收紧内边距 (`p-2.5 sm:p-3 space-y-2`) 和间距 (`mb-0.5`)，在保持 `12px` (`text-xs font-semibold`) 标准清晰字号的前提下，整体高度大幅缩减 ~35%，极大释放了纵向屏幕空间给下方的题目列表。
 
 ### 3.14 现代化暗色模式视觉规范 (Modern Dark Mode & Anti-Gloom Protocol)
 - **玻璃底 + 霓虹透光微光 (Vibrant Glass & Neon Tint)**：在暗色模式下，严禁使用浓重晦暗的深纯色（如 `indigo-950`, `emerald-950`, `rose-950`, `amber-950`），此类调色在深色底板上会产生浑浊阴森感。必须采用**高通透玻璃底 + 10% 品牌色霓虹透光微光**（如 `dark:bg-indigo-500/10 dark:border-indigo-500/25`），搭配高对比度亮彩文字（`indigo-200`, `emerald-200`, `amber-200`, `rose-200`）与发光 Icon。
@@ -208,7 +218,11 @@
   - 若调用 DeepSeek 引擎，需配置 `DEEPSEEK_API_KEY`；若调用通义千问系列（如 `qwen-max`），则会从 `ALI_BAILIAN_API_KEY` 读取秘钥；若指定 `ZHONGZHAN_GPT` / `ZHONGZHAN_CLAUDE` 专属前缀，则会自动解析并调用对应的中转站 API（从 `ZHONGZHAN_GPT_API_KEY` / `ZHONGZHAN_CLAUDE_API_KEY` 获取密钥），支持多源、跨平台的 AI 解题与多模态绘图推理。
   - `max_tokens` 强置为 **`8192`**，预防由于复杂的数学思维链（Thinking Chain）导致 Token 溢出使得最终 LaTeX 答案被强行切断。
 
-### 4.3 写入操作鉴权认证 `/api/*` (POST / PUT / DELETE)
+### 4.3 AI 智能解答生成与 Prompt 规范 (`/api/generate-solution`)
+- **逻辑严密与极简凝练**：解答过程必须逻辑完备、推理严谨（写明定理/公理前提条件与因果推导，不能盲目跳步），但语言极简干练直奔得分点，拒绝任何多余的口水废话。
+- **强制结构化板块**：解题输出必须依次包含 `\textbf{【规范解答】}` (或客观题 `\textbf{【参考答案】}` + `\textbf{【解析过程】}`)、`\textbf{【解析思路】}` (按小问或思考脉络概括破题关窍与定理应用)、`\textbf{【核心知识点】}`。
+
+### 4.4 写入操作鉴权认证 `/api/*` (POST / PUT / DELETE)
 - 所有对题库、草稿箱和系统配置进行新增、更新、删除的写操作接口均需安全鉴权。
 - **鉴权核心机制**：后端会在第一次连接或通过特定校验后生成/验证 Local Token。前端在发送 POST/PUT/DELETE 请求时，必须在请求头中附带 `X-Local-Token` 字段，且内容需与后端的 `LOCAL_TOKEN` 吻合。
 - 前端 `api.js` 中重写了 `window.fetch` 方法，在发送非 GET 请求时自动附加对应的 Token，使得该过程对业务开发完全透明。

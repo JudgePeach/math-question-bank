@@ -20,7 +20,7 @@
 > **JavaScript 语法防错与浏览器兼容性警示**：前端的四个脚本文件在浏览器中级联加载。任何人在修改 JS 代码时，必须遵循以下规则：
 > 1. **确保无任何语法错误**：因为语法错误会直接导致浏览器停止解析后续脚本，挂起 `DOMContentLoaded` 事件，从而使左侧栏永久死锁在“正在获取题库...”状态。推荐修改后运行 `node -c static/js/*.js` 进行验证。
 > 2. **禁用正则后行断言**：在前端代码中**严禁使用正则后行断言 `(?<!...)` 和 `(?<=...)`**，此类语法在旧版浏览器（如 Safari < 16.4）或移动端 WebView 中会触发致命的 `SyntaxError` 中断加载。必须改用捕获组或字符串拆分逻辑。
-> 3. **版本号缓存击穿 (Cache Busting)**：系统已在 Python 后端（`main.py` 的首页路由 `read_index` 中）实现自动缓存击穿机制。每次浏览器请求首页时，后端会自动获取前端 JS 文件的最新修改时间戳作为版本号后缀（如 `?v=时间戳`）注入 HTML。开发者无需手动修改 HTML 中的版本号。
+> 3. **版本号缓存击穿 (Cache Busting)**：系统已在 Python 后端（`main.py` 的首页路由 `read_index` 中）实现自动缓存击穿机制。每次浏览器请求首页时，后端会自动获取前端 JS 文件、CSS 以及 Favicon 图标文件（`favicon.png`/`favicon.ico`）的最新修改时间戳作为版本号后缀（如 `?v=时间戳`）注入 HTML。开发者无需手动修改 HTML 中的版本号。
 > 4. **Tailwind 自定义色彩与透明度定义**：在 `static/index.html` 的 `tailwind.config` 中配置色彩时，由于 CSS 变量中通常含有逗号分隔符（例如 `124, 58, 237`），**严禁使用 `rgb(var(--brand-xxx-rgb) / <alpha-value>)`**。此类混合语法在部分浏览器中会被判定为无效规则，导致带透明度的按钮背景完全消失/变成白底白字看不清。必须使用 `rgba(var(--brand-xxx-rgb), <alpha-value>)` 格式以保证所有浏览器的解析兼容。
 
 ## 3. 核心业务逻辑与模块设计
@@ -30,13 +30,14 @@
 - **插图排版位置联动与多图复合渲染 (Figure Placement Sync & Multi-Figure Rendering)**：
   - **多模式与多插图支持**：支持题目包含多张图片或 TikZ 几何绘图与上传图片混合的复合插图模式。插图在后端存储 `figure_align` 属性（支持 `right` 常规试卷/高考卷默认题干右侧、`center` 下方居中、`bottom_right` 日常小练默认下方居右）。
   - **全量插图抓取与实时预览同步**：前端 `paper.js`（`formatQuestionContentHtml`）与后端 `paper_helper.py` 完美升级为全量匹配 `[...matchAll(/!\[.*?\]\(([^)]+)\)/g)]`，取消了单匹配丢图问题。多图自动横向弹性排列组合在插图框内（支持按钮标识如 `题干右侧 (2图)`）。同时 LaTeX 编译与导出全量包裹多图并存输出。
-  - **交互弹窗切换**：用户在试卷预览框或题卡中点击或右击插图（及位置指示按钮）时，会弹出定制的气泡菜单允许实时切换这三种排版位置，并通过 `POST /api/questions/{qid}/figure_align` 实时持久化保存至数据库。
+  - **交互弹窗切换**：用户在右侧 A4 试卷预览框中点击或右击插图（及位置指示按钮）时，会弹出定制的气泡菜单允许实时切换这三种排版位置，并通过 `POST /api/questions/{qid}/figure_align` 实时持久化保存至数据库；左侧试题库卡片保持纯净展示，不渲染位置调控按钮。
   - **PDF 编译 LRU 哈希缓存与高考预设题号跳跃**：后端 `compile_tex_to_pdf` 内置基于全套 LaTeX 源码 MD5 哈希与关联插图修改时间戳的线程安全 LRU 内存缓存（容量 50）。在组卷预览与合并导出时，若 LaTeX 源码与配图未发生任何变动，直接 0ms 瞬间从内存复用已编译的 PDF 字节流，大幅降低 CPU 负载并提升合并导出响应速度。同时针对 `exam_19` (19题高考卷含答题卡预设)，通过设置 `exam-zh` 的 LaTeX3 全局整数变量 `\g__examzh_question_index_int`，使编译出的 PDF 题号按大型高考规范精准跳跃（单选为 1、多选为 9、填空为 12、解答为 15），与前端 A4 Live Preview 及 A3 答题卡完美联动。
   - **解答题留白调控 (Detailed Answer Solution Space Control)**：针对无独立答题卡的试卷类型（`exam` 试卷与 `quiz` 小练），系统支持对 `detailed_answer`（解答题）进行留白高度调控。留白计算统一自题干文字结束算起，若插图设为 `bottom_right` 或 `center`，插图自动包含在留白空间（如 `7.0 cm`）内部顶侧，避免留白垂直叠加过长。前端 A4 实时预览与 LaTeX 导出（`\smash` 嵌入）均精准同步此算力。若切换为 `exam_19`（高考卷含答题卡），试卷正文自动恢复紧凑布局（留白归零）。
   - **选择题 choices 环境规范与填空题 \fillin 宏规范**：
     - 所有选择题在入库和存储时，选项部分必须统一格式化为 LaTeX 的 `choices` 环境（使用 `\begin{choices}` 和 `\item` 包裹，且剥离原本的 A., B., C., D. 等标号前缀）。
     - **选择题题干末尾括号自动净化 (Choice Stem Parentheses Cleanup & Self-Healing)**：后端 `paper_helper.py` (`clean_choice_stem_parentheses`)、前端 KaTeX 预编译 (`cleanChoiceStemParentheses`) 与全量自愈脚本 (`migrate_choice_parentheses.py`) 会自动物理抹除题干末尾录入的各种全角/半角供填答用空括号（如 `(\quad)`、`(   )`、`（  ）`），防止与 LaTeX 模板右侧自动生成的 `\paren` 宏产生二次重叠。
     - **填空题 \fillin 规范与自动自愈 (Fillin Macro Standardization & Self-Healing)**：系统在多模态 OCR 识图（SiliconFlow / 阿里百炼 / 中展 AI）Prompt、试卷 AI 智能拆卷 Prompt 中均强制要求将填空题下划线生成为 `\fillin` 宏。同时在后端录入/修改/拆题逻辑中内置了 `normalize_fillin_macro` 自愈清洗器，会自动将 `______` 或 `\underline{\hspace{...}}` 等旧格式静默升级为标准的 `\fillin`。前端 `preprocessFormulaForKaTeX` 默认将纯 `\fillin` 转化为 1.5cm 标准精美下划线渲染。
+    - **LaTeX/Markdown 换行规范与右侧插图顶格组装算法 (Line Break Rules & Right-Aligned Minipage Hangindent Reset)**：在 LaTeX 试卷导出中，引入了 `format_stem_paragraphs` 算法结合 `\noindent\begin{minipage}` 容器及内部 `\hangindent=0pt\setlength{\parindent}{2em}` 参数重置。消除了外层 `problem` 环境施加给 `minipage` 盒子的外层 2em 缩进偏移以及折行悬挂缩进，既保证了在 `minipage` 右侧插图窄版下同一段落内的自然续行（如 `AC=BC, D, E分别为...`）与全宽题完全一致地 **100% 绝对顶格对齐**，又使小问另起新行并保留 2em 标准首行缩进，且绝不破坏公式或坐标点。
   - **前端渲染**：前端将自动依据选项最长字符数 `maxLen` 自适应网格排版（小于等于 10 字为 1行4列，大于 10 且小于等于 24 字为 2行2列，大于 24 字为 1行1列），并自动补全 `A.`, `B.`, `C.`, `D.` 标号。
   - **AI 题库转换**：后端导出 AI 专属只读题库时，会自动将此 `choices` 环境清洗为 Markdown 标准列表 `- A.` / `- B.` 形式，防止干扰大模型。
 - **标签系统**：
@@ -98,7 +99,7 @@
 
 ### 3.5 批量图片上传与 AI 智能拆卷/解析系统
 - **批量图片上传 (`/api/upload/batch`)**：用户可将整张试卷的多张截图一次性拖拽上传，系统自动保存并在前端返回对应标签占位符（如 `[图片1]`）。
-- **AI 智能拆卷 (`/api/ai/parse-paper`)**：输入试卷 of LaTeX/Markdown 文本与图片映射，调用解析大模型（由 `.env` 中 `PREFER_PARSE_MODEL` 指定），AI 自动对文本切片，识别分类、难度、题型，并可选择是否同步生成详细的解答解析，最终以结构化 JSON 存入草稿箱或导入题库。
+- **AI 智能拆卷 (`/api/ai/parse-paper`) 与两阶段异步解答架构**：输入试卷 LaTeX/Markdown 文本与图片映射，调用解析大模型（由 `.env` 中 `PREFER_PARSE_MODEL` 指定）。拆解第一阶段只专注文本切片、分类、难度评估与原版答案提取，秒级快速输出；若勾选自动生成解答，第二阶段由前端使用并发队列（并发上限 3）异步调用 `/api/ai/solve` 为无答案题目平滑推导解析，彻底解决 Token 截断与 HTTP 超时问题。同时每个草稿卡片均支持“AI 补全/重生成解析”单题独立触发。
 - **列表清空重置（一键清除与二次确认）**：系统在拆解结果顶部操作栏提供了**“一键清除”**按钮。点击后会弹出确认对话框提示用户。用户手动确认后，自动清除左栏所有输入（标题、Latex 内容、图片映射等）以及右栏所有拆解卡片，并安全重置系统至初始待拆解状态。
 
 ### 3.6 存储空间自愈与防误删静默净化
@@ -128,6 +129,14 @@
   - 前端无需同步等待后端 PDF 编译，纯前端结合 KaTeX + 动态 DOM 模拟真实 A4 试卷（210mm x 297mm 纸张比例）。
   - 支持渲染卷头密封线 (`\secret`)、大标题、副标题（连续空格 `&nbsp;` 与 `pre-wrap` 保持与 LaTeX `\large\bfseries` 粗体一致）、考试注意事项框 (`notice` 环境) 和大题分值信息。
   - **主副标题双向 WYSIWYG 实时编辑 (Bi-directional Title Editing)**：支持在左侧配置栏与右侧 A4 Live Preview 试卷画布上双向自由修改主标题与副标题。A4 画布节点具备 `contenteditable="true"` 属性与琥珀微光 Focus 框，副标题为空时自动展示 `+ 点击在此直接添加副标题 / 备注` 占位提示，打字过程进行增量 DOM 局部更新，做到零闪烁与零丢焦点。
+  - **右侧上下解耦与静态沉稳 Studio 面板 (Split Right Panel & Grounded Studio Panel)**：
+    - 右侧 `paperCanvasSection` 重构为 `overflow-hidden flex flex-col` 上下完全独立分离架构。
+    - 顶部控制面板为静态固定节点 (`shrink-0 mb-3`)，完全独立于下方画布，且使用纯净实底卡片 (`bg-white dark:bg-slate-900 border`) 替代半透明悬浮玻璃，并禁用了 `:hover` 起伏/位移动画 (`transform: none`)，移动鼠标时完全静止沉稳。
+    - 下方 A4 试卷 Live Preview 画布使用独立滚动条 (`flex-1 overflow-y-auto custom-scrollbar`)，滚动试卷时试卷平滑隐入独立区域上边界，完全杜绝了向控制栏底部的重叠与遮挡。
+  - **全套 `exam-zh` 及其 21 个依赖宏包免配置内置 (Built-in `exam-zh` Class & 21 Helper Packages)**：
+    - `templates/exam-zh/` 目录下全量内置了 `exam-zh.cls`、`exam-zh-*.sty` 以及全部 21 个第三方依赖宏包（`tabularray.sty`, `ninecolors.sty`, `varwidth.sty`, `linegoal.sty`, `wrapstuff.sty`, `filehook.sty`, `environ.sty`, `trimspaces.sty`, `xeCJKfntef.sty`, `ulem.sty` 等）。编译与导出时自动复制，保障 Windows (旧版 TeX Live 2018/2021) 与 Mac 100% 离线免配置秒级渲染。
+  - **左侧组卷配置栏极简高利用率重构 (Compact Configuration Panel & 12px Typography)**：
+    - 左侧 `paperFilterSection` 布局精细化压缩重构，通过收紧内边距 (`p-2.5 sm:p-3 space-y-2`) 和间距 (`mb-0.5`)，在保持 `12px` (`text-xs font-semibold`) 标准清晰字号的前提下，整体高度大幅缩减 ~35%，极大释放了纵向屏幕空间给下方的题目列表。
   - **试卷密封线与注意事项可视化交互显隐 (Secret & Notice Interactive Toggle)**：在 Live Preview 预览中，鼠标悬浮左上角绝密标记可触发 `[移除标记]` 隐去，悬浮注意事项可触发 `[移除注意事项]` 隐去。原位置分别保留精致虚线交互占位块 `[+ 已移除绝密标记]` / `[+ 已移除注意事项]` 支持随时点击一键恢复。导出与编译 LaTeX 时根据 `show_secret` 和 `show_notice` 状态自动将 LaTeX 的 `\secret` 与 `notice` 环境整块进行注释/解注释（`% \secret` / `% \begin{notice}`）。
 - **解答题留白调控 (Solution Space Control)**：
   - 在 A4 Live Preview 视图中，解答题下方实时渲染浅蓝虚线留白区，并提供快捷内联调控按钮 (`[- 1cm]`, `[- 0.5cm]`, `[+ 0.5cm]`, `[+ 1cm]`)。
@@ -154,6 +163,9 @@
   - 后端 `_PDF_CACHE` 容量为 20，基于全套 LaTeX 源码 MD5 哈希与关联插图文件修改时间戳进行防碰撞校验。相同源码 0ms 复用已有 PDF 字节流，极大减轻本地 CPU 编译开销。
 - **多格式导出能力**：
   - 支持单 PDF 字节流快速下载，以及完整 LaTeX 源码包（`.tex` 主文件与相关配图打包为 `.zip`）导出，供线下 XeLaTeX 高级排版微调。
+- **Windows 编码与宏包依赖自愈与智能诊断 (Windows Encoding & Missing Package Diagnostics)**：
+  - **进程级 UTF-8/GBK 智能平滑解码**：Python 后端对 `xelatex` 的 `proc.stdout`、`proc.stderr` 及 `paper.log` 日志文件全量以 `bytes` 字节流捕获，并采用 `_safe_decode_bytes()` (优先 UTF-8，失败降级 GBK) 进行安全解码；同时在 `main.py` 与 `paper_helper.py` 启动入口配置 `sys.stdout.reconfigure(encoding="utf-8", errors="replace")`，彻底清除终端日志打印非 GBK Emoji (如 `⚡`, `🚀`) 触发的 `UnicodeEncodeError` 崩溃。
+  - **`exam-zh.cls` 零依赖内置自愈**：项目已将 `exam-zh` 完整宏包文件（`exam-zh.cls` 及 `exam-zh-*.sty`）全量内置放置在 `templates/exam-zh/` 目录中。每次编译 PDF 或导出全量 ZIP 包时，后端会自动将其动态注入复制到临时编译目录与 Zip 压缩包中。即使 Windows 电脑安装的是旧版 TeX Live (如 2018/2021) 且完全未安装 `exam-zh` 宏包，也可实现 100% 零依赖免配置成功编译！
 
 ## 4. 外部 API 接入与接口安全严格规范
 必须读取根目录 `.env` 文件中的密钥进行 API 调用：
@@ -166,7 +178,7 @@
 - **大模型智能解答与解析/拆卷接口 (DeepSeek / 阿里百炼 / 多源 API)**：
   - 解题模型、试卷拆解模型、题目自动分类模型以及高级 TikZ 绘图模型可通过 `.env` 配置文件中的 `PREFER_SOLVE_MODEL`、`PREFER_PARSE_MODEL`、`PREFER_CLASSIFY_MODEL` 和 `PREFER_DRAW_MODEL` 指定（支持 `deepseek-chat`、`deepseek-reasoner`、`qwen-max` 等主流解题与拆卷模型，以及 SiliconFlow `Qwen/Qwen3-VL-32B-Instruct` 等多模态 VLM 高级绘图模型）。
   - 后端通过统一底座接口支持 DeepSeek (`DEEPSEEK_API_KEY`)、通义千问阿里百炼 (`ALI_BAILIAN_API_KEY`) 以及中转站等多元渠道。
-  - Prompt 设定必须强调：逻辑严密、分步推导、强制使用标准 LaTeX 语法输出公式、适当使用 TikZ 提供几何辅助说明。
+  - Prompt 设定必须强调：**逻辑严密与极简凝练**（既不省略必要的前后推理关系与公理依据，也不要多余口水废话）、**强制输出【解析思路】板块**（按小问或思考脉络概括破题关窍与定理应用）、强制使用标准 LaTeX 语法输出公式、严格执行空行/双回车 `\n\n` 换行规范，以及适当使用 TikZ 提供几何辅助说明。
 - **代理绕过与网络稳定性 (Robust Networking)**：
   - 国内知名 API 服务（如阿里百炼 `aliyuncs.com`、硅基流动 `siliconflow`）通常在直连模式下速度最快。
   - 后端在 `main.py` 中实现了 `robust_request_post` / `robust_request_get`。若发生网络代理连接或握手错误，会自动清除系统 HTTP/HTTPS 代理环境变量进行重试，确保网络通信高可用。AI 代理编写请求时应务必使用此健壮的网络请求函数。

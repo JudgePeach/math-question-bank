@@ -1,0 +1,1217 @@
+%
+% Copyright (c) 2024 Kangwei Xia
+% Released under the LaTeX Project Public License v1.3c License.
+% Repository: https://github.com/xkwxdyy/exam-zh
+%            https://gitee.com/xkwxdyy/exam-zh (mirror)
+%
+
+\NeedsTeXFormat{LaTeX2e}
+
+\RequirePackage{expl3}
+
+\ProvidesExplPackage {exam-zh-symbols} {2026-07-12} {v0.3.0}
+  {exam-zh symbols module}
+
+\RequirePackage { tikz }
+
+\keys_define:nn { exam-zh }
+  { symbols .meta:nn = { exam-zh / symbols } {#1} }
+
+
+% 正体的 e 和 i
+\NewDocumentCommand \eu { } { \mathrm{ e } }
+\NewDocumentCommand \upe { } { \mathrm{ e } }
+\NewDocumentCommand \iu { } { \mathrm{ i } }
+\NewDocumentCommand \upi { } { \mathrm{ i } }
+
+\NewDocumentCommand \uppi { } { \mathrm{ \pi } }
+
+
+
+% 分数 \frac \dfrac
+\int_new:N \l__examzh_symbols_frac_numerator_str_int       % frac 分子字符数
+\int_new:N \l__examzh_symbols_frac_denominator_str_int     % frac 分母字符数
+\int_new:N \l__examzh_symbols_dfrac_numerator_str_int       % frac 分子字符数
+\int_new:N \l__examzh_symbols_dfrac_denominator_str_int     % frac 分母字符数
+
+\keys_define:nn { exam-zh / symbols }
+  {
+    % 是否重定义 \frac
+    change-frac-style .bool_set:N = \l__examzh_symbols_change_frac_style_bool,
+    % 是否重定义 \dfrac
+    change-dfrac-style .bool_set:N = \l__examzh_symbols_change_dfrac_style_bool,
+    % \frac 分子分母增加的额外距离
+    frac-add .muskip_set:N = \l__examzh_symbols_frac_add_distance_muskip,
+    % \dfrac 分子分母增加的额外距离
+    dfrac-add .muskip_set:N = \l__examzh_symbols_dfrac_add_distance_muskip,
+  }
+\keys_set:nn { exam-zh / symbols }
+  {
+    change-frac-style = false,
+    change-dfrac-style = false,
+    frac-add = 5mu,
+    dfrac-add = 5mu,
+  }
+\NewCommandCopy { \examzhfrac } { \frac }
+\NewCommandCopy { \examzhdfrac } { \dfrac }
+\RenewDocumentCommand { \frac } { m m }
+  {
+    \group_begin:
+      \bool_if:NTF \l__examzh_symbols_change_frac_style_bool
+        {
+          % 计算分子分母的字符数
+          \__examzh_symbols_frac_calc_str_num:nn {#1} {#2}
+          % 根据字符数选择将额外的距离加在哪
+          \__examzh_symbols_frac_add_distance:NNNNnn
+            \examzhfrac
+            \l__examzh_symbols_frac_numerator_str_int
+            \l__examzh_symbols_frac_denominator_str_int
+            \l__examzh_symbols_frac_add_distance_muskip
+            {#1}{#2}
+        }
+        { \examzhfrac {#1} {#2} }
+    \group_end:
+  }
+\RenewDocumentCommand { \dfrac } { m m }
+  {
+    \group_begin:
+      \bool_if:NTF \l__examzh_symbols_change_dfrac_style_bool
+        {
+          % 计算分子分母的字符数
+          \__examzh_symbols_frac_calc_str_num:nn {#1} {#2}
+          % 根据字符数选择将额外的距离加在哪
+          \__examzh_symbols_frac_add_distance:NNNNnn
+            \examzhdfrac
+            \l__examzh_symbols_frac_numerator_str_int
+            \l__examzh_symbols_frac_denominator_str_int
+            \l__examzh_symbols_dfrac_add_distance_muskip
+            {#1}{#2}
+        }
+        % { \examzhdfrac {#1} {#2} }
+        {
+          \mathchoice { \examzhdfrac{#1}{#2} }
+            { \examzhdfrac{#1}{#2} }
+            { \examzhfrac{#1}{#2} }
+            { \examzhfrac{#1}{#2} }
+        }
+    \group_end:
+  }
+\cs_new:Npn \__examzh_symbols_frac_calc_str_num:nn #1#2
+  {
+    \int_set:Nn \l__examzh_symbols_frac_numerator_str_int
+      { \str_count:n {#1} }
+    \int_set:Nn \l__examzh_symbols_frac_denominator_str_int
+      { \str_count:n {#2} }
+  }
+% \__examzh_symbols_frac_add_distance:NNNNnn
+  % <\oldfrac><numerator str num><denominator str num><add muskip><numerator><denominator>
+\cs_new:Npn \__examzh_symbols_frac_add_distance:NNNNnn #1#2#3#4#5#6
+  {
+    \int_compare:nNnTF {#2} = {1}
+      {
+        \int_compare:nNnTF {#3} = {1}
+          {
+            % 分子字符数=1，分母字符数=1
+            #1
+              {
+                \mskip #4
+                #5
+                \mskip #4
+              } {#6}
+          }
+          {
+            % 分子字符数=1，分母字符数>1
+            #1 {#5}
+              {
+                \mskip #4
+                #6
+                \mskip #4
+              }
+          }
+      }
+      {
+        \int_compare:nNnTF {#3} = {1}
+          {
+            % 分子字符数>1，分母字符数=1
+            #1 
+              {
+                \mskip #4
+                #5
+                \mskip #4
+              } {#6}
+          }
+          {
+            % 分子字符数>1，分母字符数>1
+            #1
+              {
+                \mskip #4
+                #5
+                \mskip #4
+              } {#6}
+          }
+      }
+  }
+
+% 向量 vec
+\int_new:N \l__examzh_symbols_vec_input_count_int
+
+\AtBeginDocument
+  {
+    \RenewDocumentCommand { \vec } { m }
+      { \__examzh_symbols_vec:n {#1} }
+  }
+\cs_new:Npn \__examzh_symbols_vec:n #1
+  {
+    % 先检测 #1 有多少个字符
+    \__examzh_symbols_vec_detect_number_of_input_str:n {#1}
+    % 只有 1 个的：加粗，多于两个的加箭头
+    \int_compare:nNnTF { \l__examzh_symbols_vec_input_count_int } = {1}
+      { \symbfit {#1} }
+      { \overrightarrow {#1} }
+  }
+\cs_new:Npn \__examzh_symbols_vec_detect_number_of_input_str:n #1
+  {
+    \int_set:Nn \l__examzh_symbols_vec_input_count_int
+      { \tl_count:n { #1 } }
+  }
+
+% 平行四边形 \parallelogram
+\keys_define:nn { exam-zh / symbols }
+  {
+    parallelogram-angle .fp_set:N = \l__examzh_symbols_parallelogram_angle_fp,
+    parallelogram-x .dim_set:N = \l__examzh_symbols_parallelogram_x_dim,
+    parallelogram-y .dim_set:N = \l__examzh_symbols_parallelogram_y_dim
+  }
+
+\cs_new:Npn \__examzh_symbols_parallelogram:
+  {
+    \begin{tikzpicture}[baseline]
+      \draw[line~join = round] (0,0) --++ (\l__examzh_symbols_parallelogram_x_dim,0) --++ (\fp_use:N \l__examzh_symbols_parallelogram_angle_fp \c_colon_str \l__examzh_symbols_parallelogram_y_dim) -- (\fp_use:N \l__examzh_symbols_parallelogram_angle_fp \c_colon_str \l__examzh_symbols_parallelogram_y_dim) -- cycle;
+    \end{tikzpicture}
+  }
+
+\AtBeginDocument
+  {
+    \RenewDocumentCommand { \parallelogram } { }
+      {
+        \group_begin:
+          \keys_set:nn { exam-zh / symbols } 
+            {
+              parallelogram-angle = 67,
+              parallelogram-x = 0.9em,
+              parallelogram-y = 0.7em
+            }
+          \mathrel 
+            { 
+              \__examzh_symbols_symbol_four_size:n 
+                { \__examzh_symbols_parallelogram: } 
+            }
+        \group_end:
+      }
+  }
+
+% 平行 \parallel
+\bool_new:N \l__examzh_symbols_parallel_slant_bool
+\bool_new:N \l__examzh_symbols_nparallel_slant_bool
+
+\keys_define:nn { exam-zh / symbols }
+  {
+    parallel-angle .fp_set:N = \l__examzh_symbols_parallel_angle_fp,
+    parallel-twoline-distance .dim_set:N = \l__examzh_symbols_parallel_twoline_distance_dim,
+    parallel-length .dim_set:N = \l__examzh_symbols_parallel_length_dim,
+    parallel-baseline .dim_set:N = \l__examzh_symbols_parallel_baseline_dim,
+    nparallel-slant-angle .fp_set:N = \l__examzh_symbols_nparallel_slant_angle_fp,
+    nparallel-slant-length .dim_set:N = \l__examzh_symbols_nparallel_slant_length_dim,
+    parallel-type .choice:,
+    parallel-type / slant.code:n =
+      { \bool_set_true:N \l__examzh_symbols_parallel_slant_bool },
+    parallel-type / perpendicular .code:n =
+      { \bool_set_false:N \l__examzh_symbols_parallel_slant_bool },
+    nparallel-type .choice:,
+    nparallel-type / slant.code:n =
+      { \bool_set_true:N \l__examzh_symbols_nparallel_slant_bool },
+    nparallel-type / perpendicular .code:n =
+      { \bool_set_false:N \l__examzh_symbols_nparallel_slant_bool },
+  }
+\keys_set:nn { exam-zh / symbols }
+  {
+    parallel-type = slant,
+    nparallel-type = slant,
+  }
+
+\cs_new:Npn \__examzh_symbols_parallel:
+  {
+    \begin{tikzpicture}[baseline=\l__examzh_symbols_parallel_baseline_dim]
+      \draw[line~cap = round] (0, 0) --++ (\fp_use:N \l__examzh_symbols_parallel_angle_fp \c_colon_str \l__examzh_symbols_parallel_length_dim)
+      (\l__examzh_symbols_parallel_twoline_distance_dim, 0) --++ (\fp_use:N \l__examzh_symbols_parallel_angle_fp \c_colon_str \l__examzh_symbols_parallel_length_dim);
+    \end{tikzpicture}
+  }
+\cs_new:Npn \__examzh_symbols_nparallel:
+  {
+    \begin{tikzpicture}[line~cap = round, baseline=\l__examzh_symbols_parallel_baseline_dim]
+      \draw
+        (0, 0) --++ (\fp_use:N \l__examzh_symbols_parallel_angle_fp \c_colon_str \l__examzh_symbols_parallel_length_dim)
+        (\l__examzh_symbols_parallel_twoline_distance_dim, 0) --++ (\fp_use:N \l__examzh_symbols_parallel_angle_fp \c_colon_str \l__examzh_symbols_parallel_length_dim);
+      % n 线
+      \draw
+        (\l__examzh_symbols_parallel_twoline_distance_dim / 2, 0)++(\fp_use:N \l__examzh_symbols_parallel_angle_fp \c_colon_str \l__examzh_symbols_parallel_length_dim / 2) --++ (\fp_use:N \l__examzh_symbols_nparallel_slant_angle_fp \c_colon_str \l__examzh_symbols_nparallel_slant_length_dim / 2)
+        (\l__examzh_symbols_parallel_twoline_distance_dim / 2, 0)++(\fp_use:N \l__examzh_symbols_parallel_angle_fp \c_colon_str \l__examzh_symbols_parallel_length_dim / 2) --++ (\fp_eval:n { \l__examzh_symbols_nparallel_slant_angle_fp + 180 } \c_colon_str \l__examzh_symbols_nparallel_slant_length_dim / 2);
+    \end{tikzpicture}
+  }
+
+\AtBeginDocument
+  {
+    \cs_set_eq:NN \__examzh_symbols_old_parallel: \parallel
+    \cs_set_eq:NN \__examzh_symbols_old_nparallel: \nparallel
+    \RenewDocumentCommand { \parallel } { }
+      {
+        \group_begin:
+          \bool_if:NTF \l__examzh_symbols_parallel_slant_bool
+            {
+              \keys_set:nn { exam-zh / symbols } 
+                {
+                  parallel-angle = 60,
+                  parallel-twoline-distance = 0.28em,
+                  parallel-length = 0.98em,
+                  parallel-baseline = 0.5pt
+                }
+            }
+            {
+              % 竖直
+              \keys_set:nn { exam-zh / symbols } 
+                {
+                  parallel-angle = 90,
+                  parallel-twoline-distance = 0.2em,
+                  parallel-length = 0.93em,
+                  parallel-baseline = 1pt
+                }
+            }
+          \mathrel 
+            { 
+              \__examzh_symbols_symbol_four_size:n 
+                { \__examzh_symbols_parallel: } 
+            }
+        \group_end:
+      }
+    \RenewDocumentCommand { \nparallel } { }
+      {
+        \group_begin:
+          
+          \bool_if:NTF \l__examzh_symbols_nparallel_slant_bool
+            {
+              \keys_set:nn { exam-zh / symbols }
+                {
+                  parallel-angle = 60,
+                  parallel-twoline-distance = 0.28em,
+                  parallel-length = 0.98em,
+                  parallel-baseline = 0.5pt,
+                  nparallel-slant-angle = 120,
+                  nparallel-slant-length = 0.65em
+                }
+            }
+            {
+              \keys_set:nn { exam-zh / symbols }
+                {
+                  parallel-angle = 90,
+                  parallel-twoline-distance = 0.2em,
+                  parallel-length = 0.93em,
+                  parallel-baseline = 1pt,
+                  nparallel-slant-angle = 50,
+                  nparallel-slant-length = 0.6em
+                }
+              % \tikz[baseline = {([yshift = 5pt]current~bounding~box.south)}]{ \node { $\__examzh_symbols_old_nparallel:$ }; }
+            }
+          \mathrel 
+            { 
+              \__examzh_symbols_symbol_four_size:n 
+                { \__examzh_symbols_nparallel: } 
+            }
+        \group_end:
+      }
+  }
+
+% 平行且相等 \paralleleq
+\bool_new:N \l__examzh_symbols_paralleleq_slant_bool
+
+\keys_define:nn { exam-zh / symbols }
+  {
+    % 上面部分的倾斜角
+    paralleleq-slant-angle .fp_set:N = \l__examzh_symbols_paralleleq_angle_fp,
+    % 线长度
+    paralleleq-upper-line-length .dim_set:N = \l__examzh_symbols_paralleleq_upper_line_length_dim,
+    paralleleq-lower-line-length .dim_set:N = \l__examzh_symbols_paralleleq_lower_line_length_dim,
+    % 线间距
+    paralleleq-upper-twoline-distance .dim_set:N = \l__examzh_symbols_paralleleq_upper_twoline_distance_dim,
+    paralleleq-lower-twoline-distance .dim_set:N = \l__examzh_symbols_paralleleq_lower_twoline_distance_dim,
+    % 下面部分的水平偏移量
+    paralleleq-lower-xshift .dim_set:N = \l__examzh_symbols_paralleleq_lower_xshift_dim,
+    paralleleq-type .choice:,
+    paralleleq-type / slant.code:n =
+      { \bool_set_true:N \l__examzh_symbols_paralleleq_slant_bool },
+    paralleleq-type / perpendicular .code:n =
+      { \bool_set_false:N \l__examzh_symbols_paralleleq_slant_bool },
+  }
+
+\keys_set:nn { exam-zh / symbols }
+  { paralleleq-type = slant }
+
+\cs_new:Npn \__examzh_symbols_paralleleq:
+  {
+    \begin{tikzpicture}[baseline = -1.7pt]
+      \draw[line~cap = round, name = parallel] (0, 0) --++ (\fp_use:N \l__examzh_symbols_paralleleq_angle_fp \c_colon_str \l__examzh_symbols_paralleleq_upper_line_length_dim)
+      (\l__examzh_symbols_paralleleq_upper_twoline_distance_dim, 0) --++ (\fp_use:N \l__examzh_symbols_paralleleq_angle_fp \c_colon_str \l__examzh_symbols_paralleleq_upper_line_length_dim);
+      \draw[anchor = parallel.south] 
+        (\l__examzh_symbols_paralleleq_upper_twoline_distance_dim / 2 + \l__examzh_symbols_paralleleq_lower_xshift_dim,0) --++ (\l__examzh_symbols_paralleleq_lower_line_length_dim / 2,0)
+        (\l__examzh_symbols_paralleleq_upper_twoline_distance_dim / 2 + \l__examzh_symbols_paralleleq_lower_xshift_dim,0) --++ (-\l__examzh_symbols_paralleleq_lower_line_length_dim / 2,0)
+        (\l__examzh_symbols_paralleleq_upper_twoline_distance_dim / 2 + \l__examzh_symbols_paralleleq_lower_xshift_dim,-\l__examzh_symbols_paralleleq_lower_twoline_distance_dim) --++ (\l__examzh_symbols_paralleleq_lower_line_length_dim / 2 ,0)
+        (\l__examzh_symbols_paralleleq_upper_twoline_distance_dim / 2 + \l__examzh_symbols_paralleleq_lower_xshift_dim,-\l__examzh_symbols_paralleleq_lower_twoline_distance_dim) --++ (-\l__examzh_symbols_paralleleq_lower_line_length_dim / 2,0)
+      ;
+    \end{tikzpicture}
+  }
+
+\NewDocumentCommand { \paralleleq } { }
+  {
+    \group_begin:
+      \keys_set:nn { exam-zh / symbols }
+        {
+          paralleleq-upper-line-length = 0.65em,
+          paralleleq-lower-line-length = 0.8em,
+          paralleleq-upper-twoline-distance = 0.2em,
+          paralleleq-lower-twoline-distance = 0.18em,
+        }
+      \bool_if:NTF \l__examzh_symbols_paralleleq_slant_bool
+        {
+          % \paralleleq : 倾斜型
+          \keys_set:nn { exam-zh / symbols }
+            {
+              paralleleq-slant-angle = 70,
+              paralleleq-lower-xshift = 0.04em
+            }
+        }
+        {
+          % \paralleleq* : 垂直型
+          \keys_set:nn { exam-zh / symbols }
+            {
+              paralleleq-slant-angle = 90,
+              paralleleq-lower-xshift = 0em
+            }
+        }
+      \mathrel 
+        { 
+          \__examzh_symbols_symbol_four_size:n 
+            { \__examzh_symbols_paralleleq: } 
+        }
+    \group_end:
+  }
+
+
+% 子集 \subset 真子集 \subseteqq
+\keys_define:nn { exam-zh / symbols }
+  {
+    % 半圆的半径
+    subset-radius .dim_set:N = \l__examzh_symbols_subset_semicircle_radius_dim,
+    % 半圆右边横线的长度
+    subset-upper-linewidth .dim_set:N = \l__examzh_symbols_subset_semicircle_line_width_dim,
+    % 下面线的长度
+    subset-lower-linewidth .dim_set:N = \l__examzh_symbols_subset_lower_line_width_dim,
+    % 上面部分和下面部分的距离
+    subset-upper-lower-distance .dim_set:N =  \l__examzh_symbols_subset_upper_lower_distance_dim,
+    % 下面部分 两条线的距离
+    subsetneqq-lower-twoline-distance .dim_set:N =  \l__examzh_symbols_subsetneqq_lower_twoline_distance_dim,
+    % 下面斜线的长度
+    subsetneqq-lower-slant-length .dim_set:N = \l__examzh_symbols_subsetneqq_lower_slant_line_length_dim,
+    supsetneqq-lower-slant-length .dim_set:N = \l__examzh_symbols_supsetneqq_lower_slant_line_length_dim,
+    % 真子集下方斜线的倾斜角度
+    subsetneqq-lower-slant-angle .fp_set:N = \l__examzh_symbols_subsetneqq_lower_slant_line_angle_fp,
+    supsetneqq-lower-slant-angle .fp_set:N = \l__examzh_symbols_supsetneqq_lower_slant_line_angle_fp,
+    % nxxx 类的参数
+    % --角度--
+    nsubset-n-slant-angle .fp_set:N = \l__examzh_symbols_nsubset_slant_angle_fp,
+    nsubseteq-n-slant-angle .fp_set:N = \l__examzh_symbols_nsubseteq_slant_angle_fp,
+    nsubsetneqq-n-slant-angle .fp_set:N = \l__examzh_symbols_nsubsetneqq_slant_angle_fp,
+    % --长度--
+    nsubset-n-slant-length .dim_set:N = \l__examzh_symbols_nsubset_slant_length_dim,
+    nsubseteq-n-slant-length .dim_set:N = \l__examzh_symbols_nsubseteq_slant_length_dim,
+    nsubsetneqq-n-slant-length .dim_set:N = \l__examzh_symbols_nsubsetneqq_slant_length_dim,
+  }
+\keys_set:nn { exam-zh / symbols }
+  {
+    subset-radius = 0.2em,
+    subset-upper-linewidth = 0.6em,
+    subset-lower-linewidth = 
+      {
+        \l__examzh_symbols_subset_semicircle_radius_dim + \l__examzh_symbols_subset_semicircle_line_width_dim
+      },
+    subset-upper-lower-distance = 0.12em,
+    subsetneqq-lower-twoline-distance = 0.14em,
+    subsetneqq-lower-slant-length     = 0.42em,
+    supsetneqq-lower-slant-length     = 0.4em,
+    subsetneqq-lower-slant-angle      = 55,
+    supsetneqq-lower-slant-angle      = 60,
+    nsubset-n-slant-angle             = 65,
+    nsubseteq-n-slant-angle           = 68,
+    nsubsetneqq-n-slant-angle         = 70,
+    nsubset-n-slant-length            = 1em,
+    nsubseteq-n-slant-length          = 1em,
+    nsubsetneqq-n-slant-length        = 1.2em,
+  }
+
+\cs_new:Npn \__examzh_symbols_subset:
+  {
+    \begin{tikzpicture}[line~cap=round,baseline = {([yshift = -1pt]current~bounding~box.south)}]
+      % 半圆 + 两条线
+      \draw[line~cap=round] (0,\l__examzh_symbols_subset_semicircle_radius_dim) arc (90 \c_colon_str 270 \c_colon_str \l__examzh_symbols_subset_semicircle_radius_dim)
+      (0,\l__examzh_symbols_subset_semicircle_radius_dim) --++ (\l__examzh_symbols_subset_semicircle_line_width_dim,0)
+      (0,-\l__examzh_symbols_subset_semicircle_radius_dim) --++ (\l__examzh_symbols_subset_semicircle_line_width_dim,0);
+    \end{tikzpicture}
+  }
+\cs_new:Npn \__examzh_symbols_nsubset:
+  {
+    \begin{tikzpicture}[line~cap=round,baseline = {([yshift = -1pt]current~bounding~box.south)}]
+      % 半圆 + 两条线
+      \draw (0,\l__examzh_symbols_subset_semicircle_radius_dim) arc (90 \c_colon_str 270 \c_colon_str \l__examzh_symbols_subset_semicircle_radius_dim)
+      (0,\l__examzh_symbols_subset_semicircle_radius_dim) --++ (\l__examzh_symbols_subset_semicircle_line_width_dim,0)
+      (0,-\l__examzh_symbols_subset_semicircle_radius_dim) --++ (\l__examzh_symbols_subset_semicircle_line_width_dim,0);
+      % 定位斜线的中心
+      \coordinate (n-center) at (\l__examzh_symbols_subset_semicircle_line_width_dim / 2 - \l__examzh_symbols_subset_semicircle_radius_dim / 2,0);
+      % 画斜线
+      \draw[overlay] 
+        (n-center) --++ (\fp_use:N \l__examzh_symbols_nsubset_slant_angle_fp \c_colon_str \l__examzh_symbols_nsubset_slant_length_dim / 2)
+        (n-center) --++ (\fp_eval:n { \l__examzh_symbols_nsubset_slant_angle_fp + 180} \c_colon_str \l__examzh_symbols_nsubset_slant_length_dim / 2);
+    \end{tikzpicture}
+  }
+\cs_new:Npn \__examzh_symbols_subseteq:
+  {
+    \begin{tikzpicture}[line~cap=round,baseline = (current~bounding~box.south)]
+      % 半圆 + 两条线
+      \draw (0,\l__examzh_symbols_subset_semicircle_radius_dim) arc (90 \c_colon_str 270 \c_colon_str \l__examzh_symbols_subset_semicircle_radius_dim)
+      (0,\l__examzh_symbols_subset_semicircle_radius_dim) --++ (\l__examzh_symbols_subset_semicircle_line_width_dim,0)
+      (0,-\l__examzh_symbols_subset_semicircle_radius_dim) --++ (\l__examzh_symbols_subset_semicircle_line_width_dim,0);
+      % 下面的一条线
+      \draw (-\l__examzh_symbols_subset_semicircle_radius_dim, - \l__examzh_symbols_subset_semicircle_radius_dim - \l__examzh_symbols_subset_upper_lower_distance_dim) --++ (\l__examzh_symbols_subset_lower_line_width_dim, 0);
+    \end{tikzpicture}
+  }
+\cs_new:Npn \__examzh_symbols_nsubseteq:
+  {
+    \begin{tikzpicture}[line~cap=round,baseline = (current~bounding~box.south)]
+      % 半圆 + 两条线
+      \draw (0,\l__examzh_symbols_subset_semicircle_radius_dim) arc (90 \c_colon_str 270 \c_colon_str \l__examzh_symbols_subset_semicircle_radius_dim)
+      (0,\l__examzh_symbols_subset_semicircle_radius_dim) --++ (\l__examzh_symbols_subset_semicircle_line_width_dim,0)
+      (0,-\l__examzh_symbols_subset_semicircle_radius_dim) --++ (\l__examzh_symbols_subset_semicircle_line_width_dim,0);
+      % 下面的一条线
+      \draw (-\l__examzh_symbols_subset_semicircle_radius_dim, - \l__examzh_symbols_subset_semicircle_radius_dim - \l__examzh_symbols_subset_upper_lower_distance_dim) --++ (\l__examzh_symbols_subset_lower_line_width_dim, 0);
+      % 定位斜线的中心
+      \coordinate (n-center) at (\l__examzh_symbols_subset_semicircle_line_width_dim / 2 - \l__examzh_symbols_subset_semicircle_radius_dim / 2,0);
+      % 画斜线
+      \draw[overlay] 
+        (n-center) --++ (\fp_use:N \l__examzh_symbols_nsubseteq_slant_angle_fp \c_colon_str \l__examzh_symbols_nsubseteq_slant_length_dim / 8 * 3.5)
+        (n-center) --++ (\fp_eval:n { \l__examzh_symbols_nsubseteq_slant_angle_fp + 180} \c_colon_str \l__examzh_symbols_nsubseteq_slant_length_dim / 8 * 4.5);
+    \end{tikzpicture}
+  }
+% 真子集
+\cs_new:Npn \__examzh_symbols_subsetneqq:
+  {
+    \begin{tikzpicture}[line~cap=round,baseline = (current~bounding~box.south)]
+      % 半圆 + 两条线
+      \draw (0,\l__examzh_symbols_subset_semicircle_radius_dim) arc (90 \c_colon_str 270 \c_colon_str \l__examzh_symbols_subset_semicircle_radius_dim)
+      (0,\l__examzh_symbols_subset_semicircle_radius_dim) --++ (\l__examzh_symbols_subset_semicircle_line_width_dim,0)
+      (0,-\l__examzh_symbols_subset_semicircle_radius_dim) --++ (\l__examzh_symbols_subset_semicircle_line_width_dim,0);
+      % 下面的两条线
+      \draw (-\l__examzh_symbols_subset_semicircle_radius_dim, - \l__examzh_symbols_subset_semicircle_radius_dim - \l__examzh_symbols_subset_upper_lower_distance_dim) --++ (\l__examzh_symbols_subset_lower_line_width_dim, 0)
+      (-\l__examzh_symbols_subset_semicircle_radius_dim, - \l__examzh_symbols_subset_semicircle_radius_dim - \l__examzh_symbols_subset_upper_lower_distance_dim - \l__examzh_symbols_subsetneqq_lower_twoline_distance_dim) --++ (\l__examzh_symbols_subset_lower_line_width_dim, 0);
+      % 定位斜线的中心点
+      \coordinate (lower-center) at 
+        (\l__examzh_symbols_subset_semicircle_line_width_dim / 2 - \l__examzh_symbols_subset_semicircle_radius_dim / 2 , - \l__examzh_symbols_subset_semicircle_radius_dim - \l__examzh_symbols_subset_upper_lower_distance_dim - \l__examzh_symbols_subsetneqq_lower_twoline_distance_dim / 2 );
+      % 画斜线
+      \draw[overlay]
+        (lower-center) --++ (\fp_use:N \l__examzh_symbols_subsetneqq_lower_slant_line_angle_fp \c_colon_str \l__examzh_symbols_subsetneqq_lower_slant_line_length_dim / 2)
+        (lower-center) --++ (\fp_eval:n {\l__examzh_symbols_subsetneqq_lower_slant_line_angle_fp + 180} \c_colon_str \l__examzh_symbols_subsetneqq_lower_slant_line_length_dim / 2);
+    \end{tikzpicture}
+  }
+\cs_new:Npn \__examzh_symbols_nsubsetneqq:
+  {
+    \begin{tikzpicture}[line~cap=round,baseline = (current~bounding~box.south)]
+      % 半圆 + 两条线
+      \draw (0,\l__examzh_symbols_subset_semicircle_radius_dim) arc (90 \c_colon_str 270 \c_colon_str \l__examzh_symbols_subset_semicircle_radius_dim)
+      (0,\l__examzh_symbols_subset_semicircle_radius_dim) --++ (\l__examzh_symbols_subset_semicircle_line_width_dim,0)
+      (0,-\l__examzh_symbols_subset_semicircle_radius_dim) --++ (\l__examzh_symbols_subset_semicircle_line_width_dim,0);
+      % 下面的两条线
+      \draw (-\l__examzh_symbols_subset_semicircle_radius_dim, - \l__examzh_symbols_subset_semicircle_radius_dim - \l__examzh_symbols_subset_upper_lower_distance_dim) --++ (\l__examzh_symbols_subset_lower_line_width_dim, 0)
+      (-\l__examzh_symbols_subset_semicircle_radius_dim, - \l__examzh_symbols_subset_semicircle_radius_dim - \l__examzh_symbols_subset_upper_lower_distance_dim - \l__examzh_symbols_subsetneqq_lower_twoline_distance_dim) --++ (\l__examzh_symbols_subset_lower_line_width_dim, 0);
+      % 定位斜线的中心点
+      \coordinate (lower-center) at 
+        (\l__examzh_symbols_subset_semicircle_line_width_dim / 2 - \l__examzh_symbols_subset_semicircle_radius_dim / 2 , - \l__examzh_symbols_subset_semicircle_radius_dim - \l__examzh_symbols_subset_upper_lower_distance_dim - \l__examzh_symbols_subsetneqq_lower_twoline_distance_dim / 2 );
+      % 画斜线
+      \draw[overlay]
+        (lower-center) --++ (\fp_use:N \l__examzh_symbols_subsetneqq_lower_slant_line_angle_fp \c_colon_str \l__examzh_symbols_subsetneqq_lower_slant_line_length_dim / 2)
+        (lower-center) --++ (\fp_eval:n {\l__examzh_symbols_subsetneqq_lower_slant_line_angle_fp + 180} \c_colon_str \l__examzh_symbols_subsetneqq_lower_slant_line_length_dim / 2);
+      % 定位斜线的中心
+      \coordinate (n-center) at (\l__examzh_symbols_subset_semicircle_line_width_dim / 2 - \l__examzh_symbols_subset_semicircle_radius_dim / 2,0);
+      % 画斜线
+      \draw[overlay] 
+        (n-center) --++ (\fp_use:N \l__examzh_symbols_nsubsetneqq_slant_angle_fp \c_colon_str \l__examzh_symbols_nsubsetneqq_slant_length_dim / 8 * 3.2)
+        (n-center) --++ (\fp_eval:n { \l__examzh_symbols_nsubsetneqq_slant_angle_fp + 180} \c_colon_str \l__examzh_symbols_nsubsetneqq_slant_length_dim / 8 * 4.8);
+    \end{tikzpicture}
+  }
+\cs_new:Npn \__examzh_symbols_supset:
+  {
+    \begin{tikzpicture}[line~cap=round,baseline = {([yshift = -1pt]current~bounding~box.south)}]
+      \draw (0,\l__examzh_symbols_subset_semicircle_radius_dim) arc (90 \c_colon_str -90 \c_colon_str \l__examzh_symbols_subset_semicircle_radius_dim)
+      (0,\l__examzh_symbols_subset_semicircle_radius_dim) --++ (-\l__examzh_symbols_subset_semicircle_line_width_dim,0)
+      (0,-\l__examzh_symbols_subset_semicircle_radius_dim) --++ (-\l__examzh_symbols_subset_semicircle_line_width_dim,0);
+    \end{tikzpicture}
+  }
+\cs_new:Npn \__examzh_symbols_nsupset:
+  {
+    \begin{tikzpicture}[line~cap=round,baseline = {([yshift = -1pt]current~bounding~box.south)}]
+      \draw (0,\l__examzh_symbols_subset_semicircle_radius_dim) arc (90 \c_colon_str -90 \c_colon_str \l__examzh_symbols_subset_semicircle_radius_dim)
+      (0,\l__examzh_symbols_subset_semicircle_radius_dim) --++ (-\l__examzh_symbols_subset_semicircle_line_width_dim,0)
+      (0,-\l__examzh_symbols_subset_semicircle_radius_dim) --++ (-\l__examzh_symbols_subset_semicircle_line_width_dim,0);
+      % 定位斜线的中心
+      \coordinate (n-center) at (- \l__examzh_symbols_subset_semicircle_line_width_dim / 2 + \l__examzh_symbols_subset_semicircle_radius_dim / 2,0);
+      % 画斜线
+      \draw[overlay] 
+        (n-center) --++ (\fp_use:N \l__examzh_symbols_nsubset_slant_angle_fp \c_colon_str \l__examzh_symbols_nsubset_slant_length_dim / 2)
+        (n-center) --++ (\fp_eval:n { \l__examzh_symbols_nsubset_slant_angle_fp + 180} \c_colon_str \l__examzh_symbols_nsubset_slant_length_dim / 2);
+    \end{tikzpicture}
+  }
+\cs_new:Npn \__examzh_symbols_supseteq:
+  {
+    \begin{tikzpicture}[line~cap=round,baseline = (current~bounding~box.south)]
+      \draw (0,\l__examzh_symbols_subset_semicircle_radius_dim) arc (90 \c_colon_str -90 \c_colon_str \l__examzh_symbols_subset_semicircle_radius_dim);
+      \draw (0,\l__examzh_symbols_subset_semicircle_radius_dim) --++ (-\l__examzh_symbols_subset_semicircle_line_width_dim,0);
+      \draw (0,-\l__examzh_symbols_subset_semicircle_radius_dim) --++ (-\l__examzh_symbols_subset_semicircle_line_width_dim,0);
+      \draw 
+        (\l__examzh_symbols_subset_semicircle_radius_dim, - \l__examzh_symbols_subset_semicircle_radius_dim - \l__examzh_symbols_subset_upper_lower_distance_dim) --++ (-\l__examzh_symbols_subset_semicircle_line_width_dim - \l__examzh_symbols_subset_semicircle_radius_dim, 0);
+    \end{tikzpicture}
+  }
+\cs_new:Npn \__examzh_symbols_nsupseteq:
+  {
+    \begin{tikzpicture}[line~cap=round,baseline = (current~bounding~box.south)]
+      \draw (0,\l__examzh_symbols_subset_semicircle_radius_dim) arc (90 \c_colon_str -90 \c_colon_str \l__examzh_symbols_subset_semicircle_radius_dim)
+      (0,\l__examzh_symbols_subset_semicircle_radius_dim) --++ (-\l__examzh_symbols_subset_semicircle_line_width_dim,0)
+      (0,-\l__examzh_symbols_subset_semicircle_radius_dim) --++ (-\l__examzh_symbols_subset_semicircle_line_width_dim,0);
+      \draw 
+        (\l__examzh_symbols_subset_semicircle_radius_dim, - \l__examzh_symbols_subset_semicircle_radius_dim - \l__examzh_symbols_subset_upper_lower_distance_dim) --++ (-\l__examzh_symbols_subset_semicircle_line_width_dim - \l__examzh_symbols_subset_semicircle_radius_dim, 0);
+      \coordinate (n-center) at (-\l__examzh_symbols_subset_semicircle_line_width_dim / 2 + \l__examzh_symbols_subset_semicircle_radius_dim / 2,0);
+      % 画斜线
+      \draw[overlay] 
+        (n-center) --++ (\fp_use:N \l__examzh_symbols_nsubseteq_slant_angle_fp \c_colon_str \l__examzh_symbols_nsubseteq_slant_length_dim / 8 * 3.5)
+        (n-center) --++ (\fp_eval:n { \l__examzh_symbols_nsubseteq_slant_angle_fp + 180} \c_colon_str \l__examzh_symbols_nsubseteq_slant_length_dim / 8 * 4.5);
+    \end{tikzpicture}
+  }
+% 反向真子集
+\cs_new:Npn \__examzh_symbols_supsetneqq:
+  {
+    \begin{tikzpicture}[line~cap=round,baseline = (current~bounding~box.south)]
+      \draw (0,\l__examzh_symbols_subset_semicircle_radius_dim) arc (90 \c_colon_str -90 \c_colon_str \l__examzh_symbols_subset_semicircle_radius_dim);
+      \draw (0,\l__examzh_symbols_subset_semicircle_radius_dim) --++ (-\l__examzh_symbols_subset_semicircle_line_width_dim,0);
+      \draw (0,-\l__examzh_symbols_subset_semicircle_radius_dim) --++ (-\l__examzh_symbols_subset_semicircle_line_width_dim,0);
+      \draw 
+        (\l__examzh_symbols_subset_semicircle_radius_dim, - \l__examzh_symbols_subset_semicircle_radius_dim - \l__examzh_symbols_subset_upper_lower_distance_dim) --++ (-\l__examzh_symbols_subset_semicircle_line_width_dim - \l__examzh_symbols_subset_semicircle_radius_dim, 0)
+        (\l__examzh_symbols_subset_semicircle_radius_dim, - \l__examzh_symbols_subset_semicircle_radius_dim - \l__examzh_symbols_subset_upper_lower_distance_dim - \l__examzh_symbols_subsetneqq_lower_twoline_distance_dim) --++ (-\l__examzh_symbols_subset_semicircle_line_width_dim - \l__examzh_symbols_subset_semicircle_radius_dim, 0);
+      % 定位斜线的中心点
+      \coordinate (center) at 
+      (- \l__examzh_symbols_subset_semicircle_line_width_dim / 2 + \l__examzh_symbols_subset_semicircle_radius_dim / 2 , - \l__examzh_symbols_subset_semicircle_radius_dim - \l__examzh_symbols_subset_upper_lower_distance_dim - \l__examzh_symbols_subsetneqq_lower_twoline_distance_dim / 2 );
+      % 画斜线
+      \draw[overlay]
+        (center) --++ (\fp_use:N \l__examzh_symbols_supsetneqq_lower_slant_line_angle_fp \c_colon_str \l__examzh_symbols_supsetneqq_lower_slant_line_length_dim / 2)
+        (center) --++ (\fp_eval:n {\l__examzh_symbols_supsetneqq_lower_slant_line_angle_fp + 180} \c_colon_str \l__examzh_symbols_supsetneqq_lower_slant_line_length_dim / 2);
+    \end{tikzpicture}
+  }
+\cs_new:Npn \__examzh_symbols_nsupsetneqq:
+  {
+    \begin{tikzpicture}[line~cap=round,baseline = (current~bounding~box.south)]
+      \draw (0,\l__examzh_symbols_subset_semicircle_radius_dim) arc (90 \c_colon_str -90 \c_colon_str \l__examzh_symbols_subset_semicircle_radius_dim);
+      \draw (0,\l__examzh_symbols_subset_semicircle_radius_dim) --++ (-\l__examzh_symbols_subset_semicircle_line_width_dim,0);
+      \draw (0,-\l__examzh_symbols_subset_semicircle_radius_dim) --++ (-\l__examzh_symbols_subset_semicircle_line_width_dim,0);
+      \draw 
+        (\l__examzh_symbols_subset_semicircle_radius_dim, - \l__examzh_symbols_subset_semicircle_radius_dim - \l__examzh_symbols_subset_upper_lower_distance_dim) --++ (-\l__examzh_symbols_subset_semicircle_line_width_dim - \l__examzh_symbols_subset_semicircle_radius_dim, 0)
+        (\l__examzh_symbols_subset_semicircle_radius_dim, - \l__examzh_symbols_subset_semicircle_radius_dim - \l__examzh_symbols_subset_upper_lower_distance_dim - \l__examzh_symbols_subsetneqq_lower_twoline_distance_dim) --++ (-\l__examzh_symbols_subset_semicircle_line_width_dim - \l__examzh_symbols_subset_semicircle_radius_dim, 0);
+      % 定位斜线的中心点
+      \coordinate (center) at 
+      (- \l__examzh_symbols_subset_semicircle_line_width_dim / 2 + \l__examzh_symbols_subset_semicircle_radius_dim / 2 , - \l__examzh_symbols_subset_semicircle_radius_dim - \l__examzh_symbols_subset_upper_lower_distance_dim - \l__examzh_symbols_subsetneqq_lower_twoline_distance_dim / 2 );
+      % 画斜线
+      \draw[overlay] 
+        (center) --++ (\fp_use:N \l__examzh_symbols_supsetneqq_lower_slant_line_angle_fp \c_colon_str \l__examzh_symbols_supsetneqq_lower_slant_line_length_dim / 2)
+        (center) --++ (\fp_eval:n {\l__examzh_symbols_supsetneqq_lower_slant_line_angle_fp + 180} \c_colon_str \l__examzh_symbols_supsetneqq_lower_slant_line_length_dim / 2);
+      % 定位斜线的中心
+      \coordinate (n-center) at (-\l__examzh_symbols_subset_semicircle_line_width_dim / 2 + \l__examzh_symbols_subset_semicircle_radius_dim / 2,0);
+      % 画斜线
+      \draw[overlay] 
+        (n-center) --++ (\fp_use:N \l__examzh_symbols_nsubsetneqq_slant_angle_fp \c_colon_str \l__examzh_symbols_nsubsetneqq_slant_length_dim / 8 * 3.2)
+        (n-center) --++ (\fp_eval:n { \l__examzh_symbols_nsubsetneqq_slant_angle_fp + 180} \c_colon_str \l__examzh_symbols_nsubsetneqq_slant_length_dim / 8 * 4.8);
+    \end{tikzpicture}
+  }
+\AtBeginDocument
+  {
+    \cs_set_eq:NN \__examzh_symbols_old_subset: \subset
+    \cs_set_eq:NN \__examzh_symbols_old_supset: \supset
+    \cs_set_eq:NN \__examzh_symbols_old_nsubset: \nsubset
+    \cs_set_eq:NN \__examzh_symbols_old_nsupset: \nsupset
+    \cs_set_eq:NN \__examzh_symbols_old_subseteq: \subseteq
+    \cs_set_eq:NN \__examzh_symbols_old_supseteq: \supseteq
+    \cs_set_eq:NN \__examzh_symbols_old_nsubseteq: \nsubseteq
+    \cs_set_eq:NN \__examzh_symbols_old_nsupseteq: \nsupseteq
+    \cs_set_eq:NN \__examzh_symbols_old_subsetneqq: \subsetneqq
+    \cs_set_eq:NN \__examzh_symbols_old_supsetneqq: \supsetneqq
+    % \cs_set_eq:NN \__examzh_symbols_old_nsubsetneqq: \nsubsetneqq
+    % \cs_set_eq:NN \__examzh_symbols_old_nsupsetneqq: \nsupsetneqq
+    \RenewDocumentCommand { \subset } { s }
+      {
+        \group_begin:
+          \keys_set:nn { exam-zh / symbols }
+            {
+              subset-radius = 0.2em,
+              subset-upper-linewidth  = 0.6em
+            }
+          \IfBooleanTF {#1}
+            { \__examzh_symbols_old_subset: }
+            {
+              \mathrel 
+                { 
+                  \__examzh_symbols_symbol_four_size:n 
+                    { \__examzh_symbols_subset: } 
+                }
+            }
+        \group_end:
+      }
+    \RenewDocumentCommand { \nsubset } { s }
+      {
+        \group_begin:
+          \keys_set:nn { exam-zh / symbols }
+            {
+              subset-radius = 0.2em,
+              subset-upper-linewidth = 0.6em,
+              nsubset-n-slant-angle       = 65,
+              nsubset-n-slant-length      = 1em,
+            }
+            \IfBooleanTF {#1}
+              { \__examzh_symbols_old_nsubset: }
+              {
+                \mathrel 
+                  { 
+                    \__examzh_symbols_symbol_four_size:n 
+                      { \__examzh_symbols_nsubset: } 
+                  }
+              }
+        \group_end:
+      }
+    \RenewDocumentCommand { \subseteq } { s }
+      {
+        \group_begin:
+          \keys_set:nn { exam-zh / symbols }
+            {
+              subset-radius = 0.2em,
+              subset-upper-linewidth = 0.6em,
+              subset-upper-lower-distance = 0.12em,
+              subset-lower-linewidth = 
+                {
+                  \l__examzh_symbols_subset_semicircle_radius_dim + \l__examzh_symbols_subset_semicircle_line_width_dim
+                }
+            }
+            \IfBooleanTF {#1}
+              { \__examzh_symbols_old_subseteq: }
+              {
+                \mathrel 
+                  { 
+                    \__examzh_symbols_symbol_four_size:n 
+                      { \__examzh_symbols_subseteq: } 
+                  }
+              }
+        \group_end:
+      }
+    \RenewDocumentCommand { \nsubseteq } { s }
+      {
+        \group_begin:
+          \keys_set:nn { exam-zh / symbols }
+            {
+              subset-radius = 0.2em,
+              subset-upper-linewidth = 0.6em,
+              subset-lower-linewidth = 
+                {
+                  \l__examzh_symbols_subset_semicircle_radius_dim + \l__examzh_symbols_subset_semicircle_line_width_dim
+                },
+              subset-upper-lower-distance = 0.12em,
+              nsubseteq-n-slant-angle           = 68,
+              nsubseteq-n-slant-length          = 1em,
+            }
+            \IfBooleanTF {#1}
+              { \__examzh_symbols_old_nsubseteq: }
+              {
+                \mathrel 
+                  { 
+                    \__examzh_symbols_symbol_four_size:n 
+                      { \__examzh_symbols_nsubseteq: } 
+                  }
+              }
+        \group_end:
+      }
+    \RenewDocumentCommand { \subsetneqq } { s }
+      {
+        \group_begin:
+          \keys_set:nn { exam-zh / symbols }
+            {
+              subset-radius = 0.2em,
+              subset-upper-linewidth = 0.6em,
+              subset-lower-linewidth = 
+                {
+                  \l__examzh_symbols_subset_semicircle_radius_dim + \l__examzh_symbols_subset_semicircle_line_width_dim
+                },
+              subset-upper-lower-distance = 0.12em,
+              subsetneqq-lower-twoline-distance = 0.14em,
+              subsetneqq-lower-slant-length     = 0.42em,
+              subsetneqq-lower-slant-angle      = 55,
+            }
+            \IfBooleanTF {#1}
+              { \__examzh_symbols_old_subsetneqq: }
+              {
+                \mathrel 
+                  { 
+                    \__examzh_symbols_symbol_four_size:n 
+                      { \__examzh_symbols_subsetneqq: } 
+                  }
+              }
+        \group_end:
+      }
+    \NewDocumentCommand { \nsubsetneqq } { }
+      {
+        \group_begin:
+          \keys_set:nn { exam-zh / symbols }
+            {
+              subset-radius = 0.2em,
+              subset-upper-linewidth = 0.6em,
+              subset-lower-linewidth = 
+                {
+                  \l__examzh_symbols_subset_semicircle_radius_dim + \l__examzh_symbols_subset_semicircle_line_width_dim
+                },
+              subset-upper-lower-distance = 0.12em,
+              subsetneqq-lower-twoline-distance = 0.14em,
+              subsetneqq-lower-slant-length     = 0.42em,
+              subsetneqq-lower-slant-angle      = 55,
+              nsubsetneqq-n-slant-angle         = 70,
+              nsubsetneqq-n-slant-length        = 1.2em,
+            }
+          \mathrel 
+            { 
+              \__examzh_symbols_symbol_four_size:n 
+                { \__examzh_symbols_nsubsetneqq: } 
+            }
+        \group_end:
+      }
+    \RenewDocumentCommand { \supset } { s }
+      {
+        \group_begin:
+          \keys_set:nn { exam-zh / symbols }
+            {
+              subset-radius = 0.2em,
+              subset-upper-linewidth  = 0.6em
+            }
+          \IfBooleanTF {#1}
+            { \__examzh_symbols_old_supset: }
+            {
+              \mathrel 
+                { 
+                  \__examzh_symbols_symbol_four_size:n 
+                    { \__examzh_symbols_supset: } 
+                }
+            }
+        \group_end:
+      }
+    \RenewDocumentCommand { \nsupset } { s }
+      {
+        \group_begin:
+          \keys_set:nn { exam-zh / symbols }
+            {
+              subset-radius = 0.2em,
+              subset-upper-linewidth = 0.6em,
+              nsubset-n-slant-angle       = 65,
+              nsubset-n-slant-length      = 1em,
+            }
+            \IfBooleanTF {#1}
+              { \__examzh_symbols_old_nsupset: }
+              {
+                \mathrel 
+                  { 
+                    \__examzh_symbols_symbol_four_size:n 
+                      { \__examzh_symbols_nsupset: } 
+                  }
+              }
+        \group_end:
+      }
+    \RenewDocumentCommand { \supseteq } { s }
+      {
+        \group_begin:
+          \keys_set:nn { exam-zh / symbols }
+            {
+              subset-radius = 0.2em,
+              subset-upper-linewidth = 0.6em,
+              subset-upper-lower-distance = 0.12em,
+              subset-lower-linewidth = 
+                {
+                  \l__examzh_symbols_subset_semicircle_radius_dim + \l__examzh_symbols_subset_semicircle_line_width_dim
+                }
+            }
+            \IfBooleanTF {#1}
+              { \__examzh_symbols_old_supseteq: }
+              {
+                \mathrel 
+                  { 
+                    \__examzh_symbols_symbol_four_size:n 
+                      { \__examzh_symbols_supseteq: } 
+                  }
+              }
+        \group_end:
+      }
+    \RenewDocumentCommand { \nsupseteq } { s }
+      {
+        \group_begin:
+          \keys_set:nn { exam-zh / symbols }
+            {
+              subset-radius = 0.2em,
+              subset-upper-linewidth = 0.6em,
+              subset-lower-linewidth = 
+                {
+                  \l__examzh_symbols_subset_semicircle_radius_dim + \l__examzh_symbols_subset_semicircle_line_width_dim
+                },
+              subset-upper-lower-distance = 0.12em,
+              nsubseteq-n-slant-angle           = 68,
+              nsubseteq-n-slant-length          = 1em,
+            }
+            \IfBooleanTF {#1}
+              { \__examzh_symbols_old_nsupseteq: }
+              {
+                \mathrel 
+                  { 
+                    \__examzh_symbols_symbol_four_size:n 
+                      { \__examzh_symbols_nsupseteq: } 
+                  }
+              }
+        \group_end:
+      }
+    \RenewDocumentCommand { \supsetneqq } { s }
+      {
+        \group_begin:
+          \keys_set:nn { exam-zh / symbols }
+            {
+              subset-radius = 0.2em,
+              subset-upper-linewidth = 0.6em,
+              subset-lower-linewidth = 
+                {
+                  \l__examzh_symbols_subset_semicircle_radius_dim + \l__examzh_symbols_subset_semicircle_line_width_dim
+                },
+              subset-upper-lower-distance = 0.12em,
+              subsetneqq-lower-twoline-distance = 0.14em,
+              supsetneqq-lower-slant-length     = 0.4em,
+              supsetneqq-lower-slant-angle      = 60,
+            }
+            \IfBooleanTF {#1}
+              { \__examzh_symbols_old_supsetneqq: }
+              {
+                \mathrel 
+                  { 
+                    \__examzh_symbols_symbol_four_size:n 
+                      { \__examzh_symbols_supsetneqq: } 
+                  }
+              }
+        \group_end:
+      }
+    \NewDocumentCommand { \nsupsetneqq } { }
+      {
+        \group_begin:
+          \keys_set:nn { exam-zh / symbols }
+            {
+              subset-radius = 0.2em,
+              subset-upper-linewidth = 0.6em,
+              subset-lower-linewidth = 
+                {
+                  \l__examzh_symbols_subset_semicircle_radius_dim + \l__examzh_symbols_subset_semicircle_line_width_dim
+                },
+              subset-upper-lower-distance = 0.12em,
+              subsetneqq-lower-twoline-distance = 0.14em,
+              supsetneqq-lower-slant-length     = 0.4em,
+              supsetneqq-lower-slant-angle      = 60,
+              nsubsetneqq-n-slant-angle         = 70,
+              nsubsetneqq-n-slant-length        = 1.2em,
+            }
+          \mathrel 
+            { 
+              \__examzh_symbols_symbol_four_size:n 
+                { \__examzh_symbols_nsupsetneqq: } 
+            }
+        \group_end:
+      }
+    % \RenewDocumentCommand { \subset } { s }
+    %   {
+    %     \group_begin:
+    %       \keys_set:nn { exam-zh / symbols }
+    %         {
+    %           subset-radius = 0.2em,
+    %           subset-upper-linewidth = 0.6em,
+    %           subset-lower-linewidth = 
+    %             {
+    %               \l__examzh_symbols_subset_semicircle_radius_dim + \l__examzh_symbols_subset_semicircle_line_width_dim
+    %             },
+    %           subset-upper-lower-distance = 0.12em,
+    %           subsetneqq-lower-twoline-distance = 0.14em,
+    %           subsetneqq-lower-slant-length     = 0.42em,
+    %           supsetneqq-lower-slant-length     = 0.4em,
+    %           subsetneqq-lower-slant-angle      = 55,
+    %           supsetneqq-lower-slant-angle      = 60,
+    %           nsubset-n-slant-angle             = 65,
+    %           nsubseteq-n-slant-angle           = 68,
+    %           nsubsetneqq-n-slant-angle         = 70,
+    %           nsubset-n-slant-length            = 1em,
+    %           nsubseteq-n-slant-length          = 1em,
+    %           nsubsetneqq-n-slant-length        = 1.2em,
+    %         }
+    %         \IfBooleanTF {#1}
+    %           { \__examzh_symbols_old_subset: }
+    %           {
+    %             \mathrel 
+    %               { 
+    %                 \__examzh_symbols_symbol_four_size:n 
+    %                   { \__examzh_symbols_subset: } 
+    %               }
+    %           }
+    %     \group_end:
+    %   }
+    \RenewDocumentCommand { \subseteq } { s }
+      {
+        \group_begin:
+          \keys_set:nn { exam-zh / symbols }
+            {
+              subset-radius = 0.2em,
+              subset-upper-linewidth = 0.6em,
+              subset-lower-linewidth = 
+                {
+                  \l__examzh_symbols_subset_semicircle_radius_dim + \l__examzh_symbols_subset_semicircle_line_width_dim
+                },
+              subset-upper-lower-distance = 0.12em,
+            }
+            \IfBooleanTF {#1}
+              { \__examzh_symbols_old_subseteq: }
+              {
+                \mathrel 
+                  { 
+                    \__examzh_symbols_symbol_four_size:n 
+                      { \__examzh_symbols_subseteq: } 
+                  }
+              }
+        \group_end:
+      }
+      
+  }
+
+
+
+% 并集 交集 cap cup
+
+% 直线长度
+\dim_new:N \l__examzh_symbols_cap_line_length_dim
+\dim_new:N \l__examzh_symbols_cup_line_length_dim
+% 半径大小
+\dim_new:N \l__examzh_symbols_cap_radius_dim
+\dim_new:N \l__examzh_symbols_cup_radius_dim
+
+\cs_new:Npn \__examzh_symbols_cap:
+  {
+    \begin{tikzpicture}[line~cap=round, line~width = 0.6pt,baseline = {([yshift = 1.2pt]current~bounding~box.south)}]
+      \draw (\l__examzh_symbols_cap_radius_dim,0) arc (0 \c_colon_str 180 \c_colon_str \l__examzh_symbols_cap_radius_dim);
+      \draw 
+        (\l__examzh_symbols_cap_radius_dim,0) --++ (0,-\l__examzh_symbols_cap_line_length_dim)
+        (-\l__examzh_symbols_cap_radius_dim,0) --++ (0,-\l__examzh_symbols_cap_line_length_dim);
+    \end{tikzpicture}
+  }
+\cs_new:Npn \__examzh_symbols_cup:
+  {
+    \begin{tikzpicture}[line~cap=round, line~width = 0.6pt,baseline = {([yshift = 1.8pt]current~bounding~box.south)}]
+      \draw (-\l__examzh_symbols_cup_radius_dim,0) arc (180 \c_colon_str 360 \c_colon_str \l__examzh_symbols_cup_radius_dim);
+      \draw 
+        (\l__examzh_symbols_cup_radius_dim,0) --++ (0,\l__examzh_symbols_cup_line_length_dim)
+        (-\l__examzh_symbols_cup_radius_dim,0) --++ (0,\l__examzh_symbols_cup_line_length_dim);
+    \end{tikzpicture}
+  }
+\AtBeginDocument
+  {
+    \cs_set_eq:NN \__examzh_symbols_old_cap: \cap
+    \cs_set_eq:NN \__examzh_symbols_old_cup: \cup
+    \RenewDocumentCommand { \cap } { s }
+      {
+        \group_begin:
+          \dim_set:Nn \l__examzh_symbols_cap_line_length_dim { 0.56em }
+          \dim_set:Nn \l__examzh_symbols_cap_radius_dim { 0.28em }
+          \IfBooleanTF {#1}
+            { \__examzh_symbols_old_cap: }
+            {
+              \mathrel 
+                { 
+                  \__examzh_symbols_symbol_four_size:n 
+                    { \__examzh_symbols_cap: } 
+                }
+            }
+        \group_end:
+      }
+    \RenewDocumentCommand { \cup } { s }
+      {
+        \group_begin:
+          \dim_set:Nn \l__examzh_symbols_cup_line_length_dim { 0.53em }
+          \dim_set:Nn \l__examzh_symbols_cup_radius_dim { 0.28em }
+          \IfBooleanTF {#1}
+            { \__examzh_symbols_old_cup: }
+            {
+              \mathrel 
+                { 
+                  \__examzh_symbols_symbol_four_size:n 
+                    { \__examzh_symbols_cup: } 
+                }
+            }
+        \group_end:
+      }
+  }
+% 相似
+\cs_new:Npn \__examzh_symbols_sim:
+  {
+    \begin{tikzpicture}[line~cap=round, line~width = 0.6pt,baseline = {([yshift = -1pt]current~bounding~box.south)}]
+      \draw
+        (-.25em,1.15ex) 
+          .. controls (-.55em,1.15ex) and (-.51em,.23ex) .. (-.275em,.23ex) 
+          .. controls (0,.23ex) and (0,1.15ex) .. (.275em,1.15ex) 
+          .. controls (.51em,1.15ex) and (.55em,.23ex) .. (.25em,.23ex);
+    \end{tikzpicture}
+  }
+\cs_new:Npn \__examzh_symbols_nsim:
+  {
+    \begin{tikzpicture}[line~width = 0.6pt,line~cap=round, baseline = {([yshift = 1pt]current~bounding~box.south)}]
+      \draw
+        (-.25em,1.15ex) 
+          .. controls (-.55em,1.15ex) and (-.51em,.23ex) .. (-.275em,.23ex) 
+          .. controls (0,.23ex) and (0,1.15ex) .. (.275em,1.15ex) 
+          .. controls (.51em,1.15ex) and (.55em,.23ex) .. (.25em,.23ex);
+      \draw (-0.15em,-0.2ex) --++ (70 \c_colon_str 0.8em);
+    \end{tikzpicture}
+  }
+\AtBeginDocument
+  {
+    \cs_set_eq:NN \__examzh_symbols_old_sim: \sim
+    \RenewDocumentCommand { \sim } { s }
+      {
+        \IfBooleanTF {#1}
+          { \__examzh_symbols_old_sim: }
+          {
+            \mathrel { \__examzh_symbols_symbol_four_size:n { \__examzh_symbols_sim: } }
+          }
+      }
+    \RenewDocumentCommand { \nsim } {  }
+      {
+        \mathrel { \__examzh_symbols_symbol_four_size:n { \__examzh_symbols_nsim: } }
+      }
+  }
+
+% 全等
+\cs_new:Npn \__examzh_symbols_cong:
+  {
+    \begin{tikzpicture}[line~cap=round, baseline]
+      \draw
+        (-.2em,1.35ex) 
+          .. controls (-.46em,1.6ex) and (-.54em,.65ex) .. (-.25em,.65ex)
+          .. controls (-.06em,.65ex) and (.06em,1.35ex) .. (.25em,1.35ex)
+          .. controls (.54em,1.35ex) and (.46em,.4ex) .. (.2em,.65ex)
+        (-.46em,.4ex) -- (.46em,.4ex)
+        (-.46em,0ex) -- (.46em,0ex);
+    \end{tikzpicture}
+  }
+\cs_new:Npn \__examzh_symbols_ncong:
+  {
+    \begin{tikzpicture}[line~cap=round, baseline]
+      \draw
+        (-.2em,1.35ex) 
+          .. controls (-.46em,1.6ex) and (-.54em,.65ex) .. (-.25em,.65ex)
+          .. controls (-.06em,.65ex) and (.06em,1.35ex) .. (.25em,1.35ex)
+          .. controls (.54em,1.35ex) and (.46em,.4ex) .. (.2em,.65ex)
+        (-.46em,.4ex) -- (.46em,.4ex)
+        (-.46em,0ex) -- (.46em,0ex);
+      \draw (-0.22em,-0.4ex) --++ (66 \c_colon_str 1em);
+    \end{tikzpicture}
+  }
+
+\AtBeginDocument
+  {
+    \cs_set_eq:NN \__examzh_symbols_old_cong: \backcong
+    \RenewDocumentCommand { \cong } { s }
+      {
+        \IfBooleanTF {#1}
+          { \__examzh_symbols_old_cong: }
+          {
+            \mathrel { \__examzh_symbols_symbol_four_size:n { \__examzh_symbols_cong: } }
+          }
+      }
+    \RenewDocumentCommand { \ncong } { }
+      {
+        \mathrel { \__examzh_symbols_symbol_four_size:n { \__examzh_symbols_ncong: } }
+      }
+  }
+
+% 处理符号的不同情况的大小
+\cs_set_eq:NN \NewDocumentCommand:Nnn \NewDocumentCommand
+\cs_set_eq:NN \RenewDocumentCommand:Nnn \RenewDocumentCommand
+\cs_generate_variant:Nn \NewDocumentCommand:Nnn { cnn }
+\cs_generate_variant:Nn \RenewDocumentCommand:Nnn { cnn }
+
+\cs_new:Npn \__examzh_symbols_new_command_without_star_or_old_version:n #1
+  {
+    \NewDocumentCommand:cnn { #1 } { }
+      {
+        \mathrel 
+          { 
+            \__examzh_symbols_symbol_four_size:n 
+              { \use:c { __examzh_symbols_ #1 : } } 
+          }
+      }
+  }
+
+\cs_new:Npn \__examzh_symbols_new_command_with_star_and_old_version:n #1
+  {
+    \RenewDocumentCommand:cnn { #1 } { s }
+      {
+        \IfBooleanTF {##1}
+          { \use:c { __examzh_symbols_old_ #1 : } }
+          {
+            \mathrel 
+              { 
+                \__examzh_symbols_symbol_four_size:n 
+                  { \use:c { __examzh_symbols_ #1 : } } 
+              }
+          }
+      }
+  }
+\cs_new:Npn \__examzh_symbols_symbol_four_size:n #1
+  {
+    \mathchoice
+      {
+        \hbox:n 
+          {
+            \fontsize{\tf@size}{\tf@size}\selectfont #1
+          }
+      }
+      {
+        \hbox:n 
+          {
+            \fontsize{\tf@size}{\tf@size}\selectfont #1
+          }
+      }
+      {
+        \hbox:n
+          {
+            \fontsize{\sf@size}{\sf@size}\selectfont #1
+          }
+      }
+      {
+        \hbox:n
+          {
+            \fontsize{\ssf@size}{\ssf@size}\selectfont #1 
+          }
+      }
+  }
+
+\endinput

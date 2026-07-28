@@ -1,0 +1,116 @@
+%
+% Copyright (c) 2024 Kangwei Xia
+% Released under the LaTeX Project Public License v1.3c License.
+% Repository: https://github.com/xkwxdyy/exam-zh
+%            https://gitee.com/xkwxdyy/exam-zh (mirror)
+%
+
+\NeedsTeXFormat{LaTeX2e}
+
+\RequirePackage { expl3 }
+\RequirePackage { tikz }
+
+\ProvidesExplPackage {exam-zh-circlednumber} {2026-07-12} {v0.3.0}
+  {exam-zh shared TikZ circled-number implementation}
+
+\fp_new:N \l__examzh_tikz_circled_number_xscale_fp
+\fp_new:N \l__examzh_tikz_circled_number_yscale_fp
+\dim_new:N \l__examzh_tikz_circled_number_total_hegiht_dim
+\dim_new:N \l__examzh_tikz_circled_number_radius_dim
+
+\cs_new:Npn \__examzh_tikz_circled_number_aux:n #1
+  {
+    \fp_set:Nn \l__examzh_tikz_circled_number_xscale_fp
+      {
+        \int_compare:nNnTF {#1} < { 10 }
+          { 0.9 }
+          {
+            \int_compare:nNnTF {#1} < { 100 }
+              { 0.7 }
+              { 0.5 }
+          }
+      }
+    \fp_set:Nn \l__examzh_tikz_circled_number_yscale_fp
+      {
+        \int_compare:nNnTF {#1} < { 10 }
+          { 0.9 }
+          {
+            \int_compare:nNnTF {#1} < { 100 }
+              { 0.8 }
+              { 0.6 }
+          }
+      }
+    \hbox_set:Nn \l_tmpa_box {#1}
+    \dim_set:Nn \l__examzh_tikz_circled_number_total_hegiht_dim
+      { \box_ht:N \l_tmpa_box + \box_dp:N \l_tmpa_box }
+    \dim_set:Nn \l__examzh_tikz_circled_number_radius_dim
+      {
+        \dim_eval:n
+          { \l__examzh_tikz_circled_number_total_hegiht_dim / 2 + 0.34ex }
+      }
+    \tikz [ baseline ]
+      {
+        \node
+          [ inner~sep = 0pt, outer~sep = 0pt ]
+          at
+            (
+              0,
+              \dim_use:N \l__examzh_tikz_circled_number_total_hegiht_dim / 2
+            )
+          {
+            \hbox_set:Nn \l_tmpa_box
+              {
+                \int_compare:nNnTF {#1} > { 9 }
+                  { \textbf {#1} }
+                  {#1}
+              }
+            \makebox[0.35em][c]
+              {
+                \box_scale:Nnn \l_tmpa_box
+                  { \fp_use:N \l__examzh_tikz_circled_number_xscale_fp }
+                  { \fp_use:N \l__examzh_tikz_circled_number_yscale_fp }
+                \box_use_drop:N \l_tmpa_box
+              }
+          };
+        \draw
+          (0, \l__examzh_tikz_circled_number_total_hegiht_dim / 2)
+          circle ( \l__examzh_tikz_circled_number_radius_dim );
+      }
+  }
+
+\cs_new:Npn \__examzh_tikz_circled_number:n #1
+  {
+    \__examzh_tikz_circled_number_aux:n { \int_eval:n {#1} }
+  }
+
+\cs_new:Npn \__examzh_font_circled_number:n #1
+  {
+    \int_set:Nn \l_tmpa_int {#1}
+    \int_compare:nNnTF { \l_tmpa_int } = { 0 }
+      { \int_set:Nn \l_tmpa_int { "24EA } }
+      {
+        \int_compare:nNnTF { \l_tmpa_int } < { 21 }
+          { \int_add:Nn \l_tmpa_int { "245F } }
+          {
+            \int_compare:nNnTF { \l_tmpa_int } < { 36 }
+              { \int_add:Nn \l_tmpa_int { "3250 } }
+              {
+                \int_compare:nNnTF { \l_tmpa_int } < { 51 }
+                  { \int_add:Nn \l_tmpa_int { "32B0 } }
+                  {
+                    \msg_error:nnn { exam-zh / counter }
+                      { invalid-circled-number } { \int_use:N \l_tmpa_int }
+                  }
+              }
+          }
+      }
+    \group_begin:
+      \CJKfamily+ { }
+      \symbol { \l_tmpa_int }
+    \group_end:
+  }
+
+\msg_new:nnn { exam-zh / counter } { invalid-circled-number }
+  { Invalid~circled~number~#1. }
+
+\endinput

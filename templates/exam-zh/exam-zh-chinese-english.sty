@@ -1,0 +1,673 @@
+%
+% Copyright (c) 2024 Kangwei Xia, Lijun Guo
+% Released under the LaTeX Project Public License v1.3c License.
+% Repository: https://github.com/xkwxdyy/exam-zh
+%            https://gitee.com/xkwxdyy/exam-zh (mirror)
+%
+
+\NeedsTeXFormat{LaTeX2e}
+
+\RequirePackage{expl3}
+
+\ProvidesExplPackage {exam-zh-chinese-english} {2026-07-12} {v0.3.0}
+  {exam-zh chinese and english module}
+
+\PassOptionsToPackage { tcolorbox } { most }
+\RequirePackage { tcolorbox }
+\RequirePackage { varwidth }
+
+\keys_define:nn { exam-zh }
+  { select .meta:nn = { exam-zh / select } {#1} }
+
+
+% 选择环境 select
+\str_new:N \l__examzh_select_mark_position_str   % mark 的方位
+
+\keys_define:nn { exam-zh / select }
+  {
+    mark-symbol .tl_set:N = \l__examzh_select_mark_symbol_tl,
+    mark-position .code:n =
+      {
+        \str_set:Nn \l__examzh_select_mark_position_str {#1}
+      },
+    mark-xshift .dim_set:N = \l__examzh_select_mark_xshift_dim,
+    mark-yshift .dim_set:N = \l__examzh_select_mark_yshift_dim,
+    separator .tl_set:N = \l__examzh_select_separator_tl,
+    pre-content .tl_set:N = \l__examzh_select_pre_content_tl,
+    post-content .tl_set:N = \l__examzh_select_post_content_tl,
+    show-mark .bool_set:N = \l__examzh_select_show_mark_bool
+  }
+\keys_set:nn { exam-zh / select }
+  {
+    mark-symbol   = $\checkmark$,
+    mark-position = right,
+    mark-xshift   = 0pt,
+    mark-yshift   = 0pt,
+    separator     = \hspace{1em},
+    pre-content   = (,
+    post-content  = ),
+    show-mark     = false
+  }
+
+\seq_new:N \l__examzh_select_seq      % 储存输入的内容
+
+\NewDocumentEnvironment { select } { O{ } +b }
+  {
+    % 可选参数
+    \keys_set:nn { exam-zh / select } {#1}
+  }
+  {
+    % 检测 mark-position 的输入
+    \__examzh_chinese_select_coffin_position_test:
+    % 对输入用 \item 进行分割
+    \seq_set_split:Nnn \l__examzh_select_seq { \sitem } {#2}
+    \seq_if_empty:NF \l__examzh_select_seq
+      { \seq_pop_left:NN \l__examzh_select_seq \l_tmpa_tl }
+    % 将内容和 mark 符号存入 coffin 并拼接输出
+    \__examzh_chinese_select_coffin_set_print:N
+      \l__examzh_select_seq
+  }
+\cs_new:Npn \__examzh_chinese_select_coffin_set_print:N #1
+% #1:\l__examzh_select_seq
+  {
+    % 前置内容
+    \l__examzh_select_pre_content_tl
+    % 主体部分
+    \seq_map_indexed_inline:Nn #1
+    % ##1: index
+    % ##2: content
+      {
+        % coffin 的声明
+        \__examzh_chinese_select_coffin_new:n {##1}
+        % 看 seq 的项是否开头是 *，是的话去掉 * 和空格存到 content coffin 并且在 mark coffin 里加入 mark，不是的话就只存到 content coffin
+        \__examzh_chinese_select_coffin_set:nn {##1} {##2}
+        \bool_if:NT \l__examzh_select_show_mark_bool
+          {
+            % 拼接 content coffin 和 mark coffin
+            \__examzh_chinese_select_coffin_join:n {##1}
+          }
+        % 输出 content coffin
+        \__examzh_chinese_select_coffin_typeset:n {##1}
+      }
+    % 后置内容
+    \l__examzh_select_post_content_tl
+  }
+\cs_new:Npn \__examzh_chinese_select_coffin_new:n #1
+  {
+    % 检测是否存在，没有的话就 new 一个
+    \coffin_if_exist:cF { l__examzh_select_content_ \int_to_roman:n {#1} _ coffin }
+      { \coffin_new:c { l__examzh_select_content_ \int_to_roman:n {#1} _ coffin } }
+    \coffin_if_exist:cF { l__examzh_select_mark_ \int_to_roman:n {#1} _ coffin }
+      { \coffin_new:c { l__examzh_select_mark_ \int_to_roman:n {#1} _ coffin } }
+  }
+\cs_new:Npn \__examzh_chinese_select_coffin_set:nn #1#2
+% #1: index
+% #2: content
+  {
+    \tl_if_head_eq_meaning:nNTF {#2} *
+      {
+        % 将去掉 * 号后的内容保存进 \l_tmpa_tl
+        \tl_set:Nx \l_tmpa_tl { \tl_tail:n {#2} }
+        % 去掉 * 和内容之间的空格
+        \tl_trim_spaces:N \l_tmpa_tl
+        % 将处理后的内容存到 content coffin 里
+        \hcoffin_set:cn { l__examzh_select_content_ \int_to_roman:n {#1} _ coffin } 
+          { \l_tmpa_tl }
+        % 将 marksymbol 存到对应的第 #1 个 mark coffin 里
+        \hcoffin_set:cn { l__examzh_select_mark_ \int_to_roman:n {#1} _ coffin } 
+          { \l__examzh_select_mark_symbol_tl }
+      }
+      {
+        % 不带 * 的直接存 coffin
+        \hcoffin_set:cn { l__examzh_select_content_ \int_to_roman:n {#1} _ coffin } 
+          {#2}
+      }
+  }
+\msg_new:nnn { exam-zh / chinese } { select-no-mark-position }
+  {
+    There~is~no~position~named~#1 .\\
+    Please~read~the~manual~carefully.
+  }
+\cs_new:Npn \__examzh_chinese_select_coffin_position_test:
+  {
+    \str_case:VnF \l__examzh_select_mark_position_str
+      {
+        { top } { }
+        { above } { }
+        { bottom } { }
+        { below } { }
+        { left } { }
+        { right } { }
+      }
+      {
+        \msg_error:nnx { exam-zh / chinese } { select-no-mark-position } { \l__examzh_select_mark_position_str }
+      }
+  }
+\cs_new:Npn \__examzh_chinese_select_coffin_join:n #1
+% #1: index
+  {
+    \use:c { __examzh_chinese_select_coffin_join_ \l__examzh_select_mark_position_str :n } {#1}
+  }
+\cs_new:Npn \__examzh_chinese_select_coffin_join_top:n #1
+  {
+    \coffin_join:cnncnnnn
+      { l__examzh_select_content_ \int_to_roman:n {#1} _ coffin }
+      { hc } { t }
+      { l__examzh_select_mark_ \int_to_roman:n {#1} _ coffin }
+      { hc } { b }
+      { \l__examzh_select_mark_xshift_dim }
+      { \l__examzh_select_mark_yshift_dim + 2pt }
+  }
+\cs_set_eq:NN 
+  \__examzh_chinese_select_coffin_join_above:n 
+  \__examzh_chinese_select_coffin_join_top:n
+\cs_new:Npn \__examzh_chinese_select_coffin_join_bottom:n #1
+  {
+    \coffin_join:cnncnnnn
+      { l__examzh_select_content_ \int_to_roman:n {#1} _ coffin }
+      { hc } { H }
+      { l__examzh_select_mark_ \int_to_roman:n {#1} _ coffin }
+      { hc } { t }
+      { \l__examzh_select_mark_xshift_dim }
+      { \l__examzh_select_mark_yshift_dim - 2pt }
+  }
+\cs_set_eq:NN 
+  \__examzh_chinese_select_coffin_join_below:n 
+  \__examzh_chinese_select_coffin_join_bottom:n
+\cs_new:Npn \__examzh_chinese_select_coffin_join_left:n #1
+  {
+    \coffin_join:cnncnnnn
+      { l__examzh_select_content_ \int_to_roman:n {#1} _ coffin }
+      { l } { H }
+      { l__examzh_select_mark_ \int_to_roman:n {#1} _ coffin }
+      { r } { H }
+      { \l__examzh_select_mark_xshift_dim }
+      { \l__examzh_select_mark_yshift_dim }
+  }
+\cs_new:Npn \__examzh_chinese_select_coffin_join_right:n #1
+  {
+    \coffin_join:cnncnnnn
+      { l__examzh_select_content_ \int_to_roman:n {#1} _ coffin }
+      { r } { H }
+      { l__examzh_select_mark_ \int_to_roman:n {#1} _ coffin }
+      { l } { H }
+      { \l__examzh_select_mark_xshift_dim }
+      { \l__examzh_select_mark_yshift_dim }
+  }
+\cs_new:Npn \__examzh_chinese_select_coffin_typeset:n #1
+  {
+    \int_compare:nNnTF {#1} = {1}
+      {
+        \coffin_typeset:cnnnn 
+          { l__examzh_select_content_ \int_to_roman:n {#1} _ coffin }
+          {l} {H} {0pt} {0pt}
+      }
+      {
+        \l__examzh_select_separator_tl
+        \coffin_typeset:cnnnn 
+          { l__examzh_select_content_ \int_to_roman:n {#1} _ coffin }
+          {l} {H} {0pt} {0pt}
+      }
+  }
+
+
+% 连线题 lineto
+\clist_clear_new:N \l__examzh_lineto_list_set_clist 
+\int_zero_new:N \l__examzh_lineto_node_index_int 
+
+\keys_define:nn { exam-zh }
+  { lineto .meta:nn = { exam-zh / lineto } {#1} }
+
+\keys_define:nn { exam-zh / lineto }
+  {
+    xsep  .dim_set:N = \l__examzh_lineto_node_xsep_dim,
+    ysep  .dim_set:N = \l__examzh_lineto_node_ysep_dim,
+    name  .tl_set:N  = \l__examzh_lineto_name_tl,
+    list-style .tl_set:N  = \l__examzh_lineto_list_style_tl 
+  }
+\keys_set:nn { exam-zh / lineto }
+  {
+    xsep = .25\linewidth,
+    ysep = 1cm,
+    name = \int_to_roman:n { \l__examzh_lineto_node_index_int }
+  }
+
+
+\NewDocumentEnvironment { lineto } { O{ } }
+  {
+    \begin{center}
+      \begin{tikzpicture}[#1]
+  }
+  {
+      \end{tikzpicture}
+    \end{center}
+  }
+
+
+\NewDocumentCommand { \linelistset } { O{} m }
+  {
+    \int_incr:N \l__examzh_lineto_node_index_int  
+    \group_begin:
+      \keys_set:nn { exam-zh / lineto } {#1}
+      \clist_set:Nn \l__examzh_lineto_list_set_clist {#2}
+      \int_step_inline:nnn {1} 
+        { \clist_count:N \l__examzh_lineto_list_set_clist }
+        {
+          \use:x
+            {
+              \exp_not:N \node
+                [
+                  name   = \l__examzh_lineto_name_tl - ##1,
+                  \l__examzh_lineto_list_style_tl
+                ] 
+              at 
+                (
+                  \l__examzh_lineto_node_index_int * \l__examzh_lineto_node_xsep_dim,
+                  - \int_eval:n { ##1 - 1 } * \l__examzh_lineto_node_ysep_dim
+                ) 
+                { \clist_item:Nn \l__examzh_lineto_list_set_clist {##1} }; 
+            }
+        }
+    \group_end:
+  }
+
+\NewDocumentCommand { \lineconnect }{ O{} +m }
+  {
+    \clist_set:Nn \l_tmpa_clist {#2}
+    \int_step_inline:nn { \clist_count:N \l_tmpa_clist - 1 }
+      {
+        \use:x
+          {
+            \exp_not:N \draw
+              [line~cap = round, #1] 
+              ( \clist_item:Nn \l_tmpa_clist {##1} .east ) 
+                -- 
+              ( \clist_item:Nn \l_tmpa_clist { ##1 + 1 } .west ); 
+          }
+      }
+  }
+
+
+% 语文的文章 材料
+\keys_define:nn { exam-zh / material }
+  {
+    title .tl_set:N = \l__examzh_material_title_content_tl,
+    title-format .tl_set:N = \l__examzh_material_title_format_tl,
+    title-material-sep .skip_set:N = \l__examzh_material_title_material_sep_skip,
+    format .tl_set:N = \l__examzh_material_format_tl,
+    top-sep .skip_set:N = \l__examzh_material_top_sep_skip,
+    bottom-sep .skip_set:N = \l__examzh_material_bottom_sep_skip,
+    author .tl_set:N = \l__examzh_material_author_content_tl,
+    author-format .tl_set:N = \l__examzh_material_author_format_tl,
+    title-author-sep .skip_set:N = \l__examzh_material_title_author_sep_skip,
+    source .tl_set:N = \l__examzh_material_source_content_tl,
+    source-format .tl_set:N = \l__examzh_material_source_format_tl,
+  }
+
+\keys_set:nn { exam-zh / material }
+  {
+    title-format        = \zihao{4},
+    author-format       = \small,
+    format              = \kaishu,
+    title-author-sep    = 2em,
+    top-sep             = 0pt,
+    bottom-sep          = 0pt,
+    title-material-sep  = 0pt,
+  }
+
+\NewDocumentEnvironment { material } { O{ } +b }
+  {
+    \par
+    \keys_set:nn { exam-zh / material } {#1}
+    \addvspace { \l__examzh_material_top_sep_skip }
+    \__examzh_material_title_author_type:
+    \group_begin:
+      \l__examzh_material_format_tl
+      #2
+    \group_end:
+  }
+  {
+    \tl_if_empty:NF \l__examzh_material_source_content_tl
+      {
+        \par
+        \group_begin:
+          \hfill
+          \begin{varwidth}{\textwidth}
+            \raggedleft
+            \l__examzh_material_source_format_tl
+            \l__examzh_material_source_content_tl
+          \end{varwidth}
+        \group_end:
+      }
+    \par
+    \addvspace { \l__examzh_material_bottom_sep_skip }
+    \par
+  }
+
+\cs_new:Npn \__examzh_material_title_author_type:
+  {
+    \tl_if_empty:NF \l__examzh_material_title_content_tl
+      {
+        \noindent \hfill
+          \group_begin:
+            \l__examzh_material_title_format_tl
+            \l__examzh_material_title_content_tl
+          \group_end:
+          \tl_if_empty:NF \l__examzh_material_author_content_tl
+            {
+              \hspace { \l__examzh_material_title_author_sep_skip }
+              \group_begin:
+                \l__examzh_material_author_format_tl
+                \l__examzh_material_author_content_tl
+              \group_end:
+            }
+        \hfill \null
+        \par
+        \addvspace { \l__examzh_material_title_material_sep_skip }
+      }
+  }
+
+
+% 古诗 
+\bool_new:N \l__examzh_poem_type_minipage_bool
+\bool_set_true:N \l__examzh_poem_type_minipage_bool 
+\int_new:N \l__examzh_poem_zhu_index_int
+\seq_new:N \g__examzh_poem_zhu_store_seq
+\str_new:N \l__examzh_poem_zhu_circlednumber_base_str
+
+\keys_define:nn { exam-zh / poem }
+  {
+    title .tl_set:N = \l__examzh_poem_title_content_tl,
+    title-format .tl_set:N = \l__examzh_poem_title_format_tl,
+    title-poem-sep .skip_set:N = \l__examzh_poem_title_poem_sep_skip,
+    format .tl_set:N = \l__examzh_poem_format_tl,
+    top-sep .skip_set:N = \l__examzh_poem_top_sep_skip,
+    bottom-sep .skip_set:N = \l__examzh_poem_bottom_sep_skip,
+    author .tl_set:N = \l__examzh_poem_author_content_tl,
+    author-format .tl_set:N = \l__examzh_poem_author_format_tl,
+    title-author-sep .skip_set:N = \l__examzh_poem_title_author_sep_skip,
+    type .choice:,
+    type / minipage .code:n = { \bool_set_true:N \l__examzh_poem_type_minipage_bool },
+    type / chinese .code:n = { \bool_set_false:N \l__examzh_poem_type_minipage_bool },
+    align .choices:nn =
+      { l , c , r }
+      { \tl_set:Nx \l__examzh_poem_align_tl { \l_keys_choice_tl } },
+    zhu-circlednumber-base .choices:nn = 
+      { tikz, font }
+      { \str_set:Nx \l__examzh_poem_zhu_circlednumber_base_str { \l_keys_choice_tl } }
+  }
+
+\keys_set:nn { exam-zh / poem }
+  {
+    title-format           = \zihao{5},
+    author-format          = \small,
+    format                 = \kaishu,
+    title-author-sep       = 2em,
+    top-sep                = 0pt,
+    bottom-sep             = 1em,
+    title-poem-sep         = 0.25\baselineskip,
+    type                   = chinese,
+    align                  = l,
+    zhu-circlednumber-base = font
+  }
+
+\NewDocumentEnvironment { poem } { O{ } +b }
+  {
+    \par
+    \keys_set:nn { exam-zh / poem } {#1}
+    \addvspace { \l__examzh_poem_top_sep_skip }
+    \__examzh_poem_begin:
+      \__examzh_poem_title_author_type:
+      \group_begin:
+        \l__examzh_poem_format_tl
+        \use:x
+          {
+            \exp_not:N \tabular
+              { \l__examzh_poem_align_tl }
+          }
+          #2
+        \endtabular
+      \group_end:
+    \par
+    \addvspace { 1em }
+  }
+  {
+    \__examzh_poem_end:
+    \par
+    \addvspace { \l__examzh_poem_bottom_sep_skip }
+    \par
+  }
+\cs_new:Npn \__examzh_poem_title_author_type:
+  {
+    \tl_if_empty:NF \l__examzh_poem_title_content_tl
+      {
+        % \noindent \hfill
+          \group_begin:
+            \l__examzh_poem_title_format_tl
+            \l__examzh_poem_title_content_tl
+          \group_end:
+          \tl_if_empty:NF \l__examzh_poem_author_content_tl
+            {
+              \hspace { \l__examzh_poem_title_author_sep_skip }
+              \group_begin:
+                \l__examzh_poem_author_format_tl
+                \l__examzh_poem_author_content_tl
+              \group_end:
+            }
+        % \hfill \null
+        \par
+        \addvspace { \l__examzh_poem_title_poem_sep_skip }
+      }
+  }
+\cs_new:Npn \__examzh_poem_begin:
+  {
+    \bool_if:NTF \l__examzh_poem_type_minipage_bool
+      {
+        \noindent
+        \minipage { \linewidth }
+        \cs_set:Npn \thempfootnote { \examzh_footnote_number:N  \c@mpfootnote} 
+          \center
+      }
+      {
+        \int_zero:N \l__examzh_poem_zhu_index_int
+        \seq_clear:N \g__examzh_poem_zhu_store_seq
+        \center
+      }
+  }
+\cs_new:Npn \__examzh_poem_end: 
+  {
+    \bool_if:NTF \l__examzh_poem_type_minipage_bool
+      {
+          \endcenter
+        \endminipage
+      }
+      {
+        \endcenter
+        \seq_if_empty:NF \g__examzh_poem_zhu_store_seq
+          {
+            \vspace*{-0.7em}
+            \small
+            \begin{description}[leftmargin = 2em]
+              \item[{[注]}] 
+                \seq_map_indexed_inline:Nn \g__examzh_poem_zhu_store_seq
+                  % ##1: index
+                  % ##2: content
+                  {
+                    \__examzh_chinese_circled_number:n {##1} ~ ##2 
+                  }
+            \end{description}
+          }
+      }
+  }
+
+
+\NewDocumentCommand { \zhu } { o m }
+  {
+    \bool_if:NTF \l__examzh_poem_type_minipage_bool
+      {
+        \footnote {#2}
+      }
+      {
+        \IfNoValueF {#1}
+          { 
+            \int_gset:Nn \l__examzh_poem_zhu_index_int {#1 - 1}
+          }
+        \__examzh_poem_type_chinese_zhu:n {#2}
+      }
+  }
+
+\cs_new:Npn \__examzh_poem_type_chinese_zhu:n #1
+  {
+    \int_gincr:N \l__examzh_poem_zhu_index_int
+    \int_set_eq:NN \l_tmpa_int \l__examzh_poem_zhu_index_int
+    \unskip
+    % 输出符号
+    \textsuperscript 
+      { \__examzh_chinese_circled_number:n { \l__examzh_poem_zhu_index_int } }
+    % 将参数存起来
+    \seq_gput_right:Nx \g__examzh_poem_zhu_store_seq 
+      { #1 }
+  }
+
+\cs_new:Npn \__examzh_chinese_circled_number:n #1
+  {
+    \str_case:Vn \l__examzh_poem_zhu_circlednumber_base_str
+      {
+        { tikz } { \__examzh_chinese_tikz_circled_number:n {#1} }
+        { font } { \__examzh_chinese_tikz_circled_number:n {#1} }
+      }
+  }
+% 基于字体的带圈数字
+\cs_new:Npn \__examzh_chinese_font_circled_number:n #1
+  {
+    \int_set:Nn \l_tmpa_int {#1}
+    \int_compare:nNnTF { \l_tmpa_int } = { 0 }
+      { \int_set:Nn \l_tmpa_int { "24EA } }
+      {
+        \int_compare:nNnTF { \l_tmpa_int } < { 21 }
+          { \int_add:Nn \l_tmpa_int { "245F } }
+          {
+            \int_compare:nNnTF { \l_tmpa_int } < { 36 }
+              { \int_add:Nn \l_tmpa_int { "3250 } }
+              {
+                \int_compare:nNnTF { \l_tmpa_int } < { 51 }
+                  { \int_add:Nn \l_tmpa_int { "32B0 } }
+                  {
+                    \msg_error:nnn { exam-zh / poem }
+                      { invalid-circled-number } { \int_use:N \l_tmpa_int }
+                  }
+              }
+          }
+      }
+    \group_begin:
+      \CJKfamily+ { }
+      \symbol { \l_tmpa_int }
+    \group_end:
+  }
+
+\msg_new:nnn { exam-zh / poem } { invalid-circled-number }
+  { Invalid~ circled~ number~ #1. }
+
+% tikz 绘制带圈数字
+\fp_new:N \l__examzh_chinese_tikz_circled_number_xscale_fp   % 水平压缩系数
+\fp_new:N \l__examzh_chinese_tikz_circled_number_yscale_fp   % 垂直压缩系数
+\dim_new:N \l__examzh_chinese_tikz_circled_number_total_hegiht_dim   % 数字的总高度
+\dim_new:N \l__examzh_chinese_tikz_circled_number_radius_dim     % 半径
+
+\cs_new:Npn \__examzh_chinese_tikz_circled_number_aux:n #1
+  {
+    % 根据数字大小设置压缩系数
+    \fp_set:Nn \l__examzh_chinese_tikz_circled_number_xscale_fp
+      {
+        \int_compare:nNnTF {#1} < { 10 } 
+          { 0.9 }
+          {
+            \int_compare:nNnTF {#1} < { 100 }
+              { 0.7 }
+              { 0.5 }
+          } 
+      }
+    \fp_set:Nn \l__examzh_chinese_tikz_circled_number_yscale_fp
+      {
+        \int_compare:nNnTF {#1} < { 10 } 
+          { 0.9 }
+          {
+            \int_compare:nNnTF {#1} < { 100 }
+              { 0.8 }
+              { 0.6 }
+          } 
+      }
+    % 获取数字的高度
+    \hbox_set:Nn \l_tmpa_box {#1}
+    \dim_set:Nn \l__examzh_chinese_tikz_circled_number_total_hegiht_dim
+      { \box_ht:N \l_tmpa_box + \box_dp:N \l_tmpa_box  }
+    % 设置圆的半径
+    \dim_set:Nn \l__examzh_chinese_tikz_circled_number_radius_dim 
+      { \dim_eval:n { \l__examzh_chinese_tikz_circled_number_total_hegiht_dim / 2 + 0.34 ex } }
+    % 绘制
+    \tikz [ baseline ]
+      {
+        \node
+          [ inner~sep = 0pt, outer~sep = 0pt ]
+          at (0, \dim_use:N \l__examzh_chinese_tikz_circled_number_total_hegiht_dim / 2 ) 
+          {
+            \hbox_set:Nn \l_tmpa_box
+              {
+                \int_compare:nNnTF {#1} > {9}
+                  { \textbf {#1} }
+                  {#1}
+              }
+            \makebox[0.35em][c]
+              { 
+                % \scalebox { \fp_use:N \l__examzh_chinese_tikz_circled_number_xscale_fp } 
+                  % [ \fp_use:N \l__examzh_chinese_tikz_circled_number_yscale_fp ] 
+                \box_scale:Nnn \l_tmpa_box
+                  { \fp_use:N \l__examzh_chinese_tikz_circled_number_xscale_fp }
+                  { \fp_use:N \l__examzh_chinese_tikz_circled_number_yscale_fp } 
+                \box_use_drop:N \l_tmpa_box
+              }
+          };
+        \draw (0, \l__examzh_chinese_tikz_circled_number_total_hegiht_dim / 2 )
+          circle ( \l__examzh_chinese_tikz_circled_number_radius_dim );
+      }
+  }
+\cs_new:Npn \__examzh_chinese_tikz_circled_number:n #1
+  {
+    \__examzh_chinese_tikz_circled_number_aux:n { \int_eval:n {#1} }
+  }
+
+
+% 作文框
+\NewDocumentEnvironment { writingbox } { O{ } +b }
+  {
+    \begin{tcolorbox}
+      [
+        % 直角
+        sharp~corners = all,
+        % 颜色
+        colback = white,
+        colbacktitle = white,
+        % colframe = white,
+        coltitle = black,
+        % 边框粗细
+        boxrule   = 1pt,
+        titlerule = 0pt,
+        % 间距
+        toptitle  = 4pt,
+        % 字体
+        fonttitle = \centering,
+        % 首行缩进
+        parbox  = false,
+        before~upper = \indent,
+        % 跨页
+        breakable,
+        enhanced~jigsaw,
+        #1
+      ]
+      #2
+  }
+  {
+    \end{tcolorbox}
+  }
+
+\endinput

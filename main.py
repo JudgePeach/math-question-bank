@@ -1,5 +1,6 @@
 import os
 import io
+import sys
 import uuid
 import json
 import time
@@ -8,6 +9,13 @@ import signal
 import datetime
 import threading
 import requests
+
+if hasattr(sys.stdout, "reconfigure"):
+    try:
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+        sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:
+        pass
 import secrets
 from typing import List, Optional
 from PIL import Image
@@ -339,10 +347,14 @@ def read_index():
             # Also handle plain scripts references if they exist
             html_content = html_content.replace(f'src="/static/js/{js}"', f'src="/static/js/{js}?v={mtime}"')
             
-        # Inject dynamic cache-busting version parameter for app.css
+        # Inject dynamic cache-busting version parameter for app.css and favicon assets
         css_path = os.path.join("static", "css", "app.css")
         css_mtime = int(os.path.getmtime(css_path)) if os.path.exists(css_path) else 0
         html_content = html_content.replace('/static/css/app.css', f'/static/css/app.css?v={css_mtime}')
+
+        fav_path = os.path.join("static", "favicon.png")
+        fav_mtime = int(os.path.getmtime(fav_path)) if os.path.exists(fav_path) else 0
+        html_content = html_content.replace('/static/favicon.png', f'/static/favicon.png?v={fav_mtime}')
             
         # Inject the token and server_instance_id directly into index.html to bypass any cookie blocking policies
         token_script = f'<script>window.__localToken = "{LOCAL_TOKEN}"; window.__serverInstanceId = "{SERVER_INSTANCE_ID}";</script>'
@@ -370,13 +382,50 @@ def read_index():
 def read_favicon():
     favicon_path = os.path.join("static", "favicon.ico")
     if os.path.exists(favicon_path):
-        return FileResponse(favicon_path)
-    # Fallback to PNG if ico is somehow missing
+        res = FileResponse(favicon_path, media_type="image/x-icon")
+        res.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
+        res.headers["Pragma"] = "no-cache"
+        res.headers["Expires"] = "0"
+        return res
     favicon_png_path = os.path.join("static", "favicon.png")
     if os.path.exists(favicon_png_path):
-        return FileResponse(favicon_png_path)
+        res = FileResponse(favicon_png_path, media_type="image/png")
+        res.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
+        res.headers["Pragma"] = "no-cache"
+        res.headers["Expires"] = "0"
+        return res
     return JSONResponse(
         content={"status": "error", "message": "favicon not found."},
+        status_code=404
+    )
+
+@app.get("/favicon.svg", include_in_schema=False)
+def read_favicon_svg():
+    svg_path = os.path.join("static", "favicon.svg")
+    if os.path.exists(svg_path):
+        res = FileResponse(svg_path, media_type="image/svg+xml")
+        res.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
+        res.headers["Pragma"] = "no-cache"
+        res.headers["Expires"] = "0"
+        return res
+    return JSONResponse(
+        content={"status": "error", "message": "favicon.svg not found."},
+        status_code=404
+    )
+
+@app.get("/apple-touch-icon.png", include_in_schema=False)
+@app.get("/apple-touch-icon-precomposed.png", include_in_schema=False)
+def read_apple_touch_icon():
+    for name in ["apple-touch-icon.png", "favicon.png"]:
+        icon_path = os.path.join("static", name)
+        if os.path.exists(icon_path):
+            res = FileResponse(icon_path, media_type="image/png")
+            res.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
+            res.headers["Pragma"] = "no-cache"
+            res.headers["Expires"] = "0"
+            return res
+    return JSONResponse(
+        content={"status": "error", "message": "apple touch icon not found."},
         status_code=404
     )
 
@@ -443,6 +492,19 @@ def auto_crop_image(image):
     return image
 
 
+# ----------------- 统一精简版多模态 OCR 识图 Prompt 模版 -----------------
+COMMON_OCR_PROMPT = (
+    "请精确识别并提取图像中的所有文字与数学公式（不得遗漏方括号与题目来源），直接输出转录结果，严禁包含任何前言或解释。\n"
+    "【排版与 LaTeX 语法规范】:\n"
+    "1. 公式级包裹：仅对纯数学符号、方程、集合与代数式使用 LaTeX 包裹（行内 $...$，独立 $$...$$）。严禁整段中文包裹 LaTeX，严禁在公式内部滥用 \\text{...} 包裹大段中文。\n"
+    "2. 变量与坐标包裹：几何点符号、单个字母变量及坐标表达式（如 $(1,2)$）必须严格包裹单美元符号 $...$。\n"
+    "3. 选择题 choices 环境规范：选项部分统一格式化为 LaTeX 的 `choices` 环境（使用 \\begin{choices} 和 \\end{choices} 包裹，每项以 \\item 开头，剥离原本的 A., B., C., D. 标号前缀）。\n"
+    "4. 空行换行规范：在多行推导、解答步骤或小标号（如 (1), (2), ①, ②）之间，必须使用空行/双回车（\\n\\n）分隔。\n"
+    "5. 纯净符号：过滤 \\, 或 \\! 等干扰渲染的薄空格。"
+)
+ILLUSTRATION_BOX_PROMPT = "\n6. 几何插图识别：若包含几何/函数插图，务必在文末追加归一化百分比包围框：`[ILLUSTRATION_BOX: ymin, xmin, ymax, xmax]`（数值 0-100 整数，无插图则绝对不输出）。"
+
+
 def ocr_via_siliconflow(image_path: str, api_key: str, model_name: str = "Qwen/Qwen3.5-4B", include_illustration_box: bool = False) -> str:
     """调用 SiliconFlow 官方 API 进行多模态图文公式识别 (使用 Qwen3.5-4B / Qwen2.5-VL 等)"""
     import base64
@@ -463,19 +525,9 @@ def ocr_via_siliconflow(image_path: str, api_key: str, model_name: str = "Qwen/Q
         "Content-Type": "application/json"
     }
     
-    prompt_text = (
-        "请精确识别并提取这幅图像中的**所有文字与数学公式**。必须完整转录，不得遗漏或删减图像中的任何字符（包括方括号、题目来源如 '[2025 · 江苏淮安高一期末]' 等）。\n"
-        "直接输出图像内容的转录结果，绝对不要夹带任何你个人的说明、开场白、回复语或解释。\n"
-        "【排版格式与 LaTeX 语法关键准则 (极重要)】：\n"
-        "1. **公式级包裹**：所有 LaTeX 数学命令（如 \\overrightarrow, \\cos, \\sin, \\theta, \\cdot, \\alpha, \\beta, \\gamma, \\Delta 等）以及所有代数式、方程、集合、平面向量符号，**必须并且只能**包裹在 LaTeX 标记中（行内公式使用 $...$，行间/独立公式使用 $$...$$）。绝对不能让任何带有反斜杠 `\\` 的 LaTeX 语法暴露在普通文本中。例如，普通文本中不能出现 `\\overrightarrow{AB}`，而必须写为 `$\\overrightarrow{AB}$`。\n"
-        "2. **严禁使用 \\text 语法**：不要在 LaTeX 公式中使用 `\\text{...}` 来包裹大段中文或题目来源。普通的中文叙述和文字必须作为普通的文本直接输出在 LaTeX 块外部。例如，绝对不能输出 `$\\text{江苏淮安高一期末}$`，而必须写为普通的文本：`[2025 · 江苏淮安高一期末]`；绝对不能输出 `$\\text{已知在直角坐标系中}$`，而必须写为 `已知在直角坐标系中`。\n"
-        "3. **变量/点/坐标包裹**：所有的几何点符号（如 $A$, $B$, $C$, $D$, $O$, $P$ 等）、所有单个字母变量（如 $x$, $y$, $m$, $n$ 等）以及所有的坐标表达式（如 $(1,2)$, $(3,3)$, $(x,y)$ 等）均需严格包裹在单美元符号 $...$ 中。\n"
-        "4. **严禁整段包裹**：不要将普通的中文文本、题目描述或整段话包裹在 LaTeX 标记中。\n"
-        "5. **选择题 choices 环境规范 (极重要)**：若图像包含选择题选项，选项部分必须统一格式化为 LaTeX 的 `choices` 环境（使用 `\\begin{choices}` 和 `\\end{choices}` 包裹，每个选项单独用 `\\item` 开头，且必须剥离剥除原本的 A., B., C., D. 等标号前缀）。\n"
-        "6. **过滤干扰符**：省略公式与汉字之间干扰渲染的薄空格（如 `\\,` 或 `\\!` 等），确保数学公式的标准纯净。"
-    )
+    prompt_text = COMMON_OCR_PROMPT
     if include_illustration_box:
-        prompt_text += "\n7. **几何插图区域识别 (极重要)**：请仔细观察图像中是否包含立体几何、平面几何、函数图像、平面向量等几何插图。如果包含，**请务必在输出的文本末尾**追加输出该插图在整张图片中的归一化百分比坐标包围框，格式严格为：`[ILLUSTRATION_BOX: ymin, xmin, ymax, xmax]`。其中四个数值代表插图在图片中占用的百分比比例，范围为 0 到 100 之间的整数（例如插图在整张图偏右侧，可以输出为 `[ILLUSTRATION_BOX: 10, 45, 90, 95]`；如果整张图没有插图，则绝对不要输出 `[ILLUSTRATION_BOX: ...]`）。"
+        prompt_text += ILLUSTRATION_BOX_PROMPT
 
     # 构造 SiliconFlow 的多模态内容消息
     payload = {
@@ -561,19 +613,9 @@ def ocr_via_ali_bailian(image_path: str, api_key: str, model_name: str = "qwen3-
         "Content-Type": "application/json"
     }
     
-    prompt_text = (
-        "请精确识别并提取这幅图像中的**所有文字与数学公式**。必须完整转录，不得遗漏、删减或改写图像中的任何字符（包括方括号、题目来源如 '[2025 · 武汉二中高一月考]'、定义说明、前言等大段文字）。\n"
-        "直接输出图像内容的转录结果，绝对不要夹带任何你个人的说明、开场白、回复语或解释（例如，不要包含 '这是识别结果：' 等多余的 AI 聊天文字）。\n"
-        "【排版格式与 LaTeX 语法关键准则】：\n"
-        "1. **严禁整段包裹**：绝对不要将普通的中文文本、题目描述或整段话包裹在 LaTeX 标记（如 `$$...$$` 或 `$...$`）中。普通的中文叙述和文字必须作为普通的文本直接输出。\n"
-        "2. **严禁滥用 \\text 语法**：不要在 LaTeX 公式中使用 `\\text{...}` 来包裹大段的中文描述。所有的中文文字都应该写在 LaTeX 块外部。例如，不要输出 `$\\text{已知集合 } B$`，而应该输出 `已知集合 $B$`。\n"
-        "3. **公式级包裹**：仅对纯数学符号、代数式、集合、方程等数学对象使用 LaTeX。行内变量/符号（如 $A$、$x$、$-7$ 等）使用单美元符号 `$...$`；独立的一行长公式或复杂等式才使用双美元符号 `$$...$$`。\n"
-        "4. **选择题 choices 环境规范 (极重要)**：若图像包含选择题选项，选项部分必须统一格式化为 LaTeX 的 `choices` 环境（使用 `\\begin{choices}` 和 `\\end{choices}` 包裹，每个选项单独用 `\\item` 开头，且必须剥离剥除原本的 A., B., C., D. 等标号前缀）。\n"
-        "5. **过滤干扰符**：省略公式与汉字之间干扰渲染的薄空格（如 `\\,` 或 `\\!` 等），确保数学公式的标准纯净。\n"
-        "6. **保留所有中文文字**：在转录过程中必须百分之百保留题目中的叙述文字，例如定义段落和前言介绍，严禁只输出最后一句问句。"
-    )
+    prompt_text = COMMON_OCR_PROMPT
     if include_illustration_box:
-        prompt_text += "\n7. **几何插图区域识别 (极重要)**：请仔细观察图像中是否包含立体几何、平面几何、函数图像、平面向量等几何插图。如果包含，**请务必在输出的文本末尾**追加输出该插图在整张图片中的归一化百分比坐标包围框，格式严格为：`[ILLUSTRATION_BOX: ymin, xmin, ymax, xmax]`。其中四个数值代表插图在图片中占用的百分比比例，范围为 0 到 100 之间的整数（例如插图在整张图偏右侧，可以输出为 `[ILLUSTRATION_BOX: 10, 45, 90, 95]`；如果整张图没有插图，则绝对不要输出 `[ILLUSTRATION_BOX: ...]`）。"
+        prompt_text += ILLUSTRATION_BOX_PROMPT
 
     # 构造阿里云百炼的多模态内容消息
     payload = {
@@ -659,19 +701,9 @@ def ocr_via_zhongzhan(image_path: str, api_key: str, base_url: str, model_name: 
         "Content-Type": "application/json"
     }
     
-    prompt = (
-        "请精确识别并提取这幅图像中的**所有文字与数学公式**。必须完整转录，不得遗漏、删减或改写图像中的任何字符（包括方括号、题目来源如 '[2025 · 武汉二中高一月考]'、定义说明、前言等大段文字）。\n"
-        "直接输出图像内容的转录结果，绝对不要夹带任何你个人的说明、开场白、回复语或解释。\n"
-        "【排版格式与 LaTeX 语法关键准则】：\n"
-        "1. **严禁整段包裹**：绝对不要将普通的中文文本、题目描述或整段话包裹在 LaTeX 标记（如 `$$...$$` 或 `$...$`）中。普通的中文叙述和文字必须作为普通的文本直接输出。\n"
-        "2. **严禁滥用 \\text 语法**：不要在 LaTeX 公式中使用 `\\text{...}` 来包裹大段的中文描述。所有的中文文字都应该写在 LaTeX 块外部。\n"
-        "3. **公式级包裹**：仅对纯数学符号、代数式、集合、方程等数学对象使用 LaTeX. 行内变量/符号（如 $A$、$x$ 等）使用单美元符号 `$...$`。\n"
-        "4. **选择题 choices 环境规范 (极重要)**：若图像包含选择题选项，选项部分必须统一格式化为 LaTeX 的 `choices` 环境（使用 `\\begin{choices}` 和 `\\end{choices}` 包裹，每个选项单独用 `\\item` 开头，且必须剥离剥除原本的 A., B., C., D. 等标号前缀）。\n"
-        "5. **过滤干扰符**：省略公式与汉字之间干扰渲染的薄空格，确保数学公式的标准纯净。\n"
-        "6. **保留所有中文文字**：在转录过程中必须百分之百保留题目中的叙述文字，严禁只输出最后一句问句。"
-    )
+    prompt = COMMON_OCR_PROMPT
     if include_illustration_box:
-        prompt += "\n7. **几何插图区域识别 (极重要)**：请仔细观察图像中是否包含立体几何、平面几何、函数图像、平面向量等几何插图。如果包含，**请务必在输出的文本末尾**追加输出该插图在整张图片中的归一化百分比坐标包围框，格式严格为：`[ILLUSTRATION_BOX: ymin, xmin, ymax, xmax]`。其中四个数值代表插图在图片中占用的百分比比例，范围为 0 到 100 之间的整数。"
+        prompt += ILLUSTRATION_BOX_PROMPT
     
     payload = {
         "model": model_name,
@@ -1116,46 +1148,50 @@ async def ai_solve(
         if question_type == "single_choice":
             first_block_header = "\\\\textbf{【参考答案】}"
             format_rules = (
-                "3. 你的输出内容必须且仅包含以下三个结构化板块（使用 LaTeX 粗体格式，绝对禁止使用 Markdown 的 ** 双星号加粗语法）：\n"
-                "   - \\\\textbf{【参考答案】}：必须在最开头第一行【直接、醒目】输出该单选题的唯一正确选项字母（如 A、B、C 或 D），绝对不要在此板块写入任何长篇推导过程！\n"
-                "   - \\\\textbf{【解析过程】}：紧接在【参考答案】下方，详细写出本题各个选项的推导、排除理由与分析步骤，方便师生理清思路。\n"
-                "   - \\\\textbf{【核心知识点】}：列出解答本题用到的关键数学公式、定理或思想方法。"
+                "【必须包含的结构化板块 (使用 LaTeX 粗体 `\\\\textbf{...}`)】:\n"
+                "1. \\\\textbf{【参考答案】}：最开头第一行直接醒目输出该单选题的唯一正确选项字母（如 A、B、C 或 D），严禁包含长篇推导。\n"
+                "2. \\\\textbf{【解析过程】}：详细写出选项推导、排除理由与分析步骤。\n"
+                "3. \\\\textbf{【解析思路】}：概括解题核心突破口与思考脉络。\n"
+                "4. \\\\textbf{【核心知识点】}：列出关键公式、定理或思想方法。"
             )
         elif question_type == "multi_choice":
             first_block_header = "\\\\textbf{【参考答案】}"
             format_rules = (
-                "3. 你的输出内容必须且仅包含以下三个结构化板块（使用 LaTeX 粗体格式，绝对禁止使用 Markdown 的 ** 双星号加粗语法）：\n"
-                "   - \\\\textbf{【参考答案】}：必须在最开头第一行【直接、醒目】输出该多选题的所有正确选项字母（如 AB、ACD 或 BD），绝对不要在此板块写入任何长篇推导过程！\n"
-                "   - \\\\textbf{【解析过程】}：紧接在【参考答案】下方，详细写出本题各个选项的逐一推导、证明与分析步骤，方便师生理清思路。\n"
-                "   - \\\\textbf{【核心知识点】}：列出解答本题用到的关键数学公式、定理或思想方法。"
+                "【必须包含的结构化板块 (使用 LaTeX 粗体 `\\\\textbf{...}`)】:\n"
+                "1. \\\\textbf{【参考答案】}：最开头第一行直接醒目输出该多选题的所有正确选项字母（如 AB、ACD），严禁包含长篇推导。\n"
+                "2. \\\\textbf{【解析过程】}：详细写出各个选项的逐一推导、证明与分析步骤。\n"
+                "3. \\\\textbf{【解析思路】}：概括解题核心突破口与思考脉络。\n"
+                "4. \\\\textbf{【核心知识点】}：列出关键公式、定理或思想方法。"
             )
         elif question_type == "fill_in_blank":
             first_block_header = "\\\\textbf{【参考答案】}"
             format_rules = (
-                "3. 你的输出内容必须且仅包含以下三个结构化板块（使用 LaTeX 粗体格式，绝对禁止使用 Markdown 的 ** 双星号加粗语法）：\n"
-                "   - \\\\textbf{【参考答案】}：必须在最开头第一行【直接、醒目】输出该填空题需填入的最终正确答案内容（如具体的数值、公式、表达式、集合或区间等），绝对不要在此板块写入任何长篇推导过程！\n"
-                "   - \\\\textbf{【解析过程】}：紧接在【参考答案】下方，详细写出本题求解推导与分析步骤，方便师生理清思路。\n"
-                "   - \\\\textbf{【核心知识点】}：列出解答本题用到的关键数学公式、定理或思想方法。"
+                "【必须包含的结构化板块 (使用 LaTeX 粗体 `\\\\textbf{...}`)】:\n"
+                "1. \\\\textbf{【参考答案】}：最开头第一行直接醒目输出该填空题最终正确答案（如具体数值、公式、集合或区间），严禁包含长篇推导。\n"
+                "2. \\\\textbf{【解析过程】}：详细写出求解推导与分析步骤。\n"
+                "3. \\\\textbf{【解析思路】}：概括解题核心突破口与思考脉络。\n"
+                "4. \\\\textbf{【核心知识点】}：列出关键公式、定理或思想方法。"
             )
         else:
             first_block_header = "\\\\textbf{【规范解答】}"
             format_rules = (
-                "3. 你的输出内容必须且仅包含以下三个结构化板块（使用 LaTeX 粗体格式，绝对禁止使用 Markdown 的 ** 双星号加粗语法）：\n"
-                "   - \\\\textbf{【规范解答】}：给出符合高考/正式试卷卷面书写规范的标准解答步骤。注意书写格式要标准且严密，文字要凝练，不要有任何闲话废话或多余的过渡词，供学生参考标准卷面得分步骤。\n"
-                "   - \\\\textbf{【解析思路】}：给出解答本题背后的核心解析思路与破题关窍。解析长短请视该题目的真实难度而定，不要面面俱到，直接点出解答最核心的要点即可，言简意赅，切忌冗长。\n"
-                "   - \\\\textbf{【核心知识点】}：列出解答本题用到的关键数学原理、定理或思想方法。"
+                "【必须包含的结构化板块 (使用 LaTeX 粗体 `\\\\textbf{...}`)】:\n"
+                "1. \\\\textbf{【规范解答】}：符合高考卷面得分规范的标准解答步骤，写齐必要推理逻辑与定理依据，无冗余废话。\n"
+                "2. \\\\textbf{【解析思路】}：若有多个小问（如 (1)、(2)），按小问分点概括破题脉络与定理转化（可一句话点拨易错陷阱或另解）。\n"
+                "3. \\\\textbf{【核心知识点】}：列出关键公式、定理或思想方法。"
             )
             
         system_instructions = (
-            "你是一位极其严谨的、资深的高中数学教研专家。请解答用户输入的高中数学题目。特别注意：这必须是一道符合高中数学大纲要求的题目，你的解题思路、方法和技巧绝对不能超出中国普通高中阶段的水平（严禁使用大学高等数学、微积分、高等代数、洛必达法则、泰勒展开、拉格朗日中值定理等超出高中阶段教学大纲的大学方法，必须完全采用符合高中知识体系和认知范围的常规或技巧性方法）。\n"
-            "【输出核心准则】\n"
-            "1. 你的回答必须直接、干净地从下面的结构化板块开始。严禁包含任何前言、导语、引入承接句或问候语（例如“你好！”、“下面是解析：”等）。\n"
-            f"2. 你的回答必须直接以“{first_block_header}”作为第一个字符开始输出。特别强调：对于客观题（选择题/填空题），必须严格先在“{first_block_header}”板块第一行【直接、醒目】给出该题最终的正确答案（选项字母或填空数值/表达式），然后再在下方“\\\\textbf{{【解析过程】}}”板块中给出详细解析！严禁在结尾包含任何总结、客套话或多余的尾注段落。\n"
-            "【输出格式要求】\n"
-            "1. 必须使用标准的 LaTeX 语法书写所有的数学公式。行内公式使用 $...$ 或 \\( ... \\)，行间公式使用 $$\\n...\\n$$ 或 \\[ ... \\]。\n"
-            "2. 排版优雅，逻辑步骤条理清晰，推理严密，没有任何废话。\n"
+            "你是一位极其严谨的资深高中数学教研专家。请解答用户输入的高中数学题目。\n"
+            "【解题纪律与超纲禁令】\n"
+            "1. 严禁超纲：解题思路与技巧必须完全限制在中国普通高中数学大纲范围内（严禁使用微积分、洛必达法则、泰勒展开等大学高等数学方法）。\n"
+            "2. 逻辑严密与极简凝练：推导过程必须逻辑完备、因果严谨（写明公理定理前提，不盲目跳步），但语言精练直奔得分点，拒绝任何多余的口水话或过度解释。\n"
+            f"3. 零多余前言尾注：回答必须干净地从结构化板块开始，第一个字符必须是“{first_block_header}”，严禁包含任何问候语、前言、导语或尾注总结。\n"
+            "【LaTeX 与段落换行规范】\n"
+            "1. 必须使用标准 LaTeX 语法书写公式（行内 $...$，行间 $$\\n...\\n$$）。绝对禁止使用 Markdown 的 ** 双星号加粗语法，标题必须使用 LaTeX 粗体 `\\\\textbf{...}`。\n"
+            "2. 物理换行与空行规范 (极重要)：在分步推导、证明步骤（如“解：”、“(1) 证明：”、“因为”、“所以”、“故”）、不同小问以及标题与段落之间，必须使用空行/双回车（\\n\\n）分隔！单回车无法实现物理换行。\n"
             f"{format_rules}\n"
-            "4. 绝不要带有任何无关的字句，直接输出这三个板块。"
+            "请直接输出上述结构化板块。"
         )
         
         user_prompt = f"题目类型: {type_str}\n"
@@ -1642,8 +1678,13 @@ def compile_tikz_to_png(tikz_code: str) -> str:
             log_content = ""
             if os.path.exists(log_path):
                 try:
-                    with open(log_path, "r", encoding="utf-8", errors="ignore") as lf:
-                        lines = lf.readlines()
+                    with open(log_path, "rb") as lf:
+                        raw_log = lf.read()
+                        try:
+                            log_text = raw_log.decode("utf-8")
+                        except UnicodeDecodeError:
+                            log_text = raw_log.decode("gbk", errors="replace")
+                        lines = log_text.splitlines()
                         # 找到包含 ! 的报错行
                         error_lines = [line.strip() for line in lines if line.startswith("!")]
                         if error_lines:
@@ -1710,22 +1751,62 @@ def correct_tikz_endpoint(
     
     # 动态读取高级绘图模型配置
     prefer_draw = os.getenv("PREFER_DRAW_MODEL", "Qwen/Qwen3-VL-32B-Instruct")
-    is_zhongzhan = prefer_draw.startswith("ZHONGZHAN/")
+    is_zhongzhan_gpt = prefer_draw.startswith("ZHONGZHAN_GPT/") or prefer_draw.startswith("ZHONGZHAN/")
+    is_zhongzhan_claude = prefer_draw.startswith("ZHONGZHAN_CLAUDE/")
+    is_bailian = prefer_draw.startswith("BAILIAN/")
+    is_siliconflow = prefer_draw.startswith("SILICONFLOW/")
     
-    if is_zhongzhan:
-        zhongzhan_key = os.getenv("ZHONGZHAN_API_KEY")
+    if is_bailian:
+        api_key = os.getenv("ALI_BAILIAN_API_KEY")
+        if not api_key:
+            raise HTTPException(
+                status_code=400,
+                detail="未配置 阿里百炼 API Key (ALI_BAILIAN_API_KEY)！请在设置面板中配置后重试。"
+            )
+        api_key = api_key.strip()
+        model_name = prefer_draw.split("/", 1)[1]
+        if model_name == "qwen3.7-max":
+            model_name = "qwen-max"
+        base_url = os.getenv("ALI_BAILIAN_API_BASE", "https://dashscope.aliyuncs.com/compatible-mode/v1").rstrip("/")
+        url = f"{base_url}/chat/completions" if not base_url.endswith("/chat/completions") else base_url
+        print(f"[TikZ Correction] 启用阿里百炼高级模型进行纠错: {model_name}, Base URL: {url}")
+    elif is_zhongzhan_gpt:
+        zhongzhan_key = os.getenv("ZHONGZHAN_GPT_API_KEY") or os.getenv("ZHONGZHAN_API_KEY")
         if not zhongzhan_key:
             raise HTTPException(
                 status_code=400,
-                detail="未配置中转站 API Key (ZHONGZHAN_API_KEY)！请在设置面板中配置后重试。"
+                detail="未配置中转站 A (ZHONGZHAN_GPT_API_KEY)！请在设置面板中配置后重试。"
             )
         api_key = zhongzhan_key.strip()
         model_name = prefer_draw.split("/", 1)[1]
-        base_url = os.getenv("ZHONGZHAN_BASE_URL", "https://api.openai.com/v1").rstrip("/")
+        base_url = (os.getenv("ZHONGZHAN_GPT_BASE_URL") or os.getenv("ZHONGZHAN_BASE_URL", "https://api.openai.com/v1")).rstrip("/")
         url = f"{base_url}/chat/completions" if not base_url.endswith("/chat/completions") else base_url
-        print(f"[TikZ Correction] 启用中转站高级模型进行纠错: {model_name}, Base URL: {url}")
+        print(f"[TikZ Correction] 启用中转站 A 高级模型进行纠错: {model_name}, Base URL: {url}")
+    elif is_zhongzhan_claude:
+        zhongzhan_key = os.getenv("ZHONGZHAN_CLAUDE_API_KEY")
+        if not zhongzhan_key:
+            raise HTTPException(
+                status_code=400,
+                detail="未配置中转站 B (ZHONGZHAN_CLAUDE_API_KEY)！请在设置面板中配置后重试。"
+            )
+        api_key = zhongzhan_key.strip()
+        model_name = prefer_draw.split("/", 1)[1]
+        base_url = os.getenv("ZHONGZHAN_CLAUDE_BASE_URL", "https://api.openai.com/v1").rstrip("/")
+        url = f"{base_url}/chat/completions" if not base_url.endswith("/chat/completions") else base_url
+        print(f"[TikZ Correction] 启用中转站 B 高级模型进行纠错: {model_name}, Base URL: {url}")
+    elif is_siliconflow:
+        sf_key = os.getenv("SILICONFLOW_API_KEY")
+        if not sf_key:
+            raise HTTPException(
+                status_code=400,
+                detail="未配置 硅基流动 API Key (SILICONFLOW_API_KEY)！请在设置面板中配置后重试。"
+            )
+        api_key = sf_key.strip()
+        model_name = prefer_draw.split("/", 1)[1]
+        url = "https://api.siliconflow.cn/v1/chat/completions"
+        print(f"[TikZ Correction] 启用 SiliconFlow 高级模型进行纠错: {model_name}")
     else:
-        # SiliconFlow 路由配置
+        # SiliconFlow 无前缀默认路由
         sf_key = os.getenv("SILICONFLOW_API_KEY")
         if not sf_key:
             raise HTTPException(
@@ -1735,7 +1816,7 @@ def correct_tikz_endpoint(
         api_key = sf_key.strip()
         model_name = prefer_draw
         url = "https://api.siliconflow.cn/v1/chat/completions"
-        print(f"[TikZ Correction] 启用 SiliconFlow 高级模型进行纠错: {model_name}")
+        print(f"[TikZ Correction] 启用 SiliconFlow 默认模型进行纠错: {model_name}")
 
     # 对原始截图进行 Base64 编码
     clean_original_path = original_image_path.lstrip("/")
@@ -1772,19 +1853,15 @@ def correct_tikz_endpoint(
             raise HTTPException(status_code=400, detail=f"读取渲染出的 TikZ 图片失败: {str(e)}")
 
         prompt = (
-            "你是一个 LaTeX/TikZ 几何绘图专家和视觉审稿人。下面为你提供两张图片：\n"
-            "第一张（Image A）是手绘或试卷中的原始题目插图，第二张（Image B）是我使用 TikZ 渲染出来的插图。\n"
-            "另外，这是我目前用于绘制第二张图的 TikZ 代码：\n"
+            "你是一个 TikZ 几何绘图专家。对比 Image A（原题目插图）与 Image B（TikZ 当前渲染图）：\n"
             "```latex\n"
             f"{tikz_code}\n"
             "```\n"
-            "请完成以下任务：\n"
-            "1. 仔细对比两张图，找出不一致的地方（如几何点位置、夹角大小、实线/虚线、字母标注、箭头方向等拓扑细节）。\n"
-            "2. 针对性修改我的 TikZ 绘图代码，使其生成的图形能够 100% 还原原始插图 (Image A)。\n"
-            "3. 你的回答必须以 ```latex ... ``` 代码块包裹修正后的完整 TikZ 代码（只输出 \\begin{tikzpicture} 和 \\end{tikzpicture} 之间的部分，或者包含它们）。请确保不输出任何与代码无关的开场白或闲聊文字。"
+            "任务：对比拓扑与细节差异（点位置、实虚线、字母、箭头等），修改 TikZ 代码使其 100% 还原 Image A。\n"
+            "必须使用 ```latex ... ``` 代码块包裹修正后的完整 TikZ 代码（只输出 \\begin{tikzpicture}...\\end{tikzpicture}），严禁输出闲聊文字。"
         )
         if user_prompt and user_prompt.strip():
-            prompt += f"\n\n【人工修改和纠错指导意见】：\n用户指出了当前图形的以下具体错误或修改意见，请你在生成修正代码时务必优先且绝对遵循这一意见：\n{user_prompt.strip()}"
+            prompt += f"\n\n【人工修改意见】：请务必优先遵循：{user_prompt.strip()}"
 
         content_payload = [
             {"type": "text", "text": prompt},
@@ -3148,52 +3225,37 @@ def parse_paper_text_internal(
         curriculum_text += f"- {book}: {list(chapters.keys())}\n"
         
     if generate_answers_bool:
-        answer_generation_rule = (
-            "   - 如果试卷中只有题干没有答案，请根据题干自动生成详尽的解答步骤与解析，填入 `answer_markdown` 字段。特别注意：自动生成的解答过程、解题思路和技巧绝对不能超出本阶段水平，必须完全采用符合本知识体系和认知范围的常规或技巧性方法。\n"
-        )
+        answer_generation_rule = "   - 若试卷缺答案，请自动生成标准解答步骤填入 `answer_markdown`（写明推理逻辑与【解析思路】）。\n"
     else:
         answer_generation_rule = (
-            "   - **【极其重要：绝对不生成答案解析】**：当前用户【未开启】自动生成答案解析功能。你必须将所有题目的 `answer_markdown` 字段设为绝对的空字符串 `\"\"`！**绝对不准**主动为任何题目生成、推导、猜测、计算或瞎编任何解答和解析过程！只有且仅当输入的原始试卷 LaTeX 源码中，原本就明确且显式写着该题的原版参考答案或解析文本（你会看到明显的“【答案】”、“解析：”、“解：”、“\\quad”等字样且包含具体的解题步骤），你才可以对其进行提取。并且如果该答案确实是从原试卷源码中提取的原版参考答案或原版解析，你必须在 `answer_markdown` 的最开头原样打上 `[EXTRACTED_ORIGINAL]` 标记。如果没有这个标记，或者该标记之后没有任何具体内容，我们将视其为大模型自作主张瞎编并清空。所以，若原试卷不含答案，你必须将该字段保持留空为 `\"\"`！\n"
+            "   - 【严禁生成答案】：未开启答案生成功能。除原试卷明确自带原版答案外（提取时在开头标注 [EXTRACTED_ORIGINAL]），必须将 `answer_markdown` 设为空字符串 \"\"！严禁主动推导或编造答案。\n"
         )
 
     system_instructions = (
-        "你原是一位极其严谨的教研专家与 LaTeX 排版大师。请阅读并解析用户输入的【整张试卷 LaTeX 源码】，将其智能拆解为独立的题目列表，并分析每一题属性。\n"
+        "你是一位资深教研专家与 LaTeX 排版大师。请解析输入的试卷 LaTeX 源码，智能拆解为题目列表 JSON。\n"
         "【可选教材范围及各章名称】:\n"
         f"{curriculum_text}\n"
-        "【分类规则】:\n"
-        "1. 仔细阅读并拆解试卷中的每一道题目。请保留题目中的 LaTeX 公式和格式。\n"
-        "2. 为每道题挑选最合适的一个【学段】（例如：必修一）和一个【所属章节】（例如：5. 三角函数，必须是可选章节中的精确字符串）。\n"
-        "3. 如果题目包含图片引用标签（形如 \\includegraphics{filename.png} 或类似标记，或文字描述引用的图片名），请将其提取并放入 `referenced_images` 字段中。\n"
-        "   - **【极其重要：关于 /static/uploads/tmp/pdf_crop_ 路径的保护规则】**：如果输入的试卷 LaTeX 源码中存在以 `/static/uploads/tmp/pdf_crop_` 开头的临时裁剪插图 URL（例如 `![](/static/uploads/tmp/pdf_crop_xxx.png)`），你**必须 100% 完整且原样保留该完整 URL**，绝对不可将其修改、缩写或重命名为任何其他名称（如 `图1.png`、`图2.png`、`image1.png` 等）！同时必须将此原始完整路径 `/static/uploads/tmp/pdf_crop_xxx.png` 放入 `referenced_images` 数组中。\n"
-        "4. 判断题目类型：single_choice（单选题，若选项是 A/B/C/D 形式，建议保留选项在 `content` 尾部，并归类为 single_choice）、multi_choice（多选题）、fill_in_blank（填空题）、detailed_answer（解答题）。\n"
-        "5. 判断题目难度等级，由于是私人题库，请将其归类为：easy_error（易错题）、challenge（挑战题）或 qiangji（强基题）。\n"
-        "6. **智能识别答案与解析**：试卷中可能只包含题干，也可能同时包含答案 and 解析。请仔细辨别：\n"
-        "   - 如果试卷中包含答案（如参考答案、解答过程等），请将其提取到 `answer_markdown` 字段。\n"
+        "【拆题与分类规则】:\n"
+        "1. 题干拆解：保留 LaTeX 公式与格式。挑选精确的【学段】与【所属章节】。\n"
+        "2. 插图路径保护：若包含 `/static/uploads/tmp/pdf_crop_` 临时裁剪路径，必须 100% 完整原样保留该 URL（不可改名或重命名），并提取至 `referenced_images` 数组中。\n"
+        "3. 题型与难度判断：question_type 设为 single_choice/multi_choice/fill_in_blank/detailed_answer；difficulty 设为 easy_error/challenge/qiangji。\n"
+        "4. 答案与解析处理：\n"
         f"{answer_generation_rule}"
-        "7. **【题干智能去答案规范】**：很多时候，输入的试卷 LaTeX 源码中，某些选择题或填空题的题干部分直接保留了答案（例如：选择题括号中直接写了答案字母如“（ B ）”、“(C)”；填空题下划线命令内部直接填了答案数字或符号如“\\underline{\\quad 7 \\quad}”、“\\underline{x^2}”）：\n"
-        "   - 必须主动识别并清除这些题干中保留的答案，还原为纯净的空占位符！\n"
-        "   - 对于选择题，将括号内代表答案的字母剥离清除，还原为干净的括号（如“（  ）”或“（ ）”）。\n"
-        "   - 对于填空题，将下划线中代表答案的文本挖空，替换为纯粹的 LaTeX 空白占位符（如“\\underline{\\quad\\quad}”或“\\underline{\\quad \\quad}”）。\n"
-        "   - 对于客观题（选择题/填空题），必须在 `answer_markdown` 最开头第一句/第一行【直接、醒目】输出最终正确答案（选择题如选项字母“A”或“ABD”，填空题如需填入的正确数值/公式/表达式“\\sqrt{3}”或“(-1, 1)”），然后再在下面呈现详细解析步骤。\n"
-        "8. **【排版与字符格式规范】（极其重要）**：\n"
-        "   - **推荐使用标准的 LaTeX 列表与排版环境**：为了方便用户直接复制高价值的 LaTeX 源码，推荐在需要列表、段落或编号排版时输出标准的 LaTeX 语法环境，如 `\\begin{itemize}`, `\\end{itemize}`, `\\item`, `\\begin{enumerate}`, `\\end{enumerate}`, `\\begin{center}`, `\\end{center}`。LaTeX 标记（如 `$` 或 `$$`）应该包围所有纯数学公式。\n"
-        "   - **【加粗文本排版规范】**：在输出需要加粗的结构化文本时，**绝对禁止**使用 Markdown 的双星号 `**加粗文本**` 语法，必须且只能使用 LaTeX 标准的 `\\\\textbf{加粗文本}` 语法。\n"
-        "   - **禁止输出字面量 `\\n` 字符**：在 `content` 或 `answer_markdown` 的字符串内部换行时，直接在 JSON 字段里输出真实的换行符（回车换行），绝对不要输出转义后的字面量 `\\n`（即双斜杠字符 `\\\\n` 或斜杠加n），防止页面上直接显示出带有物理字符 `\\n` 的尴尬情况。\n"
-        "9. **【出处智能提取规范】**：仔细辨认题干开头（如“1. (2024·上海·高考真题) 已知...”中的“(2024·上海·高考真题)”)或结尾是否包含年份、考试来源等括号标注的出处信息：\n"
-        "   - 若有，必须将其完整提取至 `source` 字段中（去除外层括号），并在 `content` 字段中彻底剥离删除该出处标注以及前面的题号前缀（如“10.”、“1.”），只保留纯净的题目内容。\n"
-        "   - 若无特定出处，则 `source` 字段设为 null 或不填。\n"
-        "10. **你的输出必须是一个合法的 JSON 对象，其根键为 `\"questions\"`，对应的值为一个 JSON 数组（包含以下结构化对象）。不要有任何多余的 Markdown 标记、代码块或解释文字**：\n"
+        "5. 题干净化（去答案）：若选择题/填空题题干中保留了答案（如括号中含字母或下划线内含数值），必须擦除还原为纯净的占位符；客观题必须在 `answer_markdown` 第一行醒目输出最终答案。\n"
+        "6. 排版规范：分步推导/段落之间必须使用空行/双回车（\\n\\n）分隔；加粗必须使用 `\\\\textbf{...}`（严禁双星号 `**`）；字符串内部换行直接输出真实回车，严禁输出字面量 `\\n` 字符。\n"
+        "7. 出处提取：识别题干开头/结尾的来源信息（如 2024·上海·高考真题），提取至 `source` 字段并从题干中剥离题号与出处。\n"
+        "8. 输出 JSON 格式（根键为 `\"questions\"` 数组，只输出干净 JSON，不要包含 ```json 代码块）：\n"
         "{\n"
         "  \"questions\": [\n"
         "    {\n"
-        "      \"content\": \"题干内容，包含 LaTeX 排版公式，且保留图片排版占位标记 (如果有 /static/uploads/tmp/pdf_crop_ 临时路径，必须 100% 完整原样保留，绝对不得修改路径或重命名！例如：![插图](/static/uploads/tmp/pdf_crop_xxx.png))\",\n"
-        "      \"answer_markdown\": \"该题的答案与详细解析过程，使用标准 LaTeX 与 Markdown 排版\",\n"
+        "      \"content\": \"纯净题干内容\",\n"
+        "      \"answer_markdown\": \"答案与解析\",\n"
         "      \"question_type\": \"single_choice / multi_choice / fill_in_blank / detailed_answer\",\n"
-        "      \"category_compulsory\": \"人教A学段名称\",\n"
-        "      \"category_chapter\": \"人教A章节名称\",\n"
+        "      \"category_compulsory\": \"学段名称\",\n"
+        "      \"category_chapter\": \"章节名称\",\n"
         "      \"difficulty\": \"easy_error / challenge / qiangji\",\n"
-        "      \"source\": \"提取出的具体出处（如 2019·全国·高考真题），没有则填 null\",\n"
-        "      \"referenced_images\": [\"/static/uploads/tmp/pdf_crop_xxx.png\", \"引用的原始插图文件名1.png\"]\n"
+        "      \"source\": \"具体出处或 null\",\n"
+        "      \"referenced_images\": [\"/static/uploads/tmp/pdf_crop_xxx.png\"]\n"
         "    }\n"
         "  ]\n"
         "}\n"
@@ -3356,14 +3418,10 @@ async def ai_parse_paper(
         for book, chapters in get_current_curriculum().items():
             curriculum_text += f"- {book}: {list(chapters.keys())}\n"
             
-        if generate_answers_bool:
-            answer_generation_rule = (
-                "   - 如果试卷中只有题干没有答案，请根据题干自动生成详尽的解答步骤与解析，填入 `answer_markdown` 字段。特别注意：自动生成的解答过程、解题思路和技巧绝对不能超出本阶段水平，必须完全采用符合本知识体系和认知范围的常规或技巧性方法。\n"
-            )
-        else:
-            answer_generation_rule = (
-                "   - **【极其重要：绝对不生成答案解析】**：当前用户【未开启】自动生成答案解析功能。你必须将所有题目的 `answer_markdown` 字段设为绝对的空字符串 `\"\"`！**绝对不准**主动为任何题目生成、推导、猜测、计算或瞎编任何解答和解析过程！只有且仅当输入的原始试卷 LaTeX 源码中，本来就明确且显式写着该题的原版参考答案或解析文本（你会看到明显的“【答案】”、“解析：”、“解：”、“\\quad”等字样且包含具体的解题步骤），你才可以对其进行提取。并且如果该答案确实是从原试卷源码中提取的原版参考答案或原版解析，你必须在 `answer_markdown` 的最开头原样打上 `[EXTRACTED_ORIGINAL]` 标记。如果没有这个标记，或者该标记之后没有任何具体内容，我们将视其为大模型自作主张瞎编并清空。所以，若原试卷不含答案，你必须将该字段保持留空为 `\"\"`！\n"
-            )
+        answer_generation_rule = (
+            "   - **【拆解阶段只提取原版答案，不现场推导】**：在当前拆卷阶段，你只负责提取输入的原始试卷 LaTeX 源码中【本来就明确显式写着】的原版参考答案或解析（如看到“【答案】”、“解析：”、“解：”等且包含解答文本）。提取时请在 `answer_markdown` 的最开头原样打上 `[EXTRACTED_ORIGINAL]` 标记。\n"
+            "   - 如果原始试卷源码中该题只有题干，**绝对不要**现场推导、计算、猜测或生成解答过程！直接将该题的 `answer_markdown` 设为绝对的空字符串 `\"\"`！\n"
+        )
 
         system_instructions = (
             "你是一位极其严谨的教研专家与 LaTeX 排版大师。请阅读并解析用户输入的【整张试卷 LaTeX 源码】，将其智能拆解为独立的题目列表，并分析每一题属性。\n"
@@ -4517,12 +4575,18 @@ def save_paper(payload: dict, background_tasks: BackgroundTasks, db: Session = D
             
         total_score = sum(int(q.get("score", 5)) for q in questions_payload)
         
+        meta = payload.get("metadata", {})
+        if not isinstance(meta, dict):
+            meta = {}
+        meta["show_secret"] = payload.get("show_secret", True)
+        meta["show_notice"] = payload.get("show_notice", True)
+
         paper = Paper(
             title=title,
             subtitle=subtitle,
             paper_type=paper_type,
             total_score=total_score,
-            metadata_json=json.dumps(payload.get("metadata", {}))
+            metadata_json=json.dumps(meta)
         )
         db.add(paper)
         db.flush()
@@ -4620,6 +4684,8 @@ def export_paper_tex(payload: dict, db: Session = Depends(get_db)):
         title = payload.get("title", "2026年高中数学模拟考试试卷")
         subtitle = payload.get("subtitle", "")
         paper_type = payload.get("paper_type", "exam")
+        show_secret = payload.get("show_secret", True)
+        show_notice = payload.get("show_notice", True)
         questions_input = payload.get("questions", [])
         
         q_ids = [int(q.get("id")) for q in questions_input if q.get("id")]
@@ -4641,8 +4707,8 @@ def export_paper_tex(payload: dict, db: Session = Depends(get_db)):
                     q_item["solution_space"] = item.get("solution_space")
                 questions_data.append(q_item)
                 
-        tex_main = build_latex_document(title, subtitle, paper_type, questions_data, include_answers=False)
-        tex_ans = build_latex_document(title + " (参考答案与解析)", subtitle, paper_type, questions_data, include_answers=True)
+        tex_main = build_latex_document(title, subtitle, paper_type, questions_data, include_answers=False, show_secret=show_secret, show_notice=show_notice)
+        tex_ans = build_latex_document(title + " (参考答案与解析)", subtitle, paper_type, questions_data, include_answers=True, show_secret=show_secret, show_notice=show_notice)
         
         if paper_type == "exam_19":
             tex_answer_sheet = build_answer_sheet_latex(title, subtitle, questions_data)
@@ -4668,6 +4734,8 @@ def export_paper_bundle(payload: dict, db: Session = Depends(get_db)):
         title = payload.get("title", "2026年高中数学模拟考试试卷")
         subtitle = payload.get("subtitle", "")
         paper_type = payload.get("paper_type", "exam")
+        show_secret = payload.get("show_secret", True)
+        show_notice = payload.get("show_notice", True)
         questions_input = payload.get("questions", [])
         
         q_ids = [int(q.get("id")) for q in questions_input if q.get("id")]
@@ -4689,8 +4757,8 @@ def export_paper_bundle(payload: dict, db: Session = Depends(get_db)):
                     q_item["solution_space"] = item.get("solution_space")
                 questions_data.append(q_item)
                 
-        tex_main = build_latex_document(title, subtitle, paper_type, questions_data, include_answers=False)
-        tex_ans = build_latex_document(title + " (参考答案与解析)", subtitle, paper_type, questions_data, include_answers=True)
+        tex_main = build_latex_document(title, subtitle, paper_type, questions_data, include_answers=False, show_secret=show_secret, show_notice=show_notice)
+        tex_ans = build_latex_document(title + " (参考答案与解析)", subtitle, paper_type, questions_data, include_answers=True, show_secret=show_secret, show_notice=show_notice)
         
         if paper_type == "exam_19":
             tex_answer_sheet = build_answer_sheet_latex(title, subtitle, questions_data)
@@ -4734,6 +4802,8 @@ def export_paper_pdf(payload: dict, db: Session = Depends(get_db)):
         paper_type = payload.get("paper_type", "exam_19")
         target = payload.get("target", "paper")  # "paper" or "sheet"
         include_answers = payload.get("include_answers", False)
+        show_secret = payload.get("show_secret", True)
+        show_notice = payload.get("show_notice", True)
         questions_input = payload.get("questions", [])
         
         q_ids = [int(q.get("id")) for q in questions_input if q.get("id")]
@@ -4758,7 +4828,7 @@ def export_paper_pdf(payload: dict, db: Session = Depends(get_db)):
         if target == "sheet":
             tex_content = build_answer_sheet_latex(title, subtitle, questions_data)
         else:
-            tex_content = build_latex_document(title, subtitle, paper_type, questions_data, include_answers=include_answers)
+            tex_content = build_latex_document(title, subtitle, paper_type, questions_data, include_answers=include_answers, show_secret=show_secret, show_notice=show_notice)
 
         image_paths = collect_referenced_images(questions_data, UPLOAD_DIR)
         pdf_bytes, log_or_err = compile_tex_to_pdf(tex_content, image_paths)
