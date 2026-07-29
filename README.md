@@ -55,6 +55,9 @@ MathBank 源于一线高中数学教研与备课实战，具有鲜明的实用�
 ## 🛠️ 快速开始
 
 > [!TIP]
+> **📄 PDF 试卷拆解导入建议**：导入试卷 PDF 时，建议优先选用**仅含题干（无冗长解析）**的短试卷。详细解析推荐在题目拆解入库后，使用系统内置的 AI 一键推导或手动补充，避免因原文件文本过多导致大模型上下文 Token 超限。
+
+> [!TIP]
 > **📦 便携包推荐（非技术/懒人用户首选）**
 > 如果您不熟悉 Git、Python 或命令行操作，可以直接前往 [**Releases 页面**](https://github.com/JudgePeach/math-question-bank/releases) 下载我们打包好的双平台便携包，解压即用：
 > * **💻 Windows 用户**：下载 `MathBank-Windows-x64.zip`，解压后双击 **`启动题库系统.bat`** 即可运行（包内已完整内置便携式 Python 运行环境）。
@@ -73,8 +76,6 @@ MathBank 源于一线高中数学教研与备课实战，具有鲜明的实用�
 > * `PREFER_PARSE_MODEL` (整卷拆解模型)：默认 `deepseek-v4-flash`。
 > * `PREFER_CLASSIFY_MODEL` (题目分类模型)：默认 `deepseek-v4-flash`。
 > * `PREFER_DRAW_MODEL` (高级 TikZ 绘图模型)：推荐使用 `ZHONGZHAN_GPT/gpt-5.5`、`ZHONGZHAN_CLAUDE/claude-3-5-sonnet` 或硅基流动 `Qwen/Qwen3-VL-32B-Instruct` 等多模态 VLM，以实现双阶段 OCR 自动多模态重绘。
->
-> 📄 **PDF 试卷拆解导入建议**：导入试卷 PDF 时，建议优先选用**仅含题干（无冗长解析）**的短试卷。详细解析推荐在题目拆解入库后，使用系统内置的 AI 一键推导或手动补充，避免因原文件文本过多导致大模型上下文 Token 超限。
 >
 > > [!IMPORTANT]
 > > **关于 TikZ 自动几何重绘与本地 LaTeX 编译环境依赖**：
