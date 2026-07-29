@@ -74,6 +74,8 @@ MathBank 源于一线高中数学教研与备课实战，具有鲜明的实用�
 > * `PREFER_CLASSIFY_MODEL` (题目分类模型)：默认 `deepseek-v4-flash`。
 > * `PREFER_DRAW_MODEL` (高级 TikZ 绘图模型)：推荐使用 `ZHONGZHAN_GPT/gpt-5.5`、`ZHONGZHAN_CLAUDE/claude-3-5-sonnet` 或硅基流动 `Qwen/Qwen3-VL-32B-Instruct` 等多模态 VLM，以实现双阶段 OCR 自动多模态重绘。
 >
+> 📄 **PDF 试卷拆解导入建议**：导入试卷 PDF 时，建议优先选用**仅含题干（无冗长解析）**的短试卷。详细解析推荐在题目拆解入库后，使用系统内置的 AI 一键推导或手动补充，避免因原文件文本过多导致大模型上下文 Token 超限。
+>
 > > [!IMPORTANT]
 > > **关于 TikZ 自动几何重绘与本地 LaTeX 编译环境依赖**：
 > > 系统的 AI 智能几何插图 TikZ 重绘和 PDF 试卷编译渲染功能，高度依赖您**本地已安装的 LaTeX 编译排版环境**（如 macOS 下的 **MacTeX**，Windows 下的 **TeX Live** 或 **MiKTeX**）。
