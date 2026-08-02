@@ -33,6 +33,32 @@ from sync_helper import export_database_to_files
 # Load environment variables
 load_dotenv()
 
+def parse_model_and_effort(model_str: str):
+    """
+    解析带推理强度的模型名称字符串。
+    例如:
+    'gpt-5.6-sol:high' -> ('gpt-5.6-sol', 'high')
+    'gpt-5.6-sol(high)' -> ('gpt-5.6-sol', 'high')
+    'ZHONGZHAN_GPT/gpt-5.6-sol:high' -> ('ZHONGZHAN_GPT/gpt-5.6-sol', 'high')
+    'gpt-5.6-sol' -> ('gpt-5.6-sol', None)
+    """
+    if not model_str:
+        return "", None
+    model_str = str(model_str).strip()
+    
+    # 匹配括号如 (high)
+    match_paren = re.search(r'^(.*?)\((high|medium|low|xhigh|max|default)\)$', model_str, re.IGNORECASE)
+    if match_paren:
+        return match_paren.group(1).strip(), match_paren.group(2).lower()
+        
+    if ":" in model_str:
+        parts = model_str.rsplit(":", 1)
+        potential_effort = parts[1].strip().lower()
+        if potential_effort in ["high", "medium", "low", "xhigh", "max", "default"]:
+            return parts[0].strip(), potential_effort
+            
+    return model_str, None
+
 # Unique server instance ID generated per process launch/restart
 SERVER_INSTANCE_ID = str(uuid.uuid4())
 
@@ -705,6 +731,10 @@ def ocr_via_zhongzhan(image_path: str, api_key: str, base_url: str, model_name: 
     if include_illustration_box:
         prompt += ILLUSTRATION_BOX_PROMPT
     
+    clean_model, explicit_effort = parse_model_and_effort(model_name)
+    if clean_model:
+        model_name = clean_model
+
     payload = {
         "model": model_name,
         "messages": [
@@ -723,6 +753,10 @@ def ocr_via_zhongzhan(image_path: str, api_key: str, base_url: str, model_name: 
         ],
         "stream": False
     }
+
+    if explicit_effort and explicit_effort != "default":
+        payload["reasoning_effort"] = explicit_effort.lower()
+        payload["enable_thinking"] = True
     
     max_retries = 3
     timeout = 240
@@ -1204,6 +1238,10 @@ async def ai_solve(
         # Double max_tokens to 16384, but cap at 8192 for Alibaba Bailian compatible-mode endpoints
         max_output_tokens = 8192 if (api_base and "aliyuncs.com" in api_base.lower()) else 16384
             
+        clean_model, explicit_effort = parse_model_and_effort(model_name)
+        if clean_model:
+            model_name = clean_model
+
         data = {
             "model": model_name,
             "messages": [
@@ -1248,6 +1286,11 @@ async def ai_solve(
         
         if is_deepseek and thinking in ["enabled", "disabled"]:
             data["thinking"] = {"type": thinking}
+            
+        # Overwrite with explicit reasoning_effort parameter if set via 7:3 UI layout
+        if explicit_effort and explicit_effort != "default":
+            data["reasoning_effort"] = explicit_effort.lower()
+            data["enable_thinking"] = True
             
         # When thinking mode is active, temperature is ignored/deprecated by DeepSeek.
         # But when thinking is disabled or non-DeepSeek model, specify it.

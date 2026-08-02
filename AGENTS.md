@@ -11,6 +11,7 @@
 - **前端脚本拆分**：前端 JS 采用无编译的“渐进式级联加载”架构，分模块存放在 `static/js/` 目录下（`api.js`、`editor.js`、`ocr.js`、`import.js`），加载顺序严格依存，不允许产生任何编译及捆绑动作。
 - **前端样式与字体**：Tailwind CSS + FontAwesome 图标库 + Inter/Outfit 字体包（均已下载至本地 `/static/lib` 支持 100% 离线使用与跨平台系统降级）。
 - **公式渲染**：KaTeX（已下载至本地支持 100% 离线数学公式渲染），必须支持题干与解析框实时解析、秒级渲染。
+- **中转站模型 7:3 弹性 UI 布局与 Reasoning Effort 自动解析**：在系统 API 设置中选择中转站平台（`zhongzhan_gpt` 或 `zhongzhan_claude`）时，模型输入区域自动转换为 7:3 弹性比例（70% 模型名称，30% 推理强度 `Default (空白)` / `Low` / `Medium` / `High` / `XHigh` / `Max`）。后端在 `main.py` 的 `parse_model_and_effort` 中自动提取纯净模型名称，并向大模型 HTTP 请求 JSON 集中静默注入 `reasoning_effort` 或 `enable_thinking` 参数。
 
 > [!IMPORTANT]
 > **文档指南同步更新规则**：
@@ -178,7 +179,7 @@
   - **首选引擎 (Ali Bailian)**：默认首选调用阿里百炼运行多模态识图模型（推荐使用 `qwen3-vl-flash`），Token 变量为 `ALI_BAILIAN_API_KEY`，模型变量为 `ALI_BAILIAN_OCR_MODEL`。
   - **备用多模态通道**：支持调用 SiliconFlow (`SILICONFLOW_API_KEY`，模型 `Qwen/Qwen3-VL-8B-Instruct`)，以及中转站 GPT (`ZHONGZHAN_GPT_API_KEY`, 模型 `gpt-4o`) 和中转站 Claude (`ZHONGZHAN_CLAUDE_API_KEY`, 模型 `claude-3-5-sonnet`)。
 - **大模型智能解答与解析/拆卷接口 (DeepSeek / 阿里百炼 / 多源 API)**：
-  - 解题模型、试卷拆解模型、题目自动分类模型以及高级 TikZ 绘图模型可通过 `.env` 配置文件中的 `PREFER_SOLVE_MODEL`、`PREFER_PARSE_MODEL`、`PREFER_CLASSIFY_MODEL` 和 `PREFER_DRAW_MODEL` 指定（支持 `deepseek-chat`、`deepseek-reasoner`、`qwen-max` 等主流解题与拆卷模型，以及 SiliconFlow `Qwen/Qwen3-VL-32B-Instruct` 等多模态 VLM 高级绘图模型）。
+  - 解题模型、试卷拆解模型、题目自动分类模型以及高级 TikZ 绘图模型可通过 `.env` 配置文件中的 `PREFER_SOLVE_MODEL`、`PREFER_PARSE_MODEL`、`PREFER_CLASSIFY_MODEL` 和 `PREFER_DRAW_MODEL` 指定（支持 `deepseek-v4-flash`、`deepseek-v4-pro`、`qwen-max` 等主流解题与拆卷模型，以及 SiliconFlow `Qwen/Qwen3-VL-32B-Instruct` 等多模态 VLM 高级绘图模型）。
   - 后端通过统一底座接口支持 DeepSeek (`DEEPSEEK_API_KEY`)、通义千问阿里百炼 (`ALI_BAILIAN_API_KEY`) 以及中转站等多元渠道。
   - Prompt 设定必须强调：**逻辑严密与极简凝练**（既不省略必要的前后推理关系与公理依据，也不要多余口水废话）、**强制输出【解析思路】板块**（按小问或思考脉络概括破题关窍与定理应用）、强制使用标准 LaTeX 语法输出公式、严格执行空行/双回车 `\n\n` 换行规范，以及适当使用 TikZ 提供几何辅助说明。
 - **代理绕过与网络稳定性 (Robust Networking)**：

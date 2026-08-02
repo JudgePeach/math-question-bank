@@ -370,15 +370,49 @@
             const isZhongzhan = provider === 'zhongzhan' || provider === 'zhongzhan_gpt' || provider === 'zhongzhan_claude';
             
             if (isZhongzhan) {
-                // 中转站模式：采用 input + datalist 实现“可写、可点选历史记录”的高效设计
+                // 中转站模式：将模型名称输入框与推理强度下拉框按照 7:3 比例弹性排列
+                let rawModel = selectedValue || "";
+                let reasoningEffort = "default";
+                
+                if (rawModel.includes(":")) {
+                    const parts = rawModel.rsplit ? rawModel.rsplit(":", 1) : rawModel.split(":");
+                    const lastPart = parts[parts.length - 1].toLowerCase();
+                    if (['default', 'low', 'medium', 'high', 'xhigh', 'max'].includes(lastPart)) {
+                        reasoningEffort = lastPart;
+                        rawModel = parts.slice(0, parts.length - 1).join(":");
+                    }
+                } else if (rawModel.endsWith(")") && rawModel.includes("(")) {
+                    const match = rawModel.match(/^(.*?)\((default|low|medium|high|xhigh|max)\)$/i);
+                    if (match) {
+                        rawModel = match[1].trim();
+                        reasoningEffort = match[2].toLowerCase();
+                    }
+                }
+
                 const datalistId = `datalist_${typeKey}_${provider}`;
                 const models = getModelListForProvider(provider, typeKey);
                 let optionsHtml = models.map(m => `<option value="${m}">`).join('');
                 
                 container.innerHTML = `
-                    <input type="text" id="settings_${typeKey}_model_input" list="${datalistId}" 
-                           placeholder="手写输入模型名称，或点击右侧 [+] 按钮记录"
-                           value="${selectedValue}" class="glass-input flex-1 px-2.5 py-1.5 rounded-lg text-xs font-mono">
+                    <div class="flex items-center space-x-1.5 flex-1 min-w-0">
+                        <!-- 70% 宽度：模型名称输入框 -->
+                        <div class="w-[68%] min-w-0">
+                            <input type="text" id="settings_${typeKey}_model_input" list="${datalistId}" 
+                                   placeholder="输入模型名称 (如 gpt-5.6-sol)"
+                                   value="${rawModel}" class="glass-input w-full px-2.5 py-1.5 rounded-lg text-xs font-mono">
+                        </div>
+                        <!-- 30% 宽度：推理强度选择框 -->
+                        <div class="w-[32%] shrink-0">
+                            <select id="settings_${typeKey}_reasoning_select" class="glass-select w-full px-1.5 py-1.5 rounded-lg text-xs font-mono text-slate-700 dark:text-slate-200" title="选择中转站模型的推理强度 (Reasoning Effort)">
+                                <option value="default" ${reasoningEffort === 'default' ? 'selected' : ''}></option>
+                                <option value="low" ${reasoningEffort === 'low' ? 'selected' : ''}>low</option>
+                                <option value="medium" ${reasoningEffort === 'medium' ? 'selected' : ''}>medium</option>
+                                <option value="high" ${reasoningEffort === 'high' ? 'selected' : ''}>high</option>
+                                <option value="xhigh" ${reasoningEffort === 'xhigh' ? 'selected' : ''}>xhigh</option>
+                                <option value="max" ${reasoningEffort === 'max' ? 'selected' : ''}>max</option>
+                            </select>
+                        </div>
+                    </div>
                     <datalist id="${datalistId}">
                         ${optionsHtml}
                     </datalist>
@@ -607,7 +641,15 @@
             function getSelectedModelValue(typeKey, provider) {
                 if (provider === 'zhongzhan' || provider === 'zhongzhan_gpt' || provider === 'zhongzhan_claude') {
                     const input = document.getElementById(`settings_${typeKey}_model_input`);
-                    return input ? input.value.trim() : '';
+                    const reasoningSelect = document.getElementById(`settings_${typeKey}_reasoning_select`);
+                    let mVal = input ? input.value.trim() : '';
+                    if (mVal && reasoningSelect) {
+                        const effort = reasoningSelect.value;
+                        if (effort && effort !== 'default') {
+                            mVal = `${mVal}:${effort}`;
+                        }
+                    }
+                    return mVal;
                 } else {
                     const select = document.getElementById(`settings_${typeKey}_model_select`);
                     return select ? select.value : '';

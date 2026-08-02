@@ -13,6 +13,7 @@
 - **前端脚本拆分**：前端 JS 采用无编译的“渐进式级联加载”架构，分模块存放在 `static/js/` 目录下（`api.js`、`editor.js`、`ocr.js`、`import.js`），保证代码结构极其清爽。
 - **图文识图 (OCR)**：高精度、多通道的云端 LaTeX OCR 引擎，支持 SiliconFlow (Qwen3.5-4B) 和 阿里百炼 (qwen3-vl-flash) 的双通道并发识图。
 - **接口安全校验**：所有的非只读操作（POST / PUT / DELETE）在后端均有强置 `X-Local-Token` 安全令牌拦截保护，前端由 `api.js` 进行 fetch 全局劫持代理，确保本地数据防跨站越权篡改。
+- **中转站模型 7:3 弹性 UI 布局与推理强度 (Reasoning Effort) 自动映射**：系统 API 设置界面针对“中转站 A”和“中转站 B”支持 7:3 分割布局（70% 宽度填写/选择模型名称，30% 宽度选择推理强度 `Default (空白)` / `Low` / `Medium` / `High` / `XHigh` / `Max`）。前端自动导出形如 `gpt-5.6-sol:high` 的模型配置，后端自动提纯真实模型名称并向 JSON 请求体中静默注入 `reasoning_effort` 或 `enable_thinking` 参数。
 
 ---
 
