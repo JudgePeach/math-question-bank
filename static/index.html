@@ -477,15 +477,17 @@
                             </div>
                         </div>
 
-                        <!-- TAB 2: Content Manual -->
                         <div id="contentTabContent-manual" class="space-y-3 hidden">
                             <p class="text-xs text-slate-400"><i class="fa-solid fa-circle-info"></i> 您可以直接在下方的题干编辑框中直接手写 LaTeX/Markdown 混合内容。配图可以直接上传插图进行定位。</p>
                             <div class="flex flex-wrap gap-1.5">
                                 <span class="text-[10px] bg-slate-100 text-slate-650 px-2.5 py-1 rounded-md cursor-pointer hover:bg-slate-200 font-mono" onclick="insertContentHelper('$x^2$')">$x^2$ (行内公式)</span>
                                 <span class="text-[10px] bg-slate-100 text-slate-650 px-2.5 py-1 rounded-md cursor-pointer hover:bg-slate-200 font-mono" onclick="insertContentHelper('\\frac{a}{b}')">$\frac{a}{b}$ (分数)</span>
                                 <span class="text-[10px] bg-slate-100 text-slate-650 px-2.5 py-1 rounded-md cursor-pointer hover:bg-slate-200 font-mono" onclick="insertContentHelper('\\sqrt{x}')">$\sqrt{x}$ (开根)</span>
-                                <span class="text-[10px] bg-slate-100 text-slate-650 px-2.5 py-1 rounded-md cursor-pointer hover:bg-slate-200 font-mono" onclick="insertContentHelper('\\int_{a}^{b} f(x)dx')">$\int_a^b$ (积分)</span>
+                                <span class="text-[10px] bg-slate-100 text-slate-650 px-2.5 py-1 rounded-md cursor-pointer hover:bg-slate-200 font-mono" onclick="insertContentHelper('\\triangle ABC')">$\triangle ABC$ (三角形)</span>
+                                <span class="text-[10px] bg-slate-100 text-slate-650 px-2.5 py-1 rounded-md cursor-pointer hover:bg-slate-200 font-mono" onclick="insertContentHelper('\\angle ABC')">$\angle ABC$ (角)</span>
                                 <span class="text-[10px] bg-slate-100 text-slate-650 px-2.5 py-1 rounded-md cursor-pointer hover:bg-slate-200 font-mono" onclick="insertContentHelper('\\vec{a}')">$\vec{a}$ (向量)</span>
+                                <span class="text-[10px] bg-slate-100 text-slate-650 px-2.5 py-1 rounded-md cursor-pointer hover:bg-slate-200 font-mono" onclick="insertContentHelper('\\fillin')">\fillin (填空)</span>
+                                <span class="text-[10px] bg-slate-100 text-slate-650 px-2.5 py-1 rounded-md cursor-pointer hover:bg-slate-200 font-mono" onclick="insertContentHelper('$\\begin{cases} x, & x \\ge 0 \\\\ -x, & x < 0 \\end{cases}$')">\cases (分段)</span>
                             </div>
                         </div>
                     </div>

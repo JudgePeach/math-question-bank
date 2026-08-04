@@ -11,7 +11,7 @@
 - **前端样式与字体**：Tailwind CSS + FontAwesome 图标库 + Inter/Outfit Webfonts（均已下载至本地 `/static/lib` 支持 100% 离线使用与跨平台字体降级）。
 - **公式渲染**：KaTeX（已下载至本地支持 100% 离线数学公式渲染），支持题干与解析框实时解析、秒级渲染。
 - **前端脚本拆分**：前端 JS 采用无编译的“渐进式级联加载”架构，分模块存放在 `static/js/` 目录下（`api.js`、`editor.js`、`ocr.js`、`import.js`），保证代码结构极其清爽。
-- **图文识图 (OCR)**：高精度、多通道的云端 LaTeX OCR 引擎，支持 SiliconFlow (Qwen3.5-4B) 和 阿里百炼 (qwen3-vl-flash) 的双通道并发识图。
+- **图文识图 (OCR)**：高精度、多通道的云端 LaTeX OCR 引擎，支持 SiliconFlow (实名送16元代金券) 和 阿里百炼 (注册享受3个月免费额度) 的双通道并发识图。
 - **接口安全校验**：所有的非只读操作（POST / PUT / DELETE）在后端均有强置 `X-Local-Token` 安全令牌拦截保护，前端由 `api.js` 进行 fetch 全局劫持代理，确保本地数据防跨站越权篡改。
 - **中转站模型 7:3 弹性 UI 布局与推理强度 (Reasoning Effort) 自动映射**：系统 API 设置界面针对“中转站 A”和“中转站 B”支持 7:3 分割布局（70% 宽度填写/选择模型名称，30% 宽度选择推理强度 `Default (空白)` / `Low` / `Medium` / `High` / `XHigh` / `Max`）。前端自动导出形如 `gpt-5.6-sol:high` 的模型配置，后端自动提纯真实模型名称并向 JSON 请求体中静默注入 `reasoning_effort` 或 `enable_thinking` 参数。
 
@@ -27,6 +27,7 @@
     - **选择题 choices 网格对齐与高度自适应 (Choice Grid Column Extraction & Vertical Alignment)**：前端 KaTeX 预渲染（`editor.js` 中的 `preprocessFormulaForKaTeX` 与 `parseMarkdownWithMath`）统一为选择题 `\begin{choices}` 环境生成带 `choices-grid` 标识的弹性网格容器。组卷工作台 A4 Live Preview (`paper.js`) 自动捕获此标识将题干与选项提取分离，实现题干右侧括号 `（   ）` 顶格靠右，选项独占下方 100% 满宽 A4 栅格。同时通过 `.choices-grid` 与 `items-center` 垂直中轴线对齐规则，彻底消除了由于分式（如 `\frac{1}{2}`）与纯数字混排导致的 A、B、C、D 选项间垂直高度差（错位）问题。
   - **选择题题干末尾括号自动净化 (Choice Stem Parentheses Cleanup & Self-Healing)**：后端 `paper_helper.py` (`clean_choice_stem_parentheses`)、前端 KaTeX 预编译 (`cleanChoiceStemParentheses`) 与全量自愈脚本 (`migrate_choice_parentheses.py`) 会自动物理抹除题干末尾录入的各种全角/半角供填答用空括号（如 `(\quad)`、`(   )`、`（  ）`），防止与 LaTeX 模板右侧自动生成的 `\paren` 宏产生二次重叠。
   - **填空题 \fillin 规范与自动自愈 (Fillin Macro Standardization & Self-Healing)**：系统在多模态 OCR 识图（SiliconFlow / 阿里百炼 / 中展 AI）Prompt、试卷 AI 智能拆卷 Prompt 中均强制要求将填空题下划线生成为 `\fillin` 宏。同时在后端录入/修改/拆题逻辑中内置了 `normalize_fillin_macro` 自愈清洗器，会自动将 `______` 或 `\underline{\hspace{...}}` 等旧格式静默升级为标准的 `\fillin`。前端 `preprocessFormulaForKaTeX` 默认将纯 `\fillin` 转化为 1.5cm 标准精美下划线渲染。
+  - **裸露数学环境自动自愈 (Exposed Math Environment Self-Healing)**：针对录入或识别到的裸露 LaTeX 数学环境（如 `\begin{cases}...\end{cases}`、`aligned`、`matrix` 等），前端 KaTeX 预渲染函数（`preprocessFormulaForKaTeX` 与 `parseMarkdownWithMath`）会自动识别并使用单美元符号 `$...$` 智能包裹，彻底杜绝未加 `$` 导致渲染成纯文本的异常。
   - **LaTeX/Markdown 换行规范与右侧插图顶格组装算法 (Line Break Rules & Right-Aligned Minipage Hangindent Reset)**：在 LaTeX 试卷导出中，引入了 `format_stem_paragraphs` 算法结合 `\noindent\begin{minipage}` 容器及内部 `\hangindent=0pt\setlength{\parindent}{2em}` 参数重置。消除了外层 `problem` 环境施加给 `minipage` 盒子的外层 2em 缩进偏移以及折行悬挂缩进，既保证了在 `minipage` 右侧插图窄版下同一段落内的自然续行（如 `AC=BC, D, E分别为...`）与全宽题完全一致地 **100% 绝对顶格对齐**，又使小问另起新行并保留 2em 标准首行缩进，且绝不破坏公式或坐标点。
   - **前端渲染**：前端将自动依据选项最长字符数 `maxLen` 自适应网格排版（小于等于 10 字为 1行4列，大于 10 且小于等于 24 字为 2行2列，大于 24 字为 1行1列），并自动补全 `A.`, `B.`, `C.`, `D.` 标号。
   - **AI 题库转换**：后端导出 AI 专属只读题库时，会自动将此 `choices` 环境清洗为 Markdown 标准列表 `- A.` / `- B.` 形式，防止干扰大模型。
@@ -124,7 +125,7 @@
 ### 3.8 TikZ 几何绘图与智能纠错工作流
 - **自动编译与预览**：编辑器下方集成了 TikZ 代码专属编辑和预览区。前端会将 TikZ 代码通过 `/api/render_tikz` 送往后端，后端在本地调用编译链转换为 PNG 并返回相对路径，在前端实现无缝的几何图像秒级预览。
 - **AI 几何绘图与纠错**：支持人工与大模型闭环协同。遇到几何图题，AI 可优先直接生成 TikZ 代码编译。如遇到 TikZ 语法编译报错，用户可写入“指导意见”调用 `/api/correct_tikz` 交由高级大模型进行智能纠正，修复编译报错直至绘图完美。
-- **双阶段多模态识图与 TikZ 绘图联动**：在单题 OCR 公式识图过程中（`/api/ocr`），多模态模型如果检测到插图，会在 LaTeX 文本中植入 `[ILLUSTRATION_BOX: ...]` 定位标签。后端解析到该标签时，会自动将其剥离，并触发第二阶段联动：将整张原始题目图片和提取的 LaTeX 题干文本直接发送给高级绘图视觉大模型（由 `PREFER_DRAW_MODEL` 指定，如 GPT-5.5 / Qwen-VL-32B），由其绘制出 TikZ 源码，并在后台静默编译为 PNG 插图，自动追加到题干末尾（以 Markdown 图片语法 `![](/static/uploads/tikz_xxx.png)` 引用），实现一键图文公式识别与几何绘图矢量化。
+- **双阶段多模态识图与 TikZ 绘图联动**：在单题 OCR 公式识图过程中（`/api/ocr`），多模态模型如果检测到插图，会在 LaTeX 文本中植入 `[ILLUSTRATION_BOX: ...]` 定位标签。后端解析到该标签时，会自动将其剥离，并触发第二阶段联动：将整张原始题目图片和提取的 LaTeX 题干文本直接发送给高级绘图视觉大模型（由 `PREFER_DRAW_MODEL` 指定，推荐使用 `ZHONGZHAN_GPT/gpt-5.6-luna` 或 Gemini 系列；不建议使用国内模型进行 TikZ 绘图），由其绘制出 TikZ 源码，并在后台静默编译为 PNG 插图，自动追加到题干末尾（以 Markdown 图片语法 `![](/static/uploads/tikz_xxx.png)` 引用），实现一键图文公式识别与几何绘图矢量化。
 
 ### 3.9 题目双向关联与题组管理
 - **双向绑定机制**：系统通过 `association_group_id` 进行关联。同组题目（变式题、子母题、一题多解等）均具备相同的 `association_group_id`。绑定两个已属于不同组的题目时，系统会在后端自动将旧组的题目批量迁移合并到新组。

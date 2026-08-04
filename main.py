@@ -531,8 +531,8 @@ COMMON_OCR_PROMPT = (
 ILLUSTRATION_BOX_PROMPT = "\n6. 几何插图识别：若包含几何/函数插图，务必在文末追加归一化百分比包围框：`[ILLUSTRATION_BOX: ymin, xmin, ymax, xmax]`（数值 0-100 整数，无插图则绝对不输出）。"
 
 
-def ocr_via_siliconflow(image_path: str, api_key: str, model_name: str = "Qwen/Qwen3.5-4B", include_illustration_box: bool = False) -> str:
-    """调用 SiliconFlow 官方 API 进行多模态图文公式识别 (使用 Qwen3.5-4B / Qwen2.5-VL 等)"""
+def ocr_via_siliconflow(image_path: str, api_key: str, model_name: str = "Qwen/Qwen3-VL-8B-Instruct", include_illustration_box: bool = False) -> str:
+    """调用 SiliconFlow 官方 API 进行多模态图文公式识别 (使用 Qwen3-VL-8B / Qwen3-VL-32B 等)"""
     import base64
     import requests
     
@@ -964,10 +964,10 @@ def ocr_formula(
         confidence = 0.95
         provider = ""
         
-        # ----------------- 引擎 1: SiliconFlow (Qwen3.5-4B) 多模态识图 -----------------
+        # ----------------- 引擎 1: SiliconFlow (Qwen3-VL-8B-Instruct) 多模态识图 -----------------
         if engine == "siliconflow":
             sf_key = os.getenv("SILICONFLOW_API_KEY")
-            sf_model = os.getenv("SILICONFLOW_OCR_MODEL", "Qwen/Qwen3.5-4B")
+            sf_model = os.getenv("SILICONFLOW_OCR_MODEL", "Qwen/Qwen3-VL-8B-Instruct")
             if sf_key and sf_key.strip():
                 try:
                     latex_content = ocr_via_siliconflow(temp_filepath, sf_key, model_name=sf_model, include_illustration_box=True)
@@ -1420,7 +1420,7 @@ def get_settings():
     zz_claude_ocr_model = os.getenv("ZHONGZHAN_CLAUDE_OCR_MODEL", "claude-3-5-sonnet")
     
     prefer_engine = os.getenv("OCR_PREFER_ENGINE", "siliconflow")
-    sf_model = os.getenv("SILICONFLOW_OCR_MODEL", "Qwen/Qwen3.5-4B")
+    sf_model = os.getenv("SILICONFLOW_OCR_MODEL", "Qwen/Qwen3-VL-8B-Instruct")
     ali_model = os.getenv("ALI_BAILIAN_OCR_MODEL", "qwen3-vl-flash")
     prefer_solve_model = os.getenv("PREFER_SOLVE_MODEL", "deepseek-v4-pro")
     prefer_parse_model = os.getenv("PREFER_PARSE_MODEL", "deepseek-v4-flash")
@@ -1478,7 +1478,7 @@ async def save_settings(
     zhongzhan_claude_base_url: str = Form(""),
     zhongzhan_claude_ocr_model: str = Form(""),
     prefer_engine: str = Form("siliconflow"),
-    siliconflow_model: str = Form("Qwen/Qwen3.5-4B"),
+    siliconflow_model: str = Form("Qwen/Qwen3-VL-8B-Instruct"),
     ali_bailian_model: str = Form("qwen3-vl-flash"),
     prefer_solve_model: str = Form("deepseek-v4-pro"),
     prefer_parse_model: str = Form("deepseek-v4-flash"),
@@ -3831,7 +3831,7 @@ def extract_title_from_latex(latex: str) -> str:
 def ocr_pdf_page_image(image_path: str) -> str:
     """自动选择已配置的 VLM 识别引擎进行单页识别，支持故障转移（Fallback）与兜底识别"""
     sf_key = os.getenv("SILICONFLOW_API_KEY")
-    sf_model = os.getenv("SILICONFLOW_OCR_MODEL", "Qwen/Qwen3.5-4B")
+    sf_model = os.getenv("SILICONFLOW_OCR_MODEL", "Qwen/Qwen3-VL-8B-Instruct")
     
     ali_key = os.getenv("ALI_BAILIAN_API_KEY")
     ali_model = os.getenv("ALI_BAILIAN_OCR_MODEL", "qwen3-vl-flash")

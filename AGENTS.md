@@ -39,6 +39,7 @@
     - **选择题 choices 网格对齐与高度自适应 (Choice Grid Column Extraction & Vertical Alignment)**：前端 KaTeX 预渲染（`editor.js` 中的 `preprocessFormulaForKaTeX` 与 `parseMarkdownWithMath`）统一为选择题 `\begin{choices}` 环境生成带 `choices-grid` 标识的弹性网格容器。组卷工作台 A4 Live Preview (`paper.js`) 自动捕获此标识将题干与选项提取分离，实现题干右侧括号 `（   ）` 顶格靠右，选项独占下方 100% 满宽 A4 栅格。同时通过 `.choices-grid` 与 `items-center` 垂直中轴线对齐规则，彻底消除了由于分式（如 `\frac{1}{2}`）与纯数字混排导致的 A、B、C、D 选项间垂直高度差（错位）问题。
     - **选择题题干末尾括号自动净化 (Choice Stem Parentheses Cleanup & Self-Healing)**：后端 `paper_helper.py` (`clean_choice_stem_parentheses`)、前端 KaTeX 预编译 (`cleanChoiceStemParentheses`) 与全量自愈脚本 (`migrate_choice_parentheses.py`) 会自动物理抹除题干末尾录入的各种全角/半角供填答用空括号（如 `(\quad)`、`(   )`、`（  ）`），防止与 LaTeX 模板右侧自动生成的 `\paren` 宏产生二次重叠。
     - **填空题 \fillin 规范与自动自愈 (Fillin Macro Standardization & Self-Healing)**：系统在多模态 OCR 识图（SiliconFlow / 阿里百炼 / 中展 AI）Prompt、试卷 AI 智能拆卷 Prompt 中均强制要求将填空题下划线生成为 `\fillin` 宏。同时在后端录入/修改/拆题逻辑中内置了 `normalize_fillin_macro` 自愈清洗器，会自动将 `______` 或 `\underline{\hspace{...}}` 等旧格式静默升级为标准的 `\fillin`。前端 `preprocessFormulaForKaTeX` 默认将纯 `\fillin` 转化为 1.5cm 标准精美下划线渲染。
+    - **裸露数学环境自动自愈 (Exposed Math Environment Self-Healing)**：针对录入或识别到的裸露 LaTeX 数学环境（如 `\begin{cases}...\end{cases}`、`aligned`、`matrix` 等），前端 KaTeX 预渲染函数（`preprocessFormulaForKaTeX` 与 `parseMarkdownWithMath`）会自动识别并使用单美元符号 `$...$` 智能包裹，彻底杜绝未加 `$` 导致渲染成纯文本的异常。
     - **LaTeX/Markdown 换行规范与右侧插图顶格组装算法 (Line Break Rules & Right-Aligned Minipage Hangindent Reset)**：在 LaTeX 试卷导出中，引入了 `format_stem_paragraphs` 算法结合 `\noindent\begin{minipage}` 容器及内部 `\hangindent=0pt\setlength{\parindent}{2em}` 参数重置。消除了外层 `problem` 环境施加给 `minipage` 盒子的外层 2em 缩进偏移以及折行悬挂缩进，既保证了在 `minipage` 右侧插图窄版下同一段落内的自然续行（如 `AC=BC, D, E分别为...`）与全宽题完全一致地 **100% 绝对顶格对齐**，又使小问另起新行并保留 2em 标准首行缩进，且绝不破坏公式或坐标点。
   - **前端渲染**：前端将自动依据选项最长字符数 `maxLen` 自适应网格排版（小于等于 10 字为 1行4列，大于 10 且小于等于 24 字为 2行2列，大于 24 字为 1行1列），并自动补全 `A.`, `B.`, `C.`, `D.` 标号。
   - **AI 题库转换**：后端导出 AI 专属只读题库时，会自动将此 `choices` 环境清洗为 Markdown 标准列表 `- A.` / `- B.` 形式，防止干扰大模型。
@@ -176,10 +177,11 @@
   - 所有对题库和配置进行修改的接口（POST / PUT / DELETE）均需要鉴权令牌（本地 `LOCAL_TOKEN`）。
   - 前端由 `api.js` 全局劫持 `fetch`，自动附加 `X-Local-Token` 头部信息。所有 AI 代理在进行接口修改或直接发送 API 请求时必须严格遵守这一安全鉴权规范。
 - **OCR 接口（多通道高可用设计）**：
-  - **首选引擎 (Ali Bailian)**：默认首选调用阿里百炼运行多模态识图模型（推荐使用 `qwen3-vl-flash`），Token 变量为 `ALI_BAILIAN_API_KEY`，模型变量为 `ALI_BAILIAN_OCR_MODEL`。
-  - **备用多模态通道**：支持调用 SiliconFlow (`SILICONFLOW_API_KEY`，模型 `Qwen/Qwen3-VL-8B-Instruct`)，以及中转站 GPT (`ZHONGZHAN_GPT_API_KEY`, 模型 `gpt-4o`) 和中转站 Claude (`ZHONGZHAN_CLAUDE_API_KEY`, 模型 `claude-3-5-sonnet`)。
-- **大模型智能解答与解析/拆卷接口 (DeepSeek / 阿里百炼 / 多源 API)**：
-  - 解题模型、试卷拆解模型、题目自动分类模型以及高级 TikZ 绘图模型可通过 `.env` 配置文件中的 `PREFER_SOLVE_MODEL`、`PREFER_PARSE_MODEL`、`PREFER_CLASSIFY_MODEL` 和 `PREFER_DRAW_MODEL` 指定（支持 `deepseek-v4-flash`、`deepseek-v4-pro`、`qwen-max` 等主流解题与拆卷模型，以及 SiliconFlow `Qwen/Qwen3-VL-32B-Instruct` 等多模态 VLM 高级绘图模型）。
+  - **多模态 VLM 选型约束**：公式识图必须依赖多模态视觉大模型，DeepSeek 纯语言模型无法进行 OCR 识图。国内推荐通义千问（`qwen3-vl-flash` / `Qwen/Qwen3-VL-8B-Instruct`）或 MIMO。其中硅基流动专属链接注册并实名认证后赠送 16 元代金券，阿里云百炼平台注册后许多模型 3 个月内提供免费试用额度；海外/中转站极力推荐 `gpt-5.6-luna`（降价后性价比极高且精细度超越大部分模型）。
+  - **通道机制**：默认首选阿里百炼（`qwen3-vl-flash`）或硅基流动（`Qwen/Qwen3-VL-8B-Instruct`），以及中转站 GPT（`gpt-5.6-luna`）和中转站 Claude（`claude-3-5-sonnet`）。
+- **大模型智能解答与解析/拆卷/TikZ绘图接口 (DeepSeek / 阿里百炼 / 多源 API)**：
+  - 各类核心模型可通过 `.env` 中的 `PREFER_SOLVE_MODEL`、`PREFER_PARSE_MODEL`、`PREFER_CLASSIFY_MODEL` 和 `PREFER_DRAW_MODEL` 指定。
+  - **TikZ 绘图模型选型约束 (`PREFER_DRAW_MODEL`)**：建议不要使用国内模型（在 TikZ 代码拟合上效果欠佳），推荐使用 GPT 系列（如 `gpt-5.6-luna`）或 Gemini 系列（如 `gemini-3.6-flash`）。
   - 后端通过统一底座接口支持 DeepSeek (`DEEPSEEK_API_KEY`)、通义千问阿里百炼 (`ALI_BAILIAN_API_KEY`) 以及中转站等多元渠道。
   - Prompt 设定必须强调：**逻辑严密与极简凝练**（既不省略必要的前后推理关系与公理依据，也不要多余口水废话）、**强制输出【解析思路】板块**（按小问或思考脉络概括破题关窍与定理应用）、强制使用标准 LaTeX 语法输出公式、严格执行空行/双回车 `\n\n` 换行规范，以及适当使用 TikZ 提供几何辅助说明。
 - **代理绕过与网络稳定性 (Robust Networking)**：

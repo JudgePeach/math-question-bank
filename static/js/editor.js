@@ -1589,6 +1589,11 @@ const PAGE_LIMIT = 20;
                                .replace(/\\\(([\s\S]*?)\\\)/g, savePlaceholder)
                                .replace(/\$([^\$]+?)\$/g, savePlaceholder);
             
+            // Auto-heal exposed LaTeX math environments (e.g. \begin{cases}...\end{cases}) that lack $...$ wrapper
+            tempText = tempText.replace(/\\begin\{(cases|aligned|matrix|pmatrix|bmatrix|array|equation|gather)\}([\s\S]*?)\\end\{\1\}/g, function(match) {
+                return savePlaceholder('$' + match.trim() + '$');
+            });
+            
             // Strip HTML tags from non-math parts
             tempText = tempText.replace(/<[^>]*>/g, '');
             
@@ -1788,6 +1793,11 @@ const PAGE_LIMIT = 20;
             
             // 4. Protect inline math $...$
             tempText = tempText.replace(/\$([^\$]+?)\$/g, savePlaceholder);
+            
+            // 4.5 Auto-heal exposed LaTeX math environments (e.g. \begin{cases}...\end{cases}) that lack $...$ wrapper
+            tempText = tempText.replace(/\\begin\{(cases|aligned|matrix|pmatrix|bmatrix|array|equation|gather)\}([\s\S]*?)\\end\{\1\}/g, function(match) {
+                return savePlaceholder('$' + match.trim() + '$');
+            });
             
             // Replace standard LaTeX spacing commands outside math environments with HTML spaces (supports both single and double backslashes)
             tempText = tempText.replace(/\\\\qquad/g, '<span style="display:inline-block; width:2em;"></span>')
