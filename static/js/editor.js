@@ -1624,10 +1624,10 @@ const PAGE_LIMIT = 20;
                     gridCols = "grid-cols-2";
                 }
 
-                let html = `<div class="grid ${gridCols} gap-2 my-2 select-none choices-grid items-center">`;
+                let html = `<div class="grid ${gridCols} gap-2 my-2 select-none choices-grid items-baseline">`;
                 items.forEach((item, idx) => {
                     const label = labels[idx] || (idx + 1);
-                    html += `<div class="flex items-center"><span class="font-bold mr-1.5 text-slate-800 shrink-0">${label}.</span><span class="flex-1 [&>p]:m-0 [&>p]:inline">${item}</span></div>`;
+                    html += `<div class="flex items-baseline"><span class="font-bold mr-1.5 text-slate-800 shrink-0">${label}.</span><span class="flex-1 [&>p]:m-0 [&>p]:inline">${item}</span></div>`;
                 });
                 html += '</div>';
                 return html;
@@ -1693,10 +1693,10 @@ const PAGE_LIMIT = 20;
                     gridCols = "grid-cols-2";
                 }
 
-                let html = `<div class="grid ${gridCols} gap-2 my-2 select-none choices-grid items-center">`;
+                let html = `<div class="grid ${gridCols} gap-2 my-2 select-none choices-grid items-baseline">`;
                 items.forEach((item, idx) => {
                     const label = labels[idx] || (idx + 1);
-                    html += `<div class="flex items-center"><span class="font-bold mr-1.5 text-slate-800 shrink-0">${label}.</span><span class="flex-1 [&>p]:m-0 [&>p]:inline">${item}</span></div>`;
+                    html += `<div class="flex items-baseline"><span class="font-bold mr-1.5 text-slate-800 shrink-0">${label}.</span><span class="flex-1 [&>p]:m-0 [&>p]:inline">${item}</span></div>`;
                 });
                 html += '</div>';
                 return html;

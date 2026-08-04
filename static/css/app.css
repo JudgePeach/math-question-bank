@@ -830,10 +830,10 @@ header, main {
 
 /* Math rendering dynamic custom rules */
 .choices-grid {
-    align-items: center !important;
+    align-items: first baseline !important;
 }
 .choices-grid > div {
-    align-items: center !important;
+    align-items: first baseline !important;
     min-height: 1.75rem;
 }
 
