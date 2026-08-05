@@ -490,8 +490,18 @@ body {
 
 /* Selection style */
 ::selection {
-    background: rgba(99, 102, 241, 0.15);
-    color: #1E293B;
+    background: rgba(99, 102, 241, 0.25);
+    color: inherit;
+}
+
+/* Enhanced selection style for dark elements and code textareas */
+.dark ::selection,
+.bg-slate-900::selection,
+.bg-slate-800::selection,
+textarea.bg-slate-900::selection,
+pre::selection {
+    background: rgba(99, 102, 241, 0.45);
+    color: #FFFFFF;
 }
 
 /* Smooth scrolling */

@@ -197,6 +197,7 @@
   - **玻璃底 + 霓虹透光微光 (Vibrant Glass & Neon Tint)**：在暗色模式下，严禁使用浓重晦暗的深纯色（如 `indigo-950`, `emerald-950`, `rose-950`, `amber-950`），此类调色在深色底板上会产生浑浊阴森感。必须采用**高通透玻璃底 + 10% 品牌色霓虹透光微光**（如 `dark:bg-indigo-500/10 dark:border-indigo-500/25`），搭配高对比度亮彩文字（`indigo-200`, `emerald-200`, `amber-200`, `rose-200`）与发光 Icon。
   - **下拉菜单与 Hover 悬浮态规范 (Dropdown & Hover Protocol)**：严禁在下拉菜单项或触发按钮上使用单纯的 `hover:bg-slate-100` 类，防止在暗色模式下被误判为“浅灰底 + 白字”无法识别。必须统一采用 `.glass-dropdown` 容器与 `.glass-dropdown-item` 类，暗色 Hover 状态自动映射为深石墨灰背景 (`rgba(51, 65, 85, 0.85)` Slate-700) 与高亮纯白字 (`#ffffff`)。
   - **弹窗与卡片暗色覆盖层防护 (Modal & Card Overlay Protection)**：全局在 `app.css` 中建立对 `.dark .bg-slate-50\/40` ~ `/90` 等全套透明度变体及 `glass-card` 的暗色保护；同时保护试卷/A4仿真纸张 (`.a4-paper-sheet`) 在暗色模式下强制维持 `#ffffff` 背景与 `#0f172a` 文字。
+  - **深色文本框与编辑器高对比选中样式 (High-Contrast Selection Protocol for Dark Textareas/Editors)**：在 `app.css` 及 HTML 文本框中建立深色/代码框高对比选中机制（`selection:bg-indigo-600 selection:text-white` 与 `.bg-slate-900::selection`），彻底杜绝全局 `::selection` 暗色字体导致在深色底文本框（如自定义维度 JSON 配置编辑器）中选中文字变成黑字黑底不可读的问题。
 - **多主题色彩系统与极简曜石黑预设 (Multi-Theme System & Obsidian Monochromatic Preset)**：支持 6 套主题色彩自由切换（曜石黑 `.theme-obsidian` / 罗兰紫 `.theme-violet` / 深海蓝 `.theme-ocean` / 翡翠绿 `.theme-emerald` / 琥珀橙 `.theme-amber` / 玫瑰红 `.theme-crimson`）。“曜石黑”作为极简黑白单色旗舰调色，在亮色模式下以 `#0f172a`（Slate-900）深藏青/黑曜石作为主品牌色，呈现与黑白 Logo 完美融为一体的现代极简教研质感。
 - **系统图标与 Logo 视觉设计规范 (Flat Minimalist Icon & Logo Design Protocol)**：
   - **平面极简设计**：项目图标与 Logo 统一采用**平面极简风格（Flat Minimalist Style）**。
