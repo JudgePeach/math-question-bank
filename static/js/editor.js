@@ -1607,6 +1607,17 @@ const PAGE_LIMIT = 20;
             // Transform exam-zh \fillin macro into KaTeX compatible \underline with math environment awareness
             clean = transformFillinMacro(clean);
 
+            // Safely escape raw < and > inside math environments to \lt and \gt without lookbehind regex for maximum browser compatibility
+            clean = clean.replace(/\$([^\$]+?)\$/g, function(match, inner) {
+                let safeInner = inner.replace(/\\</g, '@@ESCAPED_LESS@@')
+                                     .replace(/</g, '\\lt ')
+                                     .replace(/@@ESCAPED_LESS@@/g, '\\<')
+                                     .replace(/\\>/g, '@@ESCAPED_GREAT@@')
+                                     .replace(/>/g, '\\gt ')
+                                     .replace(/@@ESCAPED_GREAT@@/g, '\\>');
+                return '$' + safeInner + '$';
+            });
+
             // Clean up illegal nesting like \underline{\quad $\mathbf{14}$ \quad} in KaTeX
             clean = clean.replace(/(\\underline\s*\{[^}]*?)\$([^$]+?)\$([^}]*?\})/g, function(match, p1, p2, p3) {
                 return '$' + p1 + p2 + p3 + '$';
