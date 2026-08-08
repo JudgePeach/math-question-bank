@@ -29,6 +29,7 @@ from dotenv import load_dotenv
 from database import Question, QuestionCurriculum, Paper, PaperQuestion, get_db, init_db
 from paper_helper import build_latex_document, build_answer_sheet_latex, compile_tex_to_pdf, create_tex_zip_package, create_full_bundle_zip_package, collect_referenced_images
 from sync_helper import export_database_to_files
+from mathbank.ai_providers import parse_model_and_effort, resolve_text_provider
 from mathbank.curriculums import (
     build_default_metadata,
     get_curriculum_preset,
@@ -59,32 +60,6 @@ from mathbank.paths import (
 
 # Load environment variables
 load_dotenv(ENV_FILE)
-
-def parse_model_and_effort(model_str: str):
-    """
-    解析带推理强度的模型名称字符串。
-    例如:
-    'gpt-5.6-sol:high' -> ('gpt-5.6-sol', 'high')
-    'gpt-5.6-sol(high)' -> ('gpt-5.6-sol', 'high')
-    'ZHONGZHAN_GPT/gpt-5.6-sol:high' -> ('ZHONGZHAN_GPT/gpt-5.6-sol', 'high')
-    'gpt-5.6-sol' -> ('gpt-5.6-sol', None)
-    """
-    if not model_str:
-        return "", None
-    model_str = str(model_str).strip()
-    
-    # 匹配括号如 (high)
-    match_paren = re.search(r'^(.*?)\((high|medium|low|xhigh|max|default)\)$', model_str, re.IGNORECASE)
-    if match_paren:
-        return match_paren.group(1).strip(), match_paren.group(2).lower()
-        
-    if ":" in model_str:
-        parts = model_str.rsplit(":", 1)
-        potential_effort = parts[1].strip().lower()
-        if potential_effort in ["high", "medium", "low", "xhigh", "max", "default"]:
-            return parts[0].strip(), potential_effort
-            
-    return model_str, None
 
 # Unique server instance ID generated per process launch/restart
 SERVER_INSTANCE_ID = str(uuid.uuid4())
@@ -1107,52 +1082,11 @@ async def ai_solve(
     model: str = Form("deepseek-v4-pro"),
     stream: str = Form("false")
 ):
-    # 动态解析模型所属的服务商前缀与真实模型名
-    model_lower = model.lower()
-    api_key = None
-    api_base = None
-    model_name = model
-    provider_name = "DeepSeek"
-    
-    if "/" in model:
-        parts = model.split("/", 1)
-        prefix = parts[0].upper()
-        model_name = parts[1]
-        
-        if prefix == "SILICONFLOW":
-            api_key = os.getenv("SILICONFLOW_API_KEY")
-            api_base = "https://api.siliconflow.cn/v1"
-            provider_name = "硅基流动 (SILICONFLOW_API_KEY)"
-        elif prefix == "BAILIAN":
-            api_key = os.getenv("ALI_BAILIAN_API_KEY")
-            api_base = os.getenv("ALI_BAILIAN_API_BASE", "https://dashscope.aliyuncs.com/compatible-mode/v1")
-            provider_name = "阿里百炼 (ALI_BAILIAN_API_KEY)"
-            if model_name == "qwen3.7-max":
-                model_name = "qwen-max"
-        elif prefix == "DEEPSEEK":
-            api_key = os.getenv("DEEPSEEK_API_KEY")
-            api_base = os.getenv("DEEPSEEK_API_BASE", "https://api.deepseek.com")
-            provider_name = "DeepSeek (DEEPSEEK_API_KEY)"
-        elif prefix == "ZHONGZHAN_GPT":
-            api_key = os.getenv("ZHONGZHAN_GPT_API_KEY")
-            api_base = os.getenv("ZHONGZHAN_GPT_BASE_URL", "https://api.openai.com/v1")
-            provider_name = "中转站 A (ZHONGZHAN_GPT_API_KEY)"
-        elif prefix == "ZHONGZHAN_CLAUDE":
-            api_key = os.getenv("ZHONGZHAN_CLAUDE_API_KEY")
-            api_base = os.getenv("ZHONGZHAN_CLAUDE_BASE_URL", "https://api.openai.com/v1")
-            provider_name = "中转站 B (ZHONGZHAN_CLAUDE_API_KEY)"
-    else:
-        # 向后兼容传统无前缀模式
-        if "qwen" in model_lower:
-            api_key = os.getenv("ALI_BAILIAN_API_KEY")
-            api_base = os.getenv("ALI_BAILIAN_API_BASE", "https://dashscope.aliyuncs.com/compatible-mode/v1")
-            provider_name = "阿里百炼 (ALI_BAILIAN_API_KEY)"
-            model_name = "qwen-max" if model == "qwen3.7-max" else model
-        else:
-            api_key = os.getenv("DEEPSEEK_API_KEY")
-            api_base = os.getenv("DEEPSEEK_API_BASE", "https://api.deepseek.com")
-            provider_name = "DeepSeek (DEEPSEEK_API_KEY)"
-            model_name = model
+    provider = resolve_text_provider(model)
+    api_key = provider.api_key
+    api_base = provider.api_base
+    model_name = provider.model_name
+    provider_name = provider.credential_label
 
     if not api_key:
         return JSONResponse(
@@ -1164,7 +1098,7 @@ async def ai_solve(
         )
         
     try:
-        url = f"{api_base.rstrip('/')}/chat/completions"
+        url = provider.chat_completions_url
         
         headers = {
             "Authorization": f"Bearer {api_key}",
@@ -1181,9 +1115,7 @@ async def ai_solve(
         # Double max_tokens to 16384, but cap at 8192 for Alibaba Bailian compatible-mode endpoints
         max_output_tokens = 8192 if (api_base and "aliyuncs.com" in api_base.lower()) else 16384
             
-        clean_model, explicit_effort = parse_model_and_effort(model_name)
-        if clean_model:
-            model_name = clean_model
+        explicit_effort = provider.reasoning_effort
 
         data = {
             "model": model_name,
@@ -2834,52 +2766,15 @@ async def ai_classify(content: str = Form(...)):
         or "deepseek-v4-flash"
     )
     
-    api_key = None
-    api_base = None
-    model_name = classify_model
-    
-    if "/" in classify_model:
-        parts = classify_model.split("/", 1)
-        prefix = parts[0].upper()
-        model_name = parts[1]
-        
-        if prefix == "SILICONFLOW":
-            api_key = os.getenv("SILICONFLOW_API_KEY")
-            api_base = "https://api.siliconflow.cn/v1"
-        elif prefix == "BAILIAN":
-            api_key = os.getenv("ALI_BAILIAN_API_KEY")
-            api_base = os.getenv("ALI_BAILIAN_API_BASE", "https://dashscope.aliyuncs.com/compatible-mode/v1")
-            if model_name == "qwen3.7-max":
-                model_name = "qwen-max"
-        elif prefix == "DEEPSEEK":
-            api_key = os.getenv("DEEPSEEK_API_KEY")
-            api_base = os.getenv("DEEPSEEK_API_BASE", "https://api.deepseek.com")
-        elif prefix == "ZHONGZHAN_GPT":
-            api_key = os.getenv("ZHONGZHAN_GPT_API_KEY")
-            api_base = os.getenv("ZHONGZHAN_GPT_BASE_URL", "https://api.openai.com/v1")
-        elif prefix == "ZHONGZHAN_CLAUDE":
-            api_key = os.getenv("ZHONGZHAN_CLAUDE_API_KEY")
-            api_base = os.getenv("ZHONGZHAN_CLAUDE_BASE_URL", "https://api.openai.com/v1")
-    else:
-        model_lower = classify_model.lower()
-        if "qwen" in model_lower:
-            api_key = os.getenv("ALI_BAILIAN_API_KEY")
-            api_base = os.getenv("ALI_BAILIAN_API_BASE", "https://dashscope.aliyuncs.com/compatible-mode/v1")
-            if classify_model == "qwen3.7-max":
-                model_name = "qwen-max"
-        else:
-            api_key = os.getenv("DEEPSEEK_API_KEY")
-            api_base = os.getenv("DEEPSEEK_API_BASE", "https://api.deepseek.com")
+    # Classification historically treats the configured value as a literal
+    # model name, so keep effort parsing disabled on this route for now.
+    provider = resolve_text_provider(classify_model, parse_effort=False)
+    api_key = provider.api_key
+    api_base = provider.api_base
+    model_name = provider.model_name
+    provider_name = provider.credential_label
 
     if not api_key:
-        provider_name = "DeepSeek"
-        if "/" in classify_model:
-            prefix = classify_model.split("/", 1)[0].upper()
-            if prefix == "SILICONFLOW": provider_name = "硅基流动 (SILICONFLOW_API_KEY)"
-            elif prefix == "BAILIAN": provider_name = "阿里百炼 (ALI_BAILIAN_API_KEY)"
-            elif prefix == "DEEPSEEK": provider_name = "DeepSeek (DEEPSEEK_API_KEY)"
-            elif prefix == "ZHONGZHAN_GPT": provider_name = "中转站 A (ZHONGZHAN_GPT_API_KEY)"
-            elif prefix == "ZHONGZHAN_CLAUDE": provider_name = "中转站 B (ZHONGZHAN_CLAUDE_API_KEY)"
         return JSONResponse(
             content={
                 "status": "error", 
@@ -2889,7 +2784,7 @@ async def ai_classify(content: str = Form(...)):
         )
         
     try:
-        url = f"{api_base.rstrip('/')}/chat/completions"
+        url = provider.chat_completions_url
         
         headers = {
             "Authorization": f"Bearer {api_key}",

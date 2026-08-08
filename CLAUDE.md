@@ -6,7 +6,7 @@
 ## 2. 核心技术栈与无构建原则
 本项目追求极致流畅的用户体验和极简的本地环境配置，严格禁止引入现代复杂前端构建工具（如 Webpack/Vite/Node.js 生态）：
 - **后端**：Python 3.10+ + FastAPI + Uvicorn。
-- **后端渐进式模块架构**：根目录 `main.py` 保留为 `uvicorn main:app` 兼容入口；共享能力集中在 `mathbank/`。`paths.py` 是数据库、静态资源、上传、模板、备份、`.env` 与构建路径的唯一来源，`curriculums.py` 负责四套教材 JSON，`prompts.py` 负责 OCR、解题、分类、拆卷、TikZ 与 AI 组卷提示构建。不得在路由或前端重新复制这些数据。
+- **后端渐进式模块架构**：根目录 `main.py` 保留为 `uvicorn main:app` 兼容入口；共享能力集中在 `mathbank/`。`paths.py` 是数据库、静态资源、上传、模板、备份、`.env` 与构建路径的唯一来源，`curriculums.py` 负责四套教材 JSON，`prompts.py` 负责 OCR、解题、分类、拆卷、TikZ 与 AI 组卷提示构建，`ai_providers.py` 负责纯文本模型的平台、密钥变量、API Base、真实模型名及推理强度解析。不得在路由或前端重新复制这些数据与供应商判断规则。
 - **数据库**：SQLite + SQLAlchemy（轻量化本地数据库，数据存储在项目根目录下的 `./math_question_bank.db` 中）。
 - **前端页面**：单页面应用 `static/index.html`（纯 HTML5 + 原生 JavaScript，无编译，秒级加载）。
 - **前端样式与字体**：Tailwind CSS + FontAwesome 图标库 + Inter/Outfit Webfonts（均已下载至本地 `/static/lib` 支持 100% 离线使用与跨平台字体降级）。
@@ -14,7 +14,7 @@
 - **前端脚本拆分**：前端 JS 采用无编译的“渐进式级联加载”架构，分模块存放在 `static/js/` 目录下（`api.js`、`editor.js`、`ocr.js`、`import.js`），保证代码结构极其清爽。
 - **图文识图 (OCR)**：高精度、多通道的云端 LaTeX OCR 引擎，支持 SiliconFlow (实名送16元代金券) 和 阿里百炼 (注册享受3个月免费额度) 的双通道并发识图。
 - **接口安全校验**：所有的非只读操作（POST / PUT / DELETE）在后端均有强置 `X-Local-Token` 安全令牌拦截保护，前端由 `api.js` 进行 fetch 全局劫持代理，确保本地数据防跨站越权篡改。
-- **中转站模型 7:3 弹性 UI 布局与推理强度 (Reasoning Effort) 自动映射**：系统 API 设置界面针对“中转站 A”和“中转站 B”支持 7:3 分割布局（70% 宽度填写/选择模型名称，30% 宽度选择推理强度 `Default (空白)` / `Low` / `Medium` / `High` / `XHigh` / `Max`）。前端自动导出形如 `gpt-5.6-sol:high` 的模型配置，后端自动提纯真实模型名称并向 JSON 请求体中静默注入 `reasoning_effort` 或 `enable_thinking` 参数。
+- **中转站模型 7:3 弹性 UI 布局与推理强度 (Reasoning Effort) 自动映射**：系统 API 设置界面针对“中转站 A”和“中转站 B”支持 7:3 分割布局（70% 宽度填写/选择模型名称，30% 宽度选择推理强度 `Default (空白)` / `Low` / `Medium` / `High` / `XHigh` / `Max`）。前端自动导出形如 `gpt-5.6-sol:high` 的模型配置，后端由 `mathbank.ai_providers` 提纯真实模型名称，解题路由再按既有规则向 JSON 请求体中静默注入 `reasoning_effort` 或 `enable_thinking` 参数。
 - **路径单一来源约束**：新增文件访问必须从 `mathbank.paths` 取绝对路径并锚定 `PROJECT_ROOT`；禁止依赖 `os.getcwd()`、裸 `./data_backup` 或脚本目录推断数据库位置，保证任意工作目录启动行为一致。
 
 ---

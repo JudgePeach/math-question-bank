@@ -6,13 +6,13 @@
 ## 2. 核心技术栈
 本项目追求极简配置与极致体验，严格遵循以下技术选型，**不要引入复杂的现代前端构建工具（如 Webpack/Vite/Node.js 生态）**：
 - **后端**：Python + FastAPI。
-- **后端渐进式模块架构**：根目录 `main.py` 继续作为 `uvicorn main:app` 兼容入口；跨模块共享能力集中在 `mathbank/`：`paths.py` 统一锚定数据库、静态资源、上传、模板、备份、环境变量和构建路径，`curriculums.py` 加载四套教材 JSON，`prompts.py` 提供 OCR、解题、分类、拆卷、TikZ 与 AI 组卷的纯提示构建器。严禁重新在路由或前端复制这些长篇数据。
+- **后端渐进式模块架构**：根目录 `main.py` 继续作为 `uvicorn main:app` 兼容入口；跨模块共享能力集中在 `mathbank/`：`paths.py` 统一锚定数据库、静态资源、上传、模板、备份、环境变量和构建路径，`curriculums.py` 加载四套教材 JSON，`prompts.py` 提供 OCR、解题、分类、拆卷、TikZ 与 AI 组卷的纯提示构建器，`ai_providers.py` 统一解析纯文本模型的平台前缀、密钥变量、API Base、真实模型名与推理强度。严禁重新在路由或前端复制这些长篇数据或供应商判断规则。
 - **数据库**：SQLite + SQLAlchemy（轻量级，数据存储在本地 `.db` 文件中）。
 - **前端页面**：纯 HTML + 原生 JavaScript。
 - **前端脚本拆分**：前端 JS 采用无编译的“渐进式级联加载”架构，分模块存放在 `static/js/` 目录下（`api.js`、`editor.js`、`ocr.js`、`import.js`），加载顺序严格依存，不允许产生任何编译及捆绑动作。
 - **前端样式与字体**：Tailwind CSS + FontAwesome 图标库 + Inter/Outfit 字体包（均已下载至本地 `/static/lib` 支持 100% 离线使用与跨平台系统降级）。
 - **公式渲染**：KaTeX（已下载至本地支持 100% 离线数学公式渲染），必须支持题干与解析框实时解析、秒级渲染。
-- **中转站模型 7:3 弹性 UI 布局与 Reasoning Effort 自动解析**：在系统 API 设置中选择中转站平台（`zhongzhan_gpt` 或 `zhongzhan_claude`）时，模型输入区域自动转换为 7:3 弹性比例（70% 模型名称，30% 推理强度 `Default (空白)` / `Low` / `Medium` / `High` / `XHigh` / `Max`）。后端在 `main.py` 的 `parse_model_and_effort` 中自动提取纯净模型名称，并向大模型 HTTP 请求 JSON 集中静默注入 `reasoning_effort` 或 `enable_thinking` 参数。
+- **中转站模型 7:3 弹性 UI 布局与 Reasoning Effort 自动解析**：在系统 API 设置中选择中转站平台（`zhongzhan_gpt` 或 `zhongzhan_claude`）时，模型输入区域自动转换为 7:3 弹性比例（70% 模型名称，30% 推理强度 `Default (空白)` / `Low` / `Medium` / `High` / `XHigh` / `Max`）。后端由 `mathbank.ai_providers.parse_model_and_effort` 自动提取纯净模型名称；`/api/ai/solve` 再按现有请求规则静默注入 `reasoning_effort` 或 `enable_thinking` 参数。
 
 > [!IMPORTANT]
 > **文档指南同步更新规则**：
