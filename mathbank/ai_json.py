@@ -139,7 +139,53 @@ def normalize_subquestions_double_newlines(text: str) -> str:
     return s.strip()
 
 
-def parse_ai_json(raw_text: str) -> Any:
+def realign_missing_images_to_questions(questions: list, raw_markdown: str) -> list:
+    """Ensure all images extracted in raw_markdown are preserved in questions' content."""
+    if not questions or not raw_markdown or not isinstance(raw_markdown, str):
+        return questions
+
+    raw_images = re.findall(r'!\[.*?\]\((/static/uploads/[^)]+)\)', raw_markdown)
+    if not raw_images:
+        return questions
+
+    assigned_images = set()
+    for q in questions:
+        if isinstance(q, dict):
+            c = q.get('content', '') or ''
+            for img in re.findall(r'!\[.*?\]\((/static/uploads/[^)]+)\)', c):
+                assigned_images.add(img)
+
+    unassigned = [img for img in raw_images if img not in assigned_images]
+    if not unassigned:
+        return questions
+
+    for img_url in unassigned:
+        pattern = r'([\s\S]{1,60})!\[.*?\]\(' + re.escape(img_url) + r'\)'
+        m = re.search(pattern, raw_markdown)
+        matched_q = None
+        if m:
+            snippet = m.group(1).strip()
+            kw = snippet[-25:].strip()
+            if kw:
+                for q in questions:
+                    if isinstance(q, dict) and kw in q.get('content', ''):
+                        matched_q = q
+                        break
+
+        if not matched_q and questions:
+            matched_q = questions[-1]
+
+        if matched_q and isinstance(matched_q, dict):
+            content = matched_q.get('content', '').strip()
+            matched_q['content'] = (content + f'\n\n![]({img_url})').strip()
+            if 'referenced_images' in matched_q and isinstance(matched_q['referenced_images'], list):
+                if img_url not in matched_q['referenced_images']:
+                    matched_q['referenced_images'].append(img_url)
+
+    return questions
+
+
+def parse_ai_json(raw_text: str, raw_markdown: Optional[str] = None) -> Any:
     """Parse AI JSON with narrowly scoped repairs for common model output."""
 
     if not isinstance(raw_text, str) or not raw_text.strip():
@@ -177,9 +223,13 @@ def parse_ai_json(raw_text: str) -> Any:
         for q in parsed_data["questions"]:
             if isinstance(q, dict) and "content" in q and isinstance(q["content"], str):
                 q["content"] = normalize_subquestions_double_newlines(q["content"])
+        if raw_markdown:
+            parsed_data["questions"] = realign_missing_images_to_questions(parsed_data["questions"], raw_markdown)
     elif isinstance(parsed_data, list):
         for q in parsed_data:
             if isinstance(q, dict) and "content" in q and isinstance(q["content"], str):
                 q["content"] = normalize_subquestions_double_newlines(q["content"])
+        if raw_markdown:
+            parsed_data = realign_missing_images_to_questions(parsed_data, raw_markdown)
 
     return parsed_data

@@ -244,11 +244,12 @@ def build_import_parse_system_prompt(curriculum: dict) -> str:
         "   - 希腊字母（如三角函数初相 `j`、圆周率 `p`、旋转角 `q`、频率 `w`）若被误提取为单个英文字母 `j`、`p`、`q`、`w`，必须依据高中数学语境自愈为标准的 LaTeX 宏 `\\varphi`、`\\pi`、`\\theta`、`\\omega`（例如 `y = 3\\sin(4x+j)+\\cos(4x+j)(0 < j < p)` 必须自愈为 `$y = 3\\sin(4x+\\varphi)+\\cos(4x+\\varphi)(0 < \\varphi < \\pi)$`）；\n"
         "   - 圆周率分式简写（如 `p6`, `p3`, `2p3`, `5p6`, `p2`）必须依据选项或对称轴语境自愈为标准的 LaTeX 分数 `\\dfrac{\\pi}{6}`, `\\dfrac{\\pi}{3}`, `\\dfrac{2\\pi}{3}`, `\\dfrac{5\\pi}{6}`, `\\dfrac{\\pi}{2}`；\n"
         "   - 关系符号（如 `<<` 或 `==`）必须自愈为标准的数学符号 `<`、`\\le` 或 `=`。\n"
-        "12. **你的输出必须是一个合法的 JSON 对象，其根键为 `\"questions\"`，对应的值为一个 JSON 数组（包含以下结构化对象）。不要有任何多余的 Markdown 标记、代码块或解释文字**：\n"
+        "12. **【原生插图占位符绝对保留原则（极重要）】**：如果输入的 Markdown 文本中包含类似 `![](/static/uploads/word_img_xxx.png)` 或 `![](...)` 的图片链接，必须 100% 完整原样保留在对应题目的 `content` 题干末尾或适当位置中，并且必须在 `referenced_images` 数组中记录对应的图片 URL/文件名！绝对禁止删除、漏掉或省略输入文本中的任何图片链接！\n"
+        "13. **你的输出必须是一个合法的 JSON 对象，其根键为 `\"questions\"`，对应的值为一个 JSON 数组（包含以下结构化对象）。不要有任何多余的 Markdown 标记、代码块或解释文字**：\n"
         "{\n"
         "  \"questions\": [\n"
         "    {\n"
-        '      "content": "题干内容，包含 LaTeX 排版公式，且保留图片排版占位标记 (例如 ![插图](filename.png))",\n'
+        '      "content": "题干内容，包含 LaTeX 排版公式，且保留图片排版占位标记 (例如 ![](/static/uploads/word_img_xxx.png))",\n'
         '      "answer_markdown": "该题的答案与详细解析过程，使用标准 LaTeX 与 Markdown 排版",\n'
         '      "question_type": "single_choice / multi_choice / fill_in_blank / detailed_answer",\n'
         '      "category_compulsory": "人教A学段名称",\n'

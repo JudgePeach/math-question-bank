@@ -2700,7 +2700,7 @@ def parse_paper_text_internal(
     res_json = response.json()
     raw_ai_text = res_json["choices"][0]["message"]["content"].strip()
     
-    parsed_data = parse_ai_json(raw_ai_text)
+    parsed_data = parse_ai_json(raw_ai_text, raw_markdown=latex_content)
     
     if isinstance(parsed_data, dict):
         if "questions" in parsed_data and isinstance(parsed_data["questions"], list):
@@ -2802,7 +2802,7 @@ async def ai_parse_paper(
         res_json = response.json()
         raw_ai_text = res_json["choices"][0]["message"]["content"].strip()
         
-        parsed_data = parse_ai_json(raw_ai_text)
+        parsed_data = parse_ai_json(raw_ai_text, raw_markdown=latex_content)
         
         if isinstance(parsed_data, dict):
             if "questions" in parsed_data and isinstance(parsed_data["questions"], list):
