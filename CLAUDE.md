@@ -6,7 +6,7 @@
 ## 2. 核心技术栈与无构建原则
 本项目追求极致流畅的用户体验和极简的本地环境配置，严格禁止引入现代复杂前端构建工具（如 Webpack/Vite/Node.js 生态）：
 - **后端**：Python 3.10+ + FastAPI + Uvicorn。
-- **后端渐进式模块架构**：根目录 `main.py` 保留为 `uvicorn main:app` 兼容入口；共享能力集中在 `mathbank/`。`paths.py` 是数据库、静态资源、上传、模板、备份、`.env` 与构建路径的唯一来源，`curriculums.py` 负责四套教材 JSON，`prompts.py` 负责 OCR、解题、分类、拆卷、TikZ 与 AI 组卷提示构建，`ai_providers.py` 负责纯文本模型的平台、密钥变量、API Base、真实模型名及推理强度解析。不得在路由或前端重新复制这些数据与供应商判断规则。
+- **后端渐进式模块架构**：根目录 `main.py` 保留为 `uvicorn main:app` 兼容入口；共享能力集中在 `mathbank/`。`paths.py` 是数据库、静态资源、上传、模板、备份、`.env` 与构建路径的唯一来源，`curriculums.py` 负责四套教材 JSON，`prompts.py` 负责 OCR、解题、分类、拆卷、TikZ 与 AI 组卷提示构建，`ai_providers.py` 负责纯文本模型的平台、密钥变量、API Base、真实模型名及推理强度解析，`ai_http.py` 负责 AI Bearer 请求头、代理绕过重试和 OpenAI 兼容 Chat Completions 的 HTTP 状态检查。各业务路由继续独立构建请求 JSON 和解析响应，不得在路由或前端重新复制这些数据与供应商判断规则。
 - **数据库**：SQLite + SQLAlchemy（轻量化本地数据库，数据存储在项目根目录下的 `./math_question_bank.db` 中）。
 - **前端页面**：单页面应用 `static/index.html`（纯 HTML5 + 原生 JavaScript，无编译，秒级加载）。
 - **前端样式与字体**：Tailwind CSS + FontAwesome 图标库 + Inter/Outfit Webfonts（均已下载至本地 `/static/lib` 支持 100% 离线使用与跨平台字体降级）。

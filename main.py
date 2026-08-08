@@ -29,6 +29,11 @@ from dotenv import load_dotenv
 from database import Question, QuestionCurriculum, Paper, PaperQuestion, get_db, init_db
 from paper_helper import build_latex_document, build_answer_sheet_latex, compile_tex_to_pdf, create_tex_zip_package, create_full_bundle_zip_package, collect_referenced_images
 from sync_helper import export_database_to_files
+from mathbank.ai_http import (
+    post_chat_completion,
+    robust_request_get,
+    robust_request_post,
+)
 from mathbank.ai_providers import parse_model_and_effort, resolve_text_provider
 from mathbank.curriculums import (
     build_default_metadata,
@@ -134,46 +139,6 @@ import sys
 IS_TESTING = "pytest" in sys.modules or any("pytest" in arg for arg in sys.argv)
 UPLOAD_DIR_REL = "static/test_uploads" if IS_TESTING else "static/uploads"
 UPLOAD_DIR = str(TEST_UPLOADS_DIR if IS_TESTING else UPLOADS_DIR)
-
-def robust_request_post(url, **kwargs):
-    """发送 POST 请求，并在发生 Proxy/Connection 错误时自动尝试禁用代理重试"""
-    # 如果目标 URL 是国内知名 API（如阿里百炼、SiliconFlow 等），
-    # 且 kwargs 中没有明确指定 proxies，直接在首次请求时默认禁用代理，避免代理延迟、握手失败或超时！
-    is_domestic = any(domain in url.lower() for domain in [
-        "aliyuncs.com", 
-        "siliconflow"
-    ])
-    if is_domestic and "proxies" not in kwargs:
-        kwargs["proxies"] = {"http": None, "https": None}
-
-    try:
-        return requests.post(url, **kwargs)
-    except requests.exceptions.RequestException as e:
-        if kwargs.get("proxies") == {"http": None, "https": None}:
-            raise e
-        print(f"[Robust Network] POST request to {url} failed: {str(e)}. Retrying with proxies bypassed...")
-        new_kwargs = kwargs.copy()
-        new_kwargs["proxies"] = {"http": None, "https": None}
-        return requests.post(url, **new_kwargs)
-
-def robust_request_get(url, **kwargs):
-    """发送 GET 请求，并在发生 Proxy/Connection 错误时自动尝试禁用代理重试"""
-    is_domestic = any(domain in url.lower() for domain in [
-        "aliyuncs.com", 
-        "siliconflow"
-    ])
-    if is_domestic and "proxies" not in kwargs:
-        kwargs["proxies"] = {"http": None, "https": None}
-        
-    try:
-        return requests.get(url, **kwargs)
-    except requests.exceptions.RequestException as e:
-        if kwargs.get("proxies") == {"http": None, "https": None}:
-            raise e
-        print(f"[Robust Network] GET request to {url} failed: {str(e)}. Retrying with proxies bypassed...")
-        new_kwargs = kwargs.copy()
-        new_kwargs["proxies"] = {"http": None, "https": None}
-        return requests.get(url, **new_kwargs)
 
 def load_or_create_local_token() -> str:
     token_dir = str(SYSTEM_GENERATED_DIR)
@@ -1098,13 +1063,6 @@ async def ai_solve(
         )
         
     try:
-        url = provider.chat_completions_url
-        
-        headers = {
-            "Authorization": f"Bearer {api_key}",
-            "Content-Type": "application/json"
-        }
-        
         system_instructions, user_prompt = build_ai_solve_prompts(
             question_type=question_type,
             content=content,
@@ -1176,7 +1134,13 @@ async def ai_solve(
             def event_generator():
                 data["stream"] = True
                 try:
-                    response = robust_request_post(url, headers=headers, json=data, timeout=300, stream=True)
+                    response = post_chat_completion(
+                        provider,
+                        data,
+                        timeout=300,
+                        stream=True,
+                        check_status=False,
+                    )
                     if response.status_code != 200:
                         error_msg = f"{provider_name} 接口错误: HTTP {response.status_code}, 内容: {response.text}"
                         yield f"data: {json.dumps({'status': 'error', 'message': error_msg}, ensure_ascii=False)}\n\n"
@@ -1237,10 +1201,12 @@ async def ai_solve(
             return StreamingResponse(event_generator(), media_type="text/event-stream")
 
         # Generous 300 seconds timeout (5 minutes) for high-school math reasoning and network proxies
-        response = robust_request_post(url, headers=headers, json=data, timeout=300)
-        
-        if response.status_code != 200:
-            raise Exception(f"{provider_name} 接口错误: HTTP {response.status_code}, 内容: {response.text}")
+        response = post_chat_completion(
+            provider,
+            data,
+            timeout=300,
+            provider_name=provider_name,
+        )
             
         res_json = response.json()
         
@@ -2784,13 +2750,6 @@ async def ai_classify(content: str = Form(...)):
         )
         
     try:
-        url = provider.chat_completions_url
-        
-        headers = {
-            "Authorization": f"Bearer {api_key}",
-            "Content-Type": "application/json"
-        }
-        
         system_instructions = build_classification_system_prompt(get_current_curriculum())
         data = {
             "model": model_name,
@@ -2813,9 +2772,12 @@ async def ai_classify(content: str = Form(...)):
             }
         
         
-        response = robust_request_post(url, headers=headers, json=data, timeout=30)
-        if response.status_code != 200:
-            raise Exception(f"{provider_name} 接口错误: HTTP {response.status_code}, 内容: {response.text}")
+        response = post_chat_completion(
+            provider,
+            data,
+            timeout=30,
+            provider_name=provider_name,
+        )
             
         res_json = response.json()
         ai_message = res_json.get("choices", [{}])[0].get("message", {}).get("content", "").strip()
@@ -2920,13 +2882,6 @@ def parse_paper_text_internal(
     if not api_key:
         raise ValueError(f"未配置对应的 API Key ({provider.credential_label})，无法智能拆解试卷！请在工作台右上角设置面板进行配置。")
 
-    url = provider.chat_completions_url
-    
-    headers = {
-        "Authorization": f"Bearer {api_key}",
-        "Content-Type": "application/json"
-    }
-    
     system_instructions = build_pdf_parse_system_prompt(
         get_current_curriculum(), generate_answers_bool
     )
@@ -2952,9 +2907,12 @@ def parse_paper_text_internal(
             "type": "disabled"
         }
     
-    response = robust_request_post(url, headers=headers, json=data, timeout=180)
-    if response.status_code != 200:
-        raise Exception(f"{provider_name} 接口错误: HTTP {response.status_code}, 内容: {response.text}")
+    response = post_chat_completion(
+        provider,
+        data,
+        timeout=180,
+        provider_name=provider_name,
+    )
         
     res_json = response.json()
     raw_ai_text = res_json["choices"][0]["message"]["content"].strip()
@@ -3026,13 +2984,6 @@ async def ai_parse_paper(
         image_mapping = {}
 
     try:
-        url = provider.chat_completions_url
-        
-        headers = {
-            "Authorization": f"Bearer {api_key}",
-            "Content-Type": "application/json"
-        }
-        
         system_instructions = build_import_parse_system_prompt(get_current_curriculum())
 
         max_output_tokens = 65536
@@ -3058,9 +3009,12 @@ async def ai_parse_paper(
             }
         
         
-        response = robust_request_post(url, headers=headers, json=data, timeout=180)
-        if response.status_code != 200:
-            raise Exception(f"{provider_name} 接口错误: HTTP {response.status_code}, 内容: {response.text}")
+        response = post_chat_completion(
+            provider,
+            data,
+            timeout=180,
+            provider_name=provider_name,
+        )
             
         res_json = response.json()
         raw_ai_text = res_json["choices"][0]["message"]["content"].strip()

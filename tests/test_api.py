@@ -249,7 +249,7 @@ def test_api_ai_solve_with_ocr(client):
     headers = {"X-Local-Token": LOCAL_TOKEN}
     
     with patch.dict(os.environ, {"DEEPSEEK_API_KEY": "fake_key"}):
-        with patch("main.robust_request_post") as mock_post:
+        with patch("mathbank.ai_http.robust_request_post") as mock_post:
             mock_resp = MagicMock()
             mock_resp.status_code = 200
             mock_resp.json.return_value = {
@@ -322,7 +322,7 @@ def test_parse_paper_flows_use_shared_provider_resolution(client):
         "ALI_BAILIAN_API_BASE": "https://bailian.example/v1/",
     }
     with patch.dict(os.environ, provider_env):
-        with patch("main.robust_request_post", return_value=mock_resp) as mock_post:
+        with patch("mathbank.ai_http.robust_request_post", return_value=mock_resp) as mock_post:
             response = client.post(
                 "/api/ai/parse-paper",
                 data={
@@ -380,5 +380,4 @@ def test_figure_align_api(client):
     res_get = client.get(f"/api/questions/{q_id}")
     assert res_get.status_code == 200
     assert res_get.json()["figure_align"] == "center"
-
 

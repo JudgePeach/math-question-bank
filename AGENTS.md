@@ -6,7 +6,7 @@
 ## 2. 核心技术栈
 本项目追求极简配置与极致体验，严格遵循以下技术选型，**不要引入复杂的现代前端构建工具（如 Webpack/Vite/Node.js 生态）**：
 - **后端**：Python + FastAPI。
-- **后端渐进式模块架构**：根目录 `main.py` 继续作为 `uvicorn main:app` 兼容入口；跨模块共享能力集中在 `mathbank/`：`paths.py` 统一锚定数据库、静态资源、上传、模板、备份、环境变量和构建路径，`curriculums.py` 加载四套教材 JSON，`prompts.py` 提供 OCR、解题、分类、拆卷、TikZ 与 AI 组卷的纯提示构建器，`ai_providers.py` 统一解析纯文本模型的平台前缀、密钥变量、API Base、真实模型名与推理强度。严禁重新在路由或前端复制这些长篇数据或供应商判断规则。
+- **后端渐进式模块架构**：根目录 `main.py` 继续作为 `uvicorn main:app` 兼容入口；跨模块共享能力集中在 `mathbank/`：`paths.py` 统一锚定数据库、静态资源、上传、模板、备份、环境变量和构建路径，`curriculums.py` 加载四套教材 JSON，`prompts.py` 提供 OCR、解题、分类、拆卷、TikZ 与 AI 组卷的纯提示构建器，`ai_providers.py` 统一解析纯文本模型的平台前缀、密钥变量、API Base、真实模型名与推理强度，`ai_http.py` 统一负责 AI Bearer 请求头、代理绕过重试与 OpenAI 兼容 Chat Completions 的 HTTP 状态检查。业务路由仍独立构建请求 JSON 与解析响应，严禁重新复制这些长篇数据或供应商判断规则。
 - **数据库**：SQLite + SQLAlchemy（轻量级，数据存储在本地 `.db` 文件中）。
 - **前端页面**：纯 HTML + 原生 JavaScript。
 - **前端脚本拆分**：前端 JS 采用无编译的“渐进式级联加载”架构，分模块存放在 `static/js/` 目录下（`api.js`、`editor.js`、`ocr.js`、`import.js`），加载顺序严格依存，不允许产生任何编译及捆绑动作。
