@@ -1578,7 +1578,10 @@ const PAGE_LIMIT = 20;
                 const hasClosingDollarInLine = (nextDollarIdx !== -1 && (nextNewlineIdx === -1 || nextDollarIdx < nextNewlineIdx));
 
                 if (isInsideMath) {
-                    if (postDollar === '$' || hasClosingDollarInLine) {
+                    if (postDollar === '$') {
+                        // 紧跟 postDollar 为 $ 时必须将闭合 $ 重新补回，绝对不能将其吞掉
+                        return innerTex + '$';
+                    } else if (hasClosingDollarInLine) {
                         return innerTex;
                     } else {
                         // 句末漏写闭合 $ 时自动补齐闭合
