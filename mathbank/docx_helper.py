@@ -15,7 +15,9 @@ from typing import Dict, Any, List, Optional
 from mathbank.paths import UPLOADS_DIR
 from mathbank.omml_helper import omml_element_to_latex, NS as OMML_NS
 
-# OpenXML Namespaces for WordprocessingML and DrawingML
+from mathbank.mtef_helper import mtef_to_latex
+
+# OpenXML Namespaces for WordprocessingML, DrawingML, VML and OLE
 W_NS = {
     'w': 'http://schemas.openxmlformats.org/wordprocessingml/2006/main',
     'm': 'http://schemas.openxmlformats.org/officeDocument/2006/math',
@@ -23,6 +25,7 @@ W_NS = {
     'a': 'http://schemas.openxmlformats.org/drawingml/2006/main',
     'pic': 'http://schemas.openxmlformats.org/drawingml/2006/picture',
     'v': 'urn:schemas-microsoft-com:vml',
+    'o': 'urn:schemas-microsoft-com:office:office',
 }
 
 
@@ -46,13 +49,11 @@ def _extract_rels(z: zipfile.ZipFile) -> Dict[str, str]:
 
 def _save_image(z: zipfile.ZipFile, target_rel_path: str) -> Optional[str]:
     """Extract an embedded image from zip and save to static/uploads/."""
-    # Target can be "media/image1.png" or "../media/image1.png"
     clean_target = target_rel_path.lstrip('/')
     if not clean_target.startswith('word/'):
         clean_target = 'word/' + clean_target.lstrip('./')
 
     if clean_target not in z.namelist():
-        # Try matching base name
         base_name = os.path.basename(target_rel_path)
         for name in z.namelist():
             if name.endswith('/' + base_name) or name == base_name:
@@ -75,16 +76,39 @@ def _save_image(z: zipfile.ZipFile, target_rel_path: str) -> Optional[str]:
     return None
 
 
+def _extract_ole_formula_or_image(elem, z: zipfile.ZipFile, rels: Dict[str, str]) -> Optional[str]:
+    """Extract MathType formula from OLEObject via MTEF or fallback to embedded shape image."""
+    # 1. Search for <o:OLEObject r:id="rId..."/>
+    for ole_obj in elem.iter('{urn:schemas-microsoft-com:office:office}OLEObject'):
+        r_id = ole_obj.attrib.get('{http://schemas.openxmlformats.org/officeDocument/2006/relationships}id')
+        if r_id and r_id in rels:
+            target = rels[r_id].lstrip('/')
+            if not target.startswith('word/'):
+                target = 'word/' + target.lstrip('./')
+            if target in z.namelist():
+                try:
+                    ole_bytes = z.read(target)
+                    latex = mtef_to_latex(ole_bytes).strip()
+                    if latex:
+                        return f" ${latex}$ "
+                except Exception:
+                    pass
+
+    # 2. Fallback to embedded preview image if MTEF not decoded
+    img_url = _find_and_extract_image(elem, z, rels)
+    if img_url:
+        return f"\n![]({img_url})\n"
+
+    return None
+
+
 def _parse_paragraph(p_elem, z: zipfile.ZipFile, rels: Dict[str, str]) -> str:
     """Parse a paragraph element <w:p> into mixed text, LaTeX formulas and images."""
     parts = []
     
     for child in p_elem:
         tag = child.tag
-        if '}' in tag:
-            local_tag = tag.split('}', 1)[1]
-        else:
-            local_tag = tag
+        local_tag = tag.split('}', 1)[1] if '}' in tag else tag
 
         # 1. Text Run (<w:r>)
         if local_tag == 'r':
@@ -100,19 +124,26 @@ def _parse_paragraph(p_elem, z: zipfile.ZipFile, rels: Dict[str, str]) -> str:
                     img_url = _find_and_extract_image(r_child, z, rels)
                     if img_url:
                         parts.append(f"\n![]({img_url})\n")
+                elif rc_tag == 'object':
+                    formula_or_img = _extract_ole_formula_or_image(r_child, z, rels)
+                    if formula_or_img:
+                        parts.append(formula_or_img)
 
         # 2. Native Math Formula (<m:oMath> or <m:oMathPara>)
         elif local_tag in ('oMath', 'oMathPara'):
             latex_formula = omml_element_to_latex(child).strip()
             if latex_formula:
-                # Wrap with single dollar for inline math
                 parts.append(f" ${latex_formula}$ ")
 
-        # 3. Direct Drawing (<w:drawing>)
+        # 3. Direct Drawing or OLE Object in Paragraph
         elif local_tag in ('drawing', 'pict'):
             img_url = _find_and_extract_image(child, z, rels)
             if img_url:
                 parts.append(f"\n![]({img_url})\n")
+        elif local_tag == 'object':
+            formula_or_img = _extract_ole_formula_or_image(child, z, rels)
+            if formula_or_img:
+                parts.append(formula_or_img)
 
     return "".join(parts).strip()
 

@@ -9,7 +9,24 @@ from main import app, LOCAL_TOKEN
 from mathbank.omml_helper import omml_to_latex
 from mathbank.docx_helper import extract_docx_markdown
 
+from mathbank.mtef_helper import mtef_to_latex, MTEFDecoder
+
 client = TestClient(app)
+
+
+def test_mtef_to_latex_decoder():
+    """测试 MTEF 纯 Python 解码器将 MathType 二进制转换为 LaTeX"""
+    # 模拟一个 MTEF v5 数据包: Header (5, 1, 0, 7, b'DSMT7\0', opts=1), FONT_DEF, CHAR 'z', '=', CHAR '1'
+    mtef_bytes = (
+        b"\x05\x01\x00\x07"
+        b"DSMT7\x00\x01"
+        b"\x02\x00\x00\x00\x7a\x00"  # CHAR 'z'
+        b"\x02\x00\x00\x00\x3d\x00"  # CHAR '='
+        b"\x02\x00\x00\x00\x31\x00"  # CHAR '1'
+        b"\x00"                      # END
+    )
+    latex = mtef_to_latex(mtef_bytes)
+    assert "z=1" in latex or "z = 1" in latex
 
 
 def test_omml_to_latex_conversions():
