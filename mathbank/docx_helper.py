@@ -253,8 +253,12 @@ def extract_docx_markdown(file_bytes_or_path) -> Dict[str, Any]:
 
             final_markdown = "\n\n".join(markdown_blocks).strip()
             
-            # Post-cleanup: normalize multiple newlines and clean redundant spaces
+            # Post-cleanup: normalize multiple newlines, subquestions, and clean redundant spaces
             final_markdown = re.sub(r'\n{3,}', '\n\n', final_markdown)
+            
+            # Auto-heal subquestion double newlines (e.g. \n(1) -> \n\n(1))
+            from mathbank.ai_json import normalize_subquestions_double_newlines
+            final_markdown = normalize_subquestions_double_newlines(final_markdown)
             
             return {
                 "success": True,

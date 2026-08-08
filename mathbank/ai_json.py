@@ -120,6 +120,25 @@ def _repair_json_string_content(text: str) -> str:
     return "".join(repaired)
 
 
+import re
+
+
+def normalize_subquestions_double_newlines(text: str) -> str:
+    """Ensure subquestions (1), (2), (i), (ii), （1）, （2） start on a clean paragraph with double newlines."""
+    if not text or not isinstance(text, str):
+        return text
+
+    s = text.strip()
+    # Replace single newline or punctuation-attached subquestion with standard double newlines
+    s = re.sub(
+        r'(?<!^)(?<!\n\n)(?:[。；;!！\.]|\s+|\n)\s*([(（](?:[1-9]|10|[ivxIVX]+)[)）]|\([1-9]\)|（[1-9]）|[①②③④⑤⑥⑦⑧⑨⑩])(?=\s*[\u4e00-\u9fa5a-zA-Z\$])',
+        r'\n\n\1 ',
+        s
+    )
+    s = re.sub(r'\n{3,}', '\n\n', s)
+    return s.strip()
+
+
 def parse_ai_json(raw_text: str) -> Any:
     """Parse AI JSON with narrowly scoped repairs for common model output."""
 
@@ -134,21 +153,33 @@ def parse_ai_json(raw_text: str) -> Any:
 
     last_error = None
     missing = object()
+    parsed_data = missing
     for candidate in candidates:
-        strict_result = missing
         try:
-            strict_result = json.loads(candidate)
+            parsed_data = json.loads(candidate)
+            break
         except json.JSONDecodeError as exc:
             last_error = exc
 
         repaired = _repair_json_string_content(candidate)
         if repaired != candidate:
             try:
-                return json.loads(repaired)
+                parsed_data = json.loads(repaired)
+                break
             except json.JSONDecodeError as exc:
                 last_error = exc
 
-        if strict_result is not missing:
-            return strict_result
+    if parsed_data is missing:
+        raise last_error if last_error else ValueError("无法解析返回的 JSON 内容。")
 
-    raise last_error
+    # Post-process: auto-heal subquestions double newlines in questions
+    if isinstance(parsed_data, dict) and "questions" in parsed_data and isinstance(parsed_data["questions"], list):
+        for q in parsed_data["questions"]:
+            if isinstance(q, dict) and "content" in q and isinstance(q["content"], str):
+                q["content"] = normalize_subquestions_double_newlines(q["content"])
+    elif isinstance(parsed_data, list):
+        for q in parsed_data:
+            if isinstance(q, dict) and "content" in q and isinstance(q["content"], str):
+                q["content"] = normalize_subquestions_double_newlines(q["content"])
+
+    return parsed_data

@@ -1767,6 +1767,9 @@ const PAGE_LIMIT = 20;
             // Replace LaTeX line breaks with HTML br tags outside math environments
             tempText = tempText.replace(/\\\\/g, '<br>');
             
+            // 小问分行自愈：单回车或标点后紧跟小问编号 (如 \n(1), \n(2), \n(i), \n（1）) 自动升格为段落换行 <br><br>
+            tempText = tempText.replace(/(?:\r?\n|\s+|[。；;!！\.]\s*)([(（]?(?:[1-9]|10|[ivxIVX]+|[①②③④⑤⑥⑦⑧⑨⑩])[)）\.]|\([1-9]\)|（[1-9]）|\([ivxIVX]+\)|（[ivxIVX]+）)(?=\s*[\u4e00-\u9fa5a-zA-Z\$])/g, '<br><br>$1 ');
+
             // 严格遵循 LaTeX 标准规范：双回车 (\n\n+) 代表起新段落 (<br><br>)；单回车 (\n) 仅视为空格，不产生硬换行；显式 \\\\ 代表强制换行 (<br>)
             tempText = tempText.replace(/\r\n/g, '\n')
                                .replace(/\n\n+/g, '<br><br>')
