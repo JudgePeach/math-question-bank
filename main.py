@@ -2617,6 +2617,187 @@ RENJIAO_A_CURRICULUM = {
     }
 }
 
+HUJIAO_CURRICULUM = {
+    "必修一": {
+        "第 1 章 集合与逻辑": [
+            "1.1 集合初步",
+            "1.2 常用逻辑用语"
+        ],
+        "第 2 章 等式与不等式": [
+            "2.1 等式与不等式的性质",
+            "2.2 不等式的求解",
+            "2.3 基本不等式及其应用"
+        ],
+        "第 3 章 幂、指数与对数": [
+            "3.1 幂与指数",
+            "3.2 对数"
+        ],
+        "第 4 章 幂函数、指数函数与对数函数": [
+            "4.1 幂函数",
+            "4.2 指数函数",
+            "4.3 对数函数"
+        ],
+        "第 5 章 函数的概念、性质及应用": [
+            "5.1 函数",
+            "5.2 函数的基本性质",
+            "5.3 函数的应用",
+            "*5.4 反函数"
+        ]
+    },
+    "必修二": {
+        "第 6 章 三角": [
+            "6.1 正弦、余弦、正切、余切",
+            "6.2 常用三角公式",
+            "6.3 解三角形"
+        ],
+        "第 7 章 三角函数": [
+            "7.1 正弦函数的图像与性质",
+            "7.2 余弦函数的图像与性质",
+            "7.3 函数 y=Asin(wx+φ) 的图像",
+            "7.4 正切函数的图像与性质"
+        ],
+        "第 8 章 平面向量": [
+            "8.1 向量的概念和线性运算",
+            "8.2 向量的数量积",
+            "8.3 向量的坐标表示",
+            "8.4 向量的应用"
+        ],
+        "第 9 章 复数": [
+            "9.1 复数及其四则运算",
+            "9.2 复数的几何意义",
+            "9.3 实系数一元二次方程",
+            "*9.4 复数的三角形式"
+        ]
+    },
+    "必修三": {
+        "第 10 章 空间直线与平面": [
+            "10.1 平面及其基本性质",
+            "10.2 直线与直线的位置关系",
+            "10.3 直线与平面的位置关系",
+            "10.4 平面与平面的位置关系",
+            "*10.5 异面直线间的距离"
+        ],
+        "第 11 章 简单几何体": [
+            "11.1 柱体",
+            "11.2 锥体",
+            "11.3 多面体与旋转体",
+            "11.4 球"
+        ],
+        "第 12 章 概率初步": [
+            "12.1 随机现象与样本空间",
+            "12.2 古典概率",
+            "12.3 频率与概率",
+            "12.4 随机事件的独立性"
+        ],
+        "第 13 章 统计": [
+            "13.1 总体与样本",
+            "13.2 数据的获取",
+            "13.3 抽样方法",
+            "13.4 统计图表",
+            "13.5 统计估计",
+            "13.6 统计活动"
+        ]
+    },
+    "必修四": {
+        "第 1 部分 数学建模活动案例": [
+            "1. 红绿灯管理",
+            "2. “诱人”的优惠券",
+            "3. 车辆转弯时的安全隐患",
+            "4. 雨中行"
+        ],
+        "第 2 部分 数学建模活动 A": [
+            "5. 出租车运价",
+            "6. 家具搬运",
+            "7. 登山行程设计"
+        ],
+        "第 3 部分 数学建模活动 B": [
+            "8. 包装彩带",
+            "9. 削菠萝",
+            "10. 高度测量",
+            "11. 外卖与环保"
+        ],
+        "附录": [
+            "附录 1 数学建模活动报告的写作",
+            "附录 2 数学建模活动报告样例",
+            "附录 3 有关数学建模活动中数学内容的说明"
+        ]
+    },
+    "选修一": {
+        "第 1 章 平面直角坐标系中的直线": [
+            "1.1 直线的倾斜角与斜率",
+            "1.2 直线的方程",
+            "1.3 两条直线的位置关系",
+            "1.4 点到直线的距离"
+        ],
+        "第 2 章 圆锥曲线": [
+            "2.1 圆",
+            "2.2 椭圆",
+            "2.3 双曲线",
+            "2.4 抛物线",
+            "*2.5 曲线与方程"
+        ],
+        "第 3 章 空间向量及其应用": [
+            "3.1 空间向量及其运算",
+            "3.2 空间向量基本定理",
+            "3.3 空间向量的坐标表示",
+            "3.4 空间向量在立体几何中的应用"
+        ],
+        "第 4 章 数列": [
+            "4.1 等差数列",
+            "4.2 等比数列",
+            "4.3 数列",
+            "4.4 数学归纳法",
+            "*4.5 用迭代序列求√2的近似值"
+        ]
+    },
+    "选修二": {
+        "第 5 章 导数及其应用": [
+            "5.1 导数的概念及意义",
+            "5.2 导数的运算",
+            "5.3 导数的应用"
+        ],
+        "第 6 章 计数原理": [
+            "6.1 乘法原理与加法原理",
+            "6.2 排列",
+            "6.3 组合",
+            "6.4 计数原理在古典概率中的应用",
+            "6.5 二项式定理"
+        ],
+        "第 7 章 概率初步（续）": [
+            "7.1 条件概率与相关公式",
+            "7.2 随机变量的分布与特征",
+            "7.3 常用分布"
+        ],
+        "第 8 章 成对数据的统计分析": [
+            "8.1 成对数据的相关分析",
+            "8.2 一元线性回归分析",
+            "8.3 2×2 列联表"
+        ]
+    },
+    "选修三": {
+        "第 1 部分 数学建模活动案例": [
+            "1. 刹车距离",
+            "2. 易拉罐的设计",
+            "3. 珠穆朗玛峰顶上有多少氧气",
+            "4. 水葫芦的生长"
+        ],
+        "第 2 部分 数学建模活动 A": [
+            "5. 铅球投掷",
+            "6. 电梯调度"
+        ],
+        "第 3 部分 数学建模活动 B": [
+            "7. 存款计划",
+            "8. 民生巨变 40 年",
+            "9. 教室里的照明"
+        ],
+        "附录": [
+            "附录 1 数学建模活动报告的写作",
+            "附录 2 数学建模活动报告样例",
+            "附录 3 有关数学建模活动中数学内容的说明"
+        ]
+    }
+}
+
 METADATA_FILE = "data_backup/custom_metadata_test.json" if IS_TESTING else "data_backup/custom_metadata.json"
 METADATA_CACHE = {}
 
@@ -2711,6 +2892,8 @@ def get_active_version_code() -> str:
             combined_chapters += " ".join(book_content.keys())
     if "第一章" in combined_chapters:
         return "B"
+    if "第 1 章 集合与逻辑" in combined_chapters or "数学建模活动案例" in combined_chapters or "第 2 章 等式与不等式" in combined_chapters or "第 3 章 幂、指数与对数" in combined_chapters:
+        return "H"
     if "第1章" in combined_chapters:
         return "S"
     return "A"
@@ -2791,12 +2974,39 @@ def route_chapter(comp: str, chap: str, know: str, target: str) -> tuple[str, st
         elif "统计" in combined: new_comp, new_chap = "必修二", "第14章 统计"
         elif "概率" in combined: new_comp, new_chap = "必修二", "第15章 概率"
         else: new_comp, new_chap = "必修一", "第1章 集合"
+    elif target == "H":
+        if "集合与逻辑" in combined or ("集合" in combined and "选修" not in comp): new_comp, new_chap = "必修一", "第 1 章 集合与逻辑"
+        elif "等式" in combined or "不等式" in combined: new_comp, new_chap = "必修一", "第 2 章 等式与不等式"
+        elif "幂、指数" in combined or "指数与对数" in combined or ("指数" in combined and "函数" not in combined) or ("对数" in combined and "函数" not in combined): new_comp, new_chap = "必修一", "第 3 章 幂、指数与对数"
+        elif "幂函数" in combined or "指数函数" in combined or "对数函数" in combined: new_comp, new_chap = "必修一", "第 4 章 幂函数、指数函数与对数函数"
+        elif "反函数" in combined or "函数的概念" in combined or ("函数" in combined and "三角" not in combined and "导数" not in combined and "选修" not in comp and "必修二" not in comp and "必修三" not in comp): new_comp, new_chap = "必修一", "第 5 章 函数的概念、性质及应用"
+        elif "解三角形" in combined or "正弦定理" in combined or "余弦定理" in combined or "常用三角公式" in combined or ("三角" in combined and "函数" not in combined): new_comp, new_chap = "必修二", "第 6 章 三角"
+        elif "三角函数" in combined: new_comp, new_chap = "必修二", "第 7 章 三角函数"
+        elif "平面向量" in combined or ("向量" in combined and "空间" not in combined): new_comp, new_chap = "必修二", "第 8 章 平面向量"
+        elif "复数" in combined: new_comp, new_chap = "必修二", "第 9 章 复数"
+        elif "空间直线" in combined or "空间点" in combined or ("立体几何" in combined and "空间向量" not in combined and "简单几何体" not in combined and "球" not in combined and "柱体" not in combined and "锥体" not in combined): new_comp, new_chap = "必修三", "第 10 章 空间直线与平面"
+        elif "简单几何体" in combined or "柱体" in combined or "锥体" in combined or "多面体" in combined or "球" in combined: new_comp, new_chap = "必修三", "第 11 章 简单几何体"
+        elif "古典概" in combined or "随机现象" in combined or ("概率" in combined and "条件概率" not in combined and "随机变量" not in combined and "分布" not in combined and "选修" not in comp): new_comp, new_chap = "必修三", "第 12 章 概率初步"
+        elif "总体与样本" in combined or "抽样" in combined or "统计图表" in combined or ("统计" in combined and "成对" not in combined and "回归" not in combined and "列联表" not in combined and "选修" not in comp): new_comp, new_chap = "必修三", "第 13 章 统计"
+        elif "红绿灯" in combined or "优惠券" in combined or "车辆转弯" in combined or "雨中行" in combined or "出租车" in combined or "家具" in combined or "登山" in combined or "包装彩带" in combined or "削菠萝" in combined or "高度测量" in combined or "外卖" in combined or "必修四" in comp: new_comp, new_chap = "必修四", "第 1 部分 数学建模活动案例"
+        elif "平面直角坐标系中的直线" in combined or "直线与方程" in combined or ("直线" in combined and "空间" not in combined and "圆锥曲线" not in combined): new_comp, new_chap = "选修一", "第 1 章 平面直角坐标系中的直线"
+        elif "圆锥曲线" in combined or "椭圆" in combined or "双曲线" in combined or "抛物线" in combined or ("圆" in combined and "圆锥曲线" in combined): new_comp, new_chap = "选修一", "第 2 章 圆锥曲线"
+        elif "空间向量" in combined: new_comp, new_chap = "选修一", "第 3 章 空间向量及其应用"
+        elif "数列" in combined or "等差数列" in combined or "等比数列" in combined or "数学归纳法" in combined: new_comp, new_chap = "选修一", "第 4 章 数列"
+        elif "导数" in combined: new_comp, new_chap = "选修二", "第 5 章 导数及其应用"
+        elif "计数原理" in combined or "排列" in combined or "组合" in combined or "二项式" in combined: new_comp, new_chap = "选修二", "第 6 章 计数原理"
+        elif "条件概率" in combined or "随机变量" in combined or "常用分布" in combined or "二项分布" in combined or "正态分布" in combined: new_comp, new_chap = "选修二", "第 7 章 概率初步（续）"
+        elif "成对数据" in combined or "线性回归" in combined or "列联表" in combined or "独立性检验" in combined or "回归" in combined: new_comp, new_chap = "选修二", "第 8 章 成对数据的统计分析"
+        elif "刹车距离" in combined or "易拉罐" in combined or "珠穆朗玛峰" in combined or "水葫芦" in combined or "铅球" in combined or "电梯调度" in combined or "存款计划" in combined or "民生巨变" in combined or "教室里的照明" in combined or "选修三" in comp: new_comp, new_chap = "选修三", "第 1 部分 数学建模活动案例"
+        else: new_comp, new_chap = "必修一", "第 1 章 集合与逻辑"
 
     active_v = get_active_version_code()
     if target == active_v:
         c_tree = METADATA_CACHE.get("curriculum", {})
     elif target == "A":
         c_tree = RENJIAO_A_CURRICULUM
+    elif target == "H":
+        c_tree = HUJIAO_CURRICULUM
     else:
         c_tree = METADATA_CACHE.get("curriculum", {}) if active_v == target else {}
     
@@ -2833,6 +3043,8 @@ def save_metadata_config(payload: dict, db: Session = Depends(get_db)):
                 combined_chapters += " ".join(book_content.keys())
         if "第一章" in combined_chapters:
             target_version = "B"
+        elif "第 1 章 集合与逻辑" in combined_chapters or "数学建模活动案例" in combined_chapters or "第 2 章 等式与不等式" in combined_chapters or "第 3 章 幂、指数与对数" in combined_chapters:
+            target_version = "H"
         elif "第1章" in combined_chapters:
             target_version = "S"
         else:
