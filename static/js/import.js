@@ -1469,7 +1469,13 @@
             // Hide placeholder & results, show loading skeleton
             document.getElementById('importPlaceholder').classList.add('hidden');
             document.getElementById('parsedQuestionsWrapper').classList.add('hidden');
-            document.getElementById('importLoadingState').classList.remove('hidden');
+            const loadingState = document.getElementById('importLoadingState');
+            loadingState.classList.remove('hidden');
+
+            const loadingIcon = loadingState.querySelector('.fa-circle-notch, .fa-spinner, .fa-circle-exclamation');
+            if (loadingIcon) {
+                loadingIcon.className = 'fa-solid fa-circle-notch fa-spin text-brand-600 text-3xl inline-block';
+            }
             
             // Clear logs
             const consoleDiv = document.getElementById('importLogsConsole');
@@ -1477,7 +1483,7 @@
             
             const runBtn = document.getElementById('runParseBtn');
             runBtn.disabled = true;
-            runBtn.innerHTML = '<i class="fa-solid fa-spinner animate-spin"></i> <span>正在全力拆解中...</span>';
+            runBtn.innerHTML = '<i class="fa-solid fa-spinner fa-spin inline-block"></i> <span>正在全力拆解中...</span>';
 
             const generateAnswersCheckbox = document.getElementById('importGenerateAnswers');
             const generateAnswers = generateAnswersCheckbox ? generateAnswersCheckbox.checked : false;
@@ -1963,10 +1969,9 @@
             document.getElementById('importPlaceholder').classList.remove('hidden');
 
             // 恢复加载状态的原始图标
-            const loadingIcon = document.querySelector('#importLoadingState .fa-spinner, #importLoadingState .fa-circle-exclamation');
+            const loadingIcon = document.querySelector('#importLoadingState .fa-circle-notch, #importLoadingState .fa-spinner, #importLoadingState .fa-circle-exclamation');
             if (loadingIcon) {
-                loadingIcon.classList.remove('fa-circle-exclamation', 'text-red-500');
-                loadingIcon.classList.add('fa-spinner', 'animate-spin');
+                loadingIcon.className = 'fa-solid fa-circle-notch fa-spin text-brand-600 text-3xl inline-block';
             }
 
             // 重置加载文本

@@ -1538,30 +1538,12 @@
                         <label class="block text-xs font-bold text-slate-500 shrink-0">第二步：试卷 LaTeX 源码 / PDF / Word 文件</label>
                         <div id="texDropzone" class="border-2 border-dashed border-slate-200 hover:border-brand-500/80 rounded-xl p-3.5 text-center cursor-pointer transition-all duration-200 bg-white hover:bg-brand-50/20 flex flex-col justify-center items-center shrink-0 mb-2">
                             <i class="fa-solid fa-file-lines text-slate-400 text-xl mb-1.5" id="texFileIcon"></i>
-                            <span class="text-xs text-slate-600 font-medium" id="texFileName">点击或拖放 .tex / .pdf / .docx (Word) 试卷文件</span>
-                            <span class="text-[10px] text-slate-400 mt-0.5">支持 .tex / .pdf / .docx 试卷，公式与插图 0 损自动直提</span>
-                            <input type="file" id="texFileInput" accept=".tex,.pdf,.docx" class="hidden">
+                            <span class="text-xs text-slate-600 font-medium" id="texFileName">点击或拖放 .tex / .pdf / .docx 试卷文件</span>
                         </div>
                         <textarea id="importLatexContent" placeholder="在此粘贴试卷的 LaTeX 源代码..." 
                                   class="w-full flex-1 p-3.5 border border-slate-200 rounded-xl outline-none focus:border-brand-500 focus:ring-1 focus:ring-brand-500 font-mono text-xs bg-slate-50/50 resize-none"></textarea>
                     </div>
 
-                    <!-- Step 3: Upload batch images -->
-                    <div class="space-y-1.5 shrink-0">
-                        <label class="block text-xs font-bold text-slate-500">第三步：上传试卷插图 / 配图（可选）</label>
-                        <div id="imagesDropzone" class="border-2 border-dashed border-slate-200 hover:border-brand-500/80 rounded-xl p-3.5 text-center cursor-pointer transition-all duration-200 bg-white hover:bg-brand-50/20 flex flex-col justify-center items-center">
-                            <i class="fa-solid fa-images text-slate-400 text-xl mb-1.5" id="imagesFileIcon"></i>
-                            <span class="text-xs text-slate-600 font-medium" id="imagesCountName">点击或多选拖入试卷引用的所有图片</span>
-                            <span class="text-[10px] text-slate-400 mt-0.5">支持 png, jpg, jpeg 格式</span>
-                            <input type="file" id="imagesFileInput" multiple accept="image/*" class="hidden">
-                        </div>
-                        <!-- File Checklist / Previews -->
-                        <div id="importImagesList" class="flex flex-wrap gap-1.5 max-h-24 overflow-y-auto p-1.5 bg-slate-100 border border-slate-200 rounded-xl hidden">
-                            <!-- Thumbnails injected here -->
-                        </div>
-                    </div>
-
-                    <!-- Toggle answer generation if paper source has no answers -->
                     <div class="flex items-start space-x-3 p-3 bg-slate-50/80 border border-slate-200/60 rounded-xl shrink-0">
                         <input type="checkbox" id="importGenerateAnswers" class="w-4 h-4 text-brand-600 border-slate-300 rounded focus:ring-brand-500 cursor-pointer mt-0.5">
                         <div class="flex-1">
@@ -1612,7 +1594,9 @@
 
                     <!-- Loading / Skeleton state -->
                     <div id="importLoadingState" class="flex-1 flex flex-col items-center justify-center text-center space-y-4 hidden p-12">
-                        <i class="fa-solid fa-spinner animate-spin text-brand-600 text-3xl"></i>
+                        <div class="h-16 w-16 bg-white border border-brand-200/80 rounded-2xl shadow-sm flex items-center justify-center text-brand-600 text-2xl mb-1">
+                            <i class="fa-solid fa-circle-notch fa-spin text-brand-600 text-3xl inline-block"></i>
+                        </div>
                         <div class="space-y-1.5 w-full max-w-xs flex flex-col items-center">
                             <h4 class="font-bold text-slate-700 text-sm" id="importLoadingText">正在整理插图映射并预备上传...</h4>
                             <!-- Progress bar -->
