@@ -1601,15 +1601,10 @@ const PAGE_LIMIT = 20;
             let clean = text.replace(/\\vphantom\s*\{\s*[^}]*?\}/g, '')
                             .replace(/\\strut\b/g, '');
 
-            // 1. Pre-heal exposed or half-wrapped LaTeX math environments (e.g. \begin{cases}...\end{cases}$ or \begin{cases}...\end{cases})
-            clean = clean.replace(/(\$)?\s*\\begin\{(cases|aligned|matrix|pmatrix|bmatrix|array|equation|gather)\}([\s\S]*?)\\end\{\2\}\s*(\$)?/g, function(match, p1, env, body, p4) {
-                if (p1 === '$' && p4 === '$') {
-                    return match;
-                }
-                return '$\\begin{' + env + '}' + body + '\\end{' + env + '}$';
-            });
+            // Auto-heal punctuation between \fillin and closing dollar (e.g. \fillin$. -> \fillin$.) to keep dollar tightly closing math env
+            clean = clean.replace(/\\fillin\s*([。，,；;！？!?\.]+)\s*\$/g, '\\fillin$\\1');
 
-            // 2. Transform exam-zh \fillin macro into KaTeX compatible \underline with math environment awareness
+            // Transform exam-zh \fillin macro into KaTeX compatible \underline with math environment awareness
             clean = transformFillinMacro(clean);
 
             // Clean up illegal nesting like \underline{\quad $\mathbf{14}$ \quad} in KaTeX
