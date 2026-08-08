@@ -2438,12 +2438,12 @@
             html = html.replace(/!\[.*?\]\(([^)]+)\)/g, '').trim();
         }
         
-        // 2. Process LaTeX formulas, \underline, choices environment via preprocessFormulaForKaTeX
+        // 2. Process LaTeX formulas, \underline, choices environment & LaTeX standard paragraphs via preprocessFormulaForKaTeX
         if (typeof window.preprocessFormulaForKaTeX === 'function') {
             html = window.preprocessFormulaForKaTeX(html);
         }
 
-        const stemText = html.replace(/\n\n/g, '<br><br>').replace(/\n/g, '<br>');
+        const stemText = html;
 
         if (imgSrcList.length > 0) {
             // 如果存在多张插图且原设定为右侧，默认自动优化调整为下方居中 (center) 展示

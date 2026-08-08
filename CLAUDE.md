@@ -28,7 +28,8 @@
   - 所有选择题在入库和存储时，选项部分必须统一格式化为 LaTeX 的 `choices` 环境（使用 `\begin{choices}` 和 `\item` 包裹，且剥离原本的 A., B., C., D. 等标号前缀）。
     - **选择题 choices 网格对齐与高度自适应 (Choice Grid Column Extraction & Vertical Alignment)**：前端 KaTeX 预渲染（`editor.js` 中的 `preprocessFormulaForKaTeX` 与 `parseMarkdownWithMath`）统一为选择题 `\begin{choices}` 环境生成带 `choices-grid` 标识的弹性网格容器。组卷工作台 A4 Live Preview (`paper.js`) 自动捕获此标识将题干与选项提取分离，实现题干右侧括号 `（   ）` 顶格靠右，选项独占下方 100% 满宽 A4 栅格。同时通过 `.choices-grid` 与 `items-baseline` 顶部/首行基线对齐规则，彻底解决了单行及多行折行选项下 A、B、C、D 序号标号与第一行文本基线完美对齐的问题，既杜绝了分式撑高顶部导致的标号偏高，又防止了选项折行时标号悬浮在多行文本中间。
   - **选择题题干末尾括号自动净化 (Choice Stem Parentheses Cleanup & Self-Healing)**：后端 `mathbank/paper_helper.py` (`clean_choice_stem_parentheses`)、前端 KaTeX 预编译 (`cleanChoiceStemParentheses`) 与全量自愈脚本 (`scripts/migrate_choice_parentheses.py`) 会自动物理抹除题干末尾录入的各种全角/半角供填答用空括号（如 `(\quad)`、`(   )`、`（  ）`），防止与 LaTeX 模板右侧自动生成的 `\paren` 宏产生二次重叠。
-  - **填空题 \fillin 规范与自动自愈 (Fillin Macro Standardization & Self-Healing)**：系统在多模态 OCR 识图（SiliconFlow / 阿里百炼 / 中展 AI）Prompt、试卷 AI 智能拆卷 Prompt 中均强制要求将填空题下划线生成为 `\fillin` 宏。同时在后端录入/修改/拆题逻辑中内置了 `normalize_fillin_macro` 自愈清洗器，会自动将 `______` 或 `\underline{\hspace{...}}` 等旧格式静默升级为标准的 `\fillin`。前端 `preprocessFormulaForKaTeX` 默认将纯 `\fillin` 转化为 1.5cm 标准精美下划线渲染。
+  - **填空题 \fillin 规范与自动自愈 (Fillin Macro Standardization & Self-Healing)**：系统在多模态 OCR 识图（SiliconFlow / 阿里百炼 / 中展 AI）Prompt、试卷 AI 智能拆卷 Prompt 中均强制要求将填空题下划线生成为 `\fillin` 宏。同时在后端录入/修改/拆题逻辑中内置了 `normalize_fillin_macro` 自愈清洗器，会自动将 `______` 或 `\underline{\hspace{...}}` 等旧格式静默升级为标准的 `\fillin`。前端将 `preprocessFormulaForKaTeX` 与 `parseMarkdownWithMath` 统一为全局单一来源（Single Source of Truth），内置数学环境感知与句末闭合自愈能力（无论是正文中的 `则 \fillin.` 还是未闭合公式中的 `$B = \fillin.`，均自动规范化为带合法闭合的 KaTeX `\underline` 宏），使拆卷预览（`import.js`）、试题研讨（`editor.js`）与组卷排版（`paper.js`）100% 共享相同的渲染表现。
+  - **LaTeX 标准段落与换行规范 (LaTeX Standard Paragraph & Line Break Spec)**：前端渲染管线（`preprocessFormulaForKaTeX` 与 `paper.js`）严格遵循 LaTeX 编译标准规范：双回车及以上（`\n\n+`）代表起新段落（转换为 `<br><br>`）；显式双反斜杠（`\\\\`）代表强制硬换行（转换为 `<br>`）；单回车（`\n`）仅作为源码代码折行视为空格，不打断同一自然段内的文字流，与真实 TeX 编译器排版行为 100% 保持一致。
   - **裸露数学环境自动自愈 (Exposed Math Environment Self-Healing)**：针对录入或识别到的裸露 LaTeX 数学环境（如 `\begin{cases}...\end{cases}`、`aligned`、`matrix` 等），前端 KaTeX 预渲染函数（`preprocessFormulaForKaTeX` 与 `parseMarkdownWithMath`）会自动识别并使用单美元符号 `$...$` 智能包裹，彻底杜绝未加 `$` 导致渲染成纯文本的异常。
   - **LaTeX/Markdown 换行规范与右侧插图顶格组装算法 (Line Break Rules & Right-Aligned Minipage Hangindent Reset)**：在 LaTeX 试卷导出中，引入了 `format_stem_paragraphs` 算法结合 `\noindent\begin{minipage}` 容器及内部 `\hangindent=0pt\setlength{\parindent}{2em}` 参数重置。消除了外层 `problem` 环境施加给 `minipage` 盒子的外层 2em 缩进偏移以及折行悬挂缩进，既保证了在 `minipage` 右侧插图窄版下同一段落内的自然续行（如 `AC=BC, D, E分别为...`）与全宽题完全一致地 **100% 绝对顶格对齐**，又使小问另起新行并保留 2em 标准首行缩进，且绝不破坏公式或坐标点。
   - **前端渲染**：前端将自动依据选项最长字符数 `maxLen` 自适应网格排版（小于等于 10 字为 1行4列，大于 10 且小于等于 24 字为 2行2列，大于 24 字为 1行1列），并自动补全 `A.`, `B.`, `C.`, `D.` 标号。
@@ -139,11 +140,16 @@
 - **批量图片分发**：用户可在前端一次性拖入多张截图，通过 `/api/upload/batch` 瞬间在后台保存，并返回形如 `[图片1]` 的占位符映射表，方便在解析文本中插入对应位置。
 - **大模型文本切片与两阶段解耦拆解**：用户提交完整的试卷 LaTeX/Markdown 文本及图片映射后，`/api/ai/parse-paper` 接口调用 `.env` 配置文件中的 `PREFER_PARSE_MODEL`，并通过 `mathbank.ai_providers.resolve_text_provider` 统一解析平台、密钥、API Base 与真实模型名，再将文本按题目智能切片，自动识别其类型、章节、难度、题干与配图，并提取原版答案（秒级返回）。PDF 后台拆卷内部路径采用同一 Provider 解析规则；两条路径均由 `mathbank.ai_json.parse_ai_json` 先严格解析响应，再安全修复 Markdown 代码围栏、JSON 字符串内真实控制字符和未转义的 LaTeX 反斜杠。拆卷提示词必须要求换行使用 JSON `\n` 转义、LaTeX 反斜杠使用 JSON 双反斜杠，不得要求在 JSON 字符串内部直接输出真实回车。若勾选自动生成解答，第二阶段由前端发起并发队列（上限 3）异步调用 `/api/ai/solve` 为无答案题目平滑推导解析，彻底解决 Output Token 溢出与 HTTP 超时问题。
 
-### 3.11 PDF 试卷多模态拆解与手动截图系统
-- **切片与异步任务**：支持上传 PDF 文件，后端在后台利用 `fitz` (PyMuPDF) 将 PDF 栅格化为高清图片。利用 ThreadPoolExecutor 并行发起 VLM 多模态 OCR 转译。
+### 3.11 PDF 试卷多模态拆解与智能双轨探测系统
+- **智能双轨分流架构（Smart Dual-Track Routing & pdf-inspector）**：
+  - **前置极速探测（阶段 0）**：系统在 `mathbank.pdf_inspector_helper` 中封装了对高性能开源引擎 `pdf-inspector` 的调用。PDF 上传后在 10~50ms 内快速完成文档类型检测（`TextBased` 原生电子试卷 vs `Scanned` 扫描/纯图片试卷）。
+  - **原生电子试卷毫秒级直提通道**：若判定为 `TextBased` 且具备高置信度，系统自动启用直提通道，在 50ms 内直接提取带双栏阅读顺序、表格与排版的纯净文本流，直接进入文本大模型切片拆题，**彻底跳过多模态视觉 OCR 网络请求**，实现 0 视觉 Token 消耗并将耗时从 20s 缩短至 2~3s。拆题 System Prompt（`build_pdf_parse_system_prompt`）内置了 Unicode 数学符号（如 `√`、`∈`、折行分式）向标准 LaTeX 语法的自动自愈规范。
+  - **扫描试卷与异常优雅降级（Graceful Degradation）**：若判定为 `Scanned`、`Mixed`、检测到字体编码缺失或未安装 `pdf-inspector`，系统自动且无缝回退到现有的 PyMuPDF 150 DPI 栅格化 + ThreadPoolExecutor 并发多模态 VLM OCR 流程，保证 100% 向后兼容。
+- **切片与异步任务**：支持上传 PDF 文件，后端通过异步任务 `run_pdf_parsing_task` 统一调度。
 - **PDF 导入规范与 Token 防溢出**：导入试卷 PDF 时，建议优先选用仅含题干（无冗长解析）的短试卷。详细解析推荐在题目拆解入库后，使用系统内置的 AI 一键推导或手动补充，避免因原文件文本过多导致大模型上下文 Token 超限。
 - **配图裁剪机制（取消自动裁剪，拆解题目默认不含配图）**：由于自动识别裁切容易产生不准的误差，系统已取消自动裁剪机制，拆解出的题目默认是不包含任何图片的。若原题包含配图，必须由用户在前端点击「手动截图」弹窗，通过拖拽框选进行 100% 零误差的高精度配图关联，这确保了配图插图的高画质和 100% 零误差。
 - **进度轮询与状态展示**：前端通过 `/api/upload/pdf-task` 提交文件并在右侧展现毛玻璃遮罩层与进度条，以每 1.5 秒的频率请求 `/api/tasks/{task_id}/status` 直至 `completed`。
+- **任务手动中止与 ESC 快捷键支持 (PDF Task Cancellation & ESC Handler)**：支持用户在 PDF 拆分过程中通过单击遮罩层上的【中止拆分 (ESC)】按钮或直接按键盘 `ESC` 键立即安全中断任务。前端会立即清除轮询定时器并调用 `POST /api/tasks/{task_id}/cancel`，后端检测到 `cancelled` 状态后自动提前退出线程以释放 OCR/大模型算力，并将界面平滑复位。
 - **手动拖拽框选截图**：每个拆解卡片均提供“手动截图”选项，点击可调出 PDF 页面查看灯箱，支持在页面图上左键点击并拖拽框选区域，向 `/api/ai/manual-crop-pdf` 发送百分比坐标进行精准的物理裁剪配图。
   - **生命周期管理与净化**：
     - **升级晋升 (Promotion)**：保存题目或更新题目时，若检测到 `/tmp/` 下的临时裁剪图，系统自动在后端将其 `shutil.move` 到 `static/uploads/` 永久保存并同步修改正文中的引用。

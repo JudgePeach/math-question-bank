@@ -173,7 +173,7 @@ def build_pdf_parse_system_prompt(curriculum: dict, generate_answers_bool: bool)
         "【可选教材范围及各章名称】:\n"
         f"{curriculum_text}\n"
         "【拆题与分类规则】:\n"
-        "1. 题干拆解：保留 LaTeX 公式与格式。挑选精确的【学段】与【所属章节】。\n"
+        "1. 题干拆解与公式自愈：保留并提纯题目格式。如果输入文本包含从原生电子 PDF 提取的 Unicode 数学符号或折行分式（如 √、∈、α、β、上下标等），必须自动将其规范化转译为标准 LaTeX 语法（如 \\sqrt{...}、\\frac{...}{...}、\\in、\\alpha）；选择题选项统一格式化为 \\begin{choices} \\item ... \\end{choices} 环境；填空题下划线统一使用标准的 \\fillin 宏。挑选精确的【学段】与【所属章节】。\n"
         "2. 插图路径保护：若包含 `/static/uploads/tmp/pdf_crop_` 临时裁剪路径，必须 100% 完整原样保留该 URL（不可改名或重命名），并提取至 `referenced_images` 数组中。\n"
         "3. 题型与难度判断：question_type 设为 single_choice/multi_choice/fill_in_blank/detailed_answer；difficulty 设为 easy_error/challenge/qiangji。\n"
         "4. 答案与解析处理：\n"

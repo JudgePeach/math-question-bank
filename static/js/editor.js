@@ -1547,23 +1547,19 @@ const PAGE_LIMIT = 20;
         }
         window.cleanChoiceStemParentheses = cleanChoiceStemParentheses;
 
-        function preprocessFormulaForKaTeX(text) {
-            if (!text) return "";
-            
-            // Clean up any historical \vphantom{...} or \strut from underline text to prevent KaTeX rendering artifact letters
-            let clean = text.replace(/\\vphantom\s*\{\s*[^}]*?\}/g, '')
-                            .replace(/\\strut\b/g, '');
-
-            // Transform exam-zh \fillin macro into KaTeX compatible \underline
-            clean = clean.replace(/(\$?)\\fillin(?:\[([^\]]*?)\])?(?:\[([^\]]*?)\])?(\$?)/g, function(match, preDollar, p1, p2, postDollar) {
-                const inMath = (preDollar === '$' && postDollar === '$');
+        function transformFillinMacro(clean) {
+            if (!clean) return "";
+            return clean.replace(/(\$?)\\fillin(?:\[([^\]]*?)\])?(?:\[([^\]]*?)\])?(\$?)/g, function(match, preDollar, p1, p2, postDollar, offset, fullString) {
+                // 计算当前 \fillin 之前未转义 $ 的数量
+                const preString = fullString.substring(0, offset).replace(/\\\$/g, '');
+                const dollarsBefore = (preString.match(/\$/g) || []).length;
+                const isInsideMath = (dollarsBefore % 2 !== 0) || (preDollar === '$');
                 
                 function isLengthStr(str) {
                     return /^\s*\d+(?:\.\d+)?\s*(?:cm|mm|in|pt|pc|em|ex)\s*$/i.test(str || '');
                 }
 
                 let innerTex = '\\underline{\\hspace{1.5cm}}';
-
                 if (p1 !== undefined && p2 !== undefined) {
                     const len = isLengthStr(p1) ? p1 : '1.5cm';
                     innerTex = '\\underline{\\hspace{' + len + '}' + p2 + '\\hspace{' + len + '}}';
@@ -1575,12 +1571,34 @@ const PAGE_LIMIT = 20;
                     }
                 }
 
-                if (inMath) {
-                    return innerTex;
+                // 检查从当前位置往后，本行内是否还有未转义的 $
+                const postString = fullString.substring(offset + match.length).replace(/\\\$/g, '');
+                const nextDollarIdx = postString.indexOf('$');
+                const nextNewlineIdx = postString.indexOf('\n');
+                const hasClosingDollarInLine = (nextDollarIdx !== -1 && (nextNewlineIdx === -1 || nextDollarIdx < nextNewlineIdx));
+
+                if (isInsideMath) {
+                    if (postDollar === '$' || hasClosingDollarInLine) {
+                        return innerTex;
+                    } else {
+                        // 句末漏写闭合 $ 时自动补齐闭合
+                        return innerTex + '$';
+                    }
                 } else {
-                    return (preDollar || '') + '$' + innerTex + '$' + (postDollar || '');
+                    return '$' + innerTex + '$';
                 }
             });
+        }
+
+        function preprocessFormulaForKaTeX(text) {
+            if (!text) return "";
+            
+            // Clean up any historical \vphantom{...} or \strut from underline text to prevent KaTeX rendering artifact letters
+            let clean = text.replace(/\\vphantom\s*\{\s*[^}]*?\}/g, '')
+                            .replace(/\\strut\b/g, '');
+
+            // Transform exam-zh \fillin macro into KaTeX compatible \underline with math environment awareness
+            clean = transformFillinMacro(clean);
 
             // Clean up illegal nesting like \underline{\quad $\mathbf{14}$ \quad} in KaTeX
             clean = clean.replace(/(\\underline\s*\{[^}]*?)\$([^$]+?)\$([^}]*?\})/g, function(match, p1, p2, p3) {
@@ -1588,8 +1606,10 @@ const PAGE_LIMIT = 20;
             });
             
             // If \underline{\hspace{...}} is directly exposed outside math environments, wrap it inside '$...$' so KaTeX scanner can parse it!
-            clean = clean.replace(/(\$?)\\underline\s*\{\s*\\hspace\s*\{([^}]+?)\}\s*\}(\$?)/g, function(match, p1, p2, p3) {
-                if (p1 === '$' || p3 === '$') {
+            clean = clean.replace(/(\$?)\\underline\s*\{\s*\\hspace\s*\{([^}]+?)\}\s*\}(\$?)/g, function(match, p1, p2, p3, offset, fullString) {
+                const preString = fullString.substring(0, offset).replace(/\\\$/g, '');
+                const dollarsBefore = (preString.match(/\$/g) || []).length;
+                if (dollarsBefore % 2 !== 0 || p1 === '$' || p3 === '$') {
                     return match;
                 }
                 return '$\\underline{\\hspace{' + p2 + '}}$';
@@ -1677,6 +1697,16 @@ const PAGE_LIMIT = 20;
                                
             // Replace LaTeX line breaks with HTML br tags outside math environments
             tempText = tempText.replace(/\\\\/g, '<br>');
+            
+            // 严格遵循 LaTeX 标准规范：双回车 (\n\n+) 代表起新段落 (<br><br>)；单回车 (\n) 仅视为空格，不产生硬换行；显式 \\\\ 代表强制换行 (<br>)
+            tempText = tempText.replace(/\r\n/g, '\n')
+                               .replace(/\n\n+/g, '<br><br>')
+                               .replace(/\n/g, ' ');
+                               
+            // 转换 Markdown 题目插图与配图语法 ![](/static/uploads/xxx.png) 为精美自适应预览图
+            tempText = tempText.replace(/!\[(.*?)\]\(([^)]+)\)/g, function(match, alt, src) {
+                return `<div class="my-2.5 text-center"><img src="${src}" alt="${alt || '题目配图'}" class="max-w-[220px] max-h-[180px] object-contain rounded-lg border border-slate-200 shadow-2xs inline-block cursor-zoom-in hover:shadow-sm hover:scale-[1.02] transition-all" onclick="window.open('${src}', '_blank')" title="点击在新标签页查看高清原图"></div>`;
+            });
                                
             // Restore math blocks with HTML escaping
             function escapeHtml(str) {
@@ -1695,164 +1725,9 @@ const PAGE_LIMIT = 20;
             
         function parseMarkdownWithMath(text) {
             if (!text) return "";
-
-            // Process choices environment (exam-zh-choices)
-            text = text.replace(/\\begin\{choices\}([\s\S]*?)\\end\{choices\}/g, function(match, inner) {
-                const items = inner.split(/\\item/).map(item => item.trim()).filter(item => item.length > 0);
-                const labels = ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H'];
-                let maxLen = 0;
-                items.forEach(item => {
-                    const cleanText = item.replace(/\$([^\$]+?)\$/g, (m, math) => math.replace(/\\[a-zA-Z]+/g, 'x')).replace(/\$/g, '');
-                    if (cleanText.length > maxLen) {
-                        maxLen = cleanText.length;
-                    }
-                });
-
-                let gridCols = "grid-cols-4";
-                if (maxLen > 24) {
-                    gridCols = "grid-cols-1";
-                } else if (maxLen > 10) {
-                    gridCols = "grid-cols-2";
-                }
-
-                let html = `<div class="grid ${gridCols} gap-2 my-2 select-none choices-grid items-baseline">`;
-                items.forEach((item, idx) => {
-                    const label = labels[idx] || (idx + 1);
-                    html += `<div class="flex items-baseline"><span class="font-bold mr-1.5 text-slate-800 shrink-0">${label}.</span><span class="flex-1 [&>p]:m-0 [&>p]:inline">${item}</span></div>`;
-                });
-                html += '</div>';
-                return html;
-            });
-            
-            // 1. Clean up redundant LaTeX line breaks surrounding environments/items to avoid blank block lines
-            text = text.replace(/\\\\\s*\\begin\{/g, '\\begin{')
-                       .replace(/\\begin\{([^}]+?)\}\s*\\\\/g, '\\begin{$1}')
-                       .replace(/\\\\\s*\\end\{/g, '\\end{')
-                       .replace(/\\end\{([^}]+?)\}\s*\\\\/g, '\\end{$1}')
-                       .replace(/\\\\\s*\\item/g, '\\item')
-                       .replace(/\\item\s*\\\\/g, '\\item');
-
-            // 2. Convert standard LaTeX layout environments dynamically to HTML for beautiful rendering
-            text = text.replace(/\\begin\{center\}/g, '<div class="text-center my-2">')
-                       .replace(/\\end\{center\}/g, '</div>')
-                       // Custom label lists like \item[A.]
-                       .replace(/\\item\s*\[([^\]]+?)\]/g, '</li><li class="my-1 list-none -ml-5">$1 ')
-                       // Standard lists items
-                       .replace(/\\item/g, '</li><li class="my-1">')
-                       // List blocks opening & closing
-                       .replace(/\\begin\{itemize\}/g, '<ul class="list-disc pl-5 my-2">')
-                       .replace(/\\begin\{enumerate\}/g, '<ol class="list-decimal pl-5 my-2">')
-                       .replace(/\\end\{itemize\}/g, '</li></ul>')
-                       .replace(/\\end\{enumerate\}/g, '</li></ol>')
-                       // Strip trailing </li> at the start of lists gracefully
-                       .replace(/<ul class="list-disc pl-5 my-2">\s*<\/li>/g, '<ul class="list-disc pl-5 my-2">')
-                       .replace(/<ol class="list-decimal pl-5 my-2">\s*<\/li>/g, '<ol class="list-decimal pl-5 my-2">');
-            
-            // Clean up any historical \vphantom{...} or \strut from underline text to prevent KaTeX rendering artifact letters
-            text = text.replace(/\\vphantom\s*\{\s*[^}]*?\}/g, '')
-                        .replace(/\\strut\b/g, '');
-
-            // Transform exam-zh \fillin macro into KaTeX compatible \underline
-            text = text.replace(/(\$?)\\fillin(?:\[([^\]]*?)\])?(?:\[([^\]]*?)\])?(\$?)/g, function(match, preDollar, p1, p2, postDollar) {
-                const inMath = (preDollar === '$' && postDollar === '$');
-                
-                function isLengthStr(str) {
-                    return /^\s*\d+(?:\.\d+)?\s*(?:cm|mm|in|pt|pc|em|ex)\s*$/i.test(str || '');
-                }
-
-                let innerTex = '\\underline{\\hspace{1.5cm}}';
-
-                if (p1 !== undefined && p2 !== undefined) {
-                    const len = isLengthStr(p1) ? p1 : '1.5cm';
-                    innerTex = '\\underline{\\hspace{' + len + '}' + p2 + '\\hspace{' + len + '}}';
-                } else if (p1 !== undefined) {
-                    if (isLengthStr(p1)) {
-                        innerTex = '\\underline{\\hspace{' + p1 + '}}';
-                    } else {
-                        innerTex = '\\underline{\\quad ' + p1 + ' \\quad}';
-                    }
-                }
-
-                if (inMath) {
-                    return innerTex;
-                } else {
-                    return (preDollar || '') + '$' + innerTex + '$' + (postDollar || '');
-                }
-            });
-
-            // Clean up illegal nesting like \underline{\quad $\mathbf{14}$ \quad} in KaTeX
-            text = text.replace(/(\\underline\s*\{[^}]*?)\$([^$]+?)\$([^}]*?\})/g, function(match, p1, p2, p3) {
-                return '$' + p1 + p2 + p3 + '$';
-            });
-            
-            // If \underline{\hspace{...}} is directly exposed outside math environments, wrap it inside '$...$' so KaTeX scanner can parse it!
-            text = text.replace(/(\$?)\\underline\s*\{\s*\\hspace\s*\{([^}]+?)\}\s*\}(\$?)/g, function(match, p1, p2, p3) {
-                if (p1 === '$' || p3 === '$') {
-                    return match;
-                }
-                return '$\\underline{\\hspace{' + p2 + '}}$';
-            });
-            
-            const placeholders = [];
-            let placeholderCounter = 0;
-            
-            function savePlaceholder(match) {
-                const placeholder = `@@MATH_PLACEHOLDER_${placeholderCounter++}@@`;
-                placeholders.push({ placeholder, original: match });
-                return placeholder;
-            }
-            
-            let tempText = text;
-            
-            // 1. Protect block math $$...$$
-            tempText = tempText.replace(/\$\$([\s\S]*?)\$\$/g, savePlaceholder);
-            
-            // 2. Protect block math \[...\]
-            tempText = tempText.replace(/\\\[([\s\S]*?)\\\]/g, savePlaceholder);
-            
-            // 3. Protect inline math \(...\)
-            tempText = tempText.replace(/\\\(([\s\S]*?)\\\)/g, savePlaceholder);
-            
-            // 4. Protect inline math $...$
-            tempText = tempText.replace(/\$([^\$]+?)\$/g, savePlaceholder);
-            
-            // 4.5 Auto-heal exposed LaTeX math environments (e.g. \begin{cases}...\end{cases}) that lack $...$ wrapper
-            tempText = tempText.replace(/\\begin\{(cases|aligned|matrix|pmatrix|bmatrix|array|equation|gather)\}([\s\S]*?)\\end\{\1\}/g, function(match) {
-                return savePlaceholder('$' + match.trim() + '$');
-            });
-            
-            // Replace standard LaTeX spacing commands outside math environments with HTML spaces (supports both single and double backslashes)
-            tempText = tempText.replace(/\\\\qquad/g, '<span style="display:inline-block; width:2em;"></span>')
-                               .replace(/\\\\quad/g, '<span style="display:inline-block; width:1em;"></span>')
-                               .replace(/\\qquad/g, '<span style="display:inline-block; width:2em;"></span>')
-                               .replace(/\\quad/g, '<span style="display:inline-block; width:1em;"></span>');
-            
-            // Process LaTeX bold formatting outside math environments
-            tempText = tempText.replace(/\\textbf\s*\{([^{}]*?)\}/g, '<strong>$1</strong>');
-
-            // Replace all non-math LaTeX line breaks with HTML br tags
-            tempText = tempText.replace(/\\\\/g, '<br>');
-            
-            // Auto-heal single newlines before proof/solution steps (e.g., (1), 解：, 证明：, 因为, 所以, 故, 【) into double newlines
-            // NOTE: Uses capture groups instead of lookbehind for Safari compatibility!
-            tempText = tempText.replace(/([^\n])\n(?=[（(]?[0-9一二三四五六七八九十]+[）\.\)]|解[:：]|证明[:：]|已知|因为|所以|故|又因为|由|综上|因此|得|【)/g, '$1\n\n');
-
-            // 5. Parse markdown with marked (with breaks: true so single newlines convert to <br>) and sanitize with DOMPurify for XSS Protection
-            let html = DOMPurify.sanitize(marked.parse(tempText, { breaks: true, gfm: true }));
-            
-            // 6. Restore all math blocks literally with HTML escaping
-            function escapeHtml(str) {
-                return str.replace(/&/g, '&amp;')
-                          .replace(/</g, '&lt;')
-                          .replace(/>/g, '&gt;');
-            }
-
-            placeholders.forEach(({ placeholder, original }) => {
-                html = html.replace(placeholder, () => escapeHtml(original));
-            });
-            
-            return html;
+            return preprocessFormulaForKaTeX(text);
         }
+        window.parseMarkdownWithMath = parseMarkdownWithMath;
 
         // Format raw OCR questions by detecting choice options and introducing nice line breaks
         function formatQuestionContent(text) {

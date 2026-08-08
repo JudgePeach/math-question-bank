@@ -8,3 +8,6 @@ pillow>=10.0.0
 exceptiongroup>=1.0.2
 sniffio>=1.1.0
 pymupdf>=1.22.0
+# 可选高性能矢量 PDF 原生文本直提引擎 (Rust 高速内核)
+pdf-inspector>=0.2.0; sys_platform == 'darwin' or sys_platform == 'linux'
+

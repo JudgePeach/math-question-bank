@@ -21,6 +21,7 @@ DATA_BACKUP_DIR = PROJECT_ROOT / "data_backup"
 SYSTEM_GENERATED_DIR = PROJECT_ROOT / ".system_generated"
 
 DATABASE_FILE = PROJECT_ROOT / "math_question_bank.db"
+DATABASE_PATH = DATABASE_FILE
 ENV_FILE = PROJECT_ROOT / ".env"
 ENV_EXAMPLE_FILE = PROJECT_ROOT / ".env.example"
 

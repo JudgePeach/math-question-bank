@@ -1619,13 +1619,20 @@
                             <div class="w-full bg-slate-200 rounded-full h-1.5 mt-2 hidden" id="importProgressBarContainer">
                                 <div class="bg-brand-600 h-1.5 rounded-full transition-all duration-300" style="width: 0%" id="importProgressBar"></div>
                             </div>
-                            <p class="text-xs text-slate-500 max-w-xs leading-relaxed mt-1">
-                                AI 正在进行智能分割与属性匹配（分析长文本需要一定时间），请耐心等待。
+                            <p class="text-xs text-slate-500 max-w-xs leading-relaxed mt-1" id="importSubLoadingText">
+                                正在探测 PDF 试卷格式并准备提取...
                             </p>
                         </div>
                         <!-- Beautiful interactive logs console -->
                         <div class="w-full max-w-md bg-slate-50 rounded-xl p-3 text-left font-mono text-[10px] text-slate-600 overflow-y-auto h-24 select-none shadow-inner border border-slate-200" id="importLogsConsole">
                             <div>[SYSTEM] 准备就绪，等待上传图片...</div>
+                        </div>
+                        <!-- Cancel action button -->
+                        <div class="flex items-center space-x-2 pt-1" id="cancelImportActionContainer">
+                            <button id="btnCancelImport" onclick="cancelCurrentImportTask()" class="px-4 py-1.5 rounded-xl border border-slate-250 hover:border-red-300 bg-white hover:bg-red-50/80 text-slate-600 hover:text-red-600 font-bold text-xs transition-all shadow-2xs active:scale-95 flex items-center space-x-1.5 cursor-pointer" title="点击或按键盘 ESC 键可安全中止当前任务">
+                                <i class="fa-solid fa-ban text-xs text-red-500"></i>
+                                <span>中止拆分 (ESC)</span>
+                            </button>
                         </div>
                     </div>
 

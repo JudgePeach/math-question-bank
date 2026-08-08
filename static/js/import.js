@@ -1645,11 +1645,61 @@
                 });
         }
 
+        let currentPdfPollInterval = null;
+
+        function cancelCurrentImportTask() {
+            if (currentPdfPollInterval) {
+                clearInterval(currentPdfPollInterval);
+                currentPdfPollInterval = null;
+            }
+            if (window.currentPdfTaskId) {
+                fetch(`/api/tasks/${window.currentPdfTaskId}/cancel`, {
+                    method: 'POST',
+                    headers: {
+                        'X-Local-Token': localStorage.getItem('local_token') || ''
+                    }
+                }).catch(() => {});
+                window.currentPdfTaskId = null;
+            }
+            
+            appendImportLog('[USER] 用户已手动中止当前拆分任务。', 'info');
+            
+            const loadingState = document.getElementById('importLoadingState');
+            if (loadingState) {
+                loadingState.classList.add('hidden');
+            }
+            
+            const runBtn = document.getElementById('runParseBtn');
+            if (runBtn) {
+                runBtn.disabled = false;
+                runBtn.innerHTML = '<i class="fa-solid fa-wand-magic-sparkles"></i> <span>一键 AI 智能拆解并关联</span>';
+            }
+            
+            if (typeof showToast === 'function') {
+                showToast('已为您安全中止当前拆分流程', 'info');
+            }
+        }
+        window.cancelCurrentImportTask = cancelCurrentImportTask;
+
+        // 全局监听 ESC 键中止拆分流程
+        window.addEventListener('keydown', function(e) {
+            if (e.key === 'Escape' || e.keyCode === 27) {
+                const loadingState = document.getElementById('importLoadingState');
+                if (loadingState && !loadingState.classList.contains('hidden')) {
+                    cancelCurrentImportTask();
+                }
+            }
+        });
+
         function pollPdfTaskStatus(taskId, paperTitle) {
             let lastLog = '';
             const runBtn = document.getElementById('runParseBtn');
             
-            const timer = setInterval(() => {
+            if (currentPdfPollInterval) {
+                clearInterval(currentPdfPollInterval);
+            }
+
+            currentPdfPollInterval = setInterval(() => {
                 fetch(`/api/tasks/${taskId}/status`)
                 .then(r => {
                     if (!r.ok) throw new Error("获取任务进度失败");
@@ -1664,6 +1714,17 @@
                         lastLog = task.log;
                         appendImportLog(task.log, 'info');
                         document.getElementById('importLoadingText').textContent = task.log;
+                        
+                        const subText = document.getElementById('importSubLoadingText');
+                        if (subText) {
+                            if (task.status === 'ocr_extraction' || (task.log && task.log.includes('多模态'))) {
+                                subText.textContent = '正在通过多模态视觉引擎并行转译图文与公式，请稍候...';
+                            } else if (task.status === 'ai_splitting' || (task.log && task.log.includes('大模型') || task.log.includes('pdf-inspector'))) {
+                                subText.textContent = '文本与公式已提取完毕，正在通过大模型进行题目切片与属性匹配...';
+                            } else if (task.status === 'completed') {
+                                subText.textContent = '拆解完成，正在呈现题目审查列表...';
+                            }
+                        }
                     }
                     
                     if (task.page_images && task.page_images.length > 0) {
@@ -1671,7 +1732,8 @@
                     }
                     
                     if (task.status === 'completed') {
-                        clearInterval(timer);
+                        clearInterval(currentPdfPollInterval);
+                        currentPdfPollInterval = null;
                         parsedQuestionsData = task.data || [];
                         appendImportLog(`PDF 试卷智能分析并拆解成功！共分析出 ${parsedQuestionsData.length} 道高定数学题。`, 'success');
                         
@@ -1682,8 +1744,15 @@
                         
                         runBtn.disabled = false;
                         runBtn.innerHTML = '<i class="fa-solid fa-wand-magic-sparkles"></i> <span>一键 AI 智能拆解并关联</span>';
+                    } else if (task.status === 'cancelled') {
+                        clearInterval(currentPdfPollInterval);
+                        currentPdfPollInterval = null;
+                        document.getElementById('importLoadingState').classList.add('hidden');
+                        runBtn.disabled = false;
+                        runBtn.innerHTML = '<i class="fa-solid fa-wand-magic-sparkles"></i> <span>一键 AI 智能拆解并关联</span>';
                     } else if (task.status === 'error') {
-                        clearInterval(timer);
+                        clearInterval(currentPdfPollInterval);
+                        currentPdfPollInterval = null;
                         appendImportLog(`分析失败: ${task.error || '未知错误'}`, 'error');
                         
                         const loadingIcon = document.querySelector('#importLoadingState .fa-spinner');
@@ -2098,7 +2167,11 @@
                 contentPrev.innerHTML = '<span class="text-slate-400 italic text-2xs">题干预览将在此实时渲染...</span>';
             } else {
                 try {
-                    let html = parseMarkdownWithMath(contentText);
+                    let processedContent = contentText;
+                    if (typeof window.cleanChoiceStemParentheses === 'function') {
+                        processedContent = window.cleanChoiceStemParentheses(processedContent);
+                    }
+                    let html = parseMarkdownWithMath(processedContent);
                     
                     // Automatically append associated image thumbnails to preview if not already rendered in markdown HTML
                     if (q && q.image_paths && q.image_paths.length > 0) {

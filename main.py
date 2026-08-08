@@ -57,7 +57,13 @@ from mathbank.prompts import (
     build_tikz_correction_prompt,
     build_tikz_draw_prompt,
 )
+import shutil
+from mathbank.pdf_inspector_helper import (
+    is_pdf_inspector_available,
+    inspect_and_extract_pdf,
+)
 from mathbank.paths import (
+    DATABASE_PATH,
     DATA_BACKUP_DIR,
     ENV_FILE,
     PROJECT_ROOT,
@@ -77,6 +83,45 @@ SERVER_INSTANCE_ID = str(uuid.uuid4())
 
 # Initialize DB
 init_db()
+
+
+def print_startup_diagnostics():
+    """打印美观的系统环境、虚拟环境与加速引擎自检面板"""
+    is_venv = sys.prefix != sys.base_prefix
+    env_type = f"虚拟环境 ({os.path.basename(sys.prefix)})" if is_venv else "全局/系统环境"
+    pdf_insp_ok = is_pdf_inspector_available()
+    
+    # 检查 LaTeX 编译器
+    latex_engine = "未检测到 (需安装 TeX Live / MacTeX)"
+    if shutil.which("xelatex"):
+        latex_engine = "XeLaTeX (已就绪)"
+    elif shutil.which("pdflatex"):
+        latex_engine = "pdfLaTeX (已就绪)"
+
+    # 检查 PyMuPDF
+    fitz_ok = False
+    try:
+        import fitz
+        fitz_ok = True
+    except ImportError:
+        pass
+
+    print("=" * 64, flush=True)
+    print("      本地数学题库教研系统 (MathBank) 启动自检与诊断面板", flush=True)
+    print("=" * 64, flush=True)
+    print(f"  • Python 运行环境   : {sys.version.split()[0]} [{env_type}]", flush=True)
+    print(f"  • Python 可执行路径 : {sys.executable}", flush=True)
+    if is_venv:
+        print(f"  • 虚拟环境根目录   : {sys.prefix}", flush=True)
+    print(f"  • PDF Inspector 引擎: {'🚀 已就绪 (原生矢量试卷毫秒级直提)' if pdf_insp_ok else '⚠️ 未安装 (已自动平滑降级至 VLM 多模态 OCR)'}", flush=True)
+    print(f"  • PyMuPDF 渲染器    : {'✅ 已就绪' if fitz_ok else '❌ 未安装 (建议 pip install pymupdf)'}", flush=True)
+    print(f"  • LaTeX 编译排版    : {latex_engine}", flush=True)
+    print(f"  • SQLite 本地数据库 : {DATABASE_PATH}", flush=True)
+    print(f"  • 项目静态与根路径 : {PROJECT_ROOT}", flush=True)
+    print("=" * 64, flush=True)
+
+
+print_startup_diagnostics()
 
 def heal_database_curriculum_names():
     from mathbank.database import SessionLocal
@@ -3522,58 +3567,72 @@ def run_pdf_parsing_task(task_id: str, file_bytes: bytes, filename: str, generat
         except Exception:
             pass
 
-        with PDF_TASKS_LOCK:
-            PDF_TASKS[task_id] = {
-                "status": "ocr_extraction",
-                "progress": 30,
-                "log": f"共 {total_pages} 页，指定解析 {total_target_pages} 页。正在并行发起多模态 VLM 进行图文公式转译与插图定位...",
-                "page_images": page_urls
-            }
+        # 前置尝试通过 pdf-inspector 进行原生矢量试卷极速直提
+        inspector_result = inspect_and_extract_pdf(file_bytes, task_id)
+        if inspector_result.get("is_text_based") and inspector_result.get("markdown"):
+            print(f"[PDF Inspector Flow] 🚀 检测到原生矢量 PDF 试卷 (Type: {inspector_result.get('pdf_type')})，已启用毫秒级直提通道！", flush=True)
+            with PDF_TASKS_LOCK:
+                PDF_TASKS[task_id] = {
+                    "status": "ai_splitting",
+                    "progress": 60,
+                    "log": "检测到原生矢量试卷，已启用 pdf-inspector 高速直提排版文本（0 视觉 Token 消耗），正在解析题目...",
+                    "page_images": page_urls
+                }
+            full_latex_content = inspector_result["markdown"]
+            ocr_results = [full_latex_content]
+        else:
+            with PDF_TASKS_LOCK:
+                PDF_TASKS[task_id] = {
+                    "status": "ocr_extraction",
+                    "progress": 30,
+                    "log": f"共 {total_pages} 页，指定解析 {total_target_pages} 页。正在并行发起多模态 VLM 进行图文公式转译与插图定位...",
+                    "page_images": page_urls
+                }
 
-        # 并行 OCR 解析
-        ocr_results = [None] * total_target_pages
-        
-        def ocr_worker(local_idx, img_path):
-            try:
-                raw_text = ocr_pdf_page_image(img_path)
-                real_page_num = target_page_indices[local_idx] + 1
-                # 注入 Debug 原始文本回显
-                print(f"[DEBUG OCR Raw Response] 目标第 {real_page_num} 页的原始返回结果:\n{raw_text}\n" + "-"*40)
-                return local_idx, raw_text, None
-            except Exception as e_ocr:
-                return local_idx, "", str(e_ocr)
-                
-        with concurrent.futures.ThreadPoolExecutor(max_workers=min(total_target_pages, 8)) as executor:
-            futures = [executor.submit(ocr_worker, i, page_images[i]) for i in range(total_target_pages)]
+            # 并行 OCR 解析
+            ocr_results = [None] * total_target_pages
             
-            completed = 0
-            for fut in concurrent.futures.as_completed(futures):
-                local_idx, text, err = fut.result()
-                if err:
+            def ocr_worker(local_idx, img_path):
+                try:
+                    raw_text = ocr_pdf_page_image(img_path)
                     real_page_num = target_page_indices[local_idx] + 1
-                    raise RuntimeError(f"解析第 {real_page_num} 页出错: {err}")
+                    # 注入 Debug 原始文本回显
+                    print(f"[DEBUG OCR Raw Response] 目标第 {real_page_num} 页的原始返回结果:\n{raw_text}\n" + "-"*40)
+                    return local_idx, raw_text, None
+                except Exception as e_ocr:
+                    return local_idx, "", str(e_ocr)
+                    
+            with concurrent.futures.ThreadPoolExecutor(max_workers=min(total_target_pages, 8)) as executor:
+                futures = [executor.submit(ocr_worker, i, page_images[i]) for i in range(total_target_pages)]
                 
-                # 清洗配图并进行物理裁剪
-                processed_text = process_ocr_illustrations(text, page_images[local_idx], task_id)
-                ocr_results[local_idx] = processed_text
-                
-                completed += 1
-                prog = 30 + int((completed / total_target_pages) * 40)
-                with PDF_TASKS_LOCK:
-                    # 保持 page_images 的返回，使前端随时可用
-                    PDF_TASKS[task_id].update({
-                        "progress": prog,
-                        "log": f"多模态转译进度: {completed} / {total_target_pages} 页已完成..."
-                    })
+                completed = 0
+                for fut in concurrent.futures.as_completed(futures):
+                    local_idx, text, err = fut.result()
+                    if err:
+                        real_page_num = target_page_indices[local_idx] + 1
+                        raise RuntimeError(f"解析第 {real_page_num} 页出错: {err}")
+                    
+                    # 清洗配图并进行物理裁剪
+                    processed_text = process_ocr_illustrations(text, page_images[local_idx], task_id)
+                    ocr_results[local_idx] = processed_text
+                    
+                    completed += 1
+                    prog = 30 + int((completed / total_target_pages) * 40)
+                    with PDF_TASKS_LOCK:
+                        # 保持 page_images 的返回，使前端随时可用
+                        PDF_TASKS[task_id].update({
+                            "progress": prog,
+                            "log": f"多模态转译进度: {completed} / {total_target_pages} 页已完成..."
+                        })
 
-        # 拼接全文 LaTeX 源码
-        full_latex_content = "\n\n".join(ocr_results)
+            # 拼接全文 LaTeX 源码
+            full_latex_content = "\n\n".join(ocr_results)
 
         with PDF_TASKS_LOCK:
             PDF_TASKS[task_id].update({
                 "status": "ai_splitting",
                 "progress": 80,
-                "log": "公式转译完成！正在调用文本大模型拆解题目与标注属性..."
+                "log": "文本与公式准备就绪！正在调用大模型拆解题目与标注属性..."
             })
 
         # 执行拆题分析
@@ -3711,6 +3770,20 @@ def get_pdf_task_status(task_id: str):
                 status_code=404
             )
         return task
+
+
+@app.post("/api/tasks/{task_id}/cancel")
+def cancel_pdf_task(task_id: str):
+    with PDF_TASKS_LOCK:
+        task = PDF_TASKS.get(task_id)
+        if task:
+            task["status"] = "cancelled"
+            task["log"] = "用户已手动中止任务"
+            return {"status": "success", "message": "任务已成功中止"}
+        return JSONResponse(
+            content={"status": "error", "message": "未找到对应的任务 ID！"},
+            status_code=404
+        )
 
 
 @app.post("/api/ai/clear-temp-crops")

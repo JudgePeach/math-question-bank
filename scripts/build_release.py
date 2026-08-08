@@ -188,7 +188,8 @@ def copy_app_files():
     print("📂 Copying application files...")
     files_to_copy = [
         "main.py",
-        ".env.example"
+        ".env.example",
+        "requirements.txt"
     ]
     for f in files_to_copy:
         src = os.path.join(BASE_DIR, f)
@@ -215,8 +216,17 @@ def copy_app_files():
     shutil.copytree(
         os.path.join(BASE_DIR, "static"),
         os.path.join(BUILD_DIR, "static"),
-        dirs_exist_ok=True
+        dirs_exist_ok=True,
+        ignore=shutil.ignore_patterns("__pycache__", "*.pyc"),
     )
+
+    # Clean user uploads in release package to avoid leaking local test images
+    uploads_dir = os.path.join(BUILD_DIR, "static", "uploads")
+    if os.path.exists(uploads_dir):
+        shutil.rmtree(uploads_dir, ignore_errors=True)
+    os.makedirs(os.path.join(uploads_dir, "tmp"), exist_ok=True)
+    with open(os.path.join(uploads_dir, ".gitkeep"), "w") as f:
+        pass
 
     # Copy templates folder if exists
     if os.path.exists(os.path.join(BASE_DIR, "templates")):
@@ -344,8 +354,17 @@ def zip_macos_release():
     shutil.copytree(
         os.path.join(BASE_DIR, "static"),
         os.path.join(macos_build_dir, "static"),
-        dirs_exist_ok=True
+        dirs_exist_ok=True,
+        ignore=shutil.ignore_patterns("__pycache__", "*.pyc"),
     )
+
+    # Clean user uploads in release package
+    uploads_dir = os.path.join(macos_build_dir, "static", "uploads")
+    if os.path.exists(uploads_dir):
+        shutil.rmtree(uploads_dir, ignore_errors=True)
+    os.makedirs(os.path.join(uploads_dir, "tmp"), exist_ok=True)
+    with open(os.path.join(uploads_dir, ".gitkeep"), "w") as f:
+        pass
     
     # Copy templates folder if exists
     if os.path.exists(os.path.join(BASE_DIR, "templates")):
