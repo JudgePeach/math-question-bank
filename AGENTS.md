@@ -61,7 +61,7 @@
 - **全工作台试题序号同步 (#seq_num Sync)**：
   - 后端接口（`GET /api/questions`、`GET /api/questions/{id}`）自动基于 SQLite 物理升序索引计算全局纯净序号 `seq_num` (1 ~ N)。
   - 题库研讨工作台（`editor.js`）与组卷排版工作台（`paper.js`）均统一优先采用 `q.seq_num` 作为试题卡片与 Toast 交互的视觉编号（如 `#22`），彻底规避历史删题导致的数据库主键 ID 断号/跳号给用户带来的困扰。
-  - **预览元数据稳定重绘**：编辑已有题目时，前端会在编辑态缓存原始 `created_at`。切换题型、难度或修改来源、标签触发右侧 `paperBadges` 局部重绘时，必须持续保留“录入于”时间徽章；草稿、新建及清空编辑器时必须同步清空该缓存，防止上一题时间串入新题。
+  - **编辑会话状态与预览单一来源 (EditorState & Single Renderer)**：`api.js` 中的只读方法对象 `EditorState` 是当前题目 ID、纯净序号、录入时间、草稿 ID 与编辑模式的唯一状态来源，状态切换必须使用 `reset()`、`useQuestion()`、`useDraft()`、`setDraftId()` 或 `clearDraft()`，严禁重新引入平行全局变量。`editor.js` 的 `renderEditorPaperMeta()` 是右侧 `paperBadges` 与来源栏的唯一写入入口；`import.js` 等数据加载模块只能填充表单、更新 `EditorState` 并调用该渲染函数，不得自行拼接同一区域 HTML。题目详情异步返回时还必须核对请求 ID 与当前 `EditorState.questionId`，丢弃快速跨题切换产生的过期响应。这样可确保切换题型、难度、来源、标签、题目或草稿时，编号与“录入于”时间不会丢失、串题或被旧请求覆盖。
 - **AI 智能组卷与教育学理推理 (AI Paper Auto-Selection with Pedagogical Reasoning)**：
   - 一键组卷功能升级调用 `PREFER_SOLVE_MODEL` 核心解题大模型，融入中学数学教学教研思维（双向细目表、知识点覆盖率与难度阶梯分布），自动从题库中挑选最适配的题目组合。
 - **工作台状态无缝持久化与零闪烁首屏渲染 (Workspace State Persistence & Zero Flash)**：

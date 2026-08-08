@@ -64,11 +64,72 @@
             };
         })();
 
+        // Single source of truth for the current editor session identity.
+        // Editable form values continue to live in the DOM during this low-risk phase.
+        const EditorState = (() => {
+            const state = {
+                questionId: null,
+                seqNum: null,
+                createdAt: null,
+                draftId: null,
+                mode: 'new'
+            };
+
+            const reset = () => {
+                state.questionId = null;
+                state.seqNum = null;
+                state.createdAt = null;
+                state.draftId = null;
+                state.mode = 'new';
+            };
+
+            const useQuestion = (question) => {
+                state.questionId = question && question.id != null ? question.id : null;
+                state.seqNum = question && question.seq_num != null ? question.seq_num : null;
+                state.createdAt = question && question.created_at ? question.created_at : null;
+                state.draftId = null;
+                state.mode = state.questionId == null ? 'new' : 'question';
+            };
+
+            const useDraft = (draft) => {
+                state.questionId = null;
+                state.seqNum = null;
+                state.createdAt = null;
+                state.draftId = draft && draft.id != null ? draft.id : null;
+                state.mode = state.draftId == null ? 'new' : 'draft';
+            };
+
+            const setDraftId = (draftId) => {
+                state.draftId = draftId == null ? null : draftId;
+                if (state.questionId == null) {
+                    state.mode = state.draftId == null ? 'new' : 'draft';
+                }
+            };
+
+            const clearDraft = () => {
+                state.draftId = null;
+                state.mode = state.questionId == null ? 'new' : 'question';
+            };
+
+            const snapshot = () => ({ ...state });
+
+            return Object.freeze({
+                get questionId() { return state.questionId; },
+                get seqNum() { return state.seqNum; },
+                get createdAt() { return state.createdAt; },
+                get draftId() { return state.draftId; },
+                get mode() { return state.mode; },
+                reset,
+                useQuestion,
+                useDraft,
+                setDraftId,
+                clearDraft,
+                snapshot
+            });
+        })();
+        window.EditorState = EditorState;
+
         // Global variables
-        let currentQuestionId = null;
-        let currentSeqNum = null;
-        let currentCreatedAt = null;
-        let currentDraftId = null; // Track if current editing item is a draft
         let activeSidebarTab = 'bank'; // 'bank' or 'drafts'
         let categoryTree = {};
         let systemMetadata = { question_types: [], difficulties: [], curriculum: {} };
@@ -790,7 +851,7 @@
                     if (typeof window.reloadCurrentQuestionSilently === 'function') {
                         window.reloadCurrentQuestionSilently();
                     }
-                    if (!currentQuestionId && typeof window.backupEditorState === 'function') {
+                    if (!EditorState.questionId && typeof window.backupEditorState === 'function') {
                         window.backupEditorState(null, null);
                     }
                 })

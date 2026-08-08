@@ -1,7 +1,5 @@
         function startNewQuestionWithoutPrompt() {
-            currentQuestionId = null;
-            currentCreatedAt = null;
-            currentDraftId = null;
+            EditorState.reset();
             document.getElementById('editorTitle').textContent = '录入新数学题';
             
             document.getElementById('editContent').value = '';
@@ -73,10 +71,7 @@
         function clearEditor() {
             if (confirm('确认清空当前所有的编辑草稿吗？此操作无法撤销。')) {
                 cancelAllOcr(); // Cancel any active OCR requests!
-                currentQuestionId = null;
-                currentSeqNum = null;
-                currentCreatedAt = null;
-                currentDraftId = null; // Reset draft id!
+                EditorState.reset();
                 document.getElementById('editorTitle').textContent = '录入新数学题';
                 
                 document.getElementById('editContent').value = '';
@@ -121,10 +116,7 @@
         }
 
         function startNewQuestion() {
-            currentQuestionId = null;
-            currentSeqNum = null;
-            currentCreatedAt = null;
-            currentDraftId = null; // Reset draft id!
+            EditorState.reset();
             document.getElementById('editorTitle').textContent = '录入新数学题';
             
             window.lastOcrOriginalImagePath = '';
@@ -222,7 +214,7 @@
                     
                     questions.forEach(q => {
                         // Exclude the current editing question
-                        if (currentQuestionId && q.id === currentQuestionId) {
+                        if (EditorState.questionId && q.id === EditorState.questionId) {
                             return;
                         }
                         
@@ -263,12 +255,12 @@
                 return;
             }
 
-            if (!currentQuestionId) {
+            if (!EditorState.questionId) {
                 showToast('当前正在录入新题目，请先保存本题后再建立实时关联。', 'info');
                 return;
             }
 
-            if (parseInt(targetId, 10) === parseInt(currentQuestionId, 10)) {
+            if (parseInt(targetId, 10) === parseInt(EditorState.questionId, 10)) {
                 showToast('题目不能与自身建立关联', 'warning');
                 return;
             }
@@ -277,7 +269,7 @@
                 const formData = new FormData();
                 formData.append('target_id', targetId);
 
-                const res = await fetch(`/api/questions/${currentQuestionId}/associate`, {
+                const res = await fetch(`/api/questions/${EditorState.questionId}/associate`, {
                     method: 'POST',
                     headers: {
                         'X-Local-Token': localStorage.getItem('local_token') || ''
@@ -293,7 +285,7 @@
 
                     // 刷新右侧预览区的关联变式题目卡片及下拉框
                     if (typeof loadAssociatedQuestionsInList === 'function') {
-                        loadAssociatedQuestionsInList(currentQuestionId);
+                        loadAssociatedQuestionsInList(EditorState.questionId);
                     }
                 } else {
                     showToast(data.detail || data.message || '关联建立失败', 'error');
@@ -306,7 +298,7 @@
 
         // Clear the related question association (bidirectional, backend + UI)
         function clearRelatedQuestion() {
-            if (!currentQuestionId) {
+            if (!EditorState.questionId) {
                 // No question loaded, just clear the UI
                 const dropdown = document.getElementById('editRelatedQuestion');
                 const numInput = document.getElementById('editRelatedQuestionNum');
@@ -316,7 +308,7 @@
                 return;
             }
 
-            fetch(`/api/questions/${currentQuestionId}/associated`, { method: 'DELETE' })
+            fetch(`/api/questions/${EditorState.questionId}/associated`, { method: 'DELETE' })
                 .then(r => r.json())
                 .then(data => {
                     if (data.status === 'success') {
@@ -406,10 +398,8 @@
 
         // Select a question to Edit & Preview
         function selectQuestion(item) {
-            currentQuestionId = item.id;
-            currentSeqNum = item.seq_num;
-            currentCreatedAt = item.created_at || null;
-            currentDraftId = null; // Reset draft id!
+            EditorState.useQuestion(item);
+            const requestedQuestionId = item.id;
             document.getElementById('editorTitle').textContent = '编辑数学题';
             
             // Clear any previous OCR preview when switching questions
@@ -434,7 +424,10 @@
                     return r.json();
                 })
                 .then(fullItem => {
-                    currentCreatedAt = fullItem.created_at || null;
+                    if (EditorState.questionId !== requestedQuestionId) {
+                        return;
+                    }
+                    EditorState.useQuestion(fullItem);
                     window.lastOcrOriginalImagePath = '';
                     window.contentLastCompiledTikzPath = '';
                     window.answerLastCompiledTikzPath = '';
@@ -520,26 +513,8 @@
                         document.getElementById('editReview').dispatchEvent(new Event('input'));
                     }
                     
-                    // Load selected styled preview in paper panel
-                    const badges = document.getElementById('paperBadges');
-                    const sourceEl = document.getElementById('paperFooterSource');
-                    
-                    let paperTagsHtml = '';
-                    if (fullItem.tags) {
-                        const tagList = fullItem.tags.split(/[,，]+/).map(t => t.trim()).filter(t => t.length > 0);
-                        tagList.forEach(tag => {
-                            paperTagsHtml += `<span class="text-[10px] font-bold px-2 py-0.5 rounded-md bg-amber-50 text-amber-600 border border-amber-250/60 flex items-center space-x-0.5"><i class="fa-solid fa-tag text-[8px] text-amber-500 mr-1"></i>${tag}</span>`;
-                        });
-                    }
-
-                    badges.innerHTML = `
-                        <span class="text-[10px] font-bold px-2 py-0.5 rounded-md bg-slate-100 text-slate-700">编号：#${fullItem.seq_num}</span>
-                        <span class="text-[10px] font-bold px-2 py-0.5 rounded-md bg-brand-50 text-brand-700">题型：${getTypeText(fullItem.question_type)}</span>
-                        <span class="text-[10px] font-bold px-2 py-0.5 rounded-md bg-indigo-50 text-indigo-700">难度：${getDifficultyText(fullItem.difficulty)}</span>
-                        <span class="text-[10px] font-bold px-2 py-0.5 rounded-md bg-emerald-50 text-emerald-700 inline-flex items-center"><i class="fa-regular fa-clock mr-1"></i>录入于：${formatChineseDate(fullItem.created_at)}</span>
-                        ${paperTagsHtml}
-                    `;
-                    sourceEl.textContent = `来源: ${fullItem.source || '本地教研录入'}`;
+                    // Render editor metadata through the single shared preview path.
+                    renderEditorPaperMeta();
                     
                     // Load associated questions list and handle group selection
                     loadAssociatedQuestionsInList(fullItem.id);
@@ -560,14 +535,19 @@
         }
 
         window.reloadCurrentQuestionSilently = function() {
-            if (currentQuestionId) {
-                selectQuestion({ id: currentQuestionId, seq_num: currentSeqNum });
+            if (EditorState.questionId) {
+                selectQuestion({
+                    id: EditorState.questionId,
+                    seq_num: EditorState.seqNum,
+                    created_at: EditorState.createdAt
+                });
             }
         };
 
         // Save/Update Question in SQLite (returns Promise)
         function saveQuestion(skipCheck = false) {
             return new Promise(async (resolve) => {
+                const editorSession = EditorState.snapshot();
                 const content = document.getElementById('editContent').value;
                 const qtype = document.getElementById('editQType').value;
                 const compulsory = document.getElementById('editCompulsory').value;
@@ -649,8 +629,8 @@
                 let url = '/api/questions';
                 let method = 'POST';
                 
-                if (currentQuestionId) {
-                    url = `/api/questions/${currentQuestionId}`;
+                if (editorSession.questionId) {
+                    url = `/api/questions/${editorSession.questionId}`;
                     method = 'PUT';
                 }
                 
@@ -672,19 +652,21 @@
                 })
                 .then(data => {
                     if (data.status === 'success') {
-                        showToast(currentQuestionId ? '题目已成功更新！' : '题目已成功保存！');
+                        showToast(editorSession.questionId ? '题目已成功更新！' : '题目已成功保存！');
 
                         // Clear OCR preview on save success
                         clearContentOcrPreview();
                         clearOcrPreview();
 
                         // Delete draft if it was saved from a draft
-                        if (currentDraftId) {
+                        if (editorSession.draftId) {
                             let drafts = getLocalStorageDrafts();
-                            drafts = drafts.filter(d => d.id !== currentDraftId);
+                            drafts = drafts.filter(d => d.id !== editorSession.draftId);
                             setLocalStorageDrafts(drafts);
                             updateDraftCountBadge();
-                            currentDraftId = null;
+                            if (EditorState.draftId === editorSession.draftId) {
+                                EditorState.clearDraft();
+                            }
                         }
 
                         // Reload list, dropdown, and autocomplete selectors
@@ -692,7 +674,7 @@
                         loadCategories();
                         refreshRelatedDropdown();
 
-                        if (!currentQuestionId) {
+                        if (!editorSession.questionId) {
                             // After success insert, select it
                             selectQuestion(data.question);
                         } else {
@@ -854,7 +836,7 @@
                 .then(data => {
                     if (data.status === 'success') {
                         showToast('题目已成功删除！');
-                        if (currentQuestionId === id) {
+                        if (EditorState.questionId === id) {
                             startNewQuestion();
                         } else {
                             loadQuestions();
@@ -3408,4 +3390,3 @@
         window.processAsyncAnswerGeneration = processAsyncAnswerGeneration;
         window.associateRelatedQuestion = associateRelatedQuestion;
         window.clearRelatedQuestion = clearRelatedQuestion;
-

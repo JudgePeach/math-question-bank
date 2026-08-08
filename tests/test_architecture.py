@@ -9,6 +9,9 @@ from mathbank.paths import (
 from mathbank.prompts import build_ai_solve_prompts
 
 
+STATIC_JS_DIR = PROJECT_ROOT / "static" / "js"
+
+
 def test_shared_paths_are_absolute_and_project_anchored():
     for path in (DATABASE_FILE, STATIC_DIR, TEMPLATES_DIR, CURRICULUMS_DIR):
         assert path.is_absolute()
@@ -37,3 +40,25 @@ def test_solve_prompt_builder_preserves_required_structure():
     assert "草稿" in user_prompt
     assert "简化步骤" in user_prompt
     assert "若 $x=1$" in user_prompt
+
+
+def test_editor_identity_and_meta_preview_have_single_sources():
+    api_source = (STATIC_JS_DIR / "api.js").read_text(encoding="utf-8")
+    editor_source = (STATIC_JS_DIR / "editor.js").read_text(encoding="utf-8")
+    import_source = (STATIC_JS_DIR / "import.js").read_text(encoding="utf-8")
+    combined_source = "\n".join((api_source, editor_source, import_source))
+
+    assert "const EditorState =" in api_source
+    assert "window.EditorState = EditorState" in api_source
+    for legacy_name in (
+        "currentQuestionId",
+        "currentSeqNum",
+        "currentCreatedAt",
+        "currentDraftId",
+    ):
+        assert legacy_name not in combined_source
+
+    assert combined_source.count("getElementById('paperBadges')") == 1
+    assert "window.renderEditorPaperMeta = renderEditorPaperMeta" in editor_source
+    assert "renderEditorPaperMeta();" in import_source
+    assert "EditorState.questionId !== requestedQuestionId" in import_source

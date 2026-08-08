@@ -377,7 +377,7 @@ const PAGE_LIMIT = 20;
             const tags = document.getElementById('editTags') ? document.getElementById('editTags').value.trim() : '';
             
             const draft = {
-                id: currentDraftId || ('draft-' + Date.now()),
+                id: EditorState.draftId || ('draft-' + Date.now()),
                 content: content,
                 question_type: qtype,
                 category_compulsory: compulsory,
@@ -405,7 +405,7 @@ const PAGE_LIMIT = 20;
             }
             
             setLocalStorageDrafts(drafts);
-            currentDraftId = draft.id;
+            EditorState.setDraftId(draft.id);
             
             // Backup the new draft state as the "original state" so the editor is no longer modified
             backupEditorState(null, draft.id);
@@ -420,10 +420,7 @@ const PAGE_LIMIT = 20;
         }
 
         function selectDraft(draft) {
-            currentQuestionId = null;
-            currentSeqNum = null;
-            currentCreatedAt = null;
-            currentDraftId = draft.id;
+            EditorState.useDraft(draft);
             
             // Populate form fields
             document.getElementById('editContent').value = draft.content || '';
@@ -477,6 +474,7 @@ const PAGE_LIMIT = 20;
             } else {
                 document.getElementById('editReview').dispatchEvent(new Event('input'));
             }
+            renderEditorPaperMeta();
             
             document.getElementById('editorTitle').textContent = `编辑草稿 - 暂存中`;
             
@@ -602,7 +600,7 @@ const PAGE_LIMIT = 20;
                 const itemCard = document.createElement('div');
                 itemCard.setAttribute('data-draft-id', item.id);
                 
-                const isActive = currentDraftId === item.id;
+                const isActive = EditorState.draftId === item.id;
                 itemCard.className = `p-3.5 mx-1.5 rounded-xl border glass-card hover:bg-white cursor-pointer transition-all duration-200 shadow-sm flex flex-col space-y-2 select-none group relative ${isActive ? 'border-emerald-500 bg-white ring-2 ring-emerald-100 shadow-md' : 'border-slate-200'}`;
                 
                 const cleanContent = preprocessFormulaForKaTeX(item.content || '');
@@ -686,9 +684,9 @@ const PAGE_LIMIT = 20;
                 showToast('草稿已删除！');
                 updateDraftCountBadge();
                 
-                if (currentDraftId === id) {
+                if (EditorState.draftId === id) {
                     // Reset current draft state
-                    currentDraftId = null;
+                    EditorState.clearDraft();
                     startNewQuestionWithoutPrompt();
                 }
                 
@@ -1112,7 +1110,7 @@ const PAGE_LIMIT = 20;
                         const typeText = getTypeText(item.question_type);
                         
                         const itemCard = document.createElement('div');
-                        itemCard.className = `question-card p-3.5 mx-1.5 flex flex-col space-y-2 select-none group relative ${currentQuestionId === item.id ? 'active' : ''}`;
+                        itemCard.className = `question-card p-3.5 mx-1.5 flex flex-col space-y-2 select-none group relative ${EditorState.questionId === item.id ? 'active' : ''}`;
                         itemCard.dataset.id = item.id;
                         
                         const cleanContent = preprocessFormulaForKaTeX(item.content || '');
@@ -1322,6 +1320,55 @@ const PAGE_LIMIT = 20;
         window.jumpToSidebarPage = jumpToSidebarPage;
 
         // Format ISO Date string to Chinese local datetime: xxxx年xx月xx日xx时xx分
+        function escapeEditorMetaText(value) {
+            return String(value == null ? '' : value)
+                .replace(/&/g, '&amp;')
+                .replace(/</g, '&lt;')
+                .replace(/>/g, '&gt;')
+                .replace(/"/g, '&quot;')
+                .replace(/'/g, '&#039;');
+        }
+
+        function renderEditorPaperMeta() {
+            const badges = document.getElementById('paperBadges');
+            const sourceEl = document.getElementById('paperFooterSource');
+            const editQType = document.getElementById('editQType');
+            const editDifficulty = document.getElementById('editDifficulty');
+            const editSource = document.getElementById('editSource');
+            const editTags = document.getElementById('editTags');
+
+            if (!badges || !sourceEl || !editQType || !editDifficulty || !editSource) {
+                return;
+            }
+
+            const seqBadge = EditorState.seqNum != null
+                ? `<span class="text-[10px] font-bold px-2 py-0.5 rounded-md bg-slate-100 text-slate-700">编号：#${escapeEditorMetaText(EditorState.seqNum)}</span>`
+                : '<span class="text-[10px] font-bold px-2 py-0.5 rounded-md bg-slate-150 text-slate-500">编号：新题目</span>';
+
+            const createdAtBadge = EditorState.createdAt
+                ? `<span class="text-[10px] font-bold px-2 py-0.5 rounded-md bg-emerald-50 text-emerald-700 inline-flex items-center"><i class="fa-regular fa-clock mr-1"></i>录入于：${escapeEditorMetaText(formatChineseDate(EditorState.createdAt))}</span>`
+                : '';
+
+            let paperTagsHtml = '';
+            const tagsVal = editTags ? editTags.value.trim() : '';
+            if (tagsVal) {
+                const tagList = tagsVal.split(/[,，]+/).map(tag => tag.trim()).filter(tag => tag.length > 0);
+                tagList.forEach(tag => {
+                    paperTagsHtml += `<span class="text-[10px] font-bold px-2 py-0.5 rounded-md bg-amber-50 text-amber-600 border border-amber-250/60 flex items-center space-x-0.5"><i class="fa-solid fa-tag text-[8px] text-amber-500 mr-1"></i>${escapeEditorMetaText(tag)}</span>`;
+                });
+            }
+
+            badges.innerHTML = `
+                ${seqBadge}
+                <span class="text-[10px] font-bold px-2 py-0.5 rounded-md bg-brand-50 text-brand-700">题型：${escapeEditorMetaText(getTypeText(editQType.value))}</span>
+                <span class="text-[10px] font-bold px-2 py-0.5 rounded-md bg-indigo-50 text-indigo-700">难度：${escapeEditorMetaText(getDifficultyText(editDifficulty.value))}</span>
+                ${createdAtBadge}
+                ${paperTagsHtml}
+            `;
+            sourceEl.textContent = `来源: ${editSource.value || '本地教研录入'}`;
+        }
+        window.renderEditorPaperMeta = renderEditorPaperMeta;
+
         function setupRealtimePreviews() {
             const editContent = document.getElementById('editContent');
             const editAnswer = document.getElementById('editAnswerMarkdown');
@@ -1463,54 +1510,19 @@ const PAGE_LIMIT = 20;
             window.updateAnswerPreview = updateAnswerPreview;
             window.updateReviewPreview = updateReviewPreview;
             
-            // Sync side headings dynamically
+            // Keep all editor metadata preview updates on one rendering path.
             const editQType = document.getElementById('editQType');
             const editDifficulty = document.getElementById('editDifficulty');
             const editSource = document.getElementById('editSource');
-            
             const editTags = document.getElementById('editTags');
-            
-            const updatePaperMeta = () => {
-                const badges = document.getElementById('paperBadges');
-                const sourceEl = document.getElementById('paperFooterSource');
-                
-                let seqBadge = '';
-                if (currentSeqNum) {
-                    seqBadge = `<span class="text-[10px] font-bold px-2 py-0.5 rounded-md bg-slate-100 text-slate-700">编号：#${currentSeqNum}</span>`;
-                } else {
-                    seqBadge = `<span class="text-[10px] font-bold px-2 py-0.5 rounded-md bg-slate-150 text-slate-500">编号：新题目</span>`;
-                }
 
-                const createdAtBadge = currentCreatedAt
-                    ? `<span class="text-[10px] font-bold px-2 py-0.5 rounded-md bg-emerald-50 text-emerald-700 inline-flex items-center"><i class="fa-regular fa-clock mr-1"></i>录入于：${formatChineseDate(currentCreatedAt)}</span>`
-                    : '';
-                
-                let paperTagsHtml = '';
-                const tagsVal = editTags ? editTags.value.trim() : '';
-                if (tagsVal) {
-                    const tagList = tagsVal.split(/[,，]+/).map(t => t.trim()).filter(t => t.length > 0);
-                    tagList.forEach(tag => {
-                        paperTagsHtml += `<span class="text-[10px] font-bold px-2 py-0.5 rounded-md bg-amber-50 text-amber-600 border border-amber-250/60 flex items-center space-x-0.5"><i class="fa-solid fa-tag text-[8px] text-amber-500 mr-1"></i>${tag}</span>`;
-                    });
-                }
-                
-                badges.innerHTML = `
-                    ${seqBadge}
-                    <span class="text-[10px] font-bold px-2 py-0.5 rounded-md bg-brand-50 text-brand-700">题型：${getTypeText(editQType.value)}</span>
-                    <span class="text-[10px] font-bold px-2 py-0.5 rounded-md bg-indigo-50 text-indigo-700">难度：${getDifficultyText(editDifficulty.value)}</span>
-                    ${createdAtBadge}
-                    ${paperTagsHtml}
-                `;
-                sourceEl.textContent = `来源: ${editSource.value || '本地教研录入'}`;
-            };
-            
-            editQType.addEventListener('change', updatePaperMeta);
-            editDifficulty.addEventListener('change', updatePaperMeta);
-            editSource.addEventListener('input', updatePaperMeta);
-            if (editTags) editTags.addEventListener('input', updatePaperMeta);
+            editQType.addEventListener('change', renderEditorPaperMeta);
+            editDifficulty.addEventListener('change', renderEditorPaperMeta);
+            editSource.addEventListener('input', renderEditorPaperMeta);
+            if (editTags) editTags.addEventListener('input', renderEditorPaperMeta);
             
             // Initial render of meta badges
-            updatePaperMeta();
+            renderEditorPaperMeta();
         }
 
         function cleanChoiceStemParentheses(text) {
