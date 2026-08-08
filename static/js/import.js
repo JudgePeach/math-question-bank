@@ -1,5 +1,6 @@
         function startNewQuestionWithoutPrompt() {
             currentQuestionId = null;
+            currentCreatedAt = null;
             currentDraftId = null;
             document.getElementById('editorTitle').textContent = '录入新数学题';
             
@@ -74,6 +75,7 @@
                 cancelAllOcr(); // Cancel any active OCR requests!
                 currentQuestionId = null;
                 currentSeqNum = null;
+                currentCreatedAt = null;
                 currentDraftId = null; // Reset draft id!
                 document.getElementById('editorTitle').textContent = '录入新数学题';
                 
@@ -121,6 +123,7 @@
         function startNewQuestion() {
             currentQuestionId = null;
             currentSeqNum = null;
+            currentCreatedAt = null;
             currentDraftId = null; // Reset draft id!
             document.getElementById('editorTitle').textContent = '录入新数学题';
             
@@ -405,6 +408,7 @@
         function selectQuestion(item) {
             currentQuestionId = item.id;
             currentSeqNum = item.seq_num;
+            currentCreatedAt = item.created_at || null;
             currentDraftId = null; // Reset draft id!
             document.getElementById('editorTitle').textContent = '编辑数学题';
             
@@ -430,6 +434,7 @@
                     return r.json();
                 })
                 .then(fullItem => {
+                    currentCreatedAt = fullItem.created_at || null;
                     window.lastOcrOriginalImagePath = '';
                     window.contentLastCompiledTikzPath = '';
                     window.answerLastCompiledTikzPath = '';
@@ -3403,5 +3408,4 @@
         window.processAsyncAnswerGeneration = processAsyncAnswerGeneration;
         window.associateRelatedQuestion = associateRelatedQuestion;
         window.clearRelatedQuestion = clearRelatedQuestion;
-
 

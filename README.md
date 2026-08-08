@@ -19,7 +19,7 @@
 - 🎨 **1:1 A4 仿真组卷排版**：提供像 Word 一样直观的仿真试卷画布，密封线、大标题、注意事项框一应俱全。支持拖拽排序、题目留白高度调整，以及一键切换 A3 答题卡与高考 19 题预设。
 - ⚡ **秒级公式渲染与高考级导出**：内置专业数学公式排版引擎，网页上修改秒级实时预览。支持一键导出高考标准的高清 PDF 试卷与完整的排版源码包。
 - 🤖 **AI 智能组卷与辅助解答**：内置 DeepSeek 等大语言模型，能根据考点细目表与难度阶梯一键自动挑选题目生成试卷；支持单题一键 AI 生成详细解析与教学反思。
-- 📚 **主流教材大纲一键切换**：原生预设 **人教A版**、**人教B版** 与 **苏教版** 标准高中大纲目录，切换大纲时系统自动智能映射，无需手动重新整理题目。
+- 📚 **主流教材大纲一键切换**：原生预设 **人教A版**、**人教B版**、**苏教版**与**沪教版**标准高中大纲目录，切换大纲时系统自动智能映射，无需手动重新整理题目。
 - 🔍 **便捷识别与标签管理**：支持批量上传截图或 PDF 快速拆题入库，自带“易错”、“挑战”、“强基”等四档难度标签与变式题/子母题关联管理。
 
 ---
@@ -56,6 +56,7 @@
    ```bash
    pip install -r requirements.txt
    ```
+   参与开发或运行测试时，改用 `pip install -r requirements-dev.txt`。
 
 3. **启动项目**：
    * **Mac 用户**：双击 **`启动题库系统.command`**
@@ -153,6 +154,11 @@ python3 search_questions.py -q "导数"
 ├── data_backup/                # 实时备份与 AI 专属只读题库 (已忽略)
 │   ├── questions_backup.json   # 完整数据库 JSON 备份
 │   └── questions_library.md    # AI 专属只读题库（过滤答案，防 AI 泄露）
+├── mathbank/                   # 后端共享支撑包
+│   ├── paths.py                # 与工作目录无关的项目路径单一来源
+│   ├── curriculums.py          # 四套教材预设加载与默认元数据
+│   ├── prompts.py              # OCR/解题/拆卷/TikZ/组卷提示构建器
+│   └── resources/curriculums/  # A/B/S/H 四套共享 JSON 大纲
 ├── static/                     # 前端静态资源目录
 │   ├── index.html              # 主控制台前端页面 (SPA)
 │   ├── css/                    # Tailwind, FontAwesome, KaTeX 离线样式
@@ -176,6 +182,7 @@ python3 search_questions.py -q "导数"
 ├── 启动题库系统.bat            # Windows 一键启动脚本
 ├── 启动题库系统.command        # macOS 一键启动脚本
 ├── requirements.txt            # Python 依赖包清单
+├── requirements-dev.txt        # 开发与测试依赖
 └── .env.example                # 环境变量配置模板
 ```
 

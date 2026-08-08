@@ -6,6 +6,7 @@
 ## 2. 核心技术栈与无构建原则
 本项目追求极致流畅的用户体验和极简的本地环境配置，严格禁止引入现代复杂前端构建工具（如 Webpack/Vite/Node.js 生态）：
 - **后端**：Python 3.10+ + FastAPI + Uvicorn。
+- **后端渐进式模块架构**：根目录 `main.py` 保留为 `uvicorn main:app` 兼容入口；共享能力集中在 `mathbank/`。`paths.py` 是数据库、静态资源、上传、模板、备份、`.env` 与构建路径的唯一来源，`curriculums.py` 负责四套教材 JSON，`prompts.py` 负责 OCR、解题、分类、拆卷、TikZ 与 AI 组卷提示构建。不得在路由或前端重新复制这些数据。
 - **数据库**：SQLite + SQLAlchemy（轻量化本地数据库，数据存储在项目根目录下的 `./math_question_bank.db` 中）。
 - **前端页面**：单页面应用 `static/index.html`（纯 HTML5 + 原生 JavaScript，无编译，秒级加载）。
 - **前端样式与字体**：Tailwind CSS + FontAwesome 图标库 + Inter/Outfit Webfonts（均已下载至本地 `/static/lib` 支持 100% 离线使用与跨平台字体降级）。
@@ -14,6 +15,7 @@
 - **图文识图 (OCR)**：高精度、多通道的云端 LaTeX OCR 引擎，支持 SiliconFlow (实名送16元代金券) 和 阿里百炼 (注册享受3个月免费额度) 的双通道并发识图。
 - **接口安全校验**：所有的非只读操作（POST / PUT / DELETE）在后端均有强置 `X-Local-Token` 安全令牌拦截保护，前端由 `api.js` 进行 fetch 全局劫持代理，确保本地数据防跨站越权篡改。
 - **中转站模型 7:3 弹性 UI 布局与推理强度 (Reasoning Effort) 自动映射**：系统 API 设置界面针对“中转站 A”和“中转站 B”支持 7:3 分割布局（70% 宽度填写/选择模型名称，30% 宽度选择推理强度 `Default (空白)` / `Low` / `Medium` / `High` / `XHigh` / `Max`）。前端自动导出形如 `gpt-5.6-sol:high` 的模型配置，后端自动提纯真实模型名称并向 JSON 请求体中静默注入 `reasoning_effort` 或 `enable_thinking` 参数。
+- **路径单一来源约束**：新增文件访问必须从 `mathbank.paths` 取绝对路径并锚定 `PROJECT_ROOT`；禁止依赖 `os.getcwd()`、裸 `./data_backup` 或脚本目录推断数据库位置，保证任意工作目录启动行为一致。
 
 ---
 
@@ -36,7 +38,7 @@
   - **分类必填校验**：当保存题目未选学段或章节时，页面会**平滑滚动**至对应下拉框，并触发临时的**红色高亮聚焦光晕**（`ring-2 ring-red-400 border-red-400`），动画持续 2.5 秒。
 - **自定义标签顶栏展示与智能折叠**：自定义标签平移至卡片顶部右侧（紧靠难度标签），采用 items-start 与 flex-1 弹性对齐。为防标签过多破坏布局，最多直接展示 2 个标签（单个最大宽度 80px 自动截断），其余折叠至 `+N` 徽章。悬浮在徽章上瞬间唤起定制琥珀色气泡展示全部标签，且阻断点击冒泡。
 - **PDF 编译 LRU 哈希缓存**：后端 `compile_tex_to_pdf` 内置基于全套 LaTeX 源码 MD5 哈希与关联插图修改时间戳的线程安全 LRU 内存缓存（容量 50）。在组卷预览与合并导出时，若 LaTeX 源码与配图未发生任何变动，直接 0ms 瞬间从内存复用已编译的 PDF 字节流，大幅降低 CPU 负载并提升合并导出响应速度。
-- **教材大纲多版本预设模版 (Syllabus Preset Templates)**：系统设置中支持快捷切换**人教A版**、**人教B版**、**苏教版**和**沪教版**（含必修四与选修三独立的数学建模活动群）的标准数学大纲预设。大纲目录结构已根据最新高中数学课标及各版本教材实物目录进行精准录入。切换大纲不会修改已入库题目数据，而是智能生成对应大纲的自定义维度配置 JSON 并自动填充进元数据编辑器中，保存后全局生效。
+- **教材大纲多版本预设模版 (Syllabus Preset Templates)**：系统设置中支持快捷切换**人教A版**、**人教B版**、**苏教版**和**沪教版**。四套预设统一存放在 `mathbank/resources/curriculums/A.json`、`B.json`、`S.json`、`H.json`，后端通过 `mathbank.curriculums` 加载，前端通过 `GET /api/config/curriculum-presets/{version}` 获取，禁止在 `api.js` 重复硬编码。切换只替换待保存的元数据配置，不直接改写题库数据。
 - **多教材大纲身份共存与迁移系统 (Curriculum Coexistence & Migration)**：
   - **活跃-镜像模式 (Active-Mirror Pattern)**：使用 `question_curriculums` 表独立保存题目在每套大纲（`A`、`B`、`S`、`H`）中的分类投影镜像。主表 `questions` 的分类字段仅实时缓存当前活跃配置，无需重构任何查询过滤或检索代码。
   - **版本切换与自动增量迁移**：保存并切换大纲版本（`POST /api/config/metadata`）时，后端自动获取旧活跃版本和新目标版本。若版本不同，自动在后台查找目标版本中尚未分类的题目，通过“通用关键字路由算法”将原版本的分类翻译为对应新版本的章级大纲镜像（增量翻译，不覆盖用户手动修改的分类记录），最后通过 SQLite 子查询极速将目标版本的分类同步刷入 `questions` 表的主字段。
@@ -44,6 +46,7 @@
 - **全工作台试题序号同步 (#seq_num Sync)**：
   - 后端接口（`GET /api/questions`、`GET /api/questions/{id}`）自动基于 SQLite 物理升序索引计算全局纯净序号 `seq_num` (1 ~ N)。
   - 题库研讨工作台（`editor.js`）与组卷排版工作台（`paper.js`）均统一优先采用 `q.seq_num` 作为试题卡片与 Toast 交互的视觉编号（如 `#22`），彻底规避历史删题导致的数据库主键 ID 断号/跳号给用户带来的困扰。
+  - **预览元数据稳定重绘**：编辑已有题目时，前端会在编辑态缓存原始 `created_at`。切换题型、难度或修改来源、标签触发右侧 `paperBadges` 局部重绘时，必须持续保留“录入于”时间徽章；草稿、新建及清空编辑器时必须同步清空该缓存，防止上一题时间串入新题。
 - **AI 智能组卷与教育学理推理 (AI Paper Auto-Selection with Pedagogical Reasoning)**：
   - 一键组卷功能升级调用 `PREFER_SOLVE_MODEL` 核心解题大模型，融入中学数学教学教研思维（双向细目表、知识点覆盖率与难度阶梯分布），自动从题库中挑选最适配的题目组合。
 - **工作台状态无缝持久化与零闪烁首屏渲染 (Workspace State Persistence & Zero Flash)**：
@@ -253,9 +256,9 @@
 ## 5. 开发与运行指令
 
 ### 5.1 依赖项安装
-在终端中执行以下命令安装运行本项目所需的所有 Python 环境依赖（已彻底剔除臃肿且容易报错的本地 `pix2text` 相关库）：
+运行环境使用 `pip install -r requirements.txt`；参与开发或运行测试使用：
 ```bash
-pip install fastapi uvicorn sqlalchemy python-multipart python-dotenv requests pillow pytest
+pip install -r requirements-dev.txt
 ```
 
 ### 5.2 启动开发服务
@@ -274,9 +277,10 @@ uvicorn main:app --reload
 - **`tests/test_database.py`**：测试数据库模型 `Question` CRUD、字典序列化、以及面向 AI 安全的摘要输出。
 - **`tests/test_api.py`**：测试 API 的写鉴权逻辑、设置查询、分类聚合、统计计算及题目完整 CRUD 交互。
 - **`tests/test_sync.py`**：测试 AI 排版 Markdown 清洗算法、并发写保护后台文件备份、以及 1 小时安全防错垃圾图片清理系统。
+- **`tests/test_architecture.py`**：验证统一绝对路径、四套教材共享资源以及提示构建器边界。
 
 #### 测试执行指令
 运行测试时，**必须指定 `tests/` 目录**，以防止 Pytest 自动扫描并执行 `scratch/` 目录下的临时未就绪测试脚本：
 ```bash
-PYTHONPATH=. pytest tests/
+python3 -m pytest tests/
 ```

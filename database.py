@@ -1,11 +1,11 @@
 import datetime
 import json
 from sqlalchemy import create_engine, Column, Integer, String, Text, DateTime
-from sqlalchemy.ext.declarative import declarative_base
-from sqlalchemy.orm import sessionmaker
+from sqlalchemy.orm import declarative_base, sessionmaker
+from mathbank.paths import DATABASE_FILE, sqlite_url
 
 # SQLite Database URL
-SQLALCHEMY_DATABASE_URL = "sqlite:///./math_question_bank.db"
+SQLALCHEMY_DATABASE_URL = sqlite_url(DATABASE_FILE)
 
 engine = create_engine(
     SQLALCHEMY_DATABASE_URL, connect_args={"check_same_thread": False}

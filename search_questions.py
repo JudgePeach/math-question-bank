@@ -3,9 +3,10 @@ import sqlite3
 import argparse
 import sys
 import os
+from mathbank.paths import DATABASE_FILE
 
 # Database Path
-DB_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "math_question_bank.db")
+DB_PATH = str(DATABASE_FILE)
 
 def get_association_group(question_id):
     """Finds the association group ID for a specific question ID."""

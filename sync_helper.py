@@ -5,8 +5,9 @@ import datetime
 import threading
 from sqlalchemy.orm import Session
 from database import Question, SessionLocal
+from mathbank.paths import DATA_BACKUP_DIR
 
-BACKUP_DIR = "data_backup"
+BACKUP_DIR = str(DATA_BACKUP_DIR)
 JSON_BACKUP_PATH = os.path.join(BACKUP_DIR, "questions_backup.json")
 MD_BACKUP_PATH = os.path.join(BACKUP_DIR, "questions_library.md")
 
@@ -119,7 +120,7 @@ def generate_markdown_library(questions, filepath: str):
     
     # 题型和难度映射关系
     custom_meta = None
-    custom_meta_path = "data_backup/custom_metadata.json"
+    custom_meta_path = os.path.join(BACKUP_DIR, "custom_metadata.json")
     if os.path.exists(custom_meta_path):
         try:
             with open(custom_meta_path, "r", encoding="utf-8") as f:

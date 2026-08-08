@@ -6,6 +6,7 @@
 ## 2. 核心技术栈
 本项目追求极简配置与极致体验，严格遵循以下技术选型，**不要引入复杂的现代前端构建工具（如 Webpack/Vite/Node.js 生态）**：
 - **后端**：Python + FastAPI。
+- **后端渐进式模块架构**：根目录 `main.py` 继续作为 `uvicorn main:app` 兼容入口；跨模块共享能力集中在 `mathbank/`：`paths.py` 统一锚定数据库、静态资源、上传、模板、备份、环境变量和构建路径，`curriculums.py` 加载四套教材 JSON，`prompts.py` 提供 OCR、解题、分类、拆卷、TikZ 与 AI 组卷的纯提示构建器。严禁重新在路由或前端复制这些长篇数据。
 - **数据库**：SQLite + SQLAlchemy（轻量级，数据存储在本地 `.db` 文件中）。
 - **前端页面**：纯 HTML + 原生 JavaScript。
 - **前端脚本拆分**：前端 JS 采用无编译的“渐进式级联加载”架构，分模块存放在 `static/js/` 目录下（`api.js`、`editor.js`、`ocr.js`、`import.js`），加载顺序严格依存，不允许产生任何编译及捆绑动作。
@@ -16,6 +17,10 @@
 > [!IMPORTANT]
 > **文档指南同步更新规则**：
 > 在进行任何系统更新、重构、功能新增或回滚（Rollback）操作时，AI 代理与开发者**必须同步更新 `AGENTS.md` 和 `CLAUDE.md`**，确保两个文档中记录的技术设计、接口规范与实际代码实现 100% 准确一致，严防信息滞后。
+
+> [!IMPORTANT]
+> **项目路径单一来源规则**：
+> 所有持久化文件和捆绑资源路径必须从 `mathbank.paths` 获取，并以 `PROJECT_ROOT` 为锚点。禁止新增依赖当前工作目录的 `./data_backup`、`os.getcwd()` 或“脚本所在目录就是数据库目录”等隐式假设，确保从任意工作目录启动服务或 CLI 都访问同一份数据。
 
 > [!WARNING]
 > **JavaScript 语法防错与浏览器兼容性警示**：前端的四个脚本文件在浏览器中级联加载。任何人在修改 JS 代码时，必须遵循以下规则：
@@ -48,7 +53,7 @@
   - 题型标签（单选、多选、填空、解答）。
   - 其他属性（难度、来源等）。
   - 自定义标签：卡片顶部右侧（紧靠难度标签）使用 items-start 与 flex-1 弹性对齐，智能限制至多显示 2 个（单标签超长截断），其余折叠至 `+N` 徽章，悬浮时使用定制琥珀色气泡瞬时展示，且阻断点击事件不干扰卡片跳转。
-- **教材大纲多版本预设模版 (Syllabus Preset Templates)**：系统设置中支持快捷切换**人教A版**、**人教B版**、**苏教版**和**沪教版**（含必修四与选修三独立的数学建模活动群）的标准数学大纲预设。大纲目录结构已根据最新高中数学课标及各版本教材实物目录进行精准录入。切换大纲不会修改已入库题目数据，而是智能生成对应大纲的自定义维度配置 JSON 并自动填充进元数据编辑器中，保存后全局生效。
+- **教材大纲多版本预设模版 (Syllabus Preset Templates)**：系统设置中支持快捷切换**人教A版**、**人教B版**、**苏教版**和**沪教版**（含必修四与选修三独立的数学建模活动群）的标准数学大纲预设。四套权威数据统一存放在 `mathbank/resources/curriculums/A.json`、`B.json`、`S.json`、`H.json`，后端由 `mathbank.curriculums` 加载，前端通过只读接口 `GET /api/config/curriculum-presets/{version}` 获取，禁止在 `api.js` 重复硬编码。切换大纲不会修改已入库题目数据，而是生成对应大纲的元数据配置 JSON，保存后全局生效。
 - **多教材大纲身份共存与迁移系统 (Curriculum Coexistence & Migration)**：
   - **活跃-镜像模式 (Active-Mirror Pattern)**：新建表 `question_curriculums` 用以存放题目在每套大纲（`A`、`B`、`S`、`H`）中的分类镜像。`questions` 主表字段仅反映当前活跃配置。
   - **大纲切换与自动增量迁移**：当用户在设置中保存并切换教材版本时（`POST /api/config/metadata`），系统会自动检测原活跃版本与新目标版本。若版本发生变化，系统会在后台自动对目标大纲中尚未分类（增量模式）的题目运行“通用关键词路由翻译算法”，瞬间生成并同步保存对应的章级镜像，最后批量刷入 `questions` 表的主字段中，无需用户进行任何手动迁移操作。
@@ -56,6 +61,7 @@
 - **全工作台试题序号同步 (#seq_num Sync)**：
   - 后端接口（`GET /api/questions`、`GET /api/questions/{id}`）自动基于 SQLite 物理升序索引计算全局纯净序号 `seq_num` (1 ~ N)。
   - 题库研讨工作台（`editor.js`）与组卷排版工作台（`paper.js`）均统一优先采用 `q.seq_num` 作为试题卡片与 Toast 交互的视觉编号（如 `#22`），彻底规避历史删题导致的数据库主键 ID 断号/跳号给用户带来的困扰。
+  - **预览元数据稳定重绘**：编辑已有题目时，前端会在编辑态缓存原始 `created_at`。切换题型、难度或修改来源、标签触发右侧 `paperBadges` 局部重绘时，必须持续保留“录入于”时间徽章；草稿、新建及清空编辑器时必须同步清空该缓存，防止上一题时间串入新题。
 - **AI 智能组卷与教育学理推理 (AI Paper Auto-Selection with Pedagogical Reasoning)**：
   - 一键组卷功能升级调用 `PREFER_SOLVE_MODEL` 核心解题大模型，融入中学数学教学教研思维（双向细目表、知识点覆盖率与难度阶梯分布），自动从题库中挑选最适配的题目组合。
 - **工作台状态无缝持久化与零闪烁首屏渲染 (Workspace State Persistence & Zero Flash)**：
@@ -208,14 +214,15 @@
 - **排版原则**：参考 Notion，注重留白（Padding/Margin）与呼吸感。
 
 ## 6. 开发与运行指令
-- **依赖安装**：`pip install fastapi uvicorn sqlalchemy python-multipart python-dotenv requests pillow pytest`
+- **运行依赖安装**：`pip install -r requirements.txt`
+- **开发/测试依赖安装**：`pip install -r requirements-dev.txt`
 - **本地启动命令**：`uvicorn main:app --reload`
 - 在每次生成或修改代码后，必须确保应用能够通过上述命令正常启动，且没有任何控制台报错。
 
 ### 6.1 单元测试套件与执行
 本项目配备了高可用、完全隔离的 pytest 单元测试（使用内存 SQLite `StaticPool` 保证零持久化污染）：
-- 测试用例位于 `tests/` 目录下（`test_database.py`, `test_api.py`, `test_sync.py`）。
+- 测试用例位于 `tests/` 目录下，除业务 API、数据库、同步与试卷测试外，`test_architecture.py` 专门验证共享路径、四套大纲资源与提示构建器边界。
 - **运行单元测试指令**：为了防止 Pytest 扫描到 `scratch/` 目录中的临时或废弃脚本导致报错，**执行测试时必须限定在 `tests/` 文件夹下**：
   ```bash
-  PYTHONPATH=. pytest tests/
+  python3 -m pytest tests/
   ```

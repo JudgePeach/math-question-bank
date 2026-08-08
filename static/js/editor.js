@@ -422,6 +422,7 @@ const PAGE_LIMIT = 20;
         function selectDraft(draft) {
             currentQuestionId = null;
             currentSeqNum = null;
+            currentCreatedAt = null;
             currentDraftId = draft.id;
             
             // Populate form fields
@@ -1479,6 +1480,10 @@ const PAGE_LIMIT = 20;
                 } else {
                     seqBadge = `<span class="text-[10px] font-bold px-2 py-0.5 rounded-md bg-slate-150 text-slate-500">编号：新题目</span>`;
                 }
+
+                const createdAtBadge = currentCreatedAt
+                    ? `<span class="text-[10px] font-bold px-2 py-0.5 rounded-md bg-emerald-50 text-emerald-700 inline-flex items-center"><i class="fa-regular fa-clock mr-1"></i>录入于：${formatChineseDate(currentCreatedAt)}</span>`
+                    : '';
                 
                 let paperTagsHtml = '';
                 const tagsVal = editTags ? editTags.value.trim() : '';
@@ -1493,6 +1498,7 @@ const PAGE_LIMIT = 20;
                     ${seqBadge}
                     <span class="text-[10px] font-bold px-2 py-0.5 rounded-md bg-brand-50 text-brand-700">题型：${getTypeText(editQType.value)}</span>
                     <span class="text-[10px] font-bold px-2 py-0.5 rounded-md bg-indigo-50 text-indigo-700">难度：${getDifficultyText(editDifficulty.value)}</span>
+                    ${createdAtBadge}
                     ${paperTagsHtml}
                 `;
                 sourceEl.textContent = `来源: ${editSource.value || '本地教研录入'}`;
@@ -1883,4 +1889,3 @@ const PAGE_LIMIT = 20;
         setInterval(() => {
             fetch('/api/heartbeat', { method: 'POST' }).catch(() => {});
         }, 15000);
-

@@ -10,6 +10,7 @@ from collections import OrderedDict
 from io import BytesIO
 from sqlalchemy.orm import Session
 from database import Question, Paper, PaperQuestion, QuestionCurriculum
+from mathbank.paths import TEMPLATES_DIR
 
 # In-memory LRU cache for compiled PDF bytes
 _PDF_CACHE_LOCK = threading.Lock()
@@ -43,7 +44,7 @@ def clean_choice_stem_parentheses(text: str) -> str:
     return cleaned
 
 def format_stem_paragraphs(stem_text: str) -> str:
-    """
+    r"""
     Safely assemble question stem lines into coherent LaTeX paragraphs.
     1. Preserves explicit double line breaks (empty lines) intended by the user.
     2. Identifies sub-question & note starts ONLY at line start (e.g. (1), (2), (a), (b), ①, ②, 注：, 提示：),
@@ -85,7 +86,7 @@ def format_stem_paragraphs(stem_text: str) -> str:
     return "\n\n".join(paragraphs)
 
 def clean_content_for_latex(content: str, q_type: str = "", is_answer: bool = False) -> str:
-    """
+    r"""
     Clean markdown/LaTeX question content for exam-zh LaTeX document export based on 试卷类模板.tex.
     Preserves math delimiters $...$ and $$...$$, tikz code, and handles choices & \paren environments.
     """
@@ -518,7 +519,16 @@ def compile_tex_to_pdf(tex_content: str, image_paths: list = None) -> tuple:
                 if os.path.exists(log_path):
                     with open(log_path, "r", encoding="utf-8", errors="ignore") as lf:
                         log_txt += "\n" + lf.read()
-                return (None, f"编译失败，无法生成 PDF:\n{log_txt[:2000]}")
+                # Preserve both the first error and the final summary; either can
+                # contain the actionable diagnostic depending on the TeX engine.
+                first_error = log_txt.find("\n!")
+                if len(log_txt) <= 8000:
+                    diagnostic = log_txt
+                elif first_error >= 0:
+                    diagnostic = f"{log_txt[max(0, first_error - 1000):first_error + 3000]}\n...\n{log_txt[-4000:]}"
+                else:
+                    diagnostic = f"{log_txt[:2000]}\n...\n{log_txt[-6000:]}"
+                return (None, f"编译失败，无法生成 PDF:\n{diagnostic}")
         except FileNotFoundError:
             return (None, "系统未检测到 xelatex 编译器，请确保已安装 TeX Live / MiKTeX / MacTeX 并加入 PATH。")
         except subprocess.TimeoutExpired:
@@ -565,7 +575,7 @@ def build_answer_sheet_latex(title: str, subtitle: str, questions_data: list) ->
     Generate Answer Sheet (答题卡.tex) LaTeX code based on templates/答题卡.tex or built-in default.
     Dynamic updates: title, question scores, and embedded TikZ/image nodes for Q15-Q19.
     """
-    template_path = os.path.join(os.path.dirname(__file__), "templates", "答题卡.tex")
+    template_path = str(TEMPLATES_DIR / "答题卡.tex")
     content = ""
     if os.path.exists(template_path):
         try:
@@ -576,7 +586,7 @@ def build_answer_sheet_latex(title: str, subtitle: str, questions_data: list) ->
 
     if not content:
         content = r"""
-\documentclass[UTF8, 11pt, oneside]{ctexart}
+\documentclass[UTF8, fontset=fandol, 11pt, oneside]{ctexart}
 \usepackage{amsmath, amsthm, amssymb, graphicx}
 \usepackage[bookmarks=true, colorlinks, citecolor=blue, linkcolor=black]{hyperref}
 \usepackage[a3paper, landscape,left=0.7cm, right=0.7cm, top=0.6cm, bottom=0.6cm]{geometry}

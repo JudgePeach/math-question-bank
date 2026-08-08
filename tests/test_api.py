@@ -208,6 +208,19 @@ def test_api_metadata_config(client):
         client.post("/api/config/metadata", json=original_config, headers=headers)
 
 
+def test_curriculum_preset_api(client):
+    for version in ("A", "B", "S", "H"):
+        response = client.get(f"/api/config/curriculum-presets/{version}")
+        assert response.status_code == 200
+        data = response.json()
+        assert data["version"] == version
+        assert data["name"]
+        assert data["metadata"]["curriculum"]
+
+    response = client.get("/api/config/curriculum-presets/unknown")
+    assert response.status_code == 404
+
+
 def test_pdf_task_and_crop(client):
     headers = {"X-Local-Token": LOCAL_TOKEN}
     # 1. Test POST /api/upload/pdf-task with invalid format
@@ -307,8 +320,6 @@ def test_figure_align_api(client):
     res_get = client.get(f"/api/questions/{q_id}")
     assert res_get.status_code == 200
     assert res_get.json()["figure_align"] == "center"
-
-
 
 
 

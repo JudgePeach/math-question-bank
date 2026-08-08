@@ -4,18 +4,19 @@ import subprocess
 import urllib.request
 import zipfile
 import ssl
+from mathbank.paths import BUILD_CACHE_DIR, DIST_DIR as PROJECT_DIST_DIR, PROJECT_ROOT
 
 # Bypass SSL verification to avoid certificate errors on macOS/Windows
 ssl._create_default_https_context = ssl._create_unverified_context
 
 # Paths
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-DIST_DIR = os.path.join(BASE_DIR, "dist")
+BASE_DIR = str(PROJECT_ROOT)
+DIST_DIR = str(PROJECT_DIST_DIR)
 BUILD_DIR = os.path.join(DIST_DIR, "mathbank-windows")
 PYTHON_DIR = os.path.join(BUILD_DIR, "python")
 WHEELS_DIR = os.path.join(DIST_DIR, "wheels")
 SITE_PACKAGES = os.path.join(PYTHON_DIR, "site-packages")
-CACHE_DIR = os.path.join(BASE_DIR, ".build_cache")
+CACHE_DIR = str(BUILD_CACHE_DIR)
 CACHE_WHEELS_DIR = os.path.join(CACHE_DIR, "wheels")
 
 PYTHON_ZIP_URL = "https://www.python.org/ftp/python/3.10.11/python-3.10.11-embed-amd64.zip"
@@ -200,6 +201,14 @@ def copy_app_files():
         dst = os.path.join(BUILD_DIR, f)
         if os.path.exists(src):
             shutil.copy2(src, dst)
+
+    # Copy the shared backend package (paths, prompts and curriculum resources).
+    shutil.copytree(
+        os.path.join(BASE_DIR, "mathbank"),
+        os.path.join(BUILD_DIR, "mathbank"),
+        dirs_exist_ok=True,
+        ignore=shutil.ignore_patterns("__pycache__", "*.pyc"),
+    )
             
     # Copy static folder
     shutil.copytree(
@@ -321,6 +330,13 @@ def zip_macos_release():
         dst = os.path.join(macos_build_dir, f)
         if os.path.exists(src):
             shutil.copy2(src, dst)
+
+    shutil.copytree(
+        os.path.join(BASE_DIR, "mathbank"),
+        os.path.join(macos_build_dir, "mathbank"),
+        dirs_exist_ok=True,
+        ignore=shutil.ignore_patterns("__pycache__", "*.pyc"),
+    )
             
     # Copy static folder
     shutil.copytree(
