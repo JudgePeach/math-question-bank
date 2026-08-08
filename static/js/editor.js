@@ -1585,8 +1585,8 @@ const PAGE_LIMIT = 20;
                         return innerTex + '$';
                     }
                 } else {
-                    // 防错：若后续文本紧跟着 $，避免组合产生双 $$
-                    if (postString.trim().startsWith('$')) {
+                    // 处于非数学环境中：防错隔离！若后方紧跟着 $（如 \fillin$. 且后续文本以 $ 开头），避免产生双 $$
+                    if (postDollar === '$' || postString.trim().startsWith('$')) {
                         return '$' + innerTex;
                     }
                     return '$' + innerTex + '$';
@@ -1601,7 +1601,15 @@ const PAGE_LIMIT = 20;
             let clean = text.replace(/\\vphantom\s*\{\s*[^}]*?\}/g, '')
                             .replace(/\\strut\b/g, '');
 
-            // Transform exam-zh \fillin macro into KaTeX compatible \underline with math environment awareness
+            // 1. Pre-heal exposed or half-wrapped LaTeX math environments (e.g. \begin{cases}...\end{cases}$ or \begin{cases}...\end{cases})
+            clean = clean.replace(/(\$)?\s*\\begin\{(cases|aligned|matrix|pmatrix|bmatrix|array|equation|gather)\}([\s\S]*?)\\end\{\2\}\s*(\$)?/g, function(match, p1, env, body, p4) {
+                if (p1 === '$' && p4 === '$') {
+                    return match;
+                }
+                return '$\\begin{' + env + '}' + body + '\\end{' + env + '}$';
+            });
+
+            // 2. Transform exam-zh \fillin macro into KaTeX compatible \underline with math environment awareness
             clean = transformFillinMacro(clean);
 
             // Clean up illegal nesting like \underline{\quad $\mathbf{14}$ \quad} in KaTeX
