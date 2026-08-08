@@ -1585,6 +1585,10 @@ const PAGE_LIMIT = 20;
                         return innerTex + '$';
                     }
                 } else {
+                    // 防错：若后续文本紧跟着 $，避免组合产生双 $$
+                    if (postString.trim().startsWith('$')) {
+                        return '$' + innerTex;
+                    }
                     return '$' + innerTex + '$';
                 }
             });
@@ -1669,7 +1673,12 @@ const PAGE_LIMIT = 20;
                 let html = `<div class="grid ${gridCols} gap-2 my-2 select-none choices-grid items-baseline">`;
                 items.forEach((item, idx) => {
                     const label = labels[idx] || (idx + 1);
-                    html += `<div class="flex items-baseline"><span class="font-bold mr-1.5 text-slate-800 shrink-0">${label}.</span><span class="flex-1 [&>p]:m-0 [&>p]:inline">${item}</span></div>`;
+                    let cleanItem = item;
+                    // Auto-wrap LaTeX math macros (e.g. \dfrac{5}{2}) in choices option if missing $
+                    if (/\\(dfrac|frac|sqrt|cdot|times|pm|le|ge|ne|in|vec|mathbf|mathrm|text|alpha|beta|gamma|delta|theta|pi|varphi|omega)\b/.test(cleanItem) && !/\$/.test(cleanItem)) {
+                        cleanItem = '$' + cleanItem + '$';
+                    }
+                    html += `<div class="flex items-baseline"><span class="font-bold mr-1.5 text-slate-800 shrink-0">${label}.</span><span class="flex-1 [&>p]:m-0 [&>p]:inline">${cleanItem}</span></div>`;
                 });
                 html += '</div>';
                 return html;

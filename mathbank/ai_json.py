@@ -159,26 +159,24 @@ def realign_missing_images_to_questions(questions: list, raw_markdown: str) -> l
     if not unassigned:
         return questions
 
-    figure_keyword_pattern = re.compile(r'如[右下简]?图(?:所示)?')
+    figure_keyword_pattern = re.compile(r'如[右下简]?图(?:所示)?|图形|图\s*\d+')
+
+    # Find candidate questions that explicitly mention '如图' but lack images
+    fig_candidate_qs = [
+        q for q in questions
+        if isinstance(q, dict) and figure_keyword_pattern.search(q.get('content', '')) and not re.search(r'!\[.*?\]\(', q.get('content', ''))
+    ]
 
     for img_url in unassigned:
         matched_q = None
 
-        # Strategy 1: Find question containing '如图' keywords within pre-image 250 chars snippet
-        pattern = r'([\s\S]{1,250})!\[.*?\]\(' + re.escape(img_url) + r'\)'
-        m = re.search(pattern, raw_markdown)
-        if m:
-            pre_snippet = m.group(1)
-            for q in questions:
-                if isinstance(q, dict) and 'content' in q:
-                    stem = q['content']
-                    if figure_keyword_pattern.search(stem) and not re.search(r'!\[.*?\]\(', stem):
-                        kw = stem[:15].strip()
-                        if kw and kw in pre_snippet:
-                            matched_q = q
-                            break
+        # Strategy 1: Assign in sequence to candidate questions that explicitly mention '如图'
+        if fig_candidate_qs:
+            matched_q = fig_candidate_qs.pop(0)
 
         # Strategy 2: Text snippet fingerprint matching (pre-image 25 chars)
+        pattern = r'([\s\S]{1,250})!\[.*?\]\(' + re.escape(img_url) + r'\)'
+        m = re.search(pattern, raw_markdown)
         if not matched_q and m:
             snippet = m.group(1).strip()
             kw = snippet[-25:].strip()
@@ -188,14 +186,7 @@ def realign_missing_images_to_questions(questions: list, raw_markdown: str) -> l
                         matched_q = q
                         break
 
-        # Strategy 3: Global search for unassigned question containing '如图' keywords
-        if not matched_q:
-            for q in questions:
-                if isinstance(q, dict) and figure_keyword_pattern.search(q.get('content', '')) and not re.search(r'!\[.*?\]\(', q.get('content', '')):
-                    matched_q = q
-                    break
-
-        # Strategy 4: Fallback to last question
+        # Strategy 3: Fallback to last question
         if not matched_q and questions:
             matched_q = questions[-1]
 
