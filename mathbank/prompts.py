@@ -179,20 +179,21 @@ def build_pdf_parse_system_prompt(curriculum: dict, generate_answers_bool: bool)
         "4. 答案与解析处理：\n"
         f"{answer_generation_rule}"
         "5. 题干净化（去答案）：若选择题/填空题题干中保留了答案（如括号中含字母或下划线内含数值），必须擦除还原为纯净的占位符；客观题必须在 `answer_markdown` 第一行醒目输出最终答案。\n"
-        "6. JSON 与排版规范：必须返回严格合法的 JSON；字符串内部换行必须写成 JSON 转义序列 `\\n`（反斜杠+n），严禁直接放入真实回车或制表符；LaTeX 命令的反斜杠必须按 JSON 规范转义为双反斜杠 `\\\\`。分步推导/段落之间可在解析后的文本中使用双换行；加粗必须使用 `\\\\textbf{...}`（严禁双星号 `**`）。\n"
-        "7. 出处提取：识别题干开头/结尾的来源信息（如 2024·上海·高考真题），提取至 `source` 字段并从题干中剥离题号与出处。\n"
-        "8. 输出 JSON 格式（根键为 `\"questions\"` 数组，只输出干净 JSON，不要包含 ```json 代码块）：\n"
+        "6. JSON 与排版规范：必须返回严格合法的 JSON；字符串内部换行必须写成 JSON 转义序列 `\\n`（反斜杠+n），严禁直接放入真实回车或制表符；LaTeX 命令的反斜杠必须按 JSON 规范转义为双反斜杠 `\\\\`。分步推导、不同小问（如 (1)、(2)、(i)、(ii)）与段落之间必须使用双换行（`\\n\\n`）隔开；加粗必须使用 `\\\\textbf{...}`（严禁双星号 `**`）。\n"
+        "7. 插图绝对保留规范（极重要）：若输入的 Markdown 文本中包含类似 `![](/static/uploads/word_img_xxx.png)` 或 `![](...)` 的图片链接，必须 100% 完整原样保留在对应题目的 `content` 题干末尾或适当位置中，并且必须在 `referenced_images` 数组中记录对应的图片 URL/文件名！绝对禁止删除、漏掉或忽略输入文本中的任何图片链接！\n"
+        "8. 出处提取：识别题干开头/结尾的来源信息（如 2024·上海·高考真题），提取至 `source` 字段并从题干中剥离题号与出处。\n"
+        "9. 输出 JSON 格式（根键为 `\"questions\"` 数组，只输出干净 JSON，不要包含 ```json 代码块）：\n"
         "{\n"
         "  \"questions\": [\n"
         "    {\n"
-        "      \"content\": \"纯净题干内容\",\n"
-        "      \"answer_markdown\": \"答案与解析\",\n"
-        "      \"question_type\": \"single_choice / multi_choice / fill_in_blank / detailed_answer\",\n"
-        "      \"category_compulsory\": \"学段名称\",\n"
-        "      \"category_chapter\": \"章节名称\",\n"
-        "      \"difficulty\": \"easy_error / challenge / qiangji\",\n"
-        "      \"source\": \"具体出处或 null\",\n"
-        "      \"referenced_images\": [\"/static/uploads/tmp/pdf_crop_xxx.png\"]\n"
+        '      "content": "纯净题干内容，保留图片排版占位标记 (例如 ![](/static/uploads/word_img_xxx.png))",\n'
+        '      "answer_markdown": "答案与解析",\n'
+        '      "question_type": "single_choice / multi_choice / fill_in_blank / detailed_answer",\n'
+        '      "category_compulsory": "学段名称",\n'
+        '      "category_chapter": "章节名称",\n'
+        '      "difficulty": "easy_error / challenge / qiangji",\n'
+        '      "source": "具体出处或 null",\n'
+        '      "referenced_images": ["/static/uploads/word_img_xxx.png"]\n'
         "    }\n"
         "  ]\n"
         "}\n"

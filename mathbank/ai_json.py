@@ -140,7 +140,7 @@ def normalize_subquestions_double_newlines(text: str) -> str:
 
 
 def realign_missing_images_to_questions(questions: list, raw_markdown: str) -> list:
-    """Ensure all images extracted in raw_markdown are preserved in questions' content."""
+    """Ensure all images extracted in raw_markdown are preserved in questions' content with '如图' keyword priority."""
     if not questions or not raw_markdown or not isinstance(raw_markdown, str):
         return questions
 
@@ -159,11 +159,27 @@ def realign_missing_images_to_questions(questions: list, raw_markdown: str) -> l
     if not unassigned:
         return questions
 
+    figure_keyword_pattern = re.compile(r'如[右下简]?图(?:所示)?')
+
     for img_url in unassigned:
-        pattern = r'([\s\S]{1,60})!\[.*?\]\(' + re.escape(img_url) + r'\)'
-        m = re.search(pattern, raw_markdown)
         matched_q = None
+
+        # Strategy 1: Find question containing '如图' keywords within pre-image 250 chars snippet
+        pattern = r'([\s\S]{1,250})!\[.*?\]\(' + re.escape(img_url) + r'\)'
+        m = re.search(pattern, raw_markdown)
         if m:
+            pre_snippet = m.group(1)
+            for q in questions:
+                if isinstance(q, dict) and 'content' in q:
+                    stem = q['content']
+                    if figure_keyword_pattern.search(stem) and not re.search(r'!\[.*?\]\(', stem):
+                        kw = stem[:15].strip()
+                        if kw and kw in pre_snippet:
+                            matched_q = q
+                            break
+
+        # Strategy 2: Text snippet fingerprint matching (pre-image 25 chars)
+        if not matched_q and m:
             snippet = m.group(1).strip()
             kw = snippet[-25:].strip()
             if kw:
@@ -172,15 +188,24 @@ def realign_missing_images_to_questions(questions: list, raw_markdown: str) -> l
                         matched_q = q
                         break
 
+        # Strategy 3: Global search for unassigned question containing '如图' keywords
+        if not matched_q:
+            for q in questions:
+                if isinstance(q, dict) and figure_keyword_pattern.search(q.get('content', '')) and not re.search(r'!\[.*?\]\(', q.get('content', '')):
+                    matched_q = q
+                    break
+
+        # Strategy 4: Fallback to last question
         if not matched_q and questions:
             matched_q = questions[-1]
 
         if matched_q and isinstance(matched_q, dict):
             content = matched_q.get('content', '').strip()
             matched_q['content'] = (content + f'\n\n![]({img_url})').strip()
-            if 'referenced_images' in matched_q and isinstance(matched_q['referenced_images'], list):
-                if img_url not in matched_q['referenced_images']:
-                    matched_q['referenced_images'].append(img_url)
+            if 'referenced_images' not in matched_q or not isinstance(matched_q['referenced_images'], list):
+                matched_q['referenced_images'] = []
+            if img_url not in matched_q['referenced_images']:
+                matched_q['referenced_images'].append(img_url)
 
     return questions
 
