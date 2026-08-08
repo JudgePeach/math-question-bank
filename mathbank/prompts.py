@@ -156,117 +156,56 @@ def build_paper_selection_prompts(
 
 
 def build_pdf_parse_system_prompt(curriculum: dict, generate_answers_bool: bool) -> str:
-    # Build curriculum text for instructions
-    curriculum_text = ""
-    for book, chapters in curriculum.items():
-        curriculum_text += f"- {book}: {list(chapters.keys())}\n"
-        
-    if generate_answers_bool:
-        answer_generation_rule = "   - 若试卷缺答案，请自动生成标准解答步骤填入 `answer_markdown`（写明推理逻辑与【解析思路】）。\n"
-    else:
-        answer_generation_rule = (
-            "   - 【严禁生成答案】：未开启答案生成功能。除原试卷明确自带原版答案外（提取时在开头标注 [EXTRACTED_ORIGINAL]），必须将 `answer_markdown` 设为空字符串 \"\"！严禁主动推导或编造答案。\n"
-        )
+    curriculum_text = build_curriculum_text(curriculum)
     
+    if generate_answers_bool:
+        answer_rule = (
+            "【答案提取与生成规则】:\n"
+            "- 若原试卷自带答案，请完整提取并在 `answer_markdown` 开头标明 `[EXTRACTED_ORIGINAL]`。\n"
+            "- 若原试卷缺答案，请自动推导生成标准解答步骤填入 `answer_markdown`。"
+        )
+    else:
+        answer_rule = (
+            "【答案提取规则（严禁主动生成）】:\n"
+            "- 仅提取原试卷中明确自带的原版参考答案与解析，并在 `answer_markdown` 开头标明 `[EXTRACTED_ORIGINAL]`。\n"
+            "- 若原试卷无答案，必须将 `answer_markdown` 设为空字符串 \"\"，绝对不要现场推导或编造答案！"
+        )
+
     system_instructions = (
-        "你是一位资深教研专家与 LaTeX 排版大师。请解析输入的试卷 LaTeX 源码，智能拆解为题目列表 JSON。\n"
-        "【可选教材范围及各章名称】:\n"
+        "你是一位资深高中数学教研专家与 LaTeX 排版大师。请阅读输入的试卷源码，智能切分为题目列表 JSON。\n\n"
+        "【可选教材范围与章节】:\n"
         f"{curriculum_text}\n"
-        "【拆题与分类规则】:\n"
-        "1. 题干拆解与公式自愈：保留并提纯题目格式。如果输入文本包含从原生电子 PDF 提取的 Unicode 数学符号或折行分式（如 √、∈、α、β、上下标等），必须自动将其规范化转译为标准 LaTeX 语法（如 \\sqrt{...}、\\frac{...}{...}、\\in、\\alpha）；选择题选项统一格式化为 \\begin{choices} \\item ... \\end{choices} 环境；填空题下划线统一使用标准的 \\fillin 宏。挑选精确的【学段】与【所属章节】。\n"
-        "2. 插图路径保护：若包含 `/static/uploads/tmp/pdf_crop_` 临时裁剪路径，必须 100% 完整原样保留该 URL（不可改名或重命名），并提取至 `referenced_images` 数组中。\n"
-        "3. 题型与难度判断：question_type 设为 single_choice/multi_choice/fill_in_blank/detailed_answer；difficulty 设为 easy_error/challenge/qiangji。\n"
-        "4. 答案与解析处理：\n"
-        f"{answer_generation_rule}"
-        "5. 题干净化（去答案）：若选择题/填空题题干中保留了答案（如括号中含字母或下划线内含数值），必须擦除还原为纯净的占位符；客观题必须在 `answer_markdown` 第一行醒目输出最终答案。\n"
-        "6. 题干文字完整性（极重要）：绝对禁止任意擦除、删改或省略题干中的描述性文字，尤其是“（如图）”、“如图所示”、“如右图所示”等指代说明，必须 100% 完整忠实保留原题中的每一个汉字！\n"
-        "7. JSON 与排版规范：必须返回严格合法的 JSON；字符串内部换行必须写成 JSON 转义序列 `\\n`（反斜杠+n），严禁直接放入真实回车或制表符；LaTeX 命令的反斜杠必须按 JSON 规范转义为双反斜杠 `\\\\`。分步推导、不同小问（如 (1)、(2)、(i)、(ii)）与段落之间必须使用双换行（`\\n\\n`）隔开；加粗必须使用 `\\\\textbf{...}`（严禁双星号 `**`）。\n"
-        "8. 插图绝对保留规范（极重要）：若输入的 Markdown 文本中包含类似 `![](/static/uploads/word_img_xxx.png)` 或 `![](...)` 的图片链接，必须 100% 完整原样保留在对应题目的 `content` 题干末尾或适当位置中，并且必须在 `referenced_images` 数组中记录对应的图片 URL/文件名！绝对禁止删除、漏掉或忽略输入文本中的任何图片链接！\n"
-        "8. 出处提取：识别题干开头/结尾的来源信息（如 2024·上海·高考真题），提取至 `source` 字段并从题干中剥离题号与出处。\n"
-        "9. 输出 JSON 格式（根键为 `\"questions\"` 数组，只输出干净 JSON，不要包含 ```json 代码块）：\n"
+        "【核心拆题与分类规范】:\n"
+        "1. 字段分类：挑选精确匹配的学段 `category_compulsory` 与章节 `category_chapter`；题型 `question_type`（single_choice / multi_choice / fill_in_blank / detailed_answer）；难度 `difficulty`（easy_error / challenge / qiangji）；剥离题号与出处信息（如 2024·全国·高考真题）填入 `source`。\n"
+        "2. 文字与插图忠实保留：100% 完整保留题干所有汉字，绝对禁止删除“（如图）”、“如图所示”、“如右图所示”等几何指代描述！绝对保留 Markdown/LaTeX 原有的图片链接（如 `![](/static/uploads/...)` 或 `\\includegraphics{...}`），并将其 URL/文件名提取至 `referenced_images` 数组中。\n"
+        "3. 公式格式化与排版环境：选择题选项统一格式化为 `\\begin{choices} \\item ... \\end{choices}` 环境；填空题下划线统一使用标准的 `\\fillin` 宏；文本加粗必须使用 `\\textbf{...}`（严禁双星号 `**`）。\n"
+        "4. 符号与公式自愈：识别 Unicode 字符（如 √、∈、α、β）规范化为 LaTeX 语法（如 `\\sqrt{...}`, `\\frac{...}{...}`, `\\in`, `\\alpha`）；识别 MathType 常见音译与分写简写（如希腊字母 `j` -> `\\varphi`, `p` -> `\\pi`；分式 `p6` -> `\\dfrac{\\pi}{6}`, `p3` -> `\\dfrac{\\pi}{3}`），结合语境自愈补全为完整数学公式。\n"
+        "5. 换行与段落规范：不同小问（如 (1)、(2)、(i)、(ii)）、证明推导步骤与自然段落之间，必须使用双换行/空行（`\\n\\n`）分隔！\n"
+        "6. 题干净化与客观题答案：若题干/括号/下划线中夹带了答案，必须擦除还原为纯净的空占位符；客观题（选择题/填空题）必须在 `answer_markdown` 第一行醒目输出最终正确答案（如选项字母 A 或数值/表达式），再呈现解析。\n"
+        f"{answer_rule}\n\n"
+        "【输出约束与 JSON 格式】:\n"
+        "必须且只能输出严格合法的 JSON 对象，绝对不要包裹 ```json Markdown 代码块！字符串内部换行必须输出 JSON 转义序列 `\\n`（反斜杠+n），LaTeX 命令的反斜杠必须按 JSON 规范转义为双反斜杠 `\\\\`。\n"
         "{\n"
-        "  \"questions\": [\n"
-        "    {\n"
-        '      "content": "纯净题干内容，保留图片排版占位标记 (例如 ![](/static/uploads/word_img_xxx.png))",\n'
+        '  "questions": [\n'
+        '    {\n'
+        '      "content": "纯净题干（包含 LaTeX 排版与图片标记）",\n'
         '      "answer_markdown": "答案与解析",\n'
         '      "question_type": "single_choice / multi_choice / fill_in_blank / detailed_answer",\n'
         '      "category_compulsory": "学段名称",\n'
         '      "category_chapter": "章节名称",\n'
         '      "difficulty": "easy_error / challenge / qiangji",\n'
-        '      "source": "具体出处或 null",\n'
-        '      "referenced_images": ["/static/uploads/word_img_xxx.png"]\n'
-        "    }\n"
-        "  ]\n"
+        '      "source": "出处信息或 null",\n'
+        '      "referenced_images": ["/static/uploads/xxx.png"]\n'
+        '    }\n'
+        '  ]\n'
         "}\n"
-        "注意：只输出最干净的 JSON，千万不要包含 ```json ``` 等 Markdown 代码块标记！如果试卷中没有插图，referenced_images 数组留空。"
     )
-    
     return system_instructions
 
 
 def build_import_parse_system_prompt(curriculum: dict) -> str:
-    # Build curriculum text for instructions
-    curriculum_text = ""
-    for book, chapters in curriculum.items():
-        curriculum_text += f"- {book}: {list(chapters.keys())}\n"
-        
-    answer_generation_rule = (
-        "   - **【拆解阶段只提取原版答案，不现场推导】**：在当前拆卷阶段，你只负责提取输入的原始试卷 LaTeX 源码中【本来就明确显式写着】的原版参考答案或解析（如看到“【答案】”、“解析：”、“解：”等且包含解答文本）。提取时请在 `answer_markdown` 的最开头原样打上 `[EXTRACTED_ORIGINAL]` 标记。\n"
-        "   - 如果原始试卷源码中该题只有题干，**绝对不要**现场推导、计算、猜测或生成解答过程！直接将该题的 `answer_markdown` 设为绝对的空字符串 `\"\"`！\n"
-    )
-    
-    system_instructions = (
-        "你是一位极其严谨的教研专家与 LaTeX 排版大师。请阅读并解析用户输入的【整张试卷 LaTeX 源码】，将其智能拆解为独立的题目列表，并分析每一题属性。\n"
-        "【可选教材范围及各章名称】:\n"
-        f"{curriculum_text}\n"
-        "【分类规则】:\n"
-        "1. 仔细阅读并拆解试卷中的每一道题目。请保留题目中的 LaTeX 公式和格式。\n"
-        "2. 为每道题挑选最合适的一个【学段】（例如：必修一）和一个【所属章节】（例如：5. 三角函数，必须是可选章节中的精确字符串）。\n"
-        "3. 如果题目包含图片引用标签（形如 \\includegraphics{filename.png} 或类似标记，或文字描述引用的图片名），请将其提取并放入 `referenced_images` 字段中。\n"
-        "4. 判断题目类型：single_choice（单选题，若选项是 A/B/C/D 形式，建议保留选项在 `content` 尾部，并归类为 single_choice）、multi_choice（多选题）、fill_in_blank（填空题）、detailed_answer（解答题）。\n"
-        "5. 判断题目难度等级，由于是私人题库，请将其归类为：easy_error（易错题）、challenge（挑战题）或 qiangji（强基题）。\n"
-        "6. **智能识别答案与解析**：试卷中可能只包含题干，也可能同时包含答案和解析。请仔细辨别：\n"
-        "   - 如果试卷中包含答案（如参考答案、解答过程等），请将其提取到 `answer_markdown` 字段。\n"
-        f"{answer_generation_rule}"
-        "7. **【题干智能去答案规范】**：很多时候，输入的试卷 LaTeX 源码中，某些选择题或填空题的题干部分直接保留了答案（例如：选择题括号中直接写了答案字母如“（ B ）”、“(C)”；填空题下划线命令内部直接填了答案数字或符号如“\\underline{\\quad 7 \\quad}”、“\\underline{x^2}”）：\n"
-        "   - 必须主动识别并清除这些题干中保留的答案，还原为纯净的空占位符！\n"
-        "   - 对于选择题，将括号内代表答案的字母剥离清除，还原为干净的括号（如“（  ）”或“（ ）”）。\n"
-        "   - 对于填空题，将下划线中代表答案的文本挖空，替换为纯粹的 LaTeX 空白占位符（如“\\underline{\\quad\\quad}”或“\\underline{\\quad \\quad}”）。\n"
-        "   - 对于客观题（选择题/填空题），必须在 `answer_markdown` 最开头第一句/第一行【直接、醒目】输出最终正确答案（选择题如选项字母“A”或“ABD”，填空题如需填入的正确数值/公式/表达式“\\sqrt{3}”或“(-1, 1)”），然后再在下面呈现详细解析步骤。\n"
-        "8. **【排版与字符格式规范】（极其重要）**：\n"
-        "   - **【换行与多问规范 (极重要)】**：题目中的不同小问（如 (1)、(2)、(i)、(ii)）、证明推导步骤或自然分段之间，**必须使用双换行/空行（`\\n\\n`）**隔开！在 LaTeX 排版规范中，单换行只是空格，只有双换行（`\\n\\n`）或显式 `\\\\` 才是真正的起新行/新段落。\n"
-        "   - **推荐使用标准的 LaTeX 列表与排版环境**：为了方便用户直接复制高价值的 LaTeX 源码，推荐在需要列表、段落或编号排版时输出标准的 LaTeX 语法环境，如 `\\begin{choices}`, `\\begin{itemize}`, `\\begin{enumerate}`, `\\begin{center}`。LaTeX 标记（如 `$` 或 `$$`）应该包围所有纯数学公式。\n"
-        "   - **【加粗文本排版规范】**：在输出需要加粗的结构化文本时，**绝对禁止**使用 Markdown 的双星号 `**加粗文本**` 语法，必须且只能使用 LaTeX 标准的 `\\\\textbf{加粗文本}` 语法。\n"
-        "   - **严格遵守 JSON 转义**：在 `content` 或 `answer_markdown` 字符串内部换行时，必须输出 JSON 转义序列 `\\n`（反斜杠+n），严禁直接放入真实回车、制表符等控制字符；所有 LaTeX 命令的反斜杠必须按 JSON 规范转义为双反斜杠 `\\\\`。JSON 解析后系统会自动恢复真实换行与单个 LaTeX 反斜杠。\n"
-        "9. **【出处智能提取规范】**：仔细辨认题干开头（如“1. (2024·上海·高考真题) 已知...”中的“(2024·上海·高考真题)”)或结尾是否包含年份、考试来源等括号标注的出处信息：\n"
-        "   - 若有，必须将其完整提取至 `source` 字段中（去除外层括号），并在 `content` 字段中彻底剥离删除该出处标注以及前面的题号前缀（如“10.”、“1.”），只保留纯净的题目内容。\n"
-        "   - 若无特定出处，则 `source` 字段设为 null 或不填。\n"
-        "10. **【公式自愈与数学符号完整性补全（极重要）】**：如果输入的试卷文本（例如来自 Word/OCR 转换）中出现由于公式提取遗留的残缺、微小占位或文字断裂（例如题干写着“设，若，则”或“若 （为虚数单位），则”），**必须结合题干前后文语境、选项内容与高中数学逻辑，将其 100% 自动自愈补齐为标准的 LaTeX 数学公式（例如“若 $z = \dfrac{2+i}{1-i}$（$i$ 为虚数单位），则 $|z| = $”、“设 $a, b \in \mathbf{R}$，若 $f(x) = ...$，则...”）**！绝对禁止输出残缺不全、丢失了核心变量与公式的断裂句子！\n"
-        "11. **【MathType 常见音译符号与分式自愈（极重要）】**：在部分 Word 文档或 MathType 转换的数学试卷中：\n"
-        "   - 希腊字母（如三角函数初相 `j`、圆周率 `p`、旋转角 `q`、频率 `w`）若被误提取为单个英文字母 `j`、`p`、`q`、`w`，必须依据高中数学语境自愈为标准的 LaTeX 宏 `\\varphi`、`\\pi`、`\\theta`、`\\omega`（例如 `y = 3\\sin(4x+j)+\\cos(4x+j)(0 < j < p)` 必须自愈为 `$y = 3\\sin(4x+\\varphi)+\\cos(4x+\\varphi)(0 < \\varphi < \\pi)$`）；\n"
-        "   - 圆周率分式简写（如 `p6`, `p3`, `2p3`, `5p6`, `p2`）必须依据选项或对称轴语境自愈为标准的 LaTeX 分数 `\\dfrac{\\pi}{6}`, `\\dfrac{\\pi}{3}`, `\\dfrac{2\\pi}{3}`, `\\dfrac{5\\pi}{6}`, `\\dfrac{\\pi}{2}`；\n"
-        "   - 关系符号（如 `<<` 或 `==`）必须自愈为标准的数学符号 `<`、`\\le` 或 `=`。\n"
-        "12. **【题干文字完整性（极重要）】**：绝对禁止任意擦除、删改或省略题干中的描述性文字，尤其是“（如图）”、“如图所示”、“如右图所示”等几何指代说明，必须 100% 完整忠实保留原题中的每一个汉字！\n"
-        "13. **【原生插图占位符绝对保留原则（极重要）】**：如果输入的 Markdown 文本中包含类似 `![](/static/uploads/word_img_xxx.png)` 或 `![](...)` 的图片链接，必须 100% 完整原样保留在对应题目的 `content` 题干末尾或适当位置中，并且必须在 `referenced_images` 数组中记录对应的图片 URL/文件名！绝对禁止删除、漏掉或忽略输入文本中的任何图片链接！\n"
-        "14. **你的输出必须是一个合法的 JSON 对象，其根键为 `\"questions\"`，对应的值为一个 JSON 数组（包含以下结构化对象）。不要有任何多余的 Markdown 标记、代码块或解释文字**：\n"
-        "{\n"
-        "  \"questions\": [\n"
-        "    {\n"
-        '      "content": "题干内容，包含 LaTeX 排版公式，且保留图片排版占位标记 (例如 ![](/static/uploads/word_img_xxx.png))",\n'
-        '      "answer_markdown": "该题的答案与详细解析过程，使用标准 LaTeX 与 Markdown 排版",\n'
-        '      "question_type": "single_choice / multi_choice / fill_in_blank / detailed_answer",\n'
-        '      "category_compulsory": "人教A学段名称",\n'
-        '      "category_chapter": "人教A章节名称",\n'
-        '      "difficulty": "easy_error / challenge / qiangji",\n'
-        '      "source": "提取出的具体出处（如 2019·全国·高考真题），没有则填 null",\n'
-        '      "referenced_images": ["引用的原始插图文件名1.png", "fig2.jpg"]\n'
-        "    }\n"
-        "  ]\n"
-        "}\n"
-        "注意：只输出最干净的 JSON，千万不要包含 ```json ``` 等 Markdown 代码块标记！如果试卷中没有插图，referenced_images 数组留空。"
-    )
-    
-    return system_instructions
+    """Unified prompt for online text-paste and Word paper parsing."""
+    return build_pdf_parse_system_prompt(curriculum, generate_answers_bool=False)
 
 
 def build_tikz_draw_prompt(latex_content: str = "", multimodal: bool = True) -> str:
