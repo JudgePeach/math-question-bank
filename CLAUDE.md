@@ -6,7 +6,7 @@
 ## 2. 核心技术栈与无构建原则
 本项目追求极致流畅的用户体验和极简的本地环境配置，严格禁止引入现代复杂前端构建工具（如 Webpack/Vite/Node.js 生态）：
 - **后端**：Python 3.10+ + FastAPI + Uvicorn。
-- **后端渐进式模块架构**：根目录 `main.py` 保留为 `uvicorn main:app` 兼容入口；共享能力集中在 `mathbank/`。`paths.py` 是数据库、静态资源、上传、模板、备份、`.env` 与构建路径的唯一来源，`curriculums.py` 负责四套教材 JSON，`prompts.py` 负责 OCR、解题、分类、拆卷、TikZ 与 AI 组卷提示构建，`ai_providers.py` 负责纯文本模型的平台、密钥变量、API Base、真实模型名及推理强度解析，`ai_http.py` 负责 AI Bearer 请求头、代理绕过重试和 OpenAI 兼容 Chat Completions 的 HTTP 状态检查。各业务路由继续独立构建请求 JSON 和解析响应，不得在路由或前端重新复制这些数据与供应商判断规则。
+- **后端渐进式模块架构**：根目录 `main.py` 保留为 `uvicorn main:app` 兼容入口；共享能力集中在 `mathbank/`。`paths.py` 是数据库、静态资源、上传、模板、备份、`.env` 与构建路径的唯一来源，`curriculums.py` 负责四套教材 JSON，`prompts.py` 负责 OCR、解题、分类、拆卷、TikZ 与 AI 组卷提示构建，`ai_providers.py` 负责纯文本及 OCR/TikZ 多模态模型的平台、密钥变量、API Base、真实模型名、推理强度与图像输入能力解析，`ai_http.py` 负责 AI Bearer 请求头、代理绕过重试和 OpenAI 兼容 Chat Completions 的 HTTP 状态检查。各业务路由继续独立构建请求 JSON 和解析响应，不得在路由或前端重新复制这些数据与供应商判断规则。
 - **数据库**：SQLite + SQLAlchemy（轻量化本地数据库，数据存储在项目根目录下的 `./math_question_bank.db` 中）。
 - **前端页面**：单页面应用 `static/index.html`（纯 HTML5 + 原生 JavaScript，无编译，秒级加载）。
 - **前端样式与字体**：Tailwind CSS + FontAwesome 图标库 + Inter/Outfit Webfonts（均已下载至本地 `/static/lib` 支持 100% 离线使用与跨平台字体降级）。
@@ -126,6 +126,7 @@
 - **Dropdown 防御性校验**：所有在首屏数据装载前会触发的分类填充操作（如 `populateCategoryDropdowns` 与 `populateFilterDropdowns`），其入口处均内置了健壮的 DOM 及 categoryTree 级联数据空判定安全防护，杜绝由于异步时序不同步产生的页面挂起。
 
 ### 3.8 TikZ 几何绘图与智能纠错工作流
+- **多模态 Provider 单一解析来源**：单题 OCR、PDF OCR 故障转移、自动 TikZ 绘图与 TikZ 纠错分别通过 `mathbank.ai_providers` 的 `resolve_ocr_provider`、`resolve_ocr_fallbacks` 和 `resolve_draw_provider` 获取平台、密钥、API Base、真实模型名及图像输入能力。PDF OCR 必须尊重 `zhongzhan_claude`（中转站 B）首选项；绘图配置中的 `SILICONFLOW/` 前缀必须在请求前剥离。
 - **自动编译与预览**：编辑器下方集成了 TikZ 代码专属编辑和预览区。前端会将 TikZ 代码通过 `/api/render_tikz` 送往后端，后端在本地调用编译链转换为 PNG 并返回相对路径，在前端实现无缝的几何图像秒级预览。
 - **AI 几何绘图与纠错**：支持人工与大模型闭环协同。遇到几何图题，AI 可优先直接生成 TikZ 代码编译。如遇到 TikZ 语法编译报错，用户可写入“指导意见”调用 `/api/correct_tikz` 交由高级大模型进行智能纠正，修复编译报错直至绘图完美。
 - **双阶段多模态识图与 TikZ 绘图联动**：在单题 OCR 公式识图过程中（`/api/ocr`），多模态模型如果检测到插图，会在 LaTeX 文本中植入 `[ILLUSTRATION_BOX: ...]` 定位标签。后端解析到该标签时，会自动将其剥离，并触发第二阶段联动：将整张原始题目图片和提取的 LaTeX 题干文本直接发送给高级绘图视觉大模型（由 `PREFER_DRAW_MODEL` 指定，推荐使用 `ZHONGZHAN_GPT/gpt-5.6-luna` 或 Gemini 系列；不建议使用国内模型进行 TikZ 绘图），由其绘制出 TikZ 源码，并在后台静默编译为 PNG 插图，自动追加到题干末尾（以 Markdown 图片语法 `![](/static/uploads/tikz_xxx.png)` 引用），实现一键图文公式识别与几何绘图矢量化。

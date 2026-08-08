@@ -1,10 +1,15 @@
 """Shared HTTP transport helpers for AI provider requests."""
 
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, Protocol
 
 import requests
 
-from mathbank.ai_providers import TextProviderConfig
+
+class ChatProviderConfig(Protocol):
+    provider_label: str
+    api_key: Optional[str]
+    credential_label: str
+    chat_completions_url: Optional[str]
 
 
 class AIProviderHTTPError(RuntimeError):
@@ -67,7 +72,7 @@ def build_bearer_headers(api_key: str) -> Dict[str, str]:
 
 
 def post_chat_completion(
-    provider: TextProviderConfig,
+    provider: ChatProviderConfig,
     payload: Dict[str, Any],
     *,
     timeout: float,

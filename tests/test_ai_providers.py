@@ -1,6 +1,12 @@
 import pytest
 
-from mathbank.ai_providers import parse_model_and_effort, resolve_text_provider
+from mathbank.ai_providers import (
+    parse_model_and_effort,
+    resolve_draw_provider,
+    resolve_ocr_fallbacks,
+    resolve_ocr_provider,
+    resolve_text_provider,
+)
 
 
 @pytest.mark.parametrize(
@@ -135,3 +141,63 @@ def test_unknown_explicit_prefix_is_not_silently_rerouted():
     assert config.api_key is None
     assert config.api_base is None
     assert config.model_name == "model-name"
+
+
+def test_ocr_provider_resolves_legacy_transit_settings_and_effort():
+    config = resolve_ocr_provider(
+        "zhongzhan_gpt",
+        {
+            "ZHONGZHAN_API_KEY": "legacy-key",
+            "ZHONGZHAN_BASE_URL": "https://legacy.example/v1/chat/completions",
+            "ZHONGZHAN_OCR_MODEL": "gpt-5.6-luna:high",
+        },
+    )
+
+    assert config.provider_code == "zhongzhan_gpt"
+    assert config.api_key == "legacy-key"
+    assert config.model_name == "gpt-5.6-luna"
+    assert config.reasoning_effort == "high"
+    assert config.chat_completions_url == (
+        "https://legacy.example/v1/chat/completions"
+    )
+
+
+def test_pdf_ocr_fallbacks_respect_claude_preference():
+    providers = resolve_ocr_fallbacks(
+        "zhongzhan_claude",
+        {
+            "ZHONGZHAN_CLAUDE_API_KEY": "claude-key",
+            "SILICONFLOW_API_KEY": "sf-key",
+            "ALI_BAILIAN_API_KEY": "bailian-key",
+            "ZHONGZHAN_GPT_API_KEY": "gpt-key",
+        },
+    )
+
+    assert [provider.provider_code for provider in providers] == [
+        "zhongzhan_claude",
+        "siliconflow",
+        "bailian",
+        "zhongzhan_gpt",
+    ]
+
+
+def test_draw_provider_strips_siliconflow_prefix_and_detects_images():
+    config = resolve_draw_provider(
+        "SILICONFLOW/Qwen/Qwen3-VL-32B-Instruct",
+        {"SILICONFLOW_API_KEY": "sf-key"},
+    )
+
+    assert config.provider_code == "siliconflow"
+    assert config.model_name == "Qwen/Qwen3-VL-32B-Instruct"
+    assert config.supports_image_input is True
+    assert "sf-key" not in repr(config)
+
+
+def test_draw_provider_keeps_text_only_siliconflow_mode():
+    config = resolve_draw_provider(
+        "Qwen/Qwen3.5-397B-A17B",
+        {"SILICONFLOW_API_KEY": "sf-key"},
+    )
+
+    assert config.model_name == "Qwen/Qwen3.5-397B-A17B"
+    assert config.supports_image_input is False

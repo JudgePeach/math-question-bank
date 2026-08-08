@@ -62,3 +62,19 @@ def test_editor_identity_and_meta_preview_have_single_sources():
     assert "window.renderEditorPaperMeta = renderEditorPaperMeta" in editor_source
     assert "renderEditorPaperMeta();" in import_source
     assert "EditorState.questionId !== requestedQuestionId" in import_source
+
+
+def test_multimodal_ai_routes_use_shared_provider_resolvers():
+    main_source = (PROJECT_ROOT / "main.py").read_text(encoding="utf-8")
+
+    for legacy_helper in (
+        "def ocr_via_siliconflow",
+        "def ocr_via_ali_bailian",
+        "def ocr_via_zhongzhan",
+    ):
+        assert legacy_helper not in main_source
+
+    assert "def ocr_via_provider" in main_source
+    assert "resolve_ocr_provider(engine)" in main_source
+    assert "resolve_ocr_fallbacks(prefer_engine)" in main_source
+    assert main_source.count("resolve_draw_provider(prefer_draw)") == 2

@@ -31,10 +31,15 @@ from paper_helper import build_latex_document, build_answer_sheet_latex, compile
 from sync_helper import export_database_to_files
 from mathbank.ai_http import (
     post_chat_completion,
-    robust_request_get,
     robust_request_post,
 )
-from mathbank.ai_providers import parse_model_and_effort, resolve_text_provider
+from mathbank.ai_providers import (
+    MultimodalProviderConfig,
+    resolve_draw_provider,
+    resolve_ocr_fallbacks,
+    resolve_ocr_provider,
+    resolve_text_provider,
+)
 from mathbank.curriculums import (
     build_default_metadata,
     get_curriculum_preset,
@@ -488,212 +493,30 @@ def auto_crop_image(image):
     return image
 
 
-def ocr_via_siliconflow(image_path: str, api_key: str, model_name: str = "Qwen/Qwen3-VL-8B-Instruct", include_illustration_box: bool = False) -> str:
-    """调用 SiliconFlow 官方 API 进行多模态图文公式识别 (使用 Qwen3-VL-8B / Qwen3-VL-32B 等)"""
+def ocr_via_provider(
+    image_path: str,
+    provider: MultimodalProviderConfig,
+    include_illustration_box: bool = False,
+) -> str:
+    """Use one resolved multimodal provider for formula and text OCR."""
     import base64
-    import requests
-    
-    print(f"[OCR Flow] 正在向 SiliconFlow 提交多模态识别任务: {image_path} (模型: {model_name})...")
-    
-    # 对图片进行 Base64 编码
+
+    print(
+        f"[OCR Flow] 正在向 {provider.provider_label} 提交多模态识别任务: "
+        f"{image_path} (模型: {provider.model_name})..."
+    )
     try:
         with open(image_path, "rb") as image_file:
             encoded_string = base64.b64encode(image_file.read()).decode("utf-8")
     except Exception as e:
         raise RuntimeError(f"读取并对图片进行 Base64 编码失败: {str(e)}")
-        
-    url = "https://api.siliconflow.cn/v1/chat/completions"
-    headers = {
-        "Authorization": f"Bearer {api_key.strip()}",
-        "Content-Type": "application/json"
-    }
-    
-    prompt_text = COMMON_OCR_PROMPT
-    if include_illustration_box:
-        prompt_text += ILLUSTRATION_BOX_PROMPT
 
-    # 构造 SiliconFlow 的多模态内容消息
-    payload = {
-        "model": model_name,
-        "messages": [
-            {
-                "role": "user",
-                "content": [
-                    {
-                        "type": "text",
-                        "text": prompt_text
-                    },
-                    {
-                        "type": "image_url",
-                        "image_url": {
-                            "url": f"data:image/png;base64,{encoded_string}"
-                        }
-                    }
-                ]
-            }
-        ],
-        "stream": False
-    }
-    
-    max_retries = 3
-    timeout = 240
-    response = None
-    last_error = None
-    
-    for attempt in range(max_retries):
-        try:
-            if attempt > 0:
-                print(f"[OCR Flow] 正在进行第 {attempt + 1}/{max_retries} 次重试 SiliconFlow 请求...")
-            response = robust_request_post(url, headers=headers, json=payload, timeout=timeout)
-            if response.status_code == 200:
-                break
-            else:
-                last_error = f"HTTP 状态码: {response.status_code}，详情: {response.text}"
-                if response.status_code in [500, 502, 503, 504, 429] or "timeout" in response.text.lower():
-                    time.sleep(2 * (attempt + 1))
-                    continue
-                else:
-                    raise RuntimeError(last_error)
-        except Exception as e:
-            last_error = str(e)
-            if attempt < max_retries - 1:
-                time.sleep(2 * (attempt + 1))
-            else:
-                raise RuntimeError(f"请求 SiliconFlow 失败 (已尝试 {max_retries} 次): {last_error}")
-                
-    if not response or response.status_code != 200:
-        raise RuntimeError(f"SiliconFlow API 识别失败: {last_error}")
-        
-    res_json = response.json()
-    try:
-        choices = res_json.get("choices", [])
-        if choices and len(choices) > 0:
-            content = choices[0].get("message", {}).get("content", "")
-            return content.strip()
-        else:
-            raise RuntimeError(f"SiliconFlow 返回的数据中未包含 Choices 结果: {str(res_json)}")
-    except Exception as e:
-        raise RuntimeError(f"解析 SiliconFlow 响应数据失败: {str(e)}")
-
-
-def ocr_via_ali_bailian(image_path: str, api_key: str, model_name: str = "qwen3-vl-flash", include_illustration_box: bool = False) -> str:
-    """调用阿里云百炼 (Alibaba Bailian) 官方 API 进行多模态图文公式识别 (使用 qwen3-vl-flash 等)"""
-    import base64
-    import requests
-    
-    print(f"[OCR Flow] 正在向阿里云百炼 (Alibaba Bailian) 提交多模态识别任务: {image_path} (模型: {model_name})...")
-    
-    # 对图片进行 Base64 编码
-    try:
-        with open(image_path, "rb") as image_file:
-            encoded_string = base64.b64encode(image_file.read()).decode("utf-8")
-    except Exception as e:
-        raise RuntimeError(f"读取并对图片进行 Base64 编码失败: {str(e)}")
-        
-    url = "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions"
-    headers = {
-        "Authorization": f"Bearer {api_key.strip()}",
-        "Content-Type": "application/json"
-    }
-    
-    prompt_text = COMMON_OCR_PROMPT
-    if include_illustration_box:
-        prompt_text += ILLUSTRATION_BOX_PROMPT
-
-    # 构造阿里云百炼的多模态内容消息
-    payload = {
-        "model": model_name,
-        "messages": [
-            {
-                "role": "user",
-                "content": [
-                    {
-                        "type": "text",
-                        "text": prompt_text
-                    },
-                    {
-                        "type": "image_url",
-                        "image_url": {
-                            "url": f"data:image/png;base64,{encoded_string}"
-                        }
-                    }
-                ]
-            }
-        ],
-        "stream": False
-    }
-    
-    max_retries = 3
-    timeout = 240
-    response = None
-    last_error = None
-    
-    for attempt in range(max_retries):
-        try:
-            if attempt > 0:
-                print(f"[OCR Flow] 正在进行第 {attempt + 1}/{max_retries} 次重试阿里云百炼请求...")
-            response = robust_request_post(url, headers=headers, json=payload, timeout=timeout)
-            if response.status_code == 200:
-                break
-            else:
-                last_error = f"HTTP 状态码: {response.status_code}，详情: {response.text}"
-                if response.status_code in [500, 502, 503, 504, 429] or "timeout" in response.text.lower():
-                    time.sleep(2 * (attempt + 1))
-                    continue
-                else:
-                    raise RuntimeError(last_error)
-        except Exception as e:
-            last_error = str(e)
-            if attempt < max_retries - 1:
-                time.sleep(2 * (attempt + 1))
-            else:
-                raise RuntimeError(f"请求阿里云百炼失败 (已尝试 {max_retries} 次): {last_error}")
-                
-    if not response or response.status_code != 200:
-        raise RuntimeError(f"阿里云百炼 API 识别失败: {last_error}")
-        
-    res_json = response.json()
-    try:
-        choices = res_json.get("choices", [])
-        if choices and len(choices) > 0:
-            content = choices[0].get("message", {}).get("content", "")
-            return content.strip()
-        else:
-            raise RuntimeError(f"阿里云百炼返回的数据中未包含 Choices 结果: {str(res_json)}")
-    except Exception as e:
-        raise RuntimeError(f"解析阿里云百炼响应数据失败: {str(e)}")
-
-
-def ocr_via_zhongzhan(image_path: str, api_key: str, base_url: str, model_name: str, include_illustration_box: bool = False) -> str:
-    """调用中转站 (OpenAI 兼容) API 进行多模态图文公式识别"""
-    import base64
-    import requests
-    
-    print(f"[OCR Flow] 正在向中转站 (OpenAI 兼容) 提交多模态识别任务: {image_path} (模型: {model_name})...")
-    
-    try:
-        with open(image_path, "rb") as image_file:
-            encoded_string = base64.b64encode(image_file.read()).decode("utf-8")
-    except Exception as e:
-        raise RuntimeError(f"读取并对图片进行 Base64 编码失败: {str(e)}")
-        
-    base_url = base_url.rstrip("/")
-    url = f"{base_url}/chat/completions" if not base_url.endswith("/chat/completions") else base_url
-    headers = {
-        "Authorization": f"Bearer {api_key.strip()}",
-        "Content-Type": "application/json"
-    }
-    
     prompt = COMMON_OCR_PROMPT
     if include_illustration_box:
         prompt += ILLUSTRATION_BOX_PROMPT
-    
-    clean_model, explicit_effort = parse_model_and_effort(model_name)
-    if clean_model:
-        model_name = clean_model
 
     payload = {
-        "model": model_name,
+        "model": provider.model_name,
         "messages": [
             {
                 "role": "user",
@@ -711,10 +534,10 @@ def ocr_via_zhongzhan(image_path: str, api_key: str, base_url: str, model_name: 
         "stream": False
     }
 
-    if explicit_effort and explicit_effort != "default":
-        payload["reasoning_effort"] = explicit_effort.lower()
+    if provider.reasoning_effort and provider.reasoning_effort != "default":
+        payload["reasoning_effort"] = provider.reasoning_effort.lower()
         payload["enable_thinking"] = True
-    
+
     max_retries = 3
     timeout = 240
     response = None
@@ -723,8 +546,16 @@ def ocr_via_zhongzhan(image_path: str, api_key: str, base_url: str, model_name: 
     for attempt in range(max_retries):
         try:
             if attempt > 0:
-                print(f"[OCR Flow] 正在进行第 {attempt + 1}/{max_retries} 次重试中转站请求...")
-            response = robust_request_post(url, headers=headers, json=payload, timeout=timeout)
+                print(
+                    f"[OCR Flow] 正在进行第 {attempt + 1}/{max_retries} 次重试"
+                    f"{provider.provider_label}请求..."
+                )
+            response = post_chat_completion(
+                provider,
+                payload,
+                timeout=timeout,
+                check_status=False,
+            )
             if response.status_code == 200:
                 break
             else:
@@ -739,11 +570,14 @@ def ocr_via_zhongzhan(image_path: str, api_key: str, base_url: str, model_name: 
             if attempt < max_retries - 1:
                 time.sleep(2 * (attempt + 1))
             else:
-                raise RuntimeError(f"请求中转站失败 (已尝试 {max_retries} 次): {last_error}")
-                
+                raise RuntimeError(
+                    f"请求{provider.provider_label}失败 "
+                    f"(已尝试 {max_retries} 次): {last_error}"
+                )
+
     if not response or response.status_code != 200:
-        raise RuntimeError(f"中转站 API 识别失败: {last_error}")
-        
+        raise RuntimeError(f"{provider.provider_label} API 识别失败: {last_error}")
+
     res_json = response.json()
     try:
         choices = res_json.get("choices", [])
@@ -751,61 +585,30 @@ def ocr_via_zhongzhan(image_path: str, api_key: str, base_url: str, model_name: 
             content = choices[0].get("message", {}).get("content", "")
             return content.strip()
         else:
-            raise RuntimeError(f"中转站返回的数据中未包含 Choices 结果: {str(res_json)}")
+            raise RuntimeError(
+                f"{provider.provider_label} 返回的数据中未包含 Choices 结果: "
+                f"{str(res_json)}"
+            )
     except Exception as e:
-        raise RuntimeError(f"解析中转站响应数据失败: {str(e)}")
+        raise RuntimeError(
+            f"解析 {provider.provider_label} 响应数据失败: {str(e)}"
+        )
 
 
 def draw_tikz_via_high_model(image_path: str, prefer_draw: str, latex_content: str = None) -> str:
     """使用指定的高级绘图模型（多模态或纯文本自适应）生成 TikZ 代码"""
     import base64
-    import requests
     import re
-    
-    is_zhongzhan_gpt = prefer_draw.startswith("ZHONGZHAN_GPT/") or prefer_draw.startswith("ZHONGZHAN/")
-    is_zhongzhan_claude = prefer_draw.startswith("ZHONGZHAN_CLAUDE/")
-    is_zhongzhan = is_zhongzhan_gpt or is_zhongzhan_claude
-    is_bailian = prefer_draw.startswith("BAILIAN/")
-    
-    if is_zhongzhan or is_bailian:
-        if is_bailian:
-            api_key = os.getenv("ALI_BAILIAN_API_KEY")
-            base_url = os.getenv("ALI_BAILIAN_API_BASE", "https://dashscope.aliyuncs.com/compatible-mode/v1")
-            provider_label = "阿里百炼"
-            model_name = prefer_draw.split("/", 1)[1]
-            if model_name == "qwen3.7-max":
-                model_name = "qwen-max"
-        elif is_zhongzhan_gpt:
-            api_key = os.getenv("ZHONGZHAN_GPT_API_KEY") or os.getenv("ZHONGZHAN_API_KEY")
-            base_url = os.getenv("ZHONGZHAN_GPT_BASE_URL") or os.getenv("ZHONGZHAN_BASE_URL", "https://api.openai.com/v1")
-            provider_label = "中转站 A"
-            model_name = prefer_draw.split("/", 1)[1]
-        else:
-            api_key = os.getenv("ZHONGZHAN_CLAUDE_API_KEY")
-            base_url = os.getenv("ZHONGZHAN_CLAUDE_BASE_URL", "https://api.openai.com/v1")
-            provider_label = "中转站 B"
-            model_name = prefer_draw.split("/", 1)[1]
-            
-        if not api_key:
-            print(f"[High Model Draw] 未配置 {provider_label} 密钥，降级跳过。")
-            return None
-        base_url = base_url.rstrip("/")
-        url = f"{base_url}/chat/completions" if not base_url.endswith("/chat/completions") else base_url
-    else:
-        api_key = os.getenv("SILICONFLOW_API_KEY")
-        if not api_key:
-            print("[High Model Draw] 未配置 SILICONFLOW_API_KEY，无法调用 SiliconFlow 高级绘图，降级跳过。")
-            return None
-        model_name = prefer_draw
-        url = "https://api.siliconflow.cn/v1/chat/completions"
 
-    # 判断是否为多模态模型 (名称中含 'vl', 'gpt', 'claude'，或者只要是中转站/阿里百炼我们一般默认为多模态)
-    is_multimodal = is_zhongzhan or is_bailian or "vl" in model_name.lower() or "thinking" in model_name.lower()
-    
-    headers = {
-        "Authorization": f"Bearer {api_key.strip()}",
-        "Content-Type": "application/json"
-    }
+    provider = resolve_draw_provider(prefer_draw)
+    if not provider.api_key:
+        print(
+            f"[High Model Draw] 未配置 {provider.credential_label}，降级跳过。"
+        )
+        return None
+
+    model_name = provider.model_name
+    is_multimodal = provider.supports_image_input
 
     if is_multimodal:
         # 多模态图文输入模式
@@ -848,7 +651,12 @@ def draw_tikz_via_high_model(image_path: str, prefer_draw: str, latex_content: s
     }
 
     try:
-        response = robust_request_post(url, headers=headers, json=payload, timeout=120)
+        response = post_chat_completion(
+            provider,
+            payload,
+            timeout=120,
+            check_status=False,
+        )
         if response.status_code == 200:
             res_json = response.json()
             choices = res_json.get("choices", [])
@@ -903,57 +711,39 @@ def ocr_formula(
         latex_content = None
         confidence = 0.95
         provider = ""
-        
-        # ----------------- 引擎 1: SiliconFlow (Qwen3-VL-8B-Instruct) 多模态识图 -----------------
-        if engine == "siliconflow":
-            sf_key = os.getenv("SILICONFLOW_API_KEY")
-            sf_model = os.getenv("SILICONFLOW_OCR_MODEL", "Qwen/Qwen3-VL-8B-Instruct")
-            if sf_key and sf_key.strip():
-                try:
-                    latex_content = ocr_via_siliconflow(temp_filepath, sf_key, model_name=sf_model, include_illustration_box=True)
-                    confidence = 0.99
-                    provider = f"SiliconFlow ({sf_model})"
-                except Exception as e:
-                    print(f"[SiliconFlow 识别失败] 发生异常: {str(e)}")
-            else:
-                print("[OCR Flow Warning] 未配置 SILICONFLOW_API_KEY，SiliconFlow 引擎无法启动！")
-                
-        # ----------------- 引擎 2: 阿里百炼 (qwen3-vl-flash) 多模态识图 -----------------
-        elif engine == "ali_bailian":
-            ali_key = os.getenv("ALI_BAILIAN_API_KEY")
-            ali_model = os.getenv("ALI_BAILIAN_OCR_MODEL", "qwen3-vl-flash")
-            if ali_key and ali_key.strip():
-                try:
-                    latex_content = ocr_via_ali_bailian(temp_filepath, ali_key, model_name=ali_model, include_illustration_box=True)
-                    confidence = 0.99
-                    provider = f"阿里云百炼 ({ali_model})"
-                except Exception as e:
-                    print(f"[阿里云百炼 识别失败] 发生异常: {str(e)}")
-            else:
-                print("[OCR Flow Warning] 未配置 ALI_BAILIAN_API_KEY，阿里云百炼引擎无法启动！")
 
-        # ----------------- 引擎 2.5: 中转站 多模态识图 -----------------
-        elif engine in ["zhongzhan", "zhongzhan_gpt", "zhongzhan_claude"]:
-            if engine == "zhongzhan_claude":
-                zz_key = os.getenv("ZHONGZHAN_CLAUDE_API_KEY")
-                zz_base_url = os.getenv("ZHONGZHAN_CLAUDE_BASE_URL", "https://api.openai.com/v1")
-                zz_model = os.getenv("ZHONGZHAN_CLAUDE_OCR_MODEL", "claude-3-5-sonnet")
-                provider_label = "中转站 B"
-            else:
-                zz_key = os.getenv("ZHONGZHAN_GPT_API_KEY") or os.getenv("ZHONGZHAN_API_KEY")
-                zz_base_url = os.getenv("ZHONGZHAN_GPT_BASE_URL") or os.getenv("ZHONGZHAN_BASE_URL", "https://api.openai.com/v1")
-                zz_model = os.getenv("ZHONGZHAN_GPT_OCR_MODEL") or os.getenv("ZHONGZHAN_OCR_MODEL", "gpt-4o")
-                provider_label = "中转站 A"
-                
-            if zz_key and zz_key.strip():
+        known_ocr_engines = {
+            "siliconflow",
+            "ali_bailian",
+            "bailian",
+            "zhongzhan",
+            "zhongzhan_gpt",
+            "zhongzhan_claude",
+        }
+        if engine in known_ocr_engines:
+            ocr_provider = resolve_ocr_provider(engine)
+            if ocr_provider.api_key and ocr_provider.api_key.strip():
                 try:
-                    latex_content = ocr_via_zhongzhan(temp_filepath, zz_key, zz_base_url, model_name=zz_model, include_illustration_box=True)
+                    latex_content = ocr_via_provider(
+                        temp_filepath,
+                        ocr_provider,
+                        include_illustration_box=True,
+                    )
                     confidence = 0.99
-                    provider = f"{provider_label} ({zz_model})"
+                    provider = (
+                        f"{ocr_provider.provider_label} "
+                        f"({ocr_provider.model_name})"
+                    )
                 except Exception as e:
-                    print(f"[{provider_label} 识别失败] 发生异常: {str(e)}")
+                    print(
+                        f"[{ocr_provider.provider_label} 识别失败] "
+                        f"发生异常: {str(e)}"
+                    )
             else:
-                print(f"[OCR Flow Warning] 未配置 {provider_label} 密钥，中转站引擎无法启动！")
+                print(
+                    f"[OCR Flow Warning] 未配置 {ocr_provider.credential_label}，"
+                    "当前识图引擎无法启动！"
+                )
 
         if not latex_content:
             raise RuntimeError("当前分配的识图引擎均无法启动或识别失败。请检查右上角「API设置」中是否正确配置了 硅基流动(SiliconFlow) 或是 阿里百炼(Alibaba Bailian) 的 API Key。")
@@ -1631,76 +1421,23 @@ def correct_tikz_endpoint(
 ):
     """利用用户指定的高级绘图模型进行 TikZ 纠错，支持人工指导意见注入"""
     import base64
-    import requests
-    
+
     # 动态读取高级绘图模型配置
     prefer_draw = os.getenv("PREFER_DRAW_MODEL", "Qwen/Qwen3-VL-32B-Instruct")
-    is_zhongzhan_gpt = prefer_draw.startswith("ZHONGZHAN_GPT/") or prefer_draw.startswith("ZHONGZHAN/")
-    is_zhongzhan_claude = prefer_draw.startswith("ZHONGZHAN_CLAUDE/")
-    is_bailian = prefer_draw.startswith("BAILIAN/")
-    is_siliconflow = prefer_draw.startswith("SILICONFLOW/")
-    
-    if is_bailian:
-        api_key = os.getenv("ALI_BAILIAN_API_KEY")
-        if not api_key:
-            raise HTTPException(
-                status_code=400,
-                detail="未配置 阿里百炼 API Key (ALI_BAILIAN_API_KEY)！请在设置面板中配置后重试。"
-            )
-        api_key = api_key.strip()
-        model_name = prefer_draw.split("/", 1)[1]
-        if model_name == "qwen3.7-max":
-            model_name = "qwen-max"
-        base_url = os.getenv("ALI_BAILIAN_API_BASE", "https://dashscope.aliyuncs.com/compatible-mode/v1").rstrip("/")
-        url = f"{base_url}/chat/completions" if not base_url.endswith("/chat/completions") else base_url
-        print(f"[TikZ Correction] 启用阿里百炼高级模型进行纠错: {model_name}, Base URL: {url}")
-    elif is_zhongzhan_gpt:
-        zhongzhan_key = os.getenv("ZHONGZHAN_GPT_API_KEY") or os.getenv("ZHONGZHAN_API_KEY")
-        if not zhongzhan_key:
-            raise HTTPException(
-                status_code=400,
-                detail="未配置中转站 A (ZHONGZHAN_GPT_API_KEY)！请在设置面板中配置后重试。"
-            )
-        api_key = zhongzhan_key.strip()
-        model_name = prefer_draw.split("/", 1)[1]
-        base_url = (os.getenv("ZHONGZHAN_GPT_BASE_URL") or os.getenv("ZHONGZHAN_BASE_URL", "https://api.openai.com/v1")).rstrip("/")
-        url = f"{base_url}/chat/completions" if not base_url.endswith("/chat/completions") else base_url
-        print(f"[TikZ Correction] 启用中转站 A 高级模型进行纠错: {model_name}, Base URL: {url}")
-    elif is_zhongzhan_claude:
-        zhongzhan_key = os.getenv("ZHONGZHAN_CLAUDE_API_KEY")
-        if not zhongzhan_key:
-            raise HTTPException(
-                status_code=400,
-                detail="未配置中转站 B (ZHONGZHAN_CLAUDE_API_KEY)！请在设置面板中配置后重试。"
-            )
-        api_key = zhongzhan_key.strip()
-        model_name = prefer_draw.split("/", 1)[1]
-        base_url = os.getenv("ZHONGZHAN_CLAUDE_BASE_URL", "https://api.openai.com/v1").rstrip("/")
-        url = f"{base_url}/chat/completions" if not base_url.endswith("/chat/completions") else base_url
-        print(f"[TikZ Correction] 启用中转站 B 高级模型进行纠错: {model_name}, Base URL: {url}")
-    elif is_siliconflow:
-        sf_key = os.getenv("SILICONFLOW_API_KEY")
-        if not sf_key:
-            raise HTTPException(
-                status_code=400,
-                detail="未配置 硅基流动 API Key (SILICONFLOW_API_KEY)！请在设置面板中配置后重试。"
-            )
-        api_key = sf_key.strip()
-        model_name = prefer_draw.split("/", 1)[1]
-        url = "https://api.siliconflow.cn/v1/chat/completions"
-        print(f"[TikZ Correction] 启用 SiliconFlow 高级模型进行纠错: {model_name}")
-    else:
-        # SiliconFlow 无前缀默认路由
-        sf_key = os.getenv("SILICONFLOW_API_KEY")
-        if not sf_key:
-            raise HTTPException(
-                status_code=400,
-                detail="未配置 硅基流动 API Key (SILICONFLOW_API_KEY)！请在设置面板中配置后重试。"
-            )
-        api_key = sf_key.strip()
-        model_name = prefer_draw
-        url = "https://api.siliconflow.cn/v1/chat/completions"
-        print(f"[TikZ Correction] 启用 SiliconFlow 默认模型进行纠错: {model_name}")
+    draw_provider = resolve_draw_provider(prefer_draw)
+    if not draw_provider.api_key:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"未配置 {draw_provider.credential_label}！"
+                "请在设置面板中配置后重试。"
+            ),
+        )
+    model_name = draw_provider.model_name
+    print(
+        f"[TikZ Correction] 启用 {draw_provider.provider_label} 高级模型进行纠错: "
+        f"{model_name}, Base URL: {draw_provider.chat_completions_url}"
+    )
 
     # 对原始截图进行 Base64 编码
     clean_original_path = os.path.join(str(PROJECT_ROOT), original_image_path.lstrip("/"))
@@ -1720,12 +1457,6 @@ def correct_tikz_endpoint(
         rendered_image_path = compile_tikz_to_png(tikz_code)
     except Exception as e:
         compile_error_log = str(e)
-
-    # 构造请求头部
-    headers = {
-        "Authorization": f"Bearer {api_key}",
-        "Content-Type": "application/json"
-    }
 
     # 视觉比对模式（编译成功，获取到两张图）
     if rendered_image_path:
@@ -1795,7 +1526,12 @@ def correct_tikz_endpoint(
     }
 
     try:
-        response = robust_request_post(url, headers=headers, json=payload, timeout=90)
+        response = post_chat_completion(
+            draw_provider,
+            payload,
+            timeout=90,
+            check_status=False,
+        )
         if response.status_code != 200:
             raise RuntimeError(f"大模型接口返回错误 HTTP {response.status_code}: {response.text}")
         
@@ -3310,66 +3046,18 @@ def extract_title_from_latex(latex: str) -> str:
 
 def ocr_pdf_page_image(image_path: str) -> str:
     """自动选择已配置的 VLM 识别引擎进行单页识别，支持故障转移（Fallback）与兜底识别"""
-    sf_key = os.getenv("SILICONFLOW_API_KEY")
-    sf_model = os.getenv("SILICONFLOW_OCR_MODEL", "Qwen/Qwen3-VL-8B-Instruct")
-    
-    ali_key = os.getenv("ALI_BAILIAN_API_KEY")
-    ali_model = os.getenv("ALI_BAILIAN_OCR_MODEL", "qwen3-vl-flash")
-    
-    zz_key = os.getenv("ZHONGZHAN_GPT_API_KEY") or os.getenv("ZHONGZHAN_API_KEY")
-    zz_base_url = os.getenv("ZHONGZHAN_GPT_BASE_URL") or os.getenv("ZHONGZHAN_BASE_URL", "https://api.openai.com/v1")
-    zz_model = os.getenv("ZHONGZHAN_GPT_OCR_MODEL") or os.getenv("ZHONGZHAN_OCR_MODEL", "gpt-4o")
-    
     errors = []
-    
-    # 根据用户首选的识图引擎调整尝试的顺序
     prefer_engine = os.getenv("OCR_PREFER_ENGINE", "siliconflow")
-    
-    engines_to_try = []
-    if prefer_engine == "siliconflow":
-        if sf_key and sf_key.strip():
-            engines_to_try.append(("SiliconFlow", "siliconflow", sf_key, sf_model))
-        if ali_key and ali_key.strip():
-            engines_to_try.append(("阿里云百炼", "ali_bailian", ali_key, ali_model))
-        if zz_key and zz_key.strip():
-            engines_to_try.append(("中转站", "zhongzhan", zz_key, zz_base_url, zz_model))
-    elif prefer_engine == "ali_bailian":
-        if ali_key and ali_key.strip():
-            engines_to_try.append(("阿里云百炼", "ali_bailian", ali_key, ali_model))
-        if sf_key and sf_key.strip():
-            engines_to_try.append(("SiliconFlow", "siliconflow", sf_key, sf_model))
-        if zz_key and zz_key.strip():
-            engines_to_try.append(("中转站", "zhongzhan", zz_key, zz_base_url, zz_model))
-    else:  # zhongzhan 或其他
-        if zz_key and zz_key.strip():
-            engines_to_try.append(("中转站", "zhongzhan", zz_key, zz_base_url, zz_model))
-        if sf_key and sf_key.strip():
-            engines_to_try.append(("SiliconFlow", "siliconflow", sf_key, sf_model))
-        if ali_key and ali_key.strip():
-            engines_to_try.append(("阿里云百炼", "ali_bailian", ali_key, ali_model))
-            
-    # 如果列表为空，按可用性加入有配置的引擎作为候选
-    if not engines_to_try:
-        if sf_key and sf_key.strip():
-            engines_to_try.append(("SiliconFlow", "siliconflow", sf_key, sf_model))
-        if ali_key and ali_key.strip():
-            engines_to_try.append(("阿里云百炼", "ali_bailian", ali_key, ali_model))
-        if zz_key and zz_key.strip():
-            engines_to_try.append(("中转站", "zhongzhan", zz_key, zz_base_url, zz_model))
-        
-    if not engines_to_try:
+    providers_to_try = resolve_ocr_fallbacks(prefer_engine)
+
+    if not providers_to_try:
         raise ValueError("未配置任何识图 Key，请在右上角「API设置」面板中配置 硅基流动、阿里百炼 或 中转站 API 密钥。")
-        
-    for engine_info in engines_to_try:
-        label, engine_type = engine_info[0], engine_info[1]
+
+    for ocr_provider in providers_to_try:
+        label = ocr_provider.provider_label
         try:
             print(f"[PDF OCR Flow] 正在尝试调用识图引擎: {label}...")
-            if engine_type == "siliconflow":
-                return ocr_via_siliconflow(image_path, engine_info[2], model_name=engine_info[3])
-            elif engine_type == "ali_bailian":
-                return ocr_via_ali_bailian(image_path, engine_info[2], model_name=engine_info[3])
-            elif engine_type == "zhongzhan":
-                return ocr_via_zhongzhan(image_path, engine_info[2], engine_info[3], model_name=engine_info[4])
+            return ocr_via_provider(image_path, ocr_provider)
         except Exception as e_single:
             err_msg = f"{label} 出错: {str(e_single)}"
             print(f"[PDF OCR Flow Warning] {err_msg}")

@@ -6,7 +6,7 @@
 ## 2. 核心技术栈
 本项目追求极简配置与极致体验，严格遵循以下技术选型，**不要引入复杂的现代前端构建工具（如 Webpack/Vite/Node.js 生态）**：
 - **后端**：Python + FastAPI。
-- **后端渐进式模块架构**：根目录 `main.py` 继续作为 `uvicorn main:app` 兼容入口；跨模块共享能力集中在 `mathbank/`：`paths.py` 统一锚定数据库、静态资源、上传、模板、备份、环境变量和构建路径，`curriculums.py` 加载四套教材 JSON，`prompts.py` 提供 OCR、解题、分类、拆卷、TikZ 与 AI 组卷的纯提示构建器，`ai_providers.py` 统一解析纯文本模型的平台前缀、密钥变量、API Base、真实模型名与推理强度，`ai_http.py` 统一负责 AI Bearer 请求头、代理绕过重试与 OpenAI 兼容 Chat Completions 的 HTTP 状态检查。业务路由仍独立构建请求 JSON 与解析响应，严禁重新复制这些长篇数据或供应商判断规则。
+- **后端渐进式模块架构**：根目录 `main.py` 继续作为 `uvicorn main:app` 兼容入口；跨模块共享能力集中在 `mathbank/`：`paths.py` 统一锚定数据库、静态资源、上传、模板、备份、环境变量和构建路径，`curriculums.py` 加载四套教材 JSON，`prompts.py` 提供 OCR、解题、分类、拆卷、TikZ 与 AI 组卷的纯提示构建器，`ai_providers.py` 统一解析纯文本及 OCR/TikZ 多模态模型的平台前缀、密钥变量、API Base、真实模型名、推理强度与图像输入能力，`ai_http.py` 统一负责 AI Bearer 请求头、代理绕过重试与 OpenAI 兼容 Chat Completions 的 HTTP 状态检查。业务路由仍独立构建请求 JSON 与解析响应，严禁重新复制这些长篇数据或供应商判断规则。
 - **数据库**：SQLite + SQLAlchemy（轻量级，数据存储在本地 `.db` 文件中）。
 - **前端页面**：纯 HTML + 原生 JavaScript。
 - **前端脚本拆分**：前端 JS 采用无编译的“渐进式级联加载”架构，分模块存放在 `static/js/` 目录下（`api.js`、`editor.js`、`ocr.js`、`import.js`），加载顺序严格依存，不允许产生任何编译及捆绑动作。
@@ -81,6 +81,7 @@
 - **AI 智能纠错**：若绘图编译报错或有细节不完美，用户可在纠错输入框中填写“修改意见”，调用 `/api/correct_tikz` 结合原有 TikZ 代码和指导意见由 AI 进行闭环智能修改。
 
 #### 3.2.2 双阶段多模态识图与高级 TikZ 绘图模型联动
+- **多模态 Provider 单一解析来源**：单题 OCR、PDF OCR 故障转移、自动 TikZ 绘图与 TikZ 纠错必须分别通过 `resolve_ocr_provider`、`resolve_ocr_fallbacks` 和 `resolve_draw_provider` 获取平台、密钥、地址及真实模型名。PDF OCR 必须尊重 `zhongzhan_claude`（中转站 B）首选项；`SILICONFLOW/模型名` 绘图配置必须剥离平台前缀后再发给接口。
 - **多模态插图检测**：在单题 OCR 识图（`/api/ocr`）过程中，如果选择或默认的多模态大模型引擎识别到题目包含插图，会在返回的 LaTeX 文本中自动植入 `[ILLUSTRATION_BOX: ...]` 临时定位标记。
 - **高阶 TikZ 自动生成与编译**：后端接口解析到此插图标记后，会自动将其擦除，并自动触发双阶段联动——将整张原始题目截图及提取出的 LaTeX 题干文本同时发送给配置的高级绘图模型（由 `PREFER_DRAW_MODEL` 指定），由其自动识别图文逻辑并生成高精度 LaTeX TikZ 几何绘图代码。生成后系统会在后台自动将其编译为 PNG 图片存入静态目录，并在题干末尾自动追加 Markdown 格式的插图引用（如 `![](/static/uploads/tikz_xxx.png)`），实现单题从图文识别到矢量几何图重绘的一键自愈流程。
 
