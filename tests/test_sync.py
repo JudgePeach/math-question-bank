@@ -2,8 +2,8 @@ import os
 import json
 import time
 import pytest
-from database import Question
-from sync_helper import clean_latex_to_markdown_for_ai, export_database_to_files
+from mathbank.database import Question
+from mathbank.sync_helper import clean_latex_to_markdown_for_ai, export_database_to_files
 from main import clean_orphaned_images
 
 def test_clean_latex_to_markdown_for_ai():
@@ -59,7 +59,7 @@ def test_export_database_to_files(db_session, tmp_path):
     db_session.commit()
 
     # Re-route backup paths in sync_helper module to tmp_path to avoid writing to real data_backup directory during tests
-    import sync_helper
+    from mathbank import sync_helper
     original_backup_dir = sync_helper.BACKUP_DIR
     original_json_path = sync_helper.JSON_BACKUP_PATH
     original_md_path = sync_helper.MD_BACKUP_PATH

@@ -8,13 +8,10 @@ migrate_fillin.py - 历史题库填空题下划线批量升级为 \\fillin 宏�
 """
 
 import sys
-import os
 
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-
-from database import SessionLocal, Question
+from mathbank.database import SessionLocal, Question
 from main import normalize_fillin_macro
-from sync_helper import export_database_to_files
+from mathbank.sync_helper import export_database_to_files
 
 def migrate_database_fillin():
     print("=" * 65)

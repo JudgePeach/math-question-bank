@@ -6,9 +6,9 @@
 
 无需复杂的安装与前端编译，开箱即用。支持数学公式与几何图形秒级预览，深度集成一键组卷、A4 仿真画布排版、高考级 PDF 试卷导出、DeepSeek AI 解题以及一键 OCR 题目识别。
 
-![MathBank 题库研讨工作台](screenshot1.png)
+![MathBank 题库研讨工作台](docs/images/screenshot1.png)
 
-![MathBank 组卷排版工作台](screenshot2.png)
+![MathBank 组卷排版工作台](docs/images/screenshot2.png)
 
 ---
 
@@ -134,16 +134,17 @@
 
 ## 🛠️ 命令行检索与实用脚本
 
-### 1. 本地终端极速检索 (`search_questions.py`)
+### 1. 本地终端极速检索 (`scripts/search_questions.py`)
 在终端中快速检索题库（如搜索“导数”）：
 ```bash
-python3 search_questions.py -q "导数"
+python3 -m scripts.search_questions -q "导数"
 ```
 **主要参数**：`-q` 关键词 | `-n` 返回数量 (默认 50, `-1` 无上限) | `-a` 携带答案解析 | `-t` 题型过滤 | `-d` 难度过滤 | `-r` 关联题目检索
 
 ### 2. 数据清洗与自愈脚本
-- **填空题下划线全量升级**：`python3 migrate_fillin.py`（将旧下划线规范化为 `\fillin` 宏）
-- **选择题题干空括号净化**：`python3 migrate_choice_parentheses.py`（自动抹除题干末尾空括号，防止与 `\paren` 重叠）
+- **填空题下划线全量升级**：`python3 -m scripts.migrate_fillin`（将旧下划线规范化为 `\fillin` 宏）
+- **选择题题干空括号净化**：`python3 -m scripts.migrate_choice_parentheses`（自动抹除题干末尾空括号，防止与 `\paren` 重叠）
+- **构建跨平台 Release**：`python3 -m scripts.build_release`
 
 ---
 
@@ -152,13 +153,29 @@ python3 search_questions.py -q "导数"
 ```text
 .
 ├── data_backup/                # 实时备份与 AI 专属只读题库 (已忽略)
+│   ├── archive/                # 历史迁移与测试数据库归档
 │   ├── questions_backup.json   # 完整数据库 JSON 备份
 │   └── questions_library.md    # AI 专属只读题库（过滤答案，防 AI 泄露）
-├── mathbank/                   # 后端共享支撑包
+├── docs/                       # 项目文档与 README 展示图片
+│   ├── AI_DATABASE_GUIDE.md    # AI 题库检索使用指南
+│   ├── 项目目录重构与模块解耦整理计划.md
+│   └── images/                 # 产品界面预览图
+├── mathbank/                   # 后端业务领域包
+│   ├── database.py             # SQLite 数据模型与 Session
+│   ├── paper_helper.py         # LaTeX/PDF 编译、排版与 LRU 缓存
+│   ├── sync_helper.py          # 数据备份与 AI 题库清洗
 │   ├── paths.py                # 与工作目录无关的项目路径单一来源
 │   ├── curriculums.py          # 四套教材预设加载与默认元数据
 │   ├── prompts.py              # OCR/解题/拆卷/TikZ/组卷提示构建器
+│   ├── ai_providers.py         # AI Provider 与模型参数解析
+│   ├── ai_http.py              # AI HTTP 请求与鉴权
+│   ├── ai_json.py              # AI 结构化 JSON 容错解析
 │   └── resources/curriculums/  # A/B/S/H 四套共享 JSON 大纲
+├── scripts/                    # 运维、迁移、检索与 Release 工具
+│   ├── search_questions.py
+│   ├── migrate_fillin.py
+│   ├── migrate_choice_parentheses.py
+│   └── build_release.py
 ├── static/                     # 前端静态资源目录
 │   ├── index.html              # 主控制台前端页面 (SPA)
 │   ├── css/                    # Tailwind, FontAwesome, KaTeX 离线样式
@@ -170,15 +187,9 @@ python3 search_questions.py -q "导数"
 │       ├── import.js           # 试题拆解与草稿/题库列表
 │       └── paper.js            # 组卷排版工作台 & Live Preview 渲染引擎
 ├── templates/                  # LaTeX 试卷模板与 exam-zh 宏包库
-├── tests/                      # Pytest 单元测试目录 (内存数据库)
-├── database.py                 # SQLite 数据库模型 (SQLAlchemy)
+├── tests/                      # Pytest 自动化测试与 artifacts
 ├── main.py                     # FastAPI 服务主入口与路由逻辑
-├── paper_helper.py             # 组卷逻辑、LaTeX/PDF 编译引擎与 LRU 缓存
-├── sync_helper.py              # 数据同步、备份锁与 AI 题库清洗
-├── search_questions.py         # 本地终端 SQL 极速模糊检索 CLI 工具
-├── migrate_fillin.py           # 填空题 \fillin 宏升级工具
-├── migrate_choice_parentheses.py # 选择题空括号清理工具
-├── build_release.py            # 跨平台一键打包 Release 脚本
+├── math_question_bank.db       # 本地 SQLite 主数据库（根目录兼容保留）
 ├── 启动题库系统.bat            # Windows 一键启动脚本
 ├── 启动题库系统.command        # macOS 一键启动脚本
 ├── requirements.txt            # Python 依赖包清单

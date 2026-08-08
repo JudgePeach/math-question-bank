@@ -4,7 +4,7 @@ import re
 import datetime
 import threading
 from sqlalchemy.orm import Session
-from database import Question, SessionLocal
+from mathbank.database import Question, SessionLocal
 from mathbank.paths import DATA_BACKUP_DIR
 
 BACKUP_DIR = str(DATA_BACKUP_DIR)

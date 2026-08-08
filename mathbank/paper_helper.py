@@ -9,7 +9,7 @@ import zipfile
 from collections import OrderedDict
 from io import BytesIO
 from sqlalchemy.orm import Session
-from database import Question, Paper, PaperQuestion, QuestionCurriculum
+from mathbank.database import Question, Paper, PaperQuestion, QuestionCurriculum
 from mathbank.paths import TEMPLATES_DIR
 
 # In-memory LRU cache for compiled PDF bytes

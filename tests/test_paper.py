@@ -83,7 +83,7 @@ def test_paper_api_flow(client):
 def test_exam_19_and_answer_sheet_generation(client):
     headers = {"X-Local-Token": LOCAL_TOKEN}
     
-    from paper_helper import build_answer_sheet_latex
+    from mathbank.paper_helper import build_answer_sheet_latex
     
     questions_data = [
         {
@@ -126,7 +126,7 @@ def test_exam_19_and_answer_sheet_generation(client):
     assert sheet_pdf_res.headers.get("content-type") == "application/pdf"
 
 def test_solution_space_latex_generation():
-    from paper_helper import build_latex_document
+    from mathbank.paper_helper import build_latex_document
     questions_data_65 = [{
         "question": {
             "id": 99,
@@ -169,4 +169,3 @@ def test_solution_space_latex_generation():
     # 3. exam_19 paper mode with 0.0cm solution space -> should not inject \vspace
     tex_19_zero = build_latex_document("高考模拟", "试卷", "exam_19", questions_data_zero, include_answers=False)
     assert r"\vspace*" not in tex_19_zero
-

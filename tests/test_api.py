@@ -2,7 +2,7 @@ import os
 import json
 import pytest
 from main import LOCAL_TOKEN
-from database import Question
+from mathbank.database import Question
 
 def test_api_forbidden_without_token(client):
     # Any POST/PUT/DELETE request without X-Local-Token must return 403 Forbidden

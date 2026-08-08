@@ -188,12 +188,6 @@ def copy_app_files():
     print("📂 Copying application files...")
     files_to_copy = [
         "main.py",
-        "database.py",
-        "paper_helper.py",
-        "sync_helper.py",
-        "search_questions.py",
-        "migrate_fillin.py",
-        "migrate_choice_parentheses.py",
         ".env.example"
     ]
     for f in files_to_copy:
@@ -206,6 +200,13 @@ def copy_app_files():
     shutil.copytree(
         os.path.join(BASE_DIR, "mathbank"),
         os.path.join(BUILD_DIR, "mathbank"),
+        dirs_exist_ok=True,
+        ignore=shutil.ignore_patterns("__pycache__", "*.pyc"),
+    )
+
+    shutil.copytree(
+        os.path.join(BASE_DIR, "scripts"),
+        os.path.join(BUILD_DIR, "scripts"),
         dirs_exist_ok=True,
         ignore=shutil.ignore_patterns("__pycache__", "*.pyc"),
     )
@@ -315,12 +316,6 @@ def zip_macos_release():
     # Copy source files
     files_to_copy = [
         "main.py",
-        "database.py",
-        "paper_helper.py",
-        "sync_helper.py",
-        "search_questions.py",
-        "migrate_fillin.py",
-        "migrate_choice_parentheses.py",
         ".env.example",
         "requirements.txt",
         "启动题库系统.command"
@@ -334,6 +329,13 @@ def zip_macos_release():
     shutil.copytree(
         os.path.join(BASE_DIR, "mathbank"),
         os.path.join(macos_build_dir, "mathbank"),
+        dirs_exist_ok=True,
+        ignore=shutil.ignore_patterns("__pycache__", "*.pyc"),
+    )
+
+    shutil.copytree(
+        os.path.join(BASE_DIR, "scripts"),
+        os.path.join(macos_build_dir, "scripts"),
         dirs_exist_ok=True,
         ignore=shutil.ignore_patterns("__pycache__", "*.pyc"),
     )

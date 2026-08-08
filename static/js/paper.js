@@ -2268,9 +2268,15 @@
     function getDifficultyBadge(diff) {
         if (!diff) return '';
         let label = diff;
+        let colorClass = '';
         if (window.systemMetadata && Array.isArray(window.systemMetadata.difficulties)) {
             const found = window.systemMetadata.difficulties.find(d => d.value === diff);
-            if (found) label = found.label;
+            if (found) {
+                label = found.label;
+                if (found.color) {
+                    colorClass = found.color;
+                }
+            }
         } else {
             const fallbackMap = {
                 easy: '普通题',
@@ -2283,16 +2289,24 @@
             label = fallbackMap[diff] || diff;
         }
 
-        let badgeClass = 'bg-amber-50 text-amber-600 border-amber-200/50 dark:bg-amber-900/30 dark:text-amber-300';
-        if (diff === 'easy' || diff === 'normal') {
-            badgeClass = 'bg-emerald-50 text-emerald-600 border-emerald-200/50 dark:bg-emerald-900/30 dark:text-emerald-300';
-        } else if (diff === 'easy_error') {
-            badgeClass = 'bg-cyan-50 text-cyan-600 border-cyan-200/50 dark:bg-cyan-900/30 dark:text-cyan-300';
-        } else if (diff === 'hard' || diff === 'qiangji') {
-            badgeClass = 'bg-rose-50 text-rose-600 border-rose-200/50 dark:bg-rose-900/30 dark:text-rose-300';
+        if (!colorClass) {
+            if (typeof window.getDifficultyColor === 'function') {
+                colorClass = window.getDifficultyColor(diff);
+            } else if (diff === 'easy' || diff === 'normal') {
+                colorClass = 'text-blue-600 bg-blue-50 border border-blue-200/60 dark:bg-blue-900/30 dark:text-blue-300';
+            } else if (diff === 'easy_error') {
+                colorClass = 'text-green-600 bg-green-50 border border-green-200/60 dark:bg-green-900/30 dark:text-green-300';
+            } else if (diff === 'hard' || diff === 'qiangji') {
+                colorClass = 'text-purple-600 bg-purple-50 border border-purple-200/60 dark:bg-purple-900/30 dark:text-purple-300';
+            } else if (diff === 'challenge') {
+                colorClass = 'text-red-600 bg-red-50 border border-red-200/60 dark:bg-red-900/30 dark:text-red-300';
+            } else {
+                colorClass = 'text-slate-550 bg-slate-100 border border-slate-200/60';
+            }
         }
 
-        return `<span class="px-2 py-0.5 rounded-lg text-xs font-semibold ${badgeClass} border">${escapeHtml(label)}</span>`;
+        const cleanLabel = label.replace(/[\u2700-\u27BF]|[\uE000-\uF8FF]|\uD83C[\uDC00-\uDFFF]|\uD83D[\uDC00-\uDFFF]|[\u2011-\u26FF]|\uD83E[\uDD00-\uDFFF]/g, '').trim();
+        return `<span class="px-2 py-0.5 rounded-lg text-xs font-semibold ${colorClass}">${escapeHtml(cleanLabel)}</span>`;
     }
 
     window.setFigureAlign = function (qid, alignVal) {

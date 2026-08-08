@@ -6,7 +6,7 @@
 ## 2. 核心技术栈与无构建原则
 本项目追求极致流畅的用户体验和极简的本地环境配置，严格禁止引入现代复杂前端构建工具（如 Webpack/Vite/Node.js 生态）：
 - **后端**：Python 3.10+ + FastAPI + Uvicorn。
-- **后端渐进式模块架构**：根目录 `main.py` 保留为 `uvicorn main:app` 兼容入口；共享能力集中在 `mathbank/`。`paths.py` 是数据库、静态资源、上传、模板、备份、`.env` 与构建路径的唯一来源，`curriculums.py` 负责四套教材 JSON，`prompts.py` 负责 OCR、解题、分类、拆卷、TikZ 与 AI 组卷提示构建，`ai_providers.py` 负责纯文本及 OCR/TikZ 多模态模型的平台、密钥变量、API Base、真实模型名、推理强度与图像输入能力解析，`ai_http.py` 负责 AI Bearer 请求头、代理绕过重试和 OpenAI 兼容 Chat Completions 的 HTTP 状态检查。各业务路由继续独立构建请求 JSON 和解析响应，不得在路由或前端重新复制这些数据与供应商判断规则。
+- **后端渐进式模块架构**：根目录 `main.py` 保留为 `uvicorn main:app` 兼容入口；后端领域能力统一集中在 `mathbank/`。`database.py` 负责 SQLite ORM 与 Session，`paper_helper.py` 负责 LaTeX/PDF 编译排版，`sync_helper.py` 负责备份与 AI 题库导出，`paths.py` 是数据库、静态资源、上传、模板、备份、`.env` 与构建路径的唯一来源，`curriculums.py` 负责四套教材 JSON，`prompts.py` 负责各类 AI 提示构建，`ai_providers.py`、`ai_http.py`、`ai_json.py` 分别负责供应商解析、HTTP 请求和结构化输出解析。运维、迁移、检索及 Release 工具集中于 `scripts/`，从项目根目录使用 `python3 -m scripts.<模块名>` 运行；不得重新在根目录新增业务模块。
 - **数据库**：SQLite + SQLAlchemy（轻量化本地数据库，数据存储在项目根目录下的 `./math_question_bank.db` 中）。
 - **前端页面**：单页面应用 `static/index.html`（纯 HTML5 + 原生 JavaScript，无编译，秒级加载）。
 - **前端样式与字体**：Tailwind CSS + FontAwesome 图标库 + Inter/Outfit Webfonts（均已下载至本地 `/static/lib` 支持 100% 离线使用与跨平台字体降级）。
@@ -27,7 +27,7 @@
 - **选择题 choices 环境规范与填空题 \fillin 宏规范**：
   - 所有选择题在入库和存储时，选项部分必须统一格式化为 LaTeX 的 `choices` 环境（使用 `\begin{choices}` 和 `\item` 包裹，且剥离原本的 A., B., C., D. 等标号前缀）。
     - **选择题 choices 网格对齐与高度自适应 (Choice Grid Column Extraction & Vertical Alignment)**：前端 KaTeX 预渲染（`editor.js` 中的 `preprocessFormulaForKaTeX` 与 `parseMarkdownWithMath`）统一为选择题 `\begin{choices}` 环境生成带 `choices-grid` 标识的弹性网格容器。组卷工作台 A4 Live Preview (`paper.js`) 自动捕获此标识将题干与选项提取分离，实现题干右侧括号 `（   ）` 顶格靠右，选项独占下方 100% 满宽 A4 栅格。同时通过 `.choices-grid` 与 `items-baseline` 顶部/首行基线对齐规则，彻底解决了单行及多行折行选项下 A、B、C、D 序号标号与第一行文本基线完美对齐的问题，既杜绝了分式撑高顶部导致的标号偏高，又防止了选项折行时标号悬浮在多行文本中间。
-  - **选择题题干末尾括号自动净化 (Choice Stem Parentheses Cleanup & Self-Healing)**：后端 `paper_helper.py` (`clean_choice_stem_parentheses`)、前端 KaTeX 预编译 (`cleanChoiceStemParentheses`) 与全量自愈脚本 (`migrate_choice_parentheses.py`) 会自动物理抹除题干末尾录入的各种全角/半角供填答用空括号（如 `(\quad)`、`(   )`、`（  ）`），防止与 LaTeX 模板右侧自动生成的 `\paren` 宏产生二次重叠。
+  - **选择题题干末尾括号自动净化 (Choice Stem Parentheses Cleanup & Self-Healing)**：后端 `mathbank/paper_helper.py` (`clean_choice_stem_parentheses`)、前端 KaTeX 预编译 (`cleanChoiceStemParentheses`) 与全量自愈脚本 (`scripts/migrate_choice_parentheses.py`) 会自动物理抹除题干末尾录入的各种全角/半角供填答用空括号（如 `(\quad)`、`(   )`、`（  ）`），防止与 LaTeX 模板右侧自动生成的 `\paren` 宏产生二次重叠。
   - **填空题 \fillin 规范与自动自愈 (Fillin Macro Standardization & Self-Healing)**：系统在多模态 OCR 识图（SiliconFlow / 阿里百炼 / 中展 AI）Prompt、试卷 AI 智能拆卷 Prompt 中均强制要求将填空题下划线生成为 `\fillin` 宏。同时在后端录入/修改/拆题逻辑中内置了 `normalize_fillin_macro` 自愈清洗器，会自动将 `______` 或 `\underline{\hspace{...}}` 等旧格式静默升级为标准的 `\fillin`。前端 `preprocessFormulaForKaTeX` 默认将纯 `\fillin` 转化为 1.5cm 标准精美下划线渲染。
   - **裸露数学环境自动自愈 (Exposed Math Environment Self-Healing)**：针对录入或识别到的裸露 LaTeX 数学环境（如 `\begin{cases}...\end{cases}`、`aligned`、`matrix` 等），前端 KaTeX 预渲染函数（`preprocessFormulaForKaTeX` 与 `parseMarkdownWithMath`）会自动识别并使用单美元符号 `$...$` 智能包裹，彻底杜绝未加 `$` 导致渲染成纯文本的异常。
   - **LaTeX/Markdown 换行规范与右侧插图顶格组装算法 (Line Break Rules & Right-Aligned Minipage Hangindent Reset)**：在 LaTeX 试卷导出中，引入了 `format_stem_paragraphs` 算法结合 `\noindent\begin{minipage}` 容器及内部 `\hangindent=0pt\setlength{\parindent}{2em}` 参数重置。消除了外层 `problem` 环境施加给 `minipage` 盒子的外层 2em 缩进偏移以及折行悬挂缩进，既保证了在 `minipage` 右侧插图窄版下同一段落内的自然续行（如 `AC=BC, D, E分别为...`）与全宽题完全一致地 **100% 绝对顶格对齐**，又使小问另起新行并保留 2em 标准首行缩进，且绝不破坏公式或坐标点。
@@ -46,7 +46,7 @@
 - **全工作台试题序号同步 (#seq_num Sync)**：
   - 后端接口（`GET /api/questions`、`GET /api/questions/{id}`）自动基于 SQLite 物理升序索引计算全局纯净序号 `seq_num` (1 ~ N)。
   - 题库研讨工作台（`editor.js`）与组卷排版工作台（`paper.js`）均统一优先采用 `q.seq_num` 作为试题卡片与 Toast 交互的视觉编号（如 `#22`），彻底规避历史删题导致的数据库主键 ID 断号/跳号给用户带来的困扰。
-  - **编辑会话状态与预览单一来源 (EditorState & Single Renderer)**：`api.js` 中的只读方法对象 `EditorState` 是当前题目 ID、纯净序号、录入时间、草稿 ID 与编辑模式的唯一状态来源，状态切换必须使用 `reset()`、`useQuestion()`、`useDraft()`、`setDraftId()` 或 `clearDraft()`，严禁重新引入平行全局变量。`editor.js` 的 `renderEditorPaperMeta()` 是右侧 `paperBadges` 与来源栏的唯一写入入口；`import.js` 等数据加载模块只能填充表单、更新 `EditorState` 并调用该渲染函数，不得自行拼接同一区域 HTML。题目详情异步返回时还必须核对请求 ID 与当前 `EditorState.questionId`，丢弃快速跨题切换产生的过期响应。这样可确保切换题型、难度、来源、标签、题目或草稿时，编号与“录入于”时间不会丢失、串题或被旧请求覆盖。
+  - **编辑会话状态与预览单一来源 (EditorState & Single Renderer)**：`api.js` 中的只读方法对象 `EditorState` 是当前题目 ID、纯净序号、录入时间、草稿 ID 与编辑模式的唯一状态来源，状态切换必须使用 `reset()`、`useQuestion()`、`useDraft()`、`setDraftId()` 或 `clearDraft()`，严禁重新引入平行全局变量。`editor.js` 的 `renderEditorPaperMeta()` 是右侧 `paperBadges` 与来源栏的唯一写入入口（难度徽章统一调用 `getDifficultyColor()` 动态匹配大纲元数据色彩配置，与左侧题目卡片保持 100% 视觉色彩一致）；`import.js` 等数据加载模块只能填充表单、更新 `EditorState` 并调用该渲染函数，不得自行拼接同一区域 HTML。题目详情异步返回时还必须核对请求 ID 与当前 `EditorState.questionId`，丢弃快速跨题切换产生的过期响应。这样可确保切换题型、难度、来源、标签、题目或草稿时，编号与“录入于”时间不会丢失、串题或被旧请求覆盖。
 - **AI 智能组卷与教育学理推理 (AI Paper Auto-Selection with Pedagogical Reasoning)**：
   - 一键组卷功能升级调用 `PREFER_SOLVE_MODEL` 核心解题大模型，融入中学数学教学教研思维（双向细目表、知识点覆盖率与难度阶梯分布），自动从题库中挑选最适配的题目组合。
 - **工作台状态无缝持久化与零闪烁首屏渲染 (Workspace State Persistence & Zero Flash)**：
@@ -78,19 +78,19 @@
    - **排版命令自动清洗**：自动将原题中的 `\item`、`\begin{itemize}`、`\\`、`\underline` 等 Markdown 不兼容/对 AI 造成阅读噪点的排版命令**转换为标准 Markdown 列表和纯净下划线**。
    - **数学公式 100% 保留**：完好保留夹在 `$` 和 `$$` 之间的专业数学公式。
    - **语义检索优化**：提供精美的全局目录大纲树，便于普通在线 AI（如 Web 版 ChatGPT）作为静态 RAG 知识库上传使用。
-- **AI 本地终端数据库智能检索系统 (`search_questions.py`)**：
+- **AI 本地终端数据库智能检索系统 (`scripts/search_questions.py`)**：
   - **极致的 AI 终端交互通道**：针对拥有“执行终端命令”权限的本地 AI 智能体（如 Claude Code、Cursor、Cline 等），直接加载巨大的静态 Markdown 极其低效且昂贵。
-  - **交互工作流**：系统在根目录设计了专门的 `search_questions.py` CLI 查询工具。AI 通过直接在控制台运行 `python3 search_questions.py -q <关键词>`，即可利用底层的 SQLite 索引在毫秒级模糊筛选出最贴切的题目列表（学段、章节、知识点或题干包含关键词均可自动匹配），默认单次返回限制为 50 道（使用 `-n -1` 可获取全部匹配）。
+  - **交互工作流**：系统在 `scripts/` 中提供 `search_questions.py` CLI 查询工具。AI 从项目根目录运行 `python3 -m scripts.search_questions -q <关键词>`，即可利用底层的 SQLite 索引在毫秒级模糊筛选出最贴切的题目列表（学段、章节、知识点或题干包含关键词均可自动匹配），默认单次返回限制为 50 道（使用 `-n -1` 可获取全部匹配）。
   - **关键选项**：
     - `-q`, `--query`：模糊检索词。
     - `-n`, `--limit`：返回数量上限（默认值：`50`，`-1` 代表无上限）。
     - `-a`, `--with-answers`：是否携带答案与详细解析（默认隐藏以防 AI 答案泄露）。
     - `-t`, `--type`：过滤特定题型 (`single_choice`, `multi_choice`, `fill_in_blank`, `detailed_answer`)。
     - `-d`, `--difficulty`：过滤难度等级 (`easy`, `medium`, `hard`)。
-- **历史填空题下划线批量升级迁移工具 (`migrate_fillin.py`)**：
+- **历史填空题下划线批量升级迁移工具 (`scripts/migrate_fillin.py`)**：
   - **功能用途**：扫描本地 SQLite 数据库中所有已入库题目，自动将题干中遗留的旧下划线格式（如 `______`、`\underline{...}`、`\fillin[...]`）批量规范化清洗为 100% 纯粹干净的 `\fillin` 宏。
   - **自动落盘与数据同步**：迁移完成后会自动触发 `export_database_to_files()`，同步刷新 `data_backup/questions_backup.json` 备份文件与 `data_backup/questions_library.md` AI 专属题库文件。
-  - **运行指令**：在项目根目录下直接执行 `python3 migrate_fillin.py`。
+  - **运行指令**：在项目根目录下执行 `python3 -m scripts.migrate_fillin`。
     - `-r`, `--related-to`：查询与特定 ID 题目发生双向关联的全部题目。
 - **并发写保护锁 (`threading.Lock`)**：后台写盘操作被全局线程锁保护。即使连续高频修改，写入任务也会在后台自动排队执行，绝对防止多线程冲突带来的文件损坏。
 
@@ -182,7 +182,7 @@
 - **多格式导出能力**：
   - 支持单 PDF 字节流快速下载，以及完整 LaTeX 源码包（`.tex` 主文件与相关配图打包为 `.zip`）导出，供线下 XeLaTeX 高级排版微调。
 - **Windows 编码与宏包依赖自愈与智能诊断 (Windows Encoding & Missing Package Diagnostics)**：
-  - **进程级 UTF-8/GBK 智能平滑解码**：Python 后端对 `xelatex` 的 `proc.stdout`、`proc.stderr` 及 `paper.log` 日志文件全量以 `bytes` 字节流捕获，并采用 `_safe_decode_bytes()` (优先 UTF-8，失败降级 GBK) 进行安全解码；同时在 `main.py` 与 `paper_helper.py` 启动入口配置 `sys.stdout.reconfigure(encoding="utf-8", errors="replace")`，彻底清除终端日志打印非 GBK Emoji (如 `⚡`, `🚀`) 触发的 `UnicodeEncodeError` 崩溃。
+  - **进程级 UTF-8/GBK 智能平滑解码**：Python 后端对 `xelatex` 的 `proc.stdout`、`proc.stderr` 及 `paper.log` 日志文件全量以 `bytes` 字节流捕获，并采用 `_safe_decode_bytes()` (优先 UTF-8，失败降级 GBK) 进行安全解码；同时在 `main.py` 与 `mathbank/paper_helper.py` 启动入口配置 `sys.stdout.reconfigure(encoding="utf-8", errors="replace")`，彻底清除终端日志打印非 GBK Emoji (如 `⚡`, `🚀`) 触发的 `UnicodeEncodeError` 崩溃。
   - **`exam-zh.cls` 与 21 个扩展宏包零依赖内置自愈**：项目已将 `exam-zh` 完整宏包（`exam-zh.cls` 及 `exam-zh-*.sty`）以及关联的 21 个第三方 helper 宏包（`tabularray.sty`, `ninecolors.sty`, `varwidth.sty`, `linegoal.sty`, `wrapstuff.sty`, `filehook.sty`, `environ.sty`, `trimspaces.sty`, `xeCJKfntef.sty`, `ulem.sty` 等）全量内置放置在 `templates/exam-zh/` 目录中。每次编译 PDF 或导出全量 ZIP 包时，后端会自动将其动态注入复制到临时编译目录与 Zip 压缩包中。即使 Windows 电脑安装的是旧版 TeX Live (如 2018/2021) 且完全未安装 `exam-zh` 宏包，也可实现 100% 零依赖免配置成功编译！
 - **组卷工作台右侧上下解耦与静态沉稳面板 (Split Right Panel & Grounded Studio Panel)**：
   - 右侧 `paperCanvasSection` 重构为 `overflow-hidden flex flex-col` 上下完全独立分离架构。

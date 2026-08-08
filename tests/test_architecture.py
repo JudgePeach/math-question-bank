@@ -84,3 +84,18 @@ def test_paper_parsers_use_defensive_ai_json_parser():
     main_source = (PROJECT_ROOT / "main.py").read_text(encoding="utf-8")
 
     assert main_source.count("parse_ai_json(raw_ai_text)") == 2
+
+
+def test_backend_modules_and_cli_tools_live_in_packages():
+    for module_name in ("database.py", "paper_helper.py", "sync_helper.py"):
+        assert not (PROJECT_ROOT / module_name).exists()
+        assert (PROJECT_ROOT / "mathbank" / module_name).is_file()
+
+    for script_name in (
+        "search_questions.py",
+        "migrate_fillin.py",
+        "migrate_choice_parentheses.py",
+        "build_release.py",
+    ):
+        assert not (PROJECT_ROOT / script_name).exists()
+        assert (PROJECT_ROOT / "scripts" / script_name).is_file()

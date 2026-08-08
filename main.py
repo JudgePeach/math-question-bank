@@ -26,9 +26,9 @@ from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
 from dotenv import load_dotenv
 
-from database import Question, QuestionCurriculum, Paper, PaperQuestion, get_db, init_db
-from paper_helper import build_latex_document, build_answer_sheet_latex, compile_tex_to_pdf, create_tex_zip_package, create_full_bundle_zip_package, collect_referenced_images
-from sync_helper import export_database_to_files
+from mathbank.database import Question, QuestionCurriculum, Paper, PaperQuestion, get_db, init_db
+from mathbank.paper_helper import build_latex_document, build_answer_sheet_latex, compile_tex_to_pdf, create_tex_zip_package, create_full_bundle_zip_package, collect_referenced_images
+from mathbank.sync_helper import export_database_to_files
 from mathbank.ai_json import parse_ai_json
 from mathbank.ai_http import (
     post_chat_completion,
@@ -79,7 +79,7 @@ SERVER_INSTANCE_ID = str(uuid.uuid4())
 init_db()
 
 def heal_database_curriculum_names():
-    from database import SessionLocal
+    from mathbank.database import SessionLocal
     db = SessionLocal()
     try:
         mappings = {
@@ -234,7 +234,7 @@ def watchdog_loop():
 def clean_orphaned_images():
     """扫描 static/uploads 目录，安全删除超过 1 小时未被数据库中任何题目引用的孤儿图片"""
     try:
-        from database import SessionLocal, Question
+        from mathbank.database import SessionLocal, Question
         db = SessionLocal()
         try:
             # 1. 搜集数据库中所有题目引用的图片路径
@@ -285,7 +285,7 @@ def clean_orphaned_images():
 def recalibrate_usage_counts():
     """自动校准全库题目的引用频次 usage_count，修正由于历史删除试卷遗留的计数差异"""
     try:
-        from database import SessionLocal, Question, PaperQuestion
+        from mathbank.database import SessionLocal, Question, PaperQuestion
         from sqlalchemy import func
         db = SessionLocal()
         try:

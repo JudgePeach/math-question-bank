@@ -1358,10 +1358,14 @@ const PAGE_LIMIT = 20;
                 });
             }
 
+            const diffColor = (typeof getDifficultyColor === 'function')
+                ? getDifficultyColor(editDifficulty.value)
+                : 'bg-indigo-50 text-indigo-700';
+
             badges.innerHTML = `
                 ${seqBadge}
                 <span class="text-[10px] font-bold px-2 py-0.5 rounded-md bg-brand-50 text-brand-700">题型：${escapeEditorMetaText(getTypeText(editQType.value))}</span>
-                <span class="text-[10px] font-bold px-2 py-0.5 rounded-md bg-indigo-50 text-indigo-700">难度：${escapeEditorMetaText(getDifficultyText(editDifficulty.value))}</span>
+                <span class="text-[10px] font-bold px-2 py-0.5 rounded-md ${diffColor}">难度：${escapeEditorMetaText(getDifficultyText(editDifficulty.value))}</span>
                 ${createdAtBadge}
                 ${paperTagsHtml}
             `;

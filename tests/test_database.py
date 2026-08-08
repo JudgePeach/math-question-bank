@@ -1,5 +1,5 @@
 import pytest
-from database import Question
+from mathbank.database import Question
 
 def test_question_crud_operations(db_session):
     # 1. Create Question

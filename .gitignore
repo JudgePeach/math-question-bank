@@ -17,6 +17,9 @@
 # 但通过排除 .gitkeep，使得 data_backup 目录结构可以被提交到 GitHub 上
 data_backup/*
 !data_backup/.gitkeep
+!data_backup/archive/
+data_backup/archive/*
+!data_backup/archive/.gitkeep
 
 # 4. 忽略用户上传的插图资源
 # 但通过排除 .gitkeep，使得 static/uploads 目录结构可以被提交到 GitHub 上
@@ -56,4 +59,3 @@ venv/
 *_cropped.png
 test_*.png
 *_comparison*.png
-

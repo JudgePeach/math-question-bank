@@ -3,13 +3,13 @@
 > [!NOTE]
 > **To any AI Agent (Claude, Cursor, Cline, etc.) reading this guide:**
 > You are operating within a local workspace equipped with an SQLite-based High School Mathematics Question Bank (`math_question_bank.db`).
-> Instead of reading raw files or loading massive markdown lists that overflow your context window, you should **proactively execute the local CLI script `search_questions.py`** in the terminal to search, retrieve, and format questions with 100% precision.
+> Instead of reading raw files or loading massive markdown lists that overflow your context window, you should **proactively execute the local CLI module `scripts.search_questions`** in the terminal to search, retrieve, and format questions with 100% precision.
 
 ---
 
-## 1. Quick Start: The CLI Search Tool (`search_questions.py`)
+## 1. Quick Start: The CLI Search Tool (`scripts/search_questions.py`)
 
-You can run `python3 search_questions.py` directly in the shell to fuzzy search questions. It automatically returns beautifully formatted Markdown with LaTeX formulas fully preserved.
+From the project root, run `python3 -m scripts.search_questions` to fuzzy search questions. It automatically returns beautifully formatted Markdown with LaTeX formulas fully preserved.
 
 ### Parameter Reference
 | Option | Long Option | Description | Example / Allowed Values |
@@ -28,19 +28,19 @@ You can run `python3 search_questions.py` directly in the shell to fuzzy search 
 ### 📌 Case A: Generate Student Practice Sheet (No Answers)
 To find all questions in **Compulsory 1, Chapter 1, Section 1 (1.1 集合的概念)** without leaking answers:
 ```bash
-python3 search_questions.py -q "1.1" -n -1
+python3 -m scripts.search_questions -q "1.1" -n -1
 ```
 
 ### 📌 Case B: Generate Lesson Plan / Teacher Guide (With Answers)
 To retrieve **3 difficult questions about Geometry** with detailed derivations and reviews:
 ```bash
-python3 search_questions.py -q "立体几何" -d "hard" -n 3 -a
+python3 -m scripts.search_questions -q "立体几何" -d "hard" -n 3 -a
 ```
 
 ### 📌 Case C: Find Linked / Variation Questions
 To grab all variations or linked sub-questions associated with a known question ID (e.g., ID `#3`):
 ```bash
-python3 search_questions.py -r 3 -a
+python3 -m scripts.search_questions -r 3 -a
 ```
 
 ---
@@ -74,7 +74,7 @@ CREATE TABLE questions (
 When you want your AI assistant to generate lesson plans, exam sheets, or slides, simply paste one of these prompts:
 
 ### 💬 Lesson Plan Generation Prompt
-> "Please read [AI_DATABASE_GUIDE.md](./AI_DATABASE_GUIDE.md) first. Then, run the command `python3 search_questions.py -q "三角函数" -n 3 -a` in the terminal. Use the returned 3 mathematics questions with answers as classroom examples to draft a highly professional high-school lesson plan."
+> "Please read `docs/AI_DATABASE_GUIDE.md` first. Then, run the command `python3 -m scripts.search_questions -q "三角函数" -n 3 -a` in the terminal. Use the returned 3 mathematics questions with answers as classroom examples to draft a highly professional high-school lesson plan."
 
 ### 💬 Student Worksheet Generation Prompt
-> "Read [AI_DATABASE_GUIDE.md](./AI_DATABASE_GUIDE.md). Run `python3 search_questions.py -q "1.1" -n -1` to fetch all questions for section 1.1. Select 5 of them to assemble a clean quiz sheet for students (do not include answers)."
+> "Read `docs/AI_DATABASE_GUIDE.md`. Run `python3 -m scripts.search_questions -q "1.1" -n -1` to fetch all questions for section 1.1. Select 5 of them to assemble a clean quiz sheet for students (do not include answers)."

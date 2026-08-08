@@ -1,8 +1,6 @@
 import re
-import os
-import sys
-from database import Base, Question, engine, SessionLocal
-from sync_helper import export_database_to_files
+from mathbank.database import Question, SessionLocal
+from mathbank.sync_helper import export_database_to_files
 
 def clean_choice_stem_parentheses(text: str) -> str:
     """清理选择题题干末尾供填答用的全角/半角空括号并保证 $ 闭合"""

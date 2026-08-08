@@ -1019,9 +1019,25 @@
         }
 
         // Helper string mappings
+        function getDifficultyColor(val) {
+            if (!val) return 'text-slate-550 bg-slate-100 border border-slate-200/60';
+            if (systemMetadata && Array.isArray(systemMetadata.difficulties) && systemMetadata.difficulties.length > 0) {
+                const found = systemMetadata.difficulties.find(d => d.value === val);
+                if (found && found.color) {
+                    return found.color;
+                }
+            }
+            if (val === 'easy_error') return 'text-green-600 bg-green-50 border border-green-200/60';
+            if (val === 'normal') return 'text-blue-600 bg-blue-50 border border-blue-200/60';
+            if (val === 'challenge') return 'text-red-600 bg-red-50 border border-red-200/60';
+            if (val === 'qiangji') return 'text-purple-600 bg-purple-50 border border-purple-200/60';
+            return 'text-slate-550 bg-slate-100 border border-slate-200/60';
+        }
+        window.getDifficultyColor = getDifficultyColor;
+
         function getDifficultyBadge(diff) {
             if (!systemMetadata || !systemMetadata.difficulties || systemMetadata.difficulties.length === 0) {
-                if (diff === 'easy_error') return '<span class="text-[9px] font-bold text-amber-600 bg-amber-50 px-1.5 py-0.5 rounded">易错</span>';
+                if (diff === 'easy_error') return '<span class="text-[9px] font-bold text-green-600 bg-green-50 px-1.5 py-0.5 rounded">易错</span>';
                 if (diff === 'normal') return '<span class="text-[9px] font-bold text-blue-600 bg-blue-50 px-1.5 py-0.5 rounded">常规</span>';
                 if (diff === 'challenge') return '<span class="text-[9px] font-bold text-red-600 bg-red-50 px-1.5 py-0.5 rounded">挑战</span>';
                 if (diff === 'qiangji') return '<span class="text-[9px] font-bold text-purple-600 bg-purple-50 px-1.5 py-0.5 rounded">强基</span>';

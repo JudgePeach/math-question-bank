@@ -1,6 +1,6 @@
 import pytest
 from main import LOCAL_TOKEN
-from database import Question, QuestionCurriculum, init_db
+from mathbank.database import Question, QuestionCurriculum, init_db
 
 def test_curriculum_coexistence_and_migration(client, db_session):
     # Initialize the test DB index and initial migrations
