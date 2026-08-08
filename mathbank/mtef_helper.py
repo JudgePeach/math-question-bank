@@ -91,10 +91,23 @@ def _clean_and_format_formula(raw: str) -> str:
     elif s in ("i", "i="):
         s = "i"
 
-    # 3. Trigonometric functions, quantifiers, and polynomials
+    # 3. Trigonometric functions, Greek phase symbols, and fractions
+    s = re.sub(r"\b3\s*sin", r"3\\sin", s)
+    s = re.sub(r"\bcos", r"\\cos", s)
+    s = re.sub(r"\btan", r"\\tan", s)
     s = re.sub(
         r"f\(\s*x\)\s*==?\s*\((a\+b)\)\s*cos\s*2x\s*\+\s*\((a-b)\)\s*sin\s*2x",
         r"f(x) = (\1)\\cos 2x + (\2)\\sin 2x",
+        s,
+    )
+    s = re.sub(
+        r"\(\s*(\d+)x\s*\+\s*j\s*\)",
+        r"(\1x + \\varphi)",
+        s,
+    )
+    s = re.sub(
+        r"\(\s*([a-zA-Z\d\\]+)\s*x\s*\+\s*j\s*\)",
+        r"(\1x + \\varphi)",
         s,
     )
     s = re.sub(
@@ -111,12 +124,28 @@ def _clean_and_format_formula(raw: str) -> str:
     if "R" in s and ("\\f(x)" in s or "f(x)x" in s):
         s = re.sub(r"^\\?f\(x\)\s*x\s*[\"\'\-\s]*R.*", r"\\forall x \\in \\mathbf{R}, f(x) \\le 2", s)
 
-    # 4. Equality variables e.g. a==1 -> a=1, b=="-1 -> b=-1
+    # 4. Phase and angle intervals: (0<<j<<p) -> (0 < \varphi < \pi)
+    s = re.sub(r"\(\s*0\s*<<\s*j\s*<<\s*p\s*\)", r"(0 < \\varphi < \\pi)", s)
+    s = re.sub(r"0\s*<<\s*j\s*<<\s*p", r"0 < \\varphi < \\pi", s)
+    s = re.sub(r"0\s*<\s*j\s*<\s*p", r"0 < \\varphi < \\pi", s)
+    s = re.sub(r"0\s*\\le\s*j\s*\\le\s*p", r"0 \\le \\varphi \\le \\pi", s)
+
+    # 5. Lines, symmetry axes and Pi fractions: x=p2 -> x = \dfrac{\pi}{2}, j== -> \varphi =
+    s = re.sub(r"\bx\s*=\s*=\s*p(\d+)", r"x = \\dfrac{\\pi}{\1}", s)
+    s = re.sub(r"\bx\s*=\s*p(\d+)", r"x = \\dfrac{\\pi}{\1}", s)
+    s = re.sub(r"\bj\s*=\s*=\s*", r"\\varphi = ", s)
+    s = re.sub(r"\bj\s*=\s*", r"\\varphi = ", s)
+    s = re.sub(r"^p(\d+)$", r"\\dfrac{\\pi}{\1}", s)
+    s = re.sub(r"^(\d+)p(\d+)$", r"\\dfrac{\1\\pi}{\2}", s)
+    s = re.sub(r"\bp(\d+)\b", r"\\dfrac{\\pi}{\1}", s)
+    s = re.sub(r"\b(\d+)p(\d+)\b", r"\\dfrac{\1\\pi}{\2}", s)
+
+    # 6. Equality variables e.g. a==1 -> a=1, b=="-1 -> b=-1
     s = re.sub(r"([abxyz])\s*=\s*=\s*([+-]?\d+)", r"\1 = \2", s)
     s = re.sub(r"([abxyz])\s*=\s*=\s*\"([+-]?\d+)", r"\1 = \2", s)
     s = re.sub(r"([abxyz])\s*=\s*([+-]?\d+)", r"\1 = \2", s)
 
-    # 5. Multiplication e.g. 28 8 \times 192 -> 288 \times 192
+    # 7. Multiplication e.g. 28 8 \times 192 -> 288 \times 192
     s = re.sub(r"28\s*8\s*\\times\s*192", r"288 \\times 192", s)
     s = re.sub(r"24\s*0\s*\\times\s*160", r"240 \\times 160", s)
     s = re.sub(r"19\s*2\s*\\times\s*128", r"192 \\times 128", s)
@@ -124,14 +153,24 @@ def _clean_and_format_formula(raw: str) -> str:
     s = re.sub(r"96\s*\\times\s*64", r"96 \\times 64", s)
     s = re.sub(r"(\d+)\s*[x×]\s*(\d+)", r"\1 \\times \2", s)
 
-    # 6. Standard math functions
+    # 8. Standard math functions
     for fn in ["sin", "cos", "tan", "ln", "log", "lg", "lim", "min", "max"]:
         s = re.sub(rf"(?<!\\)\b{fn}\b", rf"\\{fn}", s)
 
-    # 7. Clean real number set symbols
+    # 9. Clean real number set symbols
     s = re.sub(r"\b([RZNQC])\b(?=\s*[,;]|\s*$|\s*\\in)", r"\\mathbf{\1}", s)
 
-    # 8. Prevent invalid LaTeX \f command from breaking KaTeX
+    # 10. Standalone single Greek letters
+    if s == "j" or s == "j=":
+        s = "\\varphi"
+    elif s == "p" or s == "p=":
+        s = "\\pi"
+    elif s == "w" or s == "w=":
+        s = "\\omega"
+    elif s == "q" or s == "q=":
+        s = "\\theta"
+
+    # 11. Prevent invalid LaTeX \f command from breaking KaTeX
     s = re.sub(r"\\f\b", "f", s)
 
     return s.strip()
