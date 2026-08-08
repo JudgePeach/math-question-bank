@@ -299,18 +299,14 @@ def test_parse_paper_flows_use_shared_provider_resolution(client):
         "choices": [
             {
                 "message": {
-                    "content": json.dumps(
-                        {
-                            "questions": [
-                                {
-                                    "content": "求 $1+1$ 的值。",
-                                    "answer_markdown": "",
-                                    "referenced_images": [],
-                                }
-                            ]
-                        },
-                        ensure_ascii=False,
-                    )
+                    "content": r'''{
+                        "questions": [{
+                            "content": "求 $1+1$ 的值。
+第二行 $\frac{1}{2}$。",
+                            "answer_markdown": "",
+                            "referenced_images": []
+                        }]
+                    }'''
                 }
             }
         ]
@@ -339,7 +335,7 @@ def test_parse_paper_flows_use_shared_provider_resolution(client):
 
     assert response.status_code == 200
     assert response.json()["status"] == "success"
-    assert internal_questions[0]["content"] == "求 $1+1$ 的值。"
+    assert internal_questions[0]["content"] == "求 $1+1$ 的值。\n第二行 $\\frac{1}{2}$。"
     assert mock_post.call_count == 2
     for call in mock_post.call_args_list:
         args, kwargs = call
@@ -380,4 +376,3 @@ def test_figure_align_api(client):
     res_get = client.get(f"/api/questions/{q_id}")
     assert res_get.status_code == 200
     assert res_get.json()["figure_align"] == "center"
-

@@ -29,6 +29,7 @@ from dotenv import load_dotenv
 from database import Question, QuestionCurriculum, Paper, PaperQuestion, get_db, init_db
 from paper_helper import build_latex_document, build_answer_sheet_latex, compile_tex_to_pdf, create_tex_zip_package, create_full_bundle_zip_package, collect_referenced_images
 from sync_helper import export_database_to_files
+from mathbank.ai_json import parse_ai_json
 from mathbank.ai_http import (
     post_chat_completion,
     robust_request_post,
@@ -2653,7 +2654,7 @@ def parse_paper_text_internal(
     res_json = response.json()
     raw_ai_text = res_json["choices"][0]["message"]["content"].strip()
     
-    parsed_data = json.loads(raw_ai_text)
+    parsed_data = parse_ai_json(raw_ai_text)
     
     if isinstance(parsed_data, dict):
         if "questions" in parsed_data and isinstance(parsed_data["questions"], list):
@@ -2755,8 +2756,7 @@ async def ai_parse_paper(
         res_json = response.json()
         raw_ai_text = res_json["choices"][0]["message"]["content"].strip()
         
-        # Parse JSON robustly
-        parsed_data = json.loads(raw_ai_text)
+        parsed_data = parse_ai_json(raw_ai_text)
         
         if isinstance(parsed_data, dict):
             if "questions" in parsed_data and isinstance(parsed_data["questions"], list):

@@ -78,3 +78,9 @@ def test_multimodal_ai_routes_use_shared_provider_resolvers():
     assert "resolve_ocr_provider(engine)" in main_source
     assert "resolve_ocr_fallbacks(prefer_engine)" in main_source
     assert main_source.count("resolve_draw_provider(prefer_draw)") == 2
+
+
+def test_paper_parsers_use_defensive_ai_json_parser():
+    main_source = (PROJECT_ROOT / "main.py").read_text(encoding="utf-8")
+
+    assert main_source.count("parse_ai_json(raw_ai_text)") == 2
