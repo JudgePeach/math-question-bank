@@ -1675,6 +1675,75 @@ const PAGE_LIMIT = 20;
                 return html;
             });
 
+            // Process tabular environments (convert LaTeX tabular into modern responsive HTML tables with alignment, booktabs and multicolumn)
+            tempText = tempText.replace(/\\begin\{tabular\*?\}\s*\{([^}]*?)\}([\s\S]*?)\\end\{tabular\*?\}/g, function(match, colSpec, inner) {
+                // 1. 解析列对齐与列边框规格
+                const alignList = [];
+                let colIdx = 0;
+                for (let i = 0; i < colSpec.length; i++) {
+                    const ch = colSpec[i].toLowerCase();
+                    if (ch === "l" || ch === "c" || ch === "r" || ch === "p" || ch === "m") {
+                        alignList[colIdx] = ch === "l" ? "text-left" : (ch === "r" ? "text-right" : "text-center");
+                        colIdx++;
+                    }
+                }
+                
+                // 2. 清理行高间距修饰符如 \\\\[5pt] -> \\\\
+                const normalizedInner = inner.replace(/\\\\\[[^\]]*?\]/g, "\\\\");
+                
+                // 3. 逐行拆解与三线表感知
+                const rawRows = normalizedInner.split(/\\\\|\\cr/);
+                let html = '<div class="overflow-x-auto my-3 max-w-full text-center select-none"><table class="inline-table mx-auto text-xs text-slate-700 dark:text-slate-200 border-collapse border border-slate-300 dark:border-slate-600 bg-slate-50/60 dark:bg-slate-800/40 rounded-lg shadow-2xs"><tbody>';
+                
+                rawRows.forEach((rowStr) => {
+                    let trimmed = rowStr.trim();
+                    if (!trimmed) return;
+                    
+                    let isTopRule = /\\toprule/.test(trimmed);
+                    let isMidRule = /\\midrule/.test(trimmed);
+                    let isBottomRule = /\\bottomrule/.test(trimmed);
+                    
+                    let cleanRow = trimmed.replace(/\\(hline|toprule|midrule|bottomrule|cline\{[^}]*?\})/g, "").trim();
+                    if (!cleanRow) return;
+                    
+                    let rowClass = "border-b border-slate-250 dark:border-slate-700 hover:bg-slate-100/40 dark:hover:bg-slate-700/30 transition-colors";
+                    if (isTopRule) rowClass += " border-t-2 border-t-slate-800 dark:border-t-slate-200";
+                    if (isMidRule) rowClass += " border-b-2 border-b-slate-600 dark:border-b-slate-400";
+                    if (isBottomRule) rowClass += " border-b-2 border-b-slate-800 dark:border-b-slate-200";
+                    
+                    html += '<tr class="' + rowClass + '">';
+                    
+                    // 拆分单元格并支持 \\multicolumn{N}{spec}{content}
+                    const rawCells = cleanRow.split("&");
+                    let currentCol = 0;
+                    
+                    rawCells.forEach((cellStr) => {
+                        let cell = cellStr.trim();
+                        let colspan = 1;
+                        let alignClass = alignList[currentCol] || "text-center";
+                        
+                        const multiMatch = cell.match(/\\multicolumn\s*\{(\d+)\}\s*\{([^}]*?)\}\s*\{([\s\S]*?)\}/);
+                        if (multiMatch) {
+                            colspan = parseInt(multiMatch[1], 10) || 1;
+                            const mSpec = multiMatch[2].toLowerCase();
+                            if (mSpec.includes("l")) alignClass = "text-left";
+                            else if (mSpec.includes("r")) alignClass = "text-right";
+                            else alignClass = "text-center";
+                            cell = multiMatch[3].trim();
+                        }
+                        
+                        let borderClass = "border border-slate-250 dark:border-slate-650";
+                        html += '<td colspan="' + colspan + '" class="px-3 py-1.5 ' + borderClass + ' ' + alignClass + ' font-normal">' + cell + '</td>';
+                        currentCol += colspan;
+                    });
+                    
+                    html += '</tr>';
+                });
+                
+                html += '</tbody></table></div>';
+                return html;
+            });
+
             tempText = tempText.replace(/\\begin\{center\}/g, '<div class="text-center my-1">')
                                .replace(/\\end\{center\}/g, '</div>')
                                .replace(/\\item\s*\[([^\]]+?)\]/g, '</li><li class="my-0.5 list-none -ml-4">$1 ')
