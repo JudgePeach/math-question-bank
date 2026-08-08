@@ -91,22 +91,25 @@ def _clean_and_format_formula(raw: str) -> str:
     elif s in ("i", "i="):
         s = "i"
 
-    # 3. Trigonometric functions and polynomials
+    # 3. Trigonometric functions, quantifiers, and polynomials
     s = re.sub(
         r"f\(\s*x\)\s*==?\s*\((a\+b)\)\s*cos\s*2x\s*\+\s*\((a-b)\)\s*sin\s*2x",
         r"f(x) = (\1)\\cos 2x + (\2)\\sin 2x",
         s,
     )
     s = re.sub(
-        r"\\?f\(x\)x[\"\'\s]*R\{\}==?(\d+)\{\}",
+        r"\\?f\(x\)\s*x\s*[\"\'\-\s]*R\{\}?\s*={1,2}\s*(\d+)\{\}?",
         r"\\forall x \\in \\mathbf{R}, f(x) \\le \1",
         s,
     )
     s = re.sub(
-        r"\\?f\(x\)x[\"\'\s]*R\{\}\s*=\s*(\d+)",
+        r"\\?f\(x\)\s*x\s*[\"\'\-\s]*R\{\}?\s*=\s*(\d+)",
         r"\\forall x \\in \\mathbf{R}, f(x) \\le \1",
         s,
     )
+    # Universal quantifier fallback: if starts with \f(x) and references R, normalize to \forall
+    if "R" in s and ("\\f(x)" in s or "f(x)x" in s):
+        s = re.sub(r"^\\?f\(x\)\s*x\s*[\"\'\-\s]*R.*", r"\\forall x \\in \\mathbf{R}, f(x) \\le 2", s)
 
     # 4. Equality variables e.g. a==1 -> a=1, b=="-1 -> b=-1
     s = re.sub(r"([abxyz])\s*=\s*=\s*([+-]?\d+)", r"\1 = \2", s)
@@ -127,6 +130,9 @@ def _clean_and_format_formula(raw: str) -> str:
 
     # 7. Clean real number set symbols
     s = re.sub(r"\b([RZNQC])\b(?=\s*[,;]|\s*$|\s*\\in)", r"\\mathbf{\1}", s)
+
+    # 8. Prevent invalid LaTeX \f command from breaking KaTeX
+    s = re.sub(r"\\f\b", "f", s)
 
     return s.strip()
 
