@@ -160,15 +160,31 @@ def _clean_and_format_formula(raw: str) -> str:
     # 9. Clean real number set symbols
     s = re.sub(r"\b([RZNQC])\b(?=\s*[,;]|\s*$|\s*\\in)", r"\\mathbf{\1}", s)
 
-    # 10. Standalone single Greek letters
-    if s == "j" or s == "j=":
-        s = "\\varphi"
-    elif s == "p" or s == "p=":
-        s = "\\pi"
-    elif s == "w" or s == "w=":
-        s = "\\omega"
-    elif s == "q" or s == "q=":
-        s = "\\theta"
+    # 10. Standalone single Greek letters in Symbol font context
+    greek_standalone = {
+        "j": r"\varphi",
+        "j=": r"\varphi =",
+        "p": r"\pi",
+        "p=": r"\pi =",
+        "q": r"\theta",
+        "q=": r"\theta =",
+        "w": r"\omega",
+        "w=": r"\omega =",
+        "a": r"\alpha",
+        "b": r"\beta",
+        "g": r"\gamma",
+        "d": r"\delta",
+        "e": r"\varepsilon",
+        "l": r"\lambda",
+        "m": r"\mu",
+        "s": r"\sigma",
+        "D": r"\Delta",
+        "W": r"\Omega",
+        "F": r"\Phi",
+        "S": r"\Sigma",
+    }
+    if s in greek_standalone:
+        s = greek_standalone[s]
 
     # 11. Prevent invalid LaTeX \f command from breaking KaTeX
     s = re.sub(r"\\f\b", "f", s)
