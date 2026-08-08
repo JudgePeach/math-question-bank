@@ -44,8 +44,11 @@ def _decode_mathtype_stream(data: bytes) -> str:
     else:
         raw_bytes = data
 
+    # Byte-level math symbol decoder (Symbol Font / Extended Math Encoding)
     chars = []
-    for b in raw_bytes:
+    i = 0
+    while i < len(raw_bytes):
+        b = raw_bytes[i]
         if 32 <= b < 127:
             chars.append(chr(b))
         elif b == 0xB1:
@@ -54,6 +57,41 @@ def _decode_mathtype_stream(data: bytes) -> str:
             chars.append(" \\times ")
         elif b == 0xF7:
             chars.append(" \\div ")
+        elif b == 0xB7:
+            chars.append(" \\cdot ")
+        elif b == 0xB0:
+            chars.append("^\\circ ")
+        elif b == 0xA5:
+            chars.append(" \\infty ")
+        elif b == 0xA3:
+            chars.append(" \\le ")
+        elif b == 0xB3:
+            chars.append(" \\ge ")
+        elif b == 0xA2:
+            chars.append(" \\ne ")
+        elif b == 0xCE:
+            chars.append(" \\in ")
+        elif b == 0xCF:
+            chars.append(" \\notin ")
+        elif b == 0xC7:
+            chars.append(" \\cap ")
+        elif b == 0xC6:
+            chars.append(" \\cup ")
+        elif b == 0xC8:
+            chars.append(" \\subset ")
+        elif b == 0xC9:
+            chars.append(" \\subseteq ")
+        elif b == 0xDB:
+            chars.append(" \\Leftrightarrow ")
+        elif b == 0xDE:
+            chars.append(" \\Rightarrow ")
+        elif b == 0xBC:
+            chars.append(" \\angle ")
+        elif b == 0xBD:
+            chars.append(" \\perp ")
+        elif b == 0xD8:
+            chars.append(" \\varnothing ")
+        i += 1
 
     s = "".join(chars)
     # Strip MathType hash prefixes and internal markers
@@ -95,6 +133,10 @@ def _clean_and_format_formula(raw: str) -> str:
     s = re.sub(r"\b3\s*sin", r"3\\sin", s)
     s = re.sub(r"\bcos", r"\\cos", s)
     s = re.sub(r"\btan", r"\\tan", s)
+    s = re.sub(r"\bcot", r"\\cot", s)
+    s = re.sub(r"\barcsin", r"\\arcsin", s)
+    s = re.sub(r"\barccos", r"\\arccos", s)
+    s = re.sub(r"\barctan", r"\\arctan", s)
     s = re.sub(
         r"f\(\s*x\)\s*==?\s*\((a\+b)\)\s*cos\s*2x\s*\+\s*\((a-b)\)\s*sin\s*2x",
         r"f(x) = (\1)\\cos 2x + (\2)\\sin 2x",
@@ -153,12 +195,12 @@ def _clean_and_format_formula(raw: str) -> str:
     s = re.sub(r"96\s*\\times\s*64", r"96 \\times 64", s)
     s = re.sub(r"(\d+)\s*[x×]\s*(\d+)", r"\1 \\times \2", s)
 
-    # 8. Standard math functions
-    for fn in ["sin", "cos", "tan", "ln", "log", "lg", "lim", "min", "max"]:
+    # 8. Standard math and calculus functions
+    for fn in ["sin", "cos", "tan", "cot", "ln", "log", "lg", "exp", "lim", "min", "max", "sup", "inf"]:
         s = re.sub(rf"(?<!\\)\b{fn}\b", rf"\\{fn}", s)
 
-    # 9. Clean real number set symbols
-    s = re.sub(r"\b([RZNQC])\b(?=\s*[,;]|\s*$|\s*\\in)", r"\\mathbf{\1}", s)
+    # 9. Clean real number and standard number set symbols
+    s = re.sub(r"\b([RZNQC])\b(?=\s*[,;]|\s*$|\s*\\in|\s*\\subset)", r"\\mathbf{\1}", s)
 
     # 10. Standalone single Greek letters in Symbol font context
     greek_standalone = {
