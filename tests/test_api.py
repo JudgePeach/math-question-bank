@@ -287,6 +287,66 @@ def test_api_ai_solve_with_ocr(client):
             assert "请简化解答步骤" in user_msg
             assert "已知 $f(x) = x^2$" in user_msg
 
+
+def test_parse_paper_flows_use_shared_provider_resolution(client):
+    from unittest.mock import MagicMock, patch
+    from main import parse_paper_text_internal
+
+    headers = {"X-Local-Token": LOCAL_TOKEN}
+    mock_resp = MagicMock()
+    mock_resp.status_code = 200
+    mock_resp.json.return_value = {
+        "choices": [
+            {
+                "message": {
+                    "content": json.dumps(
+                        {
+                            "questions": [
+                                {
+                                    "content": "求 $1+1$ 的值。",
+                                    "answer_markdown": "",
+                                    "referenced_images": [],
+                                }
+                            ]
+                        },
+                        ensure_ascii=False,
+                    )
+                }
+            }
+        ]
+    }
+
+    provider_env = {
+        "PREFER_PARSE_MODEL": "BAILIAN/qwen3.7-max",
+        "ALI_BAILIAN_API_KEY": "fake-bailian-key",
+        "ALI_BAILIAN_API_BASE": "https://bailian.example/v1/",
+    }
+    with patch.dict(os.environ, provider_env):
+        with patch("main.robust_request_post", return_value=mock_resp) as mock_post:
+            response = client.post(
+                "/api/ai/parse-paper",
+                data={
+                    "latex_content": "求 $1+1$ 的值。",
+                    "paper_title": "测试试卷",
+                    "image_mapping_json": "{}",
+                    "generate_answers": "false",
+                },
+                headers=headers,
+            )
+            internal_questions = parse_paper_text_internal(
+                "求 $1+1$ 的值。", generate_answers_bool=False
+            )
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "success"
+    assert internal_questions[0]["content"] == "求 $1+1$ 的值。"
+    assert mock_post.call_count == 2
+    for call in mock_post.call_args_list:
+        args, kwargs = call
+        assert args[0] == "https://bailian.example/v1/chat/completions"
+        assert kwargs["json"]["model"] == "qwen-max"
+        assert kwargs["timeout"] == 180
+
 def test_figure_align_api(client):
     headers = {"X-Local-Token": LOCAL_TOKEN}
     payload = {
@@ -320,6 +380,5 @@ def test_figure_align_api(client):
     res_get = client.get(f"/api/questions/{q_id}")
     assert res_get.status_code == 200
     assert res_get.json()["figure_align"] == "center"
-
 
 

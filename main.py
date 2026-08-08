@@ -145,7 +145,7 @@ def robust_request_post(url, **kwargs):
     ])
     if is_domestic and "proxies" not in kwargs:
         kwargs["proxies"] = {"http": None, "https": None}
-        
+
     try:
         return requests.post(url, **kwargs)
     except requests.exceptions.RequestException as e:
@@ -2911,63 +2911,16 @@ def parse_paper_text_internal(
 ) -> list:
     """内部通用函数：调用选定的 LLM 接口，将 LaTeX 试卷内容解析拆分为结构化 JSON 卡片"""
     parse_model = os.getenv("PREFER_PARSE_MODEL") or os.getenv("DEEPSEEK_PARSE_MODEL", "deepseek-v4-flash")
-    api_key = None
-    api_base = None
-    model_name = parse_model
-    provider_name = "DeepSeek"
-    
-    if "/" in parse_model:
-        parts = parse_model.split("/", 1)
-        prefix = parts[0].upper()
-        model_name = parts[1]
-        
-        if prefix == "SILICONFLOW":
-            api_key = os.getenv("SILICONFLOW_API_KEY")
-            api_base = "https://api.siliconflow.cn/v1"
-            provider_name = "硅基流动"
-        elif prefix == "BAILIAN":
-            api_key = os.getenv("ALI_BAILIAN_API_KEY")
-            api_base = os.getenv("ALI_BAILIAN_API_BASE", "https://dashscope.aliyuncs.com/compatible-mode/v1")
-            provider_name = "阿里百炼"
-            if model_name == "qwen3.7-max":
-                model_name = "qwen-max"
-        elif prefix == "DEEPSEEK":
-            api_key = os.getenv("DEEPSEEK_API_KEY")
-            api_base = os.getenv("DEEPSEEK_API_BASE", "https://api.deepseek.com")
-            provider_name = "DeepSeek"
-        elif prefix == "ZHONGZHAN_GPT":
-            api_key = os.getenv("ZHONGZHAN_GPT_API_KEY")
-            api_base = os.getenv("ZHONGZHAN_GPT_BASE_URL", "https://api.openai.com/v1")
-            provider_name = "中转站 A"
-        elif prefix == "ZHONGZHAN_CLAUDE":
-            api_key = os.getenv("ZHONGZHAN_CLAUDE_API_KEY")
-            api_base = os.getenv("ZHONGZHAN_CLAUDE_BASE_URL", "https://api.openai.com/v1")
-            provider_name = "中转站 B"
-    else:
-        model_lower = parse_model.lower()
-        if "qwen" in model_lower:
-            api_key = os.getenv("ALI_BAILIAN_API_KEY")
-            api_base = os.getenv("ALI_BAILIAN_API_BASE", "https://dashscope.aliyuncs.com/compatible-mode/v1")
-            provider_name = "阿里百炼"
-            model_name = "qwen-max" if parse_model == "qwen3.7-max" else parse_model
-        else:
-            api_key = os.getenv("DEEPSEEK_API_KEY")
-            api_base = os.getenv("DEEPSEEK_API_BASE", "https://api.deepseek.com")
-            provider_name = "DeepSeek"
-            model_name = parse_model
+    provider = resolve_text_provider(parse_model, parse_effort=False)
+    api_key = provider.api_key
+    api_base = provider.api_base
+    model_name = provider.model_name
+    provider_name = provider.provider_label
 
     if not api_key:
-        provider_friendly = provider_name
-        if "/" in parse_model:
-            prefix = parse_model.split("/", 1)[0].upper()
-            if prefix == "SILICONFLOW": provider_friendly = "硅基流动 (SILICONFLOW_API_KEY)"
-            elif prefix == "BAILIAN": provider_friendly = "阿里百炼 (ALI_BAILIAN_API_KEY)"
-            elif prefix == "DEEPSEEK": provider_friendly = "DeepSeek (DEEPSEEK_API_KEY)"
-            elif prefix == "ZHONGZHAN_GPT": provider_friendly = "中转站 A (ZHONGZHAN_GPT_API_KEY)"
-            elif prefix == "ZHONGZHAN_CLAUDE": provider_friendly = "中转站 B (ZHONGZHAN_CLAUDE_API_KEY)"
-        raise ValueError(f"未配置对应的 API Key ({provider_friendly})，无法智能拆解试卷！请在工作台右上角设置面板进行配置。")
-        
-    url = f"{api_base.rstrip('/')}/chat/completions"
+        raise ValueError(f"未配置对应的 API Key ({provider.credential_label})，无法智能拆解试卷！请在工作台右上角设置面板进行配置。")
+
+    url = provider.chat_completions_url
     
     headers = {
         "Authorization": f"Bearer {api_key}",
@@ -3052,69 +3005,20 @@ async def ai_parse_paper(
 ):
     generate_answers_bool = generate_answers.lower() in ("true", "1", "yes")
     parse_model = os.getenv("PREFER_PARSE_MODEL") or os.getenv("DEEPSEEK_PARSE_MODEL", "deepseek-v4-flash")
-    
-    api_key = None
-    api_base = None
-    model_name = parse_model
-    provider_name = "DeepSeek"
-    
-    if "/" in parse_model:
-        parts = parse_model.split("/", 1)
-        prefix = parts[0].upper()
-        model_name = parts[1]
-        
-        if prefix == "SILICONFLOW":
-            api_key = os.getenv("SILICONFLOW_API_KEY")
-            api_base = "https://api.siliconflow.cn/v1"
-            provider_name = "硅基流动"
-        elif prefix == "BAILIAN":
-            api_key = os.getenv("ALI_BAILIAN_API_KEY")
-            api_base = os.getenv("ALI_BAILIAN_API_BASE", "https://dashscope.aliyuncs.com/compatible-mode/v1")
-            provider_name = "阿里百炼"
-            if model_name == "qwen3.7-max":
-                model_name = "qwen-max"
-        elif prefix == "DEEPSEEK":
-            api_key = os.getenv("DEEPSEEK_API_KEY")
-            api_base = os.getenv("DEEPSEEK_API_BASE", "https://api.deepseek.com")
-            provider_name = "DeepSeek"
-        elif prefix == "ZHONGZHAN_GPT":
-            api_key = os.getenv("ZHONGZHAN_GPT_API_KEY")
-            api_base = os.getenv("ZHONGZHAN_GPT_BASE_URL", "https://api.openai.com/v1")
-            provider_name = "中转站 A"
-        elif prefix == "ZHONGZHAN_CLAUDE":
-            api_key = os.getenv("ZHONGZHAN_CLAUDE_API_KEY")
-            api_base = os.getenv("ZHONGZHAN_CLAUDE_BASE_URL", "https://api.openai.com/v1")
-            provider_name = "中转站 B"
-    else:
-        model_lower = parse_model.lower()
-        if "qwen" in model_lower:
-            api_key = os.getenv("ALI_BAILIAN_API_KEY")
-            api_base = os.getenv("ALI_BAILIAN_API_BASE", "https://dashscope.aliyuncs.com/compatible-mode/v1")
-            provider_name = "阿里百炼"
-            model_name = "qwen-max" if parse_model == "qwen3.7-max" else parse_model
-        else:
-            api_key = os.getenv("DEEPSEEK_API_KEY")
-            api_base = os.getenv("DEEPSEEK_API_BASE", "https://api.deepseek.com")
-            provider_name = "DeepSeek"
-            model_name = parse_model
+    provider = resolve_text_provider(parse_model, parse_effort=False)
+    api_key = provider.api_key
+    api_base = provider.api_base
+    model_name = provider.model_name
+    provider_name = provider.provider_label
 
     if not api_key:
-        provider_friendly = provider_name
-        if "/" in parse_model:
-            prefix = parse_model.split("/", 1)[0].upper()
-            if prefix == "SILICONFLOW": provider_friendly = "硅基流动 (SILICONFLOW_API_KEY)"
-            elif prefix == "BAILIAN": provider_friendly = "阿里百炼 (ALI_BAILIAN_API_KEY)"
-            elif prefix == "DEEPSEEK": provider_friendly = "DeepSeek (DEEPSEEK_API_KEY)"
-            elif prefix == "ZHONGZHAN_GPT": provider_friendly = "中转站 A (ZHONGZHAN_GPT_API_KEY)"
-            elif prefix == "ZHONGZHAN_CLAUDE": provider_friendly = "中转站 B (ZHONGZHAN_CLAUDE_API_KEY)"
         return JSONResponse(
             content={
                 "status": "error", 
-                "message": f"未配置对应的 API Key ({provider_friendly})，无法智能拆解试卷！请在工作台右上角设置面板进行配置。"
+                "message": f"未配置对应的 API Key ({provider.credential_label})，无法智能拆解试卷！请在工作台右上角设置面板进行配置。"
             },
             status_code=400
         )
-        api_base = os.getenv("DEEPSEEK_API_BASE", "https://api.deepseek.com")
         
     try:
         image_mapping = json.loads(image_mapping_json)
@@ -3122,7 +3026,7 @@ async def ai_parse_paper(
         image_mapping = {}
 
     try:
-        url = f"{api_base.rstrip('/')}/chat/completions"
+        url = provider.chat_completions_url
         
         headers = {
             "Authorization": f"Bearer {api_key}",

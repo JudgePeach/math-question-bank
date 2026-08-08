@@ -136,7 +136,7 @@
 
 ### 3.10 批量图片上传与 AI 智能拆卷/解析系统
 - **批量图片分发**：用户可在前端一次性拖入多张截图，通过 `/api/upload/batch` 瞬间在后台保存，并返回形如 `[图片1]` 的占位符映射表，方便在解析文本中插入对应位置。
-- **大模型文本切片与两阶段解耦拆解**：用户提交完整的试卷 LaTeX/Markdown 文本及图片映射后，`/api/ai/parse-paper` 接口调用 `.env` 配置文件中的 `PREFER_PARSE_MODEL` 将文本按题目智能切片，自动识别其类型、章节、难度、题干与配图，并提取原版答案（秒级返回）。若勾选自动生成解答，第二阶段由前端发起并发队列（上限 3）异步调用 `/api/ai/solve` 为无答案题目平滑推导解析，彻底解决 Output Token 溢出与 HTTP 超时问题。
+- **大模型文本切片与两阶段解耦拆解**：用户提交完整的试卷 LaTeX/Markdown 文本及图片映射后，`/api/ai/parse-paper` 接口调用 `.env` 配置文件中的 `PREFER_PARSE_MODEL`，并通过 `mathbank.ai_providers.resolve_text_provider` 统一解析平台、密钥、API Base 与真实模型名，再将文本按题目智能切片，自动识别其类型、章节、难度、题干与配图，并提取原版答案（秒级返回）。PDF 后台拆卷内部路径采用同一 Provider 解析规则。若勾选自动生成解答，第二阶段由前端发起并发队列（上限 3）异步调用 `/api/ai/solve` 为无答案题目平滑推导解析，彻底解决 Output Token 溢出与 HTTP 超时问题。
 
 ### 3.11 PDF 试卷多模态拆解与手动截图系统
 - **切片与异步任务**：支持上传 PDF 文件，后端在后台利用 `fitz` (PyMuPDF) 将 PDF 栅格化为高清图片。利用 ThreadPoolExecutor 并行发起 VLM 多模态 OCR 转译。
