@@ -1318,22 +1318,39 @@
 
             texDrop.addEventListener('drop', (e) => {
                 const file = e.dataTransfer.files[0];
-                if (file && (file.name.endsWith('.tex') || file.name.endsWith('.pdf'))) {
+                if (file && (file.name.endsWith('.tex') || file.name.endsWith('.pdf') || file.name.endsWith('.docx'))) {
                     handleTexFileSelect(file);
                 } else {
-                    showToast('请拖入有效的 .tex 或 .pdf 格式试卷文件！', 'warning');
+                    showToast('请拖入有效的 .tex、.pdf 或 .docx (Word) 格式试卷文件！', 'warning');
                 }
             });
 
             function handleTexFileSelect(file) {
                 if (!file) return;
                 
-                if (file.name.endsWith('.pdf')) {
+                if (file.name.endsWith('.docx')) {
+                    window.currentDocxFile = file;
+                    window.currentPdfFile = null;
+                    texFileName.textContent = file.name;
+                    texFileName.className = "text-xs text-brand-600 font-bold";
+                    texFileIcon.className = "fa-solid fa-file-word text-blue-600 text-xl mb-1.5 animate-bounce";
+                    latexTextarea.value = `[Word (.docx) 试卷已成功载入: ${file.name}]\n原生 OMML 数学公式与高清插图将会在点击“一键 AI 智能拆解并关联”后于后台 100% 无损直提。`;
+                    latexTextarea.disabled = true;
+                    
+                    const titleInput = document.getElementById('importPaperTitle');
+                    if (!titleInput.value) {
+                        titleInput.value = file.name.replace(/\.[^/.]+$/, "");
+                    }
+                    
+                    const pdfRangeContainer = document.getElementById('pdfPageRangeContainer');
+                    if (pdfRangeContainer) pdfRangeContainer.classList.add('hidden');
+                } else if (file.name.endsWith('.pdf')) {
+                    window.currentDocxFile = null;
                     window.currentPdfFile = file;
                     texFileName.textContent = file.name;
                     texFileName.className = "text-xs text-brand-600 font-bold";
                     texFileIcon.className = "fa-solid fa-file-pdf text-brand-500 text-xl mb-1.5 animate-bounce";
-                    latexTextarea.value = `[PDF 试卷已成功载入: ${file.name}]\n总页数、高清转换与插图定位将会在点击“开始智能拆解试卷”后于后台异步执行。`;
+                    latexTextarea.value = `[PDF 试卷已成功载入: ${file.name}]\n总页数、高清转换与插图定位将会在点击“一键 AI 智能拆解并关联”后于后台异步执行。`;
                     latexTextarea.disabled = true;
                     
                     const titleInput = document.getElementById('importPaperTitle');
@@ -1344,6 +1361,7 @@
                     const pdfRangeContainer = document.getElementById('pdfPageRangeContainer');
                     if (pdfRangeContainer) pdfRangeContainer.classList.remove('hidden');
                 } else {
+                    window.currentDocxFile = null;
                     window.currentPdfFile = null;
                     texFileName.textContent = file.name;
                     texFileName.className = "text-xs text-brand-600 font-bold";
@@ -1463,6 +1481,70 @@
 
             const generateAnswersCheckbox = document.getElementById('importGenerateAnswers');
             const generateAnswers = generateAnswersCheckbox ? generateAnswersCheckbox.checked : false;
+
+            // Handle Word (.docx) branch
+            if (window.currentDocxFile) {
+                document.getElementById('importLoadingText').textContent = '正在上传 Word 试卷并无损提取数学公式与高清插图...';
+                appendImportLog('开始上传 Word (.docx) 试卷文件...', 'info');
+                document.getElementById('importProgressBarContainer').classList.remove('hidden');
+                document.getElementById('importProgressBar').style.width = '0%';
+
+                const docxFormData = new FormData();
+                docxFormData.append('file', window.currentDocxFile);
+                docxFormData.append('generate_answers', generateAnswers ? "true" : "false");
+
+                fetch('/api/upload/docx-task', {
+                    method: 'POST',
+                    headers: {
+                        'X-Local-Token': localStorage.getItem('local_token') || ''
+                    },
+                    body: docxFormData
+                })
+                .then(r => {
+                    if (!r.ok) {
+                        return r.json().then(errData => {
+                            throw new Error(errData.detail || errData.message || `HTTP ${r.status}`);
+                        });
+                    }
+                    return r.json();
+                })
+                .then(taskData => {
+                    if (taskData.status === 'success') {
+                        const taskId = taskData.task_id;
+                        window.currentPdfTaskId = taskId;
+                        appendImportLog(`Word 任务已成功创建！任务 ID: ${taskId}，开始轮询分析切片进度...`, 'success');
+                        pollPdfTaskStatus(taskId, title);
+                    } else {
+                        throw new Error(taskData.message || '创建 Word 解析任务失败');
+                    }
+                })
+                .catch(err => {
+                    console.error(err);
+                    appendImportLog(`Word 任务创建失败: ${err.message}`, 'error');
+                    
+                    const loadingIcon = document.querySelector('#importLoadingState .fa-spinner');
+                    if (loadingIcon) {
+                        loadingIcon.classList.remove('fa-spinner', 'animate-spin');
+                        loadingIcon.classList.add('fa-circle-exclamation', 'text-red-500');
+                    }
+                    document.getElementById('importLoadingText').textContent = 'Word 上传解析出错！';
+
+                    const loadingState = document.getElementById('importLoadingState');
+                    let resetBtn = document.getElementById('resetImportBtn');
+                    if (!resetBtn) {
+                        resetBtn = document.createElement('button');
+                        resetBtn.id = 'resetImportBtn';
+                        resetBtn.className = 'mt-4 px-6 py-2.5 rounded-xl bg-gradient-to-r from-slate-500 to-slate-600 hover:from-slate-600 hover:to-slate-700 text-white font-bold text-xs shadow-lg transition-all active:scale-95 flex items-center space-x-2';
+                        resetBtn.innerHTML = '<i class="fa-solid fa-arrow-rotate-left"></i><span>重置并重新开始</span>';
+                        resetBtn.onclick = resetImportState;
+                        loadingState.appendChild(resetBtn);
+                    }
+                    resetBtn.classList.remove('hidden');
+                    runBtn.disabled = false;
+                    runBtn.innerHTML = '<i class="fa-solid fa-wand-magic-sparkles"></i> <span>一键 AI 智能拆解并关联</span>';
+                });
+                return;
+            }
 
             // Handle PDF branch
             if (window.currentPdfFile) {
@@ -1717,9 +1799,11 @@
                         
                         const subText = document.getElementById('importSubLoadingText');
                         if (subText) {
-                            if (task.status === 'ocr_extraction' || (task.log && task.log.includes('多模态'))) {
+                            if (task.status === 'extracting_docx' || (task.log && task.log.includes('OMML'))) {
+                                subText.textContent = '正在通过 OMML 引擎极速直提原生 LaTeX 公式与高清配图，请稍候...';
+                            } else if (task.status === 'ocr_extraction' || (task.log && task.log.includes('多模态'))) {
                                 subText.textContent = '正在通过多模态视觉引擎并行转译图文与公式，请稍候...';
-                            } else if (task.status === 'ai_splitting' || (task.log && task.log.includes('大模型') || task.log.includes('pdf-inspector'))) {
+                            } else if (task.status === 'ai_splitting' || (task.log && task.log.includes('大模型') || task.log.includes('pdf-inspector') || task.log.includes('Word 原生'))) {
                                 subText.textContent = '文本与公式已提取完毕，正在通过大模型进行题目切片与属性匹配...';
                             } else if (task.status === 'completed') {
                                 subText.textContent = '拆解完成，正在呈现题目审查列表...';

@@ -29,6 +29,7 @@ from dotenv import load_dotenv
 from mathbank.database import Question, QuestionCurriculum, Paper, PaperQuestion, get_db, init_db
 from mathbank.paper_helper import build_latex_document, build_answer_sheet_latex, compile_tex_to_pdf, create_tex_zip_package, create_full_bundle_zip_package, collect_referenced_images
 from mathbank.sync_helper import export_database_to_files
+from mathbank.docx_helper import extract_docx_markdown
 from mathbank.ai_json import parse_ai_json
 from mathbank.ai_http import (
     post_chat_completion,
@@ -3756,6 +3757,129 @@ async def upload_pdf_task(
     except Exception as e:
         return JSONResponse(
             content={"status": "error", "message": f"创建 PDF 解析任务失败: {str(e)}"},
+            status_code=500
+        )
+
+
+def run_docx_parsing_task(
+    task_id: str,
+    file_bytes: bytes,
+    filename: str,
+    generate_answers: bool = False
+):
+    try:
+        # 1. 检查任务是否已被用户手动取消 (ESC)
+        with PDF_TASKS_LOCK:
+            if PDF_TASKS.get(task_id, {}).get("status") == "cancelled":
+                return
+
+        with PDF_TASKS_LOCK:
+            PDF_TASKS[task_id] = {
+                "status": "extracting_docx",
+                "progress": 25,
+                "log": "已接收 Word 试卷，正在通过 OMML 引擎极速直提原生 LaTeX 公式与高清配图..."
+            }
+
+        # 2. 毫秒级无损提取 Word Markdown
+        docx_res = extract_docx_markdown(file_bytes)
+        if not docx_res.get("success") or not docx_res.get("markdown"):
+            raise ValueError(docx_res.get("error") or "未能从 Word 文档中提取出有效试题内容！")
+
+        full_markdown_content = docx_res["markdown"]
+        img_count = docx_res.get("image_count", 0)
+
+        # 检查取消
+        with PDF_TASKS_LOCK:
+            if PDF_TASKS.get(task_id, {}).get("status") == "cancelled":
+                return
+            PDF_TASKS[task_id] = {
+                "status": "ai_splitting",
+                "progress": 70,
+                "log": f"Word 原生题卷与 {img_count} 张配图提取完毕！正在调用核心教研大模型进行切片与难度分类..."
+            }
+
+        # 3. 智能提取标题与题目切片
+        paper_title = os.path.splitext(filename)[0]
+        auto_title = extract_title_from_latex(full_markdown_content)
+        if auto_title:
+            paper_title = auto_title
+
+        parsed_questions = parse_paper_text_internal(full_markdown_content, generate_answers)
+
+        # 检查取消
+        with PDF_TASKS_LOCK:
+            if PDF_TASKS.get(task_id, {}).get("status") == "cancelled":
+                return
+
+        final_questions = post_process_pdf_parsed_questions(parsed_questions, paper_title, task_id, [full_markdown_content])
+
+        with PDF_TASKS_LOCK:
+            if PDF_TASKS.get(task_id, {}).get("status") == "cancelled":
+                return
+            PDF_TASKS[task_id].update({
+                "status": "completed",
+                "progress": 100,
+                "log": "完成！已为您提取并拆分全部 Word 题目卡片。",
+                "data": final_questions
+            })
+    except Exception as ex:
+        with PDF_TASKS_LOCK:
+            if PDF_TASKS.get(task_id, {}).get("status") != "cancelled":
+                PDF_TASKS[task_id] = {
+                    "status": "error",
+                    "progress": 0,
+                    "error": f"Word 试卷拆解失败: {str(ex)}"
+                }
+
+
+@app.post("/api/upload/docx-task")
+async def upload_docx_task(
+    background_tasks: BackgroundTasks,
+    file: UploadFile = File(...),
+    generate_answers: str = Form("false")
+):
+    try:
+        generate_answers_bool = generate_answers.lower() in ("true", "1", "yes")
+        
+        # 验证文件扩展名
+        if not file.filename.lower().endswith(".docx"):
+            return JSONResponse(
+                content={"status": "error", "message": "上传文件格式不正确，必须为 .docx 格式！"},
+                status_code=400
+            )
+            
+        # 限制文件大小（30MB 以内）
+        content = await file.read()
+        if len(content) > 30 * 1024 * 1024:
+            return JSONResponse(
+                content={"status": "error", "message": "Word 文件过大，请上传 30MB 以内的试卷文件！"},
+                status_code=400
+            )
+            
+        task_id = str(uuid.uuid4())
+        
+        with PDF_TASKS_LOCK:
+            PDF_TASKS[task_id] = {
+                "status": "pending",
+                "progress": 0,
+                "log": "Word 任务已排队，正在准备运行原生 OMML 提取..."
+            }
+            
+        background_tasks.add_task(
+            run_docx_parsing_task,
+            task_id,
+            content,
+            file.filename,
+            generate_answers_bool
+        )
+        
+        return {
+            "status": "success",
+            "task_id": task_id
+        }
+    except Exception as e:
+        return JSONResponse(
+            content={"status": "error", "message": f"创建 Word 解析任务失败: {str(e)}"},
             status_code=500
         )
 
