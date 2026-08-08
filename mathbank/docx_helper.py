@@ -61,9 +61,12 @@ def _save_image(z: zipfile.ZipFile, target_rel_path: str) -> Optional[str]:
                 break
 
     if clean_target in z.namelist():
+        ext = os.path.splitext(clean_target)[1].lower()
+        # Skip Windows Metafile (.wmf/.emf) inline equation previews that browsers cannot render
+        if ext in ('.wmf', '.emf'):
+            return None
         try:
             img_bytes = z.read(clean_target)
-            ext = os.path.splitext(clean_target)[1].lower()
             if not ext:
                 ext = '.png'
             filename = f"word_img_{uuid.uuid4().hex[:12]}{ext}"
@@ -77,8 +80,7 @@ def _save_image(z: zipfile.ZipFile, target_rel_path: str) -> Optional[str]:
 
 
 def _extract_ole_formula_or_image(elem, z: zipfile.ZipFile, rels: Dict[str, str]) -> Optional[str]:
-    """Extract MathType formula from OLEObject via MTEF or fallback to embedded shape image."""
-    # 1. Search for <o:OLEObject r:id="rId..."/>
+    """Extract MathType formula from OLEObject via MTEF to standard LaTeX."""
     for ole_obj in elem.iter('{urn:schemas-microsoft-com:office:office}OLEObject'):
         r_id = ole_obj.attrib.get('{http://schemas.openxmlformats.org/officeDocument/2006/relationships}id')
         if r_id and r_id in rels:
@@ -93,12 +95,6 @@ def _extract_ole_formula_or_image(elem, z: zipfile.ZipFile, rels: Dict[str, str]
                         return f" ${latex}$ "
                 except Exception:
                     pass
-
-    # 2. Fallback to embedded preview image if MTEF not decoded
-    img_url = _find_and_extract_image(elem, z, rels)
-    if img_url:
-        return f"\n![]({img_url})\n"
-
     return None
 
 
