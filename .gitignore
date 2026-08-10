@@ -72,6 +72,7 @@ Release_Output/
 *_cropped.png
 test_*.png
 *_comparison*.png
+static/test_uploads/
 tests/artifacts/*
 !tests/artifacts/.gitkeep
 
