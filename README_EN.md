@@ -14,6 +14,18 @@ Out of the box without complex installation or frontend build steps. Supports se
 
 ---
 
+## ✨ Key Highlights
+
+With just basic LaTeX math formula syntax, MathBank empowers frontline math teachers to efficiently solve exam generation and lesson preparation challenges:
+
+- 🎨 **1:1 A4 Simulation Exam Layout**: Provides an intuitive exam paper canvas just like Word, complete with sealing line, title, and notice box. Supports drag-and-drop sorting, question blank space height adjustment, and one-click switching to A3 answer sheet or Gaokao 19-question preset.
+- ⚡ **Second-Level Formula Rendering & Exam-Level Export**: Built-in professional math formula typesetting engine with real-time web preview. Supports one-click export of high-definition PDFs matching National College Entrance Examination (Gaokao) standards and complete LaTeX source packages.
+- 🤖 **AI Intelligent Exam Generation & Solving Assistance**: Built-in Large Language Models (DeepSeek, etc.) automatically select questions and generate exams based on knowledge point breakdown tables and difficulty gradients; supports single-question AI generation of detailed solutions and teaching reflections.
+- 📚 **One-Click Switching Across Major Curriculum Outlines**: Natively preloaded with standard High School curriculum outlines: **PEP A (人教A版)**, **PEP B (人教B版)**, **Jiangsu (苏教版)**, and **Shanghai (沪教版)**. Changing outlines automatically and intelligently maps questions without manual re-organization.
+- 📄 **Multi-Format Exam Smart Parsing & PDF Dual-Strategy Route**: Supports direct drag-and-drop of **LaTeX source (.tex)**, **PDF exams (.pdf)**, or **Word documents (.docx)** for fast intelligent slice parsing. PDF parsing natively offers dual strategies: **[Native Vector Text & Formula Extraction] (Default Recommended)** and **[Full-Page Visual OCR]**. Primary recommendation is native extraction using `PDF Inspector` for sub-second, 0-visual-token loss extraction; if images cause missing formulas, the system smoothly falls back to VLM visual OCR completion; a full-page visual OCR channel is also available as a reliable fallback for unusually formatted exams, ensuring 100% breakdown success rate. Word import structurally converts Office OMML and parses MathType structures from OLE `Equation Native` streams, preserving preview images with manual audit tags for non-high-confidence formulas.
+
+---
+
 ## 🤖 AI Agent / Harness Workflows
 
 MathBank features multiple highly automated, fault-tolerant, and self-healing AI Agent / Harness workflows to ensure high reliability across exam parsing, geometry redrawing, and concurrent solving:
@@ -23,8 +35,8 @@ MathBank features multiple highly automated, fault-tolerant, and self-healing AI
 flowchart LR
     PDF[PDF Input] --> Inspector[Inspector Engine]
     Inspector --> Route{Page-Level<br/>Confidence & Routing}
-    Route -->|High Confidence (0 Token)| Native[Native Text & Formula Extraction]
-    Route -->|Low Confidence / Fallback| VLM[Multimodal VLM OCR Fallback]
+    Route -->|"High Confidence (0 Token)"| Native[Native Text & Formula Extraction]
+    Route -->|"Low Confidence / Fallback"| VLM[Multimodal VLM OCR Fallback]
     Native --> Merge[Cross-Page Text Merge & Clean]
     VLM --> Merge
     Merge --> LLM[LLM Structured Slice Parsing]
@@ -39,9 +51,9 @@ flowchart LR
     Reason --> TikZ[TikZ Code Generation]
     TikZ --> Engine[Local XeLaTeX Execution]
     Engine --> Feedback{Compile Logs &<br/>Visual Feedback}
-    Feedback -->|Compile Error| Repair[AI Code Self-Correction Loop]
+    Feedback -->|"Compile Error"| Repair[AI Code Self-Correction Loop]
     Repair --> Engine
-    Feedback -->|Success| Output[HD Vector Graphics & Preview]
+    Feedback -->|"Success"| Output[HD Vector Graphics & Preview]
 ```
 
 ### 3. Paper Ingestion & Concurrent Solving Harness
@@ -52,18 +64,6 @@ flowchart LR
     Classify --> Validate[Structured JSON Fault-Tolerant Validation]
     Validate --> Solve[Async Concurrent AI Solving Engine]
 ```
-
----
-
-## ✨ Key Highlights
-
-With just basic LaTeX math formula syntax, MathBank empowers frontline math teachers to efficiently solve exam generation and lesson preparation challenges:
-
-- 🎨 **1:1 A4 Simulation Exam Layout**: Provides an intuitive exam paper canvas just like Word, complete with sealing line, title, and notice box. Supports drag-and-drop sorting, question blank space height adjustment, and one-click switching to A3 answer sheet or Gaokao 19-question preset.
-- ⚡ **Second-Level Formula Rendering & Exam-Level Export**: Built-in professional math formula typesetting engine with real-time web preview. Supports one-click export of high-definition PDFs matching National College Entrance Examination (Gaokao) standards and complete LaTeX source packages.
-- 🤖 **AI Intelligent Exam Generation & Solving Assistance**: Built-in Large Language Models (DeepSeek, etc.) automatically select questions and generate exams based on knowledge point breakdown tables and difficulty gradients; supports single-question AI generation of detailed solutions and teaching reflections.
-- 📚 **One-Click Switching Across Major Curriculum Outlines**: Natively preloaded with standard High School curriculum outlines: **PEP A (人教A版)**, **PEP B (人教B版)**, **Jiangsu (苏教版)**, and **Shanghai (沪教版)**. Changing outlines automatically and intelligently maps questions without manual re-organization.
-- 📄 **Multi-Format Exam Smart Parsing & PDF Dual-Strategy Route**: Supports direct drag-and-drop of **LaTeX source (.tex)**, **PDF exams (.pdf)**, or **Word documents (.docx)** for fast intelligent slice parsing. PDF parsing natively offers dual strategies: **[Native Vector Text & Formula Extraction] (Default Recommended)** and **[Full-Page Visual OCR]**. Primary recommendation is native extraction using `PDF Inspector` for sub-second, 0-visual-token loss extraction; if images cause missing formulas, the system smoothly falls back to VLM visual OCR completion; a full-page visual OCR channel is also available as a reliable fallback for unusually formatted exams, ensuring 100% breakdown success rate. Word import structurally converts Office OMML and parses MathType structures from OLE `Equation Native` streams, preserving preview images with manual audit tags for non-high-confidence formulas.
 
 ---
 
