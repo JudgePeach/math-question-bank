@@ -1249,7 +1249,7 @@
             parsedQuestionsData.forEach(q => {
                 if (!q.saved && q.image_paths) {
                     q.image_paths.forEach(p => {
-                        if (p.includes('/tmp/pdf_crop_')) {
+                        if (p.includes('/tmp/')) {
                             tempPaths.push(p);
                         }
                     });
@@ -1299,6 +1299,10 @@
             const imagesListContainer = document.getElementById('importImagesList');
 
             // LaTeX / PDF File drag & select
+            if (!texDrop || !texInput || !texFileName || !texFileIcon || !latexTextarea) {
+                console.error('[Import] 试卷文件上传控件不完整，无法初始化文件选择。');
+                return;
+            }
             texDrop.addEventListener('click', () => texInput.click());
             texInput.addEventListener('change', (e) => handleTexFileSelect(e.target.files[0]));
 
@@ -1318,23 +1322,96 @@
 
             texDrop.addEventListener('drop', (e) => {
                 const file = e.dataTransfer.files[0];
-                if (file && (file.name.endsWith('.tex') || file.name.endsWith('.pdf') || file.name.endsWith('.docx'))) {
+                const lowerFileName = file ? file.name.toLowerCase() : '';
+                if (file && (lowerFileName.endsWith('.tex') || lowerFileName.endsWith('.pdf') || lowerFileName.endsWith('.docx'))) {
                     handleTexFileSelect(file);
                 } else {
                     showToast('请拖入有效的 .tex、.pdf 或 .docx (Word) 格式试卷文件！', 'warning');
                 }
             });
 
+            function readFileAsArrayBuffer(file) {
+                if (file && typeof file.arrayBuffer === 'function') {
+                    return file.arrayBuffer();
+                }
+                return new Promise((resolve, reject) => {
+                    const reader = new FileReader();
+                    reader.onload = () => resolve(reader.result);
+                    reader.onerror = () => reject(reader.error || new Error('无法读取本地文件'));
+                    reader.readAsArrayBuffer(file);
+                });
+            }
+
+            async function decodeTexFileLocally(file) {
+                const buffer = await readFileAsArrayBuffer(file);
+                const bytes = new Uint8Array(buffer || new ArrayBuffer(0));
+                if (!bytes.length) throw new Error('TeX 文件为空');
+                if (bytes.length > 5 * 1024 * 1024) throw new Error('TeX 文件超过 5MB 上限');
+
+                const attempts = [];
+                if ((bytes[0] === 0xFF && bytes[1] === 0xFE) || (bytes[0] === 0xFE && bytes[1] === 0xFF)) {
+                    attempts.push('utf-16');
+                } else if (bytes.length >= 8) {
+                    let evenNuls = 0;
+                    let oddNuls = 0;
+                    const sampleLength = Math.min(bytes.length, 200);
+                    for (let i = 0; i < sampleLength; i++) {
+                        if (bytes[i] === 0) {
+                            if (i % 2 === 0) evenNuls++;
+                            else oddNuls++;
+                        }
+                    }
+                    if (oddNuls > Math.max(2, evenNuls * 3)) attempts.push('utf-16le');
+                    if (evenNuls > Math.max(2, oddNuls * 3)) attempts.push('utf-16be');
+                }
+                attempts.push('utf-8', 'gb18030');
+
+                for (const encoding of attempts) {
+                    try {
+                        const decoded = new TextDecoder(encoding, {fatal: true}).decode(bytes);
+                        return decoded
+                            .replace(/^\uFEFF/, '')
+                            .replace(/\u0000/g, '')
+                            .replace(/\r\n?/g, '\n');
+                    } catch (_error) {
+                        // Continue through the explicit safe encoding fallbacks.
+                    }
+                }
+                throw new Error('无法识别文件编码，请将 TeX 另存为 UTF-8 后重试');
+            }
+
+            function applyLocallyReadTex(file, source, diagnostics = null, serverTitle = '') {
+                latexTextarea.value = source || '';
+                latexTextarea.disabled = false;
+                window.currentTexDiagnostics = diagnostics;
+                const titleInput = document.getElementById('importPaperTitle');
+                const autoTitle = serverTitle || extractTitleFromLatex(source || '');
+                if (autoTitle) {
+                    titleInput.value = autoTitle;
+                } else if (!titleInput.value.trim()) {
+                    titleInput.value = file.name.replace(/\.[^/.]+$/, '');
+                }
+                return autoTitle;
+            }
+
             function handleTexFileSelect(file) {
                 if (!file) return;
+                const lowerFileName = file.name.toLowerCase();
+                if (!lowerFileName.endsWith('.tex') && !lowerFileName.endsWith('.pdf') && !lowerFileName.endsWith('.docx')) {
+                    showToast('仅支持 .tex、.pdf 或 .docx 试卷文件。', 'warning');
+                    texInput.value = '';
+                    return;
+                }
+                window.currentTexReadToken = null;
+                const texImagesSection = document.getElementById('texImagesSection');
                 
-                if (file.name.endsWith('.docx')) {
+                if (lowerFileName.endsWith('.docx')) {
                     window.currentDocxFile = file;
                     window.currentPdfFile = null;
                     texFileName.textContent = file.name;
                     texFileName.className = "text-xs text-brand-600 font-bold";
                     texFileIcon.className = "fa-solid fa-file-word text-blue-600 text-xl mb-1.5 animate-bounce";
-                    latexTextarea.value = `[Word (.docx) 试卷已成功载入: ${file.name}]\n原生 OMML 数学公式与高清插图将会在点击“一键 AI 智能拆解并关联”后于后台 100% 无损直提。`;
+                    latexTextarea.value = `[Word (.docx) 试卷已成功载入: ${file.name}]\n系统将安全提取 OMML 公式与高清插图；MathType 公式无法可靠转换时会保留原预览图并标记人工核对。`;
                     latexTextarea.disabled = true;
                     
                     const titleInput = document.getElementById('importPaperTitle');
@@ -1344,7 +1421,8 @@
                     
                     const pdfRangeContainer = document.getElementById('pdfPageRangeContainer');
                     if (pdfRangeContainer) pdfRangeContainer.classList.add('hidden');
-                } else if (file.name.endsWith('.pdf')) {
+                    if (texImagesSection) texImagesSection.classList.add('hidden');
+                } else if (lowerFileName.endsWith('.pdf')) {
                     window.currentDocxFile = null;
                     window.currentPdfFile = file;
                     texFileName.textContent = file.name;
@@ -1360,64 +1438,146 @@
                     
                     const pdfRangeContainer = document.getElementById('pdfPageRangeContainer');
                     if (pdfRangeContainer) pdfRangeContainer.classList.remove('hidden');
+                    if (texImagesSection) texImagesSection.classList.add('hidden');
                 } else {
                     window.currentDocxFile = null;
                     window.currentPdfFile = null;
+                    window.currentTexDiagnostics = null;
                     texFileName.textContent = file.name;
                     texFileName.className = "text-xs text-brand-600 font-bold";
                     texFileIcon.className = "fa-solid fa-file-circle-check text-brand-500 text-xl mb-1.5 animate-bounce";
-                    latexTextarea.disabled = false;
+                    latexTextarea.disabled = true;
+                    latexTextarea.value = '正在安全读取并检查 TeX 源码编码与结构...';
                     
                     const pdfRangeContainer = document.getElementById('pdfPageRangeContainer');
                     if (pdfRangeContainer) pdfRangeContainer.classList.add('hidden');
+                    if (texImagesSection) texImagesSection.classList.remove('hidden');
                     
-                    const reader = new FileReader();
-                    reader.onload = (e) => {
-                        latexTextarea.value = e.target.result;
-                        const autoTitle = extractTitleFromLatex(e.target.result);
-                        if (autoTitle) {
-                            const titleInput = document.getElementById('importPaperTitle');
-                            titleInput.value = autoTitle;
-                            showToast(`已自动从 LaTeX 文件中读取试卷标题: ${autoTitle}`);
+                    const runBtn = document.getElementById('runParseBtn');
+                    if (runBtn) {
+                        runBtn.disabled = true;
+                        runBtn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i><span>正在读取 TeX...</span>';
+                    }
+                    const readToken = `${Date.now()}-${Math.random()}`;
+                    window.currentTexReadToken = readToken;
+                    let localTitle = '';
+                    decodeTexFileLocally(file)
+                    .then(localSource => {
+                        if (window.currentTexReadToken !== readToken) return null;
+                        localTitle = applyLocallyReadTex(file, localSource);
+
+                        const formData = new FormData();
+                        formData.append('file', file);
+                        const controller = typeof AbortController === 'function' ? new AbortController() : null;
+                        const timeoutId = controller ? setTimeout(() => controller.abort(), 8000) : null;
+                        return fetch('/api/upload/tex-source', {
+                            method: 'POST',
+                            headers: {'X-Local-Token': localStorage.getItem('local_token') || ''},
+                            body: formData,
+                            signal: controller ? controller.signal : undefined
+                        })
+                        .then(async response => {
+                            const data = await response.json().catch(() => ({}));
+                            if (!response.ok || data.status !== 'success') {
+                                throw new Error(data.message || data.detail || `HTTP ${response.status}`);
+                            }
+                            return data;
+                        })
+                        .then(data => {
+                            if (window.currentTexReadToken !== readToken) return;
+                            const autoTitle = applyLocallyReadTex(
+                                file,
+                                data.source || localSource,
+                                data.diagnostics || null,
+                                data.title || ''
+                            );
+                            if (autoTitle && autoTitle !== localTitle) {
+                                showToast(`已自动从 TeX 文件中读取试卷标题：${autoTitle}`);
+                            }
+                            const diagnostics = data.diagnostics || {};
+                            if (diagnostics.encoding_fallback) {
+                                showToast(`已按 ${diagnostics.encoding} 编码安全读取该 TeX 文件。`, 'info');
+                            }
+                            if (Array.isArray(diagnostics.warnings) && diagnostics.warnings.length) {
+                                showToast(`TeX 预检发现 ${diagnostics.warnings.length} 项需留意的结构，拆分后会继续提示。`, 'warning');
+                            }
+                        })
+                        .catch(error => {
+                            if (window.currentTexReadToken !== readToken) return;
+                            console.warn('TeX 后端预检不可用，已保留浏览器本地读取结果:', error);
+                            window.currentTexDiagnostics = {
+                                local_read_fallback: true,
+                                warnings: ['后端 TeX 预检暂不可用，已使用浏览器本地读取结果']
+                            };
+                            showToast('TeX 文件已读取；后端预检暂不可用，不影响继续编辑。', 'warning');
+                        })
+                        .finally(() => {
+                            if (timeoutId) clearTimeout(timeoutId);
+                        });
+                    })
+                    .catch(error => {
+                        if (window.currentTexReadToken !== readToken) return;
+                        latexTextarea.value = '';
+                        latexTextarea.disabled = false;
+                        texInput.value = '';
+                        texFileName.textContent = 'TeX 文件读取失败，请重新选择';
+                        texFileName.className = 'text-xs text-red-500 font-bold';
+                        showToast(`TeX 文件读取失败：${error.message}`, 'error');
+                    })
+                    .finally(() => {
+                        if (runBtn) {
+                            runBtn.disabled = false;
+                            runBtn.innerHTML = '<i class="fa-solid fa-wand-magic-sparkles"></i><span>一键 AI 智能拆解并关联</span>';
                         }
-                    };
-                    reader.readAsText(file);
+                    });
                 }
             }
 
-            // Images File multi drag & select
-            imagesDrop.addEventListener('click', () => imagesInput.click());
-            imagesInput.addEventListener('change', (e) => handleImagesSelect(e.target.files));
+            // 旧版独立配图区在部分页面布局中不存在；仅在整套控件齐全时绑定，
+            // 避免空元素让试卷文件选择和后续初始化一起中断。
+            if (imagesDrop && imagesInput && imagesCountName && imagesFileIcon && imagesListContainer) {
+                imagesDrop.addEventListener('click', () => imagesInput.click());
+                imagesInput.addEventListener('change', (e) => handleImagesSelect(e.target.files));
 
-            ['dragenter', 'dragover'].forEach(eventName => {
-                imagesDrop.addEventListener(eventName, (e) => {
-                    e.preventDefault();
-                    imagesDrop.classList.add('border-brand-500', 'bg-brand-50/20');
-                }, false);
-            });
+                ['dragenter', 'dragover'].forEach(eventName => {
+                    imagesDrop.addEventListener(eventName, (e) => {
+                        e.preventDefault();
+                        imagesDrop.classList.add('border-brand-500', 'bg-brand-50/20');
+                    }, false);
+                });
 
-            ['dragleave', 'drop'].forEach(eventName => {
-                imagesDrop.addEventListener(eventName, (e) => {
-                    e.preventDefault();
-                    imagesDrop.classList.remove('border-brand-500', 'bg-brand-50/20');
-                }, false);
-            });
+                ['dragleave', 'drop'].forEach(eventName => {
+                    imagesDrop.addEventListener(eventName, (e) => {
+                        e.preventDefault();
+                        imagesDrop.classList.remove('border-brand-500', 'bg-brand-50/20');
+                    }, false);
+                });
 
-            imagesDrop.addEventListener('drop', (e) => {
-                handleImagesSelect(e.dataTransfer.files);
-            });
+                imagesDrop.addEventListener('drop', (e) => {
+                    handleImagesSelect(e.dataTransfer.files);
+                });
+            }
 
             function handleImagesSelect(files) {
                 if (!files || files.length === 0) return;
+                const allowedExtensions = ['.png', '.jpg', '.jpeg', '.gif', '.webp'];
+                let rejected = 0;
                 for (let i = 0; i < files.length; i++) {
                     const f = files[i];
-                    if (f.type.startsWith('image/')) {
+                    const lowerName = (f.name || '').toLowerCase();
+                    const allowed = f.type.startsWith('image/') && allowedExtensions.some(ext => lowerName.endsWith(ext));
+                    if (allowed && batchSelectedImages.length < 20) {
                         if (!batchSelectedImages.some(img => img.name === f.name)) {
                             batchSelectedImages.push(f);
                         }
+                    } else {
+                        rejected++;
                     }
                 }
                 renderImagesList();
+                if (rejected) {
+                    showToast(`有 ${rejected} 个文件不是受支持的图片，或已超过 20 张上限。`, 'warning');
+                }
             }
 
             // Input event listener for pasted LaTeX or manual edits
@@ -1433,18 +1593,42 @@
             });
         }
 
+        function demoteCurrentImportLog(consoleDiv) {
+            consoleDiv.querySelectorAll('[data-import-log-state="current"]').forEach(logEl => {
+                logEl.dataset.importLogState = 'completed';
+                logEl.className = 'text-slate-400 py-0.5';
+                logEl.removeAttribute('aria-current');
+            });
+        }
+
         function appendImportLog(message, type = 'info') {
             const consoleDiv = document.getElementById('importLogsConsole');
             if (!consoleDiv) return;
             const logEl = document.createElement('div');
-            
-            let colorClass = 'text-brand-400';
-            if (type === 'success') colorClass = 'text-green-400';
-            if (type === 'error') colorClass = 'text-red-400';
-            if (type === 'warning') colorClass = 'text-yellow-400';
-            
+
+            const isCurrentStep = type === 'current' || type === 'success';
+            if (isCurrentStep || type === 'error') {
+                demoteCurrentImportLog(consoleDiv);
+            }
+
+            let colorClass = 'text-slate-500';
+            if (isCurrentStep) {
+                colorClass = 'text-emerald-500 font-semibold';
+                logEl.dataset.importLogState = 'current';
+                logEl.setAttribute('aria-current', 'step');
+            } else if (type === 'completed') {
+                colorClass = 'text-slate-400';
+                logEl.dataset.importLogState = 'completed';
+            } else if (type === 'error') {
+                colorClass = 'text-red-500 font-semibold';
+                logEl.dataset.importLogState = 'error';
+            } else if (type === 'warning') {
+                colorClass = 'text-amber-500';
+                logEl.dataset.importLogState = 'warning';
+            }
+
             logEl.className = `${colorClass} py-0.5`;
-            logEl.innerHTML = `[${new Date().toLocaleTimeString()}] ${message}`;
+            logEl.textContent = `[${new Date().toLocaleTimeString()}] ${message}`;
             consoleDiv.appendChild(logEl);
             consoleDiv.scrollTop = consoleDiv.scrollHeight;
         }
@@ -1490,8 +1674,8 @@
 
             // Handle Word (.docx) branch
             if (window.currentDocxFile) {
-                document.getElementById('importLoadingText').textContent = '正在上传 Word 试卷并无损提取数学公式与高清插图...';
-                appendImportLog('开始上传 Word (.docx) 试卷文件...', 'info');
+                document.getElementById('importLoadingText').textContent = '正在上传 Word 试卷并安全提取数学公式与高清插图...';
+                appendImportLog('开始上传 Word (.docx) 试卷文件...', 'current');
                 document.getElementById('importProgressBarContainer').classList.remove('hidden');
                 document.getElementById('importProgressBar').style.width = '0%';
 
@@ -1555,7 +1739,7 @@
             // Handle PDF branch
             if (window.currentPdfFile) {
                 document.getElementById('importLoadingText').textContent = '正在上传 PDF 试卷并创建处理任务...';
-                appendImportLog('开始上传 PDF 试卷文件...', 'info');
+                appendImportLog('开始上传 PDF 试卷文件...', 'current');
                 document.getElementById('importProgressBarContainer').classList.remove('hidden');
                 document.getElementById('importProgressBar').style.width = '0%';
 
@@ -1568,6 +1752,10 @@
                 if (pageRange) {
                     pdfFormData.append('page_range', pageRange);
                 }
+
+                const pdfStrategyRadio = document.querySelector('input[name="pdfStrategy"]:checked');
+                const pdfStrategy = pdfStrategyRadio ? pdfStrategyRadio.value : 'native_preferred';
+                pdfFormData.append('pdf_strategy', pdfStrategy);
 
                 fetch('/api/upload/pdf-task', {
                     method: 'POST',
@@ -1624,12 +1812,12 @@
 
             // Normal LaTeX branch
             document.getElementById('importLoadingText').textContent = '正在上传配套图片并整理文件名映射...';
-            appendImportLog('开始检查配套图片...', 'info');
+            appendImportLog('开始检查配套图片...', 'current');
             document.getElementById('importProgressBarContainer').classList.add('hidden');
 
             let uploadPromise = Promise.resolve({});
             if (batchSelectedImages.length > 0) {
-                appendImportLog(`检测到 ${batchSelectedImages.length} 张配图，开始多线程上传中...`, 'info');
+                appendImportLog(`检测到 ${batchSelectedImages.length} 张配图，开始多线程上传中...`, 'current');
                 const imgFormData = new FormData();
                 batchSelectedImages.forEach(file => {
                     imgFormData.append('files', file);
@@ -1652,7 +1840,7 @@
                     }
                 });
             } else {
-                appendImportLog('无插图需关联，直接运行大文本 AI 拆解。', 'info');
+                appendImportLog('无插图需关联，直接运行大文本 AI 拆解。', 'current');
             }
 
             uploadPromise
@@ -1660,7 +1848,7 @@
                     let parseModelFriendly = systemPreferParseModel.includes('/') ? systemPreferParseModel.split('/').pop() : systemPreferParseModel;
                     let parseBrand = 'AI';
                     document.getElementById('importLoadingText').textContent = `${parseBrand} 正在智能分析并拆解试卷，请稍候...`;
-                    appendImportLog(`正在调用 ${parseModelFriendly} 教研大模型进行试题智能分割与属性匹配...`, 'info');
+                    appendImportLog(`正在调用 ${parseModelFriendly} 教研大模型进行试题智能分割与属性匹配...`, 'current');
                     appendImportLog('大纲映射范围：高中人教版A 必修一至选择性必修三。请耐心等候...', 'info');
 
                     const parseFormData = new FormData();
@@ -1689,6 +1877,20 @@
                     if (data.status === 'success') {
                         parsedQuestionsData = data.questions;
                         appendImportLog(`试卷成功拆解完成！共提取出 ${parsedQuestionsData.length} 道高定数学题。`, 'success');
+                        const texDiagnostics = data.tex_diagnostics || {};
+                        const estimatedCount = texDiagnostics.question_count_estimate || 0;
+                        const actualCount = texDiagnostics.question_count_actual || parsedQuestionsData.length;
+                        if (estimatedCount) {
+                            appendImportLog(`TeX 题数核对：源码约 ${estimatedCount} 题，实际拆分 ${actualCount} 题。`, estimatedCount === actualCount ? 'info' : 'warning');
+                        }
+                        if (texDiagnostics.math_locks_created) {
+                            appendImportLog(`TeX 公式保真校验：${texDiagnostics.math_locks_restored || 0}/${texDiagnostics.math_locks_created} 个公式已按原源码恢复。`, 'info');
+                        }
+                        const texWarnings = Array.isArray(texDiagnostics.warnings) ? texDiagnostics.warnings : [];
+                        texWarnings.forEach(message => appendImportLog(`TeX 预检：${message}`, 'warning'));
+                        if (texWarnings.length) {
+                            showToast(`TeX 拆分完成，但有 ${texWarnings.length} 项结构提示需要核对。`, 'warning');
+                        }
                         
                         renderParsedQuestionsList(parsedQuestionsData);
                         
@@ -1800,13 +2002,13 @@
                     
                     if (task.log && task.log !== lastLog) {
                         lastLog = task.log;
-                        appendImportLog(task.log, 'info');
+                        appendImportLog(task.log, 'current');
                         document.getElementById('importLoadingText').textContent = task.log;
                         
                         const subText = document.getElementById('importSubLoadingText');
                         if (subText) {
                             if (task.status === 'extracting_docx' || (task.log && task.log.includes('OMML'))) {
-                                subText.textContent = '正在通过 OMML 引擎极速直提原生 LaTeX 公式与高清配图，请稍候...';
+                                subText.textContent = '正在安全提取 OMML 公式与高清配图，不可靠的公式将保留预览图...';
                             } else if (task.status === 'ocr_extraction' || (task.log && task.log.includes('多模态'))) {
                                 subText.textContent = '正在通过多模态视觉引擎并行转译图文与公式，请稍候...';
                             } else if (task.status === 'ai_splitting' || (task.log && task.log.includes('大模型') || task.log.includes('pdf-inspector') || task.log.includes('Word 原生'))) {
@@ -1825,7 +2027,36 @@
                         clearInterval(currentPdfPollInterval);
                         currentPdfPollInterval = null;
                         parsedQuestionsData = task.data || [];
-                        appendImportLog(`PDF 试卷智能分析并拆解成功！共分析出 ${parsedQuestionsData.length} 道高定数学题。`, 'success');
+                        const isWordTask = task.document_type === 'docx';
+                        const documentLabel = isWordTask ? 'Word' : 'PDF';
+                        appendImportLog(`${documentLabel} 试卷分析并拆解成功！共分析出 ${parsedQuestionsData.length} 道数学题。`, 'success');
+                        if (isWordTask && task.diagnostics) {
+                            const report = task.diagnostics;
+                            const converted = (report.omml_converted || 0) + (report.mtef_converted || 0);
+                            const reviewCount = report.review_required || 0;
+                            appendImportLog(`Word 提取报告：${converted} 个公式已转换，${report.images_extracted || 0} 张图片已保留，${reviewCount} 处需人工核对。`, reviewCount > 0 ? 'warning' : 'info');
+                            const structuralMathType = report.mtef_structural_converted || 0;
+                            const annotatedMathType = report.mtef_annotation_converted || 0;
+                            const compatibleMathType = report.mtef_compatibility_converted || 0;
+                            if (structuralMathType || annotatedMathType || compatibleMathType) {
+                                appendImportLog(`MathType 明细：${structuralMathType} 个按公式结构转换，${annotatedMathType} 个使用内嵌 LaTeX，${compatibleMathType} 个使用有限文本兼容。`, compatibleMathType > 0 ? 'warning' : 'info');
+                            }
+                            const restoredNumbers = report.numbering_converted || 0;
+                            const restoredFormatting = (report.superscripts_converted || 0)
+                                + (report.subscripts_converted || 0)
+                                + (report.underlines_converted || 0)
+                                + (report.text_styles_converted || 0);
+                            if (restoredNumbers || restoredFormatting) {
+                                appendImportLog(`Word 排版语义：已恢复 ${restoredNumbers} 个自动编号、${restoredFormatting} 处上下标/下划线/强调格式。`, 'info');
+                            }
+                            const lockedMath = report.math_locks_created || 0;
+                            if (lockedMath) {
+                                appendImportLog(`公式保真校验：${report.math_locks_restored || 0}/${lockedMath} 个公式已按 Word 原文恢复，拆卷模型未直接改写最终公式。`, 'info');
+                            }
+                            if (reviewCount > 0) {
+                                showToast(`Word 中有 ${reviewCount} 处公式、字符、图片或表格需人工核对，已保留提示标记。`, 'warning');
+                            }
+                        }
                         
                         renderParsedQuestionsList(parsedQuestionsData);
                         
@@ -1850,7 +2081,8 @@
                             loadingIcon.classList.remove('fa-spinner', 'animate-spin');
                             loadingIcon.classList.add('fa-circle-exclamation', 'text-red-500');
                         }
-                        document.getElementById('importLoadingText').textContent = 'PDF 试卷分析中断！';
+                        const documentLabel = task.document_type === 'docx' ? 'Word' : 'PDF';
+                        document.getElementById('importLoadingText').textContent = `${documentLabel} 试卷分析中断！`;
 
                         const loadingState = document.getElementById('importLoadingState');
                         let resetBtn = document.getElementById('resetImportBtn');
@@ -1866,7 +2098,7 @@
                         
                         runBtn.disabled = false;
                         runBtn.innerHTML = '<i class="fa-solid fa-wand-magic-sparkles"></i> <span>一键 AI 智能拆解并关联</span>';
-                        showToast(`PDF 拆解分析失败: ${task.error || '未知错误'}`, 'error');
+                        showToast(`${documentLabel} 拆解分析失败: ${task.error || '未知错误'}`, 'error');
                     }
                 })
                 .catch(err => {
@@ -1899,13 +2131,20 @@
             batchSelectedImages.forEach((file, index) => {
                 const item = document.createElement('div');
                 item.className = "relative group flex items-center justify-between bg-white border border-slate-200 rounded-lg px-2 py-0.5 text-[10px] text-slate-600 space-x-1.5 shrink-0 max-w-[140px]";
-                item.innerHTML = `
-                    <span class="truncate font-semibold max-w-[90px]" title="${file.name}">${file.name}</span>
-                    <button class="text-slate-400 hover:text-red-500 transition-colors" title="移除">
-                        <i class="fa-solid fa-circle-xmark"></i>
-                    </button>
-                `;
-                item.querySelector('button').addEventListener('click', (e) => {
+                const name = document.createElement('span');
+                name.className = 'truncate font-semibold max-w-[90px]';
+                name.textContent = file.name;
+                name.dataset.tooltip = file.name;
+                const removeButton = document.createElement('button');
+                removeButton.type = 'button';
+                removeButton.className = 'text-slate-400 hover:text-red-500 transition-colors';
+                removeButton.dataset.tooltip = '移除';
+                removeButton.setAttribute('aria-label', `移除图片 ${file.name}`);
+                const icon = document.createElement('i');
+                icon.className = 'fa-solid fa-circle-xmark';
+                removeButton.appendChild(icon);
+                item.append(name, removeButton);
+                removeButton.addEventListener('click', (e) => {
                     e.stopPropagation();
                     batchSelectedImages.splice(index, 1);
                     renderImagesList();
@@ -1935,7 +2174,7 @@
             const texFileName = document.getElementById('texFileName');
             const texFileIcon = document.getElementById('texFileIcon');
             if (texFileName) {
-                texFileName.textContent = "点击或拖放拖入 .tex 或 .pdf 格式试卷文件";
+                texFileName.textContent = "点击或拖放 .tex / .pdf / .docx 试卷文件";
                 texFileName.className = "text-xs text-slate-600 font-medium";
             }
             if (texFileIcon) {
@@ -1949,6 +2188,9 @@
             
             // 重置 PDF 状态
             window.currentPdfFile = null;
+            window.currentDocxFile = null;
+            window.currentTexDiagnostics = null;
+            window.currentTexReadToken = null;
             window.pdfPageImages = [];
             window.currentPdfTaskId = null;
             window.activeCropQuestionIndex = null;
@@ -1958,6 +2200,8 @@
             if (pdfRange) pdfRange.value = '';
             const pdfRangeContainer = document.getElementById('pdfPageRangeContainer');
             if (pdfRangeContainer) pdfRangeContainer.classList.add('hidden');
+            const texImagesSection = document.getElementById('texImagesSection');
+            if (texImagesSection) texImagesSection.classList.remove('hidden');
         }
 
         function resetImportState(showToastMessage = true) {
@@ -2291,6 +2535,9 @@
                         ],
                         throwOnError: false
                     });
+                    if (typeof window.adaptChoicesGridLayout === 'function') {
+                        window.adaptChoicesGridLayout(contentPrev);
+                    }
                 } catch(e) {
                     contentPrev.textContent = contentText;
                 }
@@ -2750,27 +2997,46 @@
         // ==========================================
         // LaTeX TITLE AUTO-EXTRACTION HELPERS
         // ==========================================
-        function extractTitleFromLatex(latex) {
-            if (!latex) return "";
-            
-            // 1. Try \title{...}
-            let match = latex.match(/\\title\s*\{([^}]+)\}/);
-            if (match && match[1]) {
-                return cleanLatexFormatting(match[1]);
-            }
-            
-            // 2. Try \chead{...}
-            match = latex.match(/\\chead\s*\{([^}]+)\}/);
-            if (match && match[1]) {
-                const clean = cleanLatexFormatting(match[1]);
-                if (!clean.includes("页") && !clean.includes("绝密")) {
-                    return clean;
+        function extractLatexBraceGroup(latex, start) {
+            if (!latex || start < 0 || latex[start] !== '{') return null;
+            let depth = 0;
+            for (let i = start; i < latex.length; i++) {
+                let slashCount = 0;
+                for (let j = i - 1; j >= 0 && latex[j] === '\\'; j--) slashCount++;
+                const escaped = slashCount % 2 === 1;
+                if (latex[i] === '{' && !escaped) depth++;
+                if (latex[i] === '}' && !escaped) {
+                    depth--;
+                    if (depth === 0) return {content: latex.slice(start + 1, i), end: i + 1};
                 }
             }
-            
-            // 3. Try \begin{center} ... \end{center} near the top
+            return null;
+        }
+
+        function findLatexCommandGroup(latex, commands) {
+            for (const command of commands) {
+                const pattern = new RegExp('\\\\' + command + '\\b', 'g');
+                let match;
+                while ((match = pattern.exec(latex)) !== null) {
+                    let cursor = match.index + match[0].length;
+                    while (cursor < latex.length && /\s/.test(latex[cursor])) cursor++;
+                    const group = extractLatexBraceGroup(latex, cursor);
+                    if (group) return {command, content: group.content};
+                }
+            }
+            return null;
+        }
+
+        function extractTitleFromLatex(latex) {
+            if (!latex) return "";
+            const commandTitle = findLatexCommandGroup(latex, ['title', 'chead', 'lhead', 'rhead']);
+            if (commandTitle) {
+                const clean = cleanLatexFormatting(commandTitle.content);
+                if (clean && !clean.includes('页') && !clean.includes('绝密')) return clean;
+            }
+
             const topPart = latex.slice(0, 1500);
-            match = topPart.match(/\\begin\s*\{center\}([\s\S]*?)\\end\s*\{center\}/);
+            const match = topPart.match(/\\begin\s*\{center\}([\s\S]*?)\\end\s*\{center\}/);
             if (match && match[1]) {
                 let content = match[1].trim();
                 content = content.replace(/\\(large|Large|LARGE|huge|Huge|small|bf|bfseries|it|itshape|sf|tt)/g, '');
@@ -2791,25 +3057,21 @@
                 }
             }
             
-            // 4. Try \lhead or \rhead headers
-            match = latex.match(/\\(lhead|rhead)\s*\{([^}]+)\}/);
-            if (match && match[2]) {
-                const clean = cleanLatexFormatting(match[2]);
-                if (clean.includes("中学") || clean.includes("试卷") || clean.includes("试题") || clean.includes("考试")) {
-                    return clean;
-                }
-            }
-            
             return "";
         }
 
         function cleanLatexFormatting(str) {
             if (!str) return "";
-            return str
+            let cleaned = str;
+            for (let i = 0; i < 5; i++) {
+                const next = cleaned
+                    .replace(/\\text(?:bf|it|sf|tt)\s*\{([^{}]*)\}/g, '$1')
+                    .replace(/\\(?:heiti|kt|kaishu|songti|fangsong)\s*\{([^{}]*)\}/g, '$1');
+                if (next === cleaned) break;
+                cleaned = next;
+            }
+            return cleaned
                 .replace(/\\(large|Large|LARGE|huge|Huge|small|bf|bfseries|it|itshape|sf|tt)/g, '')
-                .replace(/\\textbf\s*\{([^}]+)\}/g, '$1')
-                .replace(/\\heiti\s*\{([^}]+)\}/g, '$1')
-                .replace(/\\kt\s*\{([^}]+)\}/g, '$1')
                 .replace(/\\sffamily/g, '')
                 .replace(/\\centering/g, '')
                 .replace(/[\{\}]/g, '')

@@ -5,9 +5,12 @@ python-multipart>=0.0.6
 python-dotenv>=1.0.0
 requests>=2.31.0
 pillow>=10.0.0
+python-docx>=1.1.0
+lxml>=4.9.0
+defusedxml>=0.7.1
+olefile>=0.47
 exceptiongroup>=1.0.2
 sniffio>=1.1.0
 pymupdf>=1.22.0
 # 可选高性能矢量 PDF 原生文本直提引擎 (Rust 高速内核)
 pdf-inspector>=0.2.0; sys_platform == 'darwin' or sys_platform == 'linux'
-

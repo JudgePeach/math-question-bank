@@ -18,7 +18,7 @@ if hasattr(sys.stdout, "reconfigure"):
         pass
 import secrets
 from typing import List, Optional
-from PIL import Image
+from PIL import Image, UnidentifiedImageError
 from fastapi import FastAPI, Depends, HTTPException, UploadFile, File, Form, BackgroundTasks, Request, Response, Header
 from fastapi.responses import FileResponse, JSONResponse, HTMLResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
@@ -28,8 +28,21 @@ from dotenv import load_dotenv
 
 from mathbank.database import Question, QuestionCurriculum, Paper, PaperQuestion, get_db, init_db
 from mathbank.paper_helper import build_latex_document, build_answer_sheet_latex, compile_tex_to_pdf, create_tex_zip_package, create_full_bundle_zip_package, collect_referenced_images
+from mathbank.word_export_helper import build_word_document, create_word_bundle_zip
 from mathbank.sync_helper import export_database_to_files
 from mathbank.docx_helper import extract_docx_markdown
+from mathbank.content_locks import lock_visible_math, restore_visible_math
+from mathbank.tex_helper import (
+    MAX_TEX_BYTES,
+    decode_and_prepare_tex,
+    prepare_tex_source,
+    tex_asset_basename,
+    tex_asset_references_match,
+)
+from mathbank.latex_diagnostics import (
+    build_local_latex_diagnostic,
+    merge_ai_latex_diagnostic,
+)
 from mathbank.ai_json import parse_ai_json
 from mathbank.ai_http import (
     post_chat_completion,
@@ -53,6 +66,7 @@ from mathbank.prompts import (
     build_ai_solve_prompts,
     build_classification_system_prompt,
     build_import_parse_system_prompt,
+    build_latex_error_explanation_prompts,
     build_paper_selection_prompts,
     build_pdf_parse_system_prompt,
     build_tikz_correction_prompt,
@@ -62,6 +76,7 @@ import shutil
 from mathbank.pdf_inspector_helper import (
     is_pdf_inspector_available,
     inspect_and_extract_pdf,
+    merge_pdf_page_texts,
 )
 from mathbank.paths import (
     DATABASE_PATH,
@@ -99,6 +114,9 @@ def print_startup_diagnostics():
     elif shutil.which("pdflatex"):
         latex_engine = "pdfLaTeX (已就绪)"
 
+    pandoc_path = os.getenv("MATHBANK_PANDOC_PATH", "").strip() or shutil.which("pandoc")
+    pandoc_status = f"已就绪 ({pandoc_path})" if pandoc_path else "未检测到 (Word 公式将使用图片兜底)"
+
     # 检查 PyMuPDF
     fitz_ok = False
     try:
@@ -117,6 +135,7 @@ def print_startup_diagnostics():
     print(f"  • PDF Inspector 引擎: {'🚀 已就绪 (原生矢量试卷毫秒级直提)' if pdf_insp_ok else '⚠️ 未安装 (已自动平滑降级至 VLM 多模态 OCR)'}", flush=True)
     print(f"  • PyMuPDF 渲染器    : {'✅ 已就绪' if fitz_ok else '❌ 未安装 (建议 pip install pymupdf)'}", flush=True)
     print(f"  • LaTeX 编译排版    : {latex_engine}", flush=True)
+    print(f"  • Word 原生公式转换 : Pandoc {pandoc_status}", flush=True)
     print(f"  • SQLite 本地数据库 : {DATABASE_PATH}", flush=True)
     print(f"  • 项目静态与根路径 : {PROJECT_ROOT}", flush=True)
     print("=" * 64, flush=True)
@@ -278,7 +297,7 @@ def watchdog_loop():
 
 # ----------------- 启动自愈：后台静默清理孤儿临时图片 -----------------
 def clean_orphaned_images():
-    """扫描 static/uploads 目录，安全删除超过 1 小时未被数据库中任何题目引用的孤儿图片"""
+    """扫描 static/uploads 目录及其 tmp 子目录，安全彻底擦除未被数据库引用的孤儿图片与旧残留临时图片"""
     try:
         from mathbank.database import SessionLocal, Question
         db = SessionLocal()
@@ -295,7 +314,7 @@ def clean_orphaned_images():
                     except Exception:
                         pass
                         
-            # 2. 遍历本地图片目录
+            # 2. 遍历本地图片目录及 tmp 子目录
             upload_dir = UPLOAD_DIR
             if not os.path.exists(upload_dir):
                 return
@@ -304,25 +323,38 @@ def clean_orphaned_images():
             now = time.time()
             one_hour_seconds = 3600
             
+            # 清理 static/uploads/ 根目录下未引用的孤儿图片
             for filename in os.listdir(upload_dir):
-                # 忽略隐藏/系统文件
-                if filename.startswith("."):
-                    continue
-                
-                local_rel_path = f"{UPLOAD_DIR_REL}/{filename}".lower()
-                if local_rel_path not in referenced_images:
-                    full_path = os.path.join(upload_dir, filename)
-                    # 安全红线：仅物理清理创建/修改时间超过 1 小时的临时或残留垃圾文件
-                    try:
-                        mtime = os.path.getmtime(full_path)
-                        if now - mtime > one_hour_seconds:
-                            os.remove(full_path)
-                            cleaned_count += 1
-                    except Exception:
-                        pass
+                full_path = os.path.join(upload_dir, filename)
+                if os.path.isfile(full_path) and not filename.startswith("."):
+                    local_rel_path = f"{UPLOAD_DIR_REL}/{filename}".lower()
+                    if local_rel_path not in referenced_images:
+                        try:
+                            mtime = os.path.getmtime(full_path)
+                            if now - mtime > one_hour_seconds:
+                                os.remove(full_path)
+                                cleaned_count += 1
+                        except Exception:
+                            pass
+
+            # 清理 static/uploads/tmp/ 子目录下残留的所有旧拆卷/OCR临时切片图
+            tmp_dir = os.path.join(upload_dir, "tmp")
+            if os.path.exists(tmp_dir):
+                for filename in os.listdir(tmp_dir):
+                    full_path = os.path.join(tmp_dir, filename)
+                    if os.path.isfile(full_path) and not filename.startswith("."):
+                        local_rel_path = f"{UPLOAD_DIR_REL}/tmp/{filename}".lower()
+                        if local_rel_path not in referenced_images:
+                            try:
+                                mtime = os.path.getmtime(full_path)
+                                if now - mtime > 600:  # 超过 10 分钟未被使用的 tmp 切片立即清理
+                                    os.remove(full_path)
+                                    cleaned_count += 1
+                            except Exception:
+                                pass
                         
             if cleaned_count > 0:
-                print(f"[Storage Cleanup] 成功检测并清除 {cleaned_count} 个超过 1 小时未引用的孤儿图片，硬盘瘦身成功！")
+                print(f"[Storage Cleanup] 成功检测并清除 {cleaned_count} 个残留的旧临时图片与孤儿文件，磁盘无痕瘦身成功！")
         finally:
             db.close()
     except Exception as e:
@@ -1324,6 +1356,103 @@ async def save_settings(
             content={"status": "error", "message": f"保存配置失败: {str(e)}"},
             status_code=500
         )
+
+# ----------------- Version & Update Check API -----------------
+
+def parse_version_tuple(v_str: str):
+    """Parse version string like 'v2.0.1' or '2.0.1' into integer tuple for comparison."""
+    if not v_str:
+        return (0, 0, 0)
+    cleaned = v_str.strip().lstrip("vV").split("-")[0].split("+")[0]
+    parts = []
+    for p in cleaned.split("."):
+        try:
+            parts.append(int(re.sub(r"\D", "", p) or "0"))
+        except Exception:
+            parts.append(0)
+    while len(parts) < 3:
+        parts.append(0)
+    return tuple(parts[:3])
+
+@app.get("/api/version")
+def get_version_info():
+    """Return local version info."""
+    from mathbank import __version__, GITHUB_REPO
+    is_git_repo = (PROJECT_ROOT / ".git").exists()
+    return {
+        "current_version": __version__,
+        "repo": GITHUB_REPO,
+        "is_git_repo": is_git_repo
+    }
+
+@app.get("/api/version/check-update")
+def check_version_update():
+    """Check for latest release on GitHub."""
+    from mathbank import __version__, GITHUB_REPO
+    from mathbank.ai_http import robust_request_get
+    
+    is_git_repo = (PROJECT_ROOT / ".git").exists()
+    current_ver = __version__
+    
+    result = {
+        "status": "success",
+        "current_version": current_ver,
+        "latest_version": current_ver,
+        "has_update": False,
+        "release_title": "",
+        "release_body": "",
+        "release_url": f"https://github.com/{GITHUB_REPO}/releases/latest",
+        "published_at": "",
+        "assets": {},
+        "is_git_repo": is_git_repo
+    }
+    
+    try:
+        url = f"https://api.github.com/repos/{GITHUB_REPO}/releases/latest"
+        headers = {
+            "Accept": "application/vnd.github.v3+json",
+            "User-Agent": "MathBank-Question-Bank-App"
+        }
+        resp = robust_request_get(url, headers=headers, timeout=5)
+        if resp.status_code == 200:
+            data = resp.json()
+            latest_tag = data.get("tag_name", "").strip()
+            latest_ver = latest_tag.lstrip("vV")
+            
+            # Compare versions
+            current_tuple = parse_version_tuple(current_ver)
+            latest_tuple = parse_version_tuple(latest_ver)
+            
+            has_update = latest_tuple > current_tuple
+            
+            assets_map = {}
+            for asset in data.get("assets", []):
+                name = asset.get("name", "")
+                download_url = asset.get("browser_download_url", "")
+                size_mb = round(asset.get("size", 0) / (1024 * 1024), 1)
+                download_count = asset.get("download_count", 0)
+                if "macOS" in name or "mac" in name.lower() or "darwin" in name.lower():
+                    assets_map["macOS"] = {"name": name, "url": download_url, "size_mb": size_mb, "downloads": download_count}
+                elif "Windows" in name or "win" in name.lower():
+                    assets_map["Windows"] = {"name": name, "url": download_url, "size_mb": size_mb, "downloads": download_count}
+            
+            result.update({
+                "latest_version": latest_tag,
+                "has_update": has_update,
+                "release_title": data.get("name", "") or latest_tag,
+                "release_body": data.get("body", ""),
+                "release_url": data.get("html_url", result["release_url"]),
+                "published_at": data.get("published_at", ""),
+                "assets": assets_map
+            })
+        else:
+            result["status"] = "warning"
+            result["message"] = f"GitHub API 返回状态码: {resp.status_code}"
+    except Exception as e:
+        result["status"] = "warning"
+        result["message"] = f"检查更新超时或失败: {str(e)}"
+        
+    return result
 
 # ----------------- TikZ Render & AI Correction API -----------------
 
@@ -2622,31 +2751,83 @@ async def ai_classify(content: str = Form(...)):
 
 # ----------------- LaTeX Batch Paper Import APIs -----------------
 
+@app.post("/api/upload/tex-source")
+async def upload_tex_source(file: UploadFile = File(...)):
+    """Decode and inspect a single TeX source file without executing it."""
+    filename = file.filename or ""
+    if not filename.lower().endswith(".tex"):
+        return JSONResponse(
+            content={"status": "error", "message": "上传文件格式不正确，必须为 .tex 格式！"},
+            status_code=400,
+        )
+    try:
+        content = await file.read(MAX_TEX_BYTES + 1)
+        if len(content) > MAX_TEX_BYTES:
+            return JSONResponse(
+                content={"status": "error", "message": "TeX 文件过大，请上传 5MB 以内的单文件试卷源码！"},
+                status_code=400,
+            )
+        result = decode_and_prepare_tex(content)
+        return {
+            "status": "success",
+            "source": result["source"],
+            "title": result["title"],
+            "diagnostics": result["diagnostics"],
+        }
+    except ValueError as exc:
+        return JSONResponse(content={"status": "error", "message": str(exc)}, status_code=400)
+
+
 @app.post("/api/upload/batch")
 async def upload_batch_images(files: List[UploadFile] = File(...)):
     try:
-        mapping = {}
+        if not files or len(files) > 20:
+            return JSONResponse(
+                content={"status": "error", "message": "配图数量必须为 1 至 20 张。"},
+                status_code=400,
+            )
+        validated: list[tuple[str, bytes, str]] = []
+        total_bytes = 0
+        seen_names: set[str] = set()
+        format_extensions = {"PNG": ".png", "JPEG": ".jpg", "GIF": ".gif", "WEBP": ".webp"}
         for file in files:
-            ext = os.path.splitext(file.filename)[1]
-            if not ext:
-                ext = ".png"
+            original_name = tex_asset_basename(file.filename or "image") or "image"
+            normalized_name = original_name.casefold()
+            if normalized_name in seen_names:
+                raise ValueError(f"存在重名配图 {original_name}，请保留一张或先重命名。")
+            seen_names.add(normalized_name)
+            raw = await file.read(10 * 1024 * 1024 + 1)
+            if len(raw) > 10 * 1024 * 1024:
+                raise ValueError(f"图片 {original_name} 超过 10MB。")
+            total_bytes += len(raw)
+            if total_bytes > 50 * 1024 * 1024:
+                raise ValueError("配图总大小不能超过 50MB。")
+            with Image.open(io.BytesIO(raw)) as image:
+                if image.width <= 0 or image.height <= 0 or image.width * image.height > 30_000_000:
+                    raise ValueError(f"图片 {original_name} 的像素尺寸不安全。")
+                image_format = (image.format or "").upper()
+                if image_format not in format_extensions:
+                    raise ValueError(f"图片 {original_name} 不是受支持的 PNG/JPEG/GIF/WebP 格式。")
+                image.verify()
+            validated.append((original_name, raw, format_extensions[image_format]))
+
+        mapping = {}
+        for original_name, raw, ext in validated:
             filename = f"{uuid.uuid4().hex}{ext}"
             filepath = os.path.join(UPLOAD_DIR, filename)
-            
             with open(filepath, "wb") as f:
-                f.write(await file.read())
-                
+                f.write(raw)
             relative_path = f"/{UPLOAD_DIR_REL}/{filename}"
-            mapping[file.filename] = relative_path
+            mapping[original_name] = relative_path
             
         return {
             "status": "success",
             "mapping": mapping
         }
-    except Exception as e:
+    except (ValueError, UnidentifiedImageError, OSError, Image.DecompressionBombError) as e:
         return JSONResponse(
             content={"status": "error", "message": f"批量图片上传失败: {str(e)}"},
-            status_code=500
+            status_code=400
         )
 
 
@@ -2740,7 +2921,7 @@ def parse_paper_text_internal(
 @app.post("/api/ai/parse-paper")
 async def ai_parse_paper(
     latex_content: str = Form(...),
-    paper_title: str = Form(...),
+    paper_title: str = Form(""),
     image_mapping_json: str = Form("{}"),
     generate_answers: str = Form("false")
 ):
@@ -2763,10 +2944,22 @@ async def ai_parse_paper(
         
     try:
         image_mapping = json.loads(image_mapping_json)
-    except Exception as e:
+        if not isinstance(image_mapping, dict):
+            image_mapping = {}
+    except Exception:
         image_mapping = {}
 
     try:
+        tex_result = prepare_tex_source(latex_content)
+        tex_diagnostics = tex_result["diagnostics"]
+        model_source, math_locks = lock_visible_math(
+            tex_result["model_source"],
+            "TEX_" + uuid.uuid4().hex[:16],
+        )
+        tex_diagnostics["math_locks_created"] = len(math_locks)
+        if not paper_title.strip() and tex_result["title"]:
+            paper_title = tex_result["title"]
+
         system_instructions = build_import_parse_system_prompt(get_current_curriculum())
 
         max_output_tokens = 65536
@@ -2775,7 +2968,7 @@ async def ai_parse_paper(
             "model": model_name,
             "messages": [
                 {"role": "system", "content": system_instructions},
-                {"role": "user", "content": latex_content}
+                {"role": "user", "content": model_source}
             ],
             "response_format": {
                 "type": "json_object"
@@ -2802,7 +2995,7 @@ async def ai_parse_paper(
         res_json = response.json()
         raw_ai_text = res_json["choices"][0]["message"]["content"].strip()
         
-        parsed_data = parse_ai_json(raw_ai_text, raw_markdown=latex_content)
+        parsed_data = parse_ai_json(raw_ai_text, raw_markdown=model_source)
         
         if isinstance(parsed_data, dict):
             if "questions" in parsed_data and isinstance(parsed_data["questions"], list):
@@ -2821,9 +3014,46 @@ async def ai_parse_paper(
             parsed_questions = parsed_data
         else:
             raise Exception("AI 返回的 JSON 格式不正确，期望是一个数组或包含 questions 列表的对象。")
+
+        if not parsed_questions or not all(isinstance(question, dict) for question in parsed_questions):
+            raise ValueError("AI 未返回有效的题目对象列表。")
+        for index, question in enumerate(parsed_questions, start=1):
+            if not isinstance(question.get("content"), str) or not question["content"].strip():
+                raise ValueError(f"AI 返回的第 {index} 题缺少有效题干，已停止导入以避免静默漏题。")
+            if not isinstance(question.get("referenced_images"), list):
+                question["referenced_images"] = []
+
+        lock_report = restore_visible_math(parsed_questions, math_locks)
+        tex_diagnostics.update(lock_report)
+        tex_diagnostics["question_count_actual"] = len(parsed_questions)
+        estimated_count = tex_diagnostics.get("question_count_estimate", 0)
+        if estimated_count and estimated_count != len(parsed_questions):
+            tex_diagnostics.setdefault("warnings", []).append(
+                f"源码约识别到 {estimated_count} 道题，但模型返回 {len(parsed_questions)} 道，请重点核对是否漏题或误拆。"
+            )
+
+        for graphic_ref in tex_diagnostics.get("referenced_graphics", []):
+            graphic_ref = str(graphic_ref)
+            candidates = []
+            for question in parsed_questions:
+                content_graphics = re.findall(
+                    r"\\includegraphics(?:\s*\[[^\]]*\])?\s*\{([^}]+)\}",
+                    question.get("content", ""),
+                )
+                question_refs = content_graphics + [
+                    str(value) for value in question.get("referenced_images", [])
+                ]
+                if any(tex_asset_references_match(graphic_ref, value) for value in question_refs):
+                    candidates.append(question)
+            if len(candidates) == 1 and not any(
+                tex_asset_references_match(graphic_ref, existing)
+                for existing in candidates[0]["referenced_images"]
+            ):
+                candidates[0]["referenced_images"].append(graphic_ref)
+            elif not candidates:
+                tex_diagnostics.setdefault("unassigned_source_images", []).append(graphic_ref)
         
         # Translate referenced_images to server paths
-        import re
         for q in parsed_questions:
             # 强制进行静默净化：若未勾选自动生成答案，则对于没有带有 [EXTRACTED_ORIGINAL] 的解析和解答，将其强行抹平为空。
             ans = q.get("answer_markdown", "")
@@ -2869,17 +3099,29 @@ async def ai_parse_paper(
             mapped_images = []
             ref_imgs = q.get("referenced_images", [])
             for ref_name in ref_imgs:
+                ref_name = str(ref_name)
                 # Direct match or fuzzy match
                 found_path = None
                 for orig_name, serv_path in image_mapping.items():
-                    if ref_name == orig_name or ref_name in orig_name or orig_name in ref_name:
+                    if tex_asset_references_match(ref_name, orig_name):
                         found_path = serv_path
                         break
                 if found_path:
-                    mapped_images.append(found_path)
-                    # Replace reference name in content to standard relative path markdown
-                    if ref_name in q["content"]:
-                        q["content"] = q["content"].replace(ref_name, found_path)
+                    if found_path not in mapped_images:
+                        mapped_images.append(found_path)
+                    include_pattern = re.compile(
+                        r"\\includegraphics(?:\s*\[[^\]]*\])?\s*\{\s*([^}]+?)\s*\}"
+                    )
+                    q["content"] = include_pattern.sub(
+                        lambda match: (
+                            f"![插图]({found_path})"
+                            if tex_asset_references_match(ref_name, match.group(1))
+                            else match.group(0)
+                        ),
+                        q["content"],
+                    )
+                else:
+                    tex_diagnostics.setdefault("unmapped_images", []).append(str(ref_name))
                     
             q["image_paths"] = mapped_images
             
@@ -2887,10 +3129,24 @@ async def ai_parse_paper(
             for img_path in mapped_images:
                 if img_path not in q["content"]:
                     q["content"] += f"\n\n![插图]({img_path})\n\n"
+
+        unmapped_images = sorted(set(tex_diagnostics.get("unmapped_images", [])))
+        unassigned_images = sorted(set(tex_diagnostics.get("unassigned_source_images", [])))
+        tex_diagnostics["unmapped_images"] = unmapped_images
+        tex_diagnostics["unassigned_source_images"] = unassigned_images
+        if unmapped_images:
+            tex_diagnostics.setdefault("warnings", []).append(
+                "以下 TeX 配图未找到同名上传文件：" + "、".join(unmapped_images[:8])
+            )
+        if unassigned_images:
+            tex_diagnostics.setdefault("warnings", []).append(
+                "以下配图未能确定所属题目：" + "、".join(unassigned_images[:8])
+            )
                     
         return {
             "status": "success",
-            "questions": parsed_questions
+            "questions": parsed_questions,
+            "tex_diagnostics": tex_diagnostics,
         }
     except Exception as e:
         return JSONResponse(
@@ -2971,7 +3227,7 @@ def promote_question_temp_assets(content: str, answer_markdown: str, image_paths
             
     # Check for any other tmp paths inside content/answer_markdown
     for text_val in [new_content, new_answer]:
-        for match in re.finditer(r'/static/uploads(?:_test|/test_uploads|/uploads)?/tmp/pdf_crop_[a-zA-Z0-9_]+\.png', text_val):
+        for match in re.finditer(r'/static/(?:uploads|test_uploads)/tmp/[a-zA-Z0-9_.-]+', text_val):
             matched_path = match.group(0)
             if matched_path not in mapping:
                 normalized_path = os.path.normpath(matched_path.lstrip("/"))
@@ -3470,14 +3726,14 @@ def post_process_pdf_parsed_questions(parsed_questions: list, paper_title: str, 
         found_crops = set()
         for field in ["content", "answer_markdown"]:
             if field in q and isinstance(q[field], str):
-                for match in re.finditer(r'/static/uploads(?:_test|/test_uploads|/uploads)?/tmp/pdf_crop_[a-zA-Z0-9_-]+\.png', q[field]):
+                for match in re.finditer(r'/static/(?:uploads|test_uploads)/tmp/[a-zA-Z0-9_.-]+', q[field]):
                     found_crops.add(match.group(0))
                     
         # 顺带检查 referenced_images 属性并应用修复映射
         ref_imgs = q.get("referenced_images", [])
         for ref in ref_imgs:
             mapped_ref = mapping.get(ref, ref)
-            if "pdf_crop_" in mapped_ref:
+            if "/tmp/" in mapped_ref:
                 filename = os.path.basename(mapped_ref)
                 found_crops.add(f"/{UPLOAD_DIR_REL}/tmp/{filename}")
                 
@@ -3514,7 +3770,7 @@ def post_process_pdf_parsed_questions(parsed_questions: list, paper_title: str, 
     return parsed_questions
 
 
-def run_pdf_parsing_task(task_id: str, file_bytes: bytes, filename: str, generate_answers: bool = False, page_range: str = None):
+def run_pdf_parsing_task(task_id: str, file_bytes: bytes, filename: str, generate_answers: bool = False, page_range: str = None, pdf_strategy: str = "native_preferred"):
     """异步 PDF 试卷分析后台主流程：栅格化 -> 并行 OCR -> 自动裁剪 -> 大模型拆题"""
     import concurrent.futures
     import re
@@ -3568,31 +3824,62 @@ def run_pdf_parsing_task(task_id: str, file_bytes: bytes, filename: str, generat
         except Exception:
             pass
 
-        # 前置尝试通过 pdf-inspector 进行原生矢量试卷极速直提
-        inspector_result = inspect_and_extract_pdf(file_bytes, task_id)
-        if inspector_result.get("is_text_based") and inspector_result.get("markdown"):
-            print(f"[PDF Inspector Flow] 🚀 检测到原生矢量 PDF 试卷 (Type: {inspector_result.get('pdf_type')})，已启用毫秒级直提通道！", flush=True)
+        # 若用户选择【全图视觉 OCR】策略，绕过直提，对全页强制进行视觉转译；
+        # 若选择【原生文字公式提取】（默认），则调用 pdf-inspector 并结合公式流失自愈检测。
+        if pdf_strategy == "force_ocr":
+            inspector_result = {"pages": [], "pdf_type": "scanned"}
+            inspector_pages = {}
+        else:
+            inspector_result = inspect_and_extract_pdf(
+                file_bytes,
+                task_id,
+                page_indices=target_page_indices,
+            )
+            inspector_pages = {
+                int(page.get("page_index")): page
+                for page in inspector_result.get("pages", [])
+                if page.get("page_index") is not None
+            }
+        ocr_results = [None] * total_target_pages
+        pages_requiring_ocr = []
+        native_page_count = 0
+        for local_idx, page_num in enumerate(target_page_indices):
+            page_info = inspector_pages.get(page_num)
+            native_text = str((page_info or {}).get("markdown") or "").strip()
+            if page_info and not page_info.get("needs_ocr") and native_text:
+                ocr_results[local_idx] = f"<!-- MATHBANK_PDF_PAGE:{page_num + 1} -->\n{native_text}"
+                native_page_count += 1
+            else:
+                pages_requiring_ocr.append(local_idx)
+
+        if native_page_count:
+            print(
+                f"[PDF Inspector Flow] 原生直提 {native_page_count} 页，"
+                f"视觉 OCR {len(pages_requiring_ocr)} 页 (Type: {inspector_result.get('pdf_type')})",
+                flush=True,
+            )
+
+        if not pages_requiring_ocr:
             with PDF_TASKS_LOCK:
                 PDF_TASKS[task_id] = {
                     "status": "ai_splitting",
                     "progress": 60,
-                    "log": "检测到原生矢量试卷，已启用 pdf-inspector 高速直提排版文本（0 视觉 Token 消耗），正在解析题目...",
+                    "log": f"pdf-inspector 已按所选范围可靠提取 {native_page_count} 页原生文本，正在连续拆题...",
                     "page_images": page_urls
                 }
-            full_latex_content = inspector_result["markdown"]
-            ocr_results = [full_latex_content]
         else:
             with PDF_TASKS_LOCK:
                 PDF_TASKS[task_id] = {
                     "status": "ocr_extraction",
                     "progress": 30,
-                    "log": f"共 {total_pages} 页，指定解析 {total_target_pages} 页。正在并行发起多模态 VLM 进行图文公式转译与插图定位...",
+                    "log": (
+                        f"所选 {total_target_pages} 页中，{native_page_count} 页已原生提取，"
+                        f"仅对其余 {len(pages_requiring_ocr)} 页进行视觉转译..."
+                    ),
                     "page_images": page_urls
                 }
 
-            # 并行 OCR 解析
-            ocr_results = [None] * total_target_pages
-            
+            # 仅并行 OCR 探测器明确标记或无法可靠提取的页面。
             def ocr_worker(local_idx, img_path):
                 try:
                     raw_text = ocr_pdf_page_image(img_path)
@@ -3603,8 +3890,11 @@ def run_pdf_parsing_task(task_id: str, file_bytes: bytes, filename: str, generat
                 except Exception as e_ocr:
                     return local_idx, "", str(e_ocr)
                     
-            with concurrent.futures.ThreadPoolExecutor(max_workers=min(total_target_pages, 8)) as executor:
-                futures = [executor.submit(ocr_worker, i, page_images[i]) for i in range(total_target_pages)]
+            with concurrent.futures.ThreadPoolExecutor(max_workers=min(len(pages_requiring_ocr), 8)) as executor:
+                futures = [
+                    executor.submit(ocr_worker, local_idx, page_images[local_idx])
+                    for local_idx in pages_requiring_ocr
+                ]
                 
                 completed = 0
                 for fut in concurrent.futures.as_completed(futures):
@@ -3615,19 +3905,23 @@ def run_pdf_parsing_task(task_id: str, file_bytes: bytes, filename: str, generat
                     
                     # 清洗配图并进行物理裁剪
                     processed_text = process_ocr_illustrations(text, page_images[local_idx], task_id)
-                    ocr_results[local_idx] = processed_text
+                    real_page_num = target_page_indices[local_idx] + 1
+                    ocr_results[local_idx] = f"<!-- MATHBANK_PDF_PAGE:{real_page_num} -->\n{processed_text.strip()}"
                     
                     completed += 1
-                    prog = 30 + int((completed / total_target_pages) * 40)
+                    prog = 30 + int((completed / len(pages_requiring_ocr)) * 40)
                     with PDF_TASKS_LOCK:
                         # 保持 page_images 的返回，使前端随时可用
                         PDF_TASKS[task_id].update({
                             "progress": prog,
-                            "log": f"多模态转译进度: {completed} / {total_target_pages} 页已完成..."
+                            "log": f"视觉转译进度: {completed} / {len(pages_requiring_ocr)} 页已完成..."
                         })
 
-            # 拼接全文 LaTeX 源码
-            full_latex_content = "\n\n".join(ocr_results)
+        # 按用户所选页序合并后只拆题一次。相邻页之间不插入题目终止符，支持题干、
+        # 选项、公式和表格跨页延续；HTML 注释页标仅用于来源追踪。
+        full_latex_content = merge_pdf_page_texts(ocr_results)
+        if not full_latex_content.strip():
+            raise ValueError("所选 PDF 页面未能提取出可解析的文字内容。")
 
         with PDF_TASKS_LOCK:
             PDF_TASKS[task_id].update({
@@ -3710,7 +4004,8 @@ async def upload_pdf_task(
     background_tasks: BackgroundTasks,
     file: UploadFile = File(...),
     generate_answers: str = Form("false"),
-    page_range: Optional[str] = Form(None)
+    page_range: Optional[str] = Form(None),
+    pdf_strategy: str = Form("native_preferred")
 ):
     try:
         generate_answers_bool = generate_answers.lower() in ("true", "1", "yes")
@@ -3747,7 +4042,8 @@ async def upload_pdf_task(
             content,
             file.filename,
             generate_answers_bool,
-            page_range
+            page_range,
+            pdf_strategy,
         )
         
         return {
@@ -3761,12 +4057,34 @@ async def upload_pdf_task(
         )
 
 
+def _delete_task_temp_assets(paths: list) -> int:
+    """Delete only explicit files below this instance's upload tmp directory."""
+    removed = 0
+    tmp_root = os.path.realpath(TMP_UPLOAD_DIR)
+    for url in paths or []:
+        normalized = os.path.normpath(str(url).lstrip("/"))
+        expected_prefix = os.path.normpath(os.path.join(UPLOAD_DIR_REL, "tmp"))
+        if not normalized.startswith(expected_prefix + os.sep):
+            continue
+        full_path = os.path.realpath(os.path.join(str(PROJECT_ROOT), normalized))
+        if os.path.dirname(full_path) != tmp_root:
+            continue
+        if os.path.isfile(full_path):
+            try:
+                os.remove(full_path)
+                removed += 1
+            except OSError:
+                pass
+    return removed
+
+
 def run_docx_parsing_task(
     task_id: str,
     file_bytes: bytes,
     filename: str,
     generate_answers: bool = False
 ):
+    temp_assets = []
     try:
         # 1. 检查任务是否已被用户手动取消 (ESC)
         with PDF_TASKS_LOCK:
@@ -3777,25 +4095,44 @@ def run_docx_parsing_task(
             PDF_TASKS[task_id] = {
                 "status": "extracting_docx",
                 "progress": 25,
-                "log": "已接收 Word 试卷，正在通过 OMML 引擎极速直提原生 LaTeX 公式与高清配图..."
+                "log": "已接收 Word 试卷，正在安全提取 OMML 公式、文字与配图...",
+                "document_type": "docx",
+                "temp_assets": [],
             }
 
-        # 2. 毫秒级无损提取 Word Markdown
-        docx_res = extract_docx_markdown(file_bytes)
+        # 2. 安全提取 Word Markdown；资产先放入 tmp，入库时再晋升。
+        docx_res = extract_docx_markdown(
+            file_bytes,
+            output_dir=TMP_UPLOAD_DIR,
+            url_prefix=f"/{UPLOAD_DIR_REL}/tmp",
+            asset_prefix=f"word_{task_id}",
+        )
+        temp_assets = docx_res.get("image_paths", [])
         if not docx_res.get("success") or not docx_res.get("markdown"):
             raise ValueError(docx_res.get("error") or "未能从 Word 文档中提取出有效试题内容！")
 
         full_markdown_content = docx_res["markdown"]
         img_count = docx_res.get("image_count", 0)
+        diagnostics = docx_res.get("diagnostics", {})
+        converted_count = diagnostics.get("omml_converted", 0) + diagnostics.get("mtef_converted", 0)
+        review_count = diagnostics.get("review_required", 0)
+        extraction_log = (
+            f"Word 提取完成：{converted_count} 个公式已转换，{img_count} 张图片已保留"
+            + (f"，{review_count} 处需人工核对。" if review_count else "，未发现需人工核对的内容。")
+        )
 
         # 检查取消
         with PDF_TASKS_LOCK:
             if PDF_TASKS.get(task_id, {}).get("status") == "cancelled":
+                _delete_task_temp_assets(temp_assets)
                 return
             PDF_TASKS[task_id] = {
                 "status": "ai_splitting",
                 "progress": 70,
-                "log": f"Word 原生题卷与 {img_count} 张配图提取完毕！正在调用核心教研大模型进行切片与难度分类..."
+                "log": extraction_log + " 正在调用教研模型拆题...",
+                "document_type": "docx",
+                "diagnostics": diagnostics,
+                "temp_assets": temp_assets,
             }
 
         # 3. 智能提取标题与题目切片
@@ -3804,7 +4141,17 @@ def run_docx_parsing_task(
         if auto_title:
             paper_title = auto_title
 
-        parsed_questions = parse_paper_text_internal(full_markdown_content, generate_answers)
+        # Keep every formula visible in-place for the model's mathematical
+        # understanding, while assigning an immutable ID. The model returns
+        # the ID and the server restores the exact Word-extracted source.
+        locked_markdown_content, math_locks = lock_visible_math(
+            full_markdown_content,
+            task_id.replace("-", "")[:16],
+        )
+        diagnostics["math_locks_created"] = len(math_locks)
+        parsed_questions = parse_paper_text_internal(locked_markdown_content, generate_answers)
+        lock_report = restore_visible_math(parsed_questions, math_locks)
+        diagnostics.update(lock_report)
 
         # 检查取消
         with PDF_TASKS_LOCK:
@@ -3819,16 +4166,21 @@ def run_docx_parsing_task(
             PDF_TASKS[task_id].update({
                 "status": "completed",
                 "progress": 100,
-                "log": "完成！已为您提取并拆分全部 Word 题目卡片。",
-                "data": final_questions
+                "log": "完成！已提取并拆分 Word 题目，请优先检查带“公式待核对”标记的内容。" if review_count else "完成！已提取并拆分全部 Word 题目卡片。",
+                "data": final_questions,
+                "document_type": "docx",
+                "diagnostics": diagnostics,
+                "temp_assets": temp_assets,
             })
     except Exception as ex:
+        _delete_task_temp_assets(temp_assets)
         with PDF_TASKS_LOCK:
             if PDF_TASKS.get(task_id, {}).get("status") != "cancelled":
                 PDF_TASKS[task_id] = {
                     "status": "error",
                     "progress": 0,
-                    "error": f"Word 试卷拆解失败: {str(ex)}"
+                    "error": f"Word 试卷拆解失败: {str(ex)}",
+                    "document_type": "docx",
                 }
 
 
@@ -3848,12 +4200,17 @@ async def upload_docx_task(
                 status_code=400
             )
             
-        # 限制文件大小（30MB 以内）
-        content = await file.read()
+        # 最多只读取上限 + 1 字节，避免超大上传先占满内存。
+        content = await file.read(30 * 1024 * 1024 + 1)
         if len(content) > 30 * 1024 * 1024:
             return JSONResponse(
                 content={"status": "error", "message": "Word 文件过大，请上传 30MB 以内的试卷文件！"},
                 status_code=400
+            )
+        if len(content) < 4 or content[:4] != b"PK\x03\x04":
+            return JSONResponse(
+                content={"status": "error", "message": "文件内容不是有效的 Word DOCX 压缩包！"},
+                status_code=400,
             )
             
         task_id = str(uuid.uuid4())
@@ -3862,7 +4219,9 @@ async def upload_docx_task(
             PDF_TASKS[task_id] = {
                 "status": "pending",
                 "progress": 0,
-                "log": "Word 任务已排队，正在准备运行原生 OMML 提取..."
+                "log": "Word 任务已排队，正在准备安全提取公式与配图...",
+                "document_type": "docx",
+                "temp_assets": [],
             }
             
         background_tasks.add_task(
@@ -3898,16 +4257,20 @@ def get_pdf_task_status(task_id: str):
 
 @app.post("/api/tasks/{task_id}/cancel")
 def cancel_pdf_task(task_id: str):
+    temp_assets = []
     with PDF_TASKS_LOCK:
         task = PDF_TASKS.get(task_id)
         if task:
             task["status"] = "cancelled"
             task["log"] = "用户已手动中止任务"
-            return {"status": "success", "message": "任务已成功中止"}
-        return JSONResponse(
+            temp_assets = list(task.get("temp_assets", []))
+        else:
+            return JSONResponse(
             content={"status": "error", "message": "未找到对应的任务 ID！"},
             status_code=404
         )
+    removed = _delete_task_temp_assets(temp_assets)
+    return {"status": "success", "message": f"任务已成功中止，已清理 {removed} 个临时资产"}
 
 
 @app.post("/api/ai/clear-temp-crops")
@@ -4188,6 +4551,50 @@ def export_paper_bundle(payload: dict, db: Session = Depends(get_db)):
     except Exception as e:
         return JSONResponse(content={"status": "error", "message": f"生成全套合并包失败: {str(e)}"}, status_code=500)
 
+def explain_latex_compile_error(log_text: str, tex_content: str) -> dict:
+    """Explain one compile failure locally, then enrich it with the parse model."""
+    diagnostic = build_local_latex_diagnostic(log_text, tex_content)
+    parse_model = os.getenv("PREFER_PARSE_MODEL") or os.getenv(
+        "DEEPSEEK_PARSE_MODEL", "deepseek-v4-flash"
+    )
+    provider = resolve_text_provider(parse_model, parse_effort=False)
+    if not provider.api_key:
+        diagnostic["ai_note"] = "试卷拆解模型未配置，当前显示本地诊断结果。"
+        return diagnostic
+
+    system_prompt, user_prompt = build_latex_error_explanation_prompts(diagnostic)
+    payload = {
+        "model": provider.model_name,
+        "messages": [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_prompt},
+        ],
+        "response_format": {"type": "json_object"},
+        "temperature": 0.1,
+        "max_tokens": 1200,
+    }
+    is_deepseek = (
+        "deepseek" in provider.model_name.lower()
+        or "deepseek" in (provider.api_base or "").lower()
+    ) and provider.model_name not in {"deepseek-chat", "deepseek-reasoner"}
+    if is_deepseek:
+        payload["thinking"] = {"type": "disabled"}
+
+    try:
+        response = post_chat_completion(
+            provider,
+            payload,
+            timeout=45,
+            provider_name=provider.provider_label,
+        )
+        raw_text = response.json()["choices"][0]["message"]["content"].strip()
+        ai_value = parse_ai_json(raw_text)
+        return merge_ai_latex_diagnostic(diagnostic, ai_value)
+    except Exception:
+        diagnostic["ai_note"] = "AI 暂时无法解释该错误，当前显示本地诊断结果。"
+        return diagnostic
+
+
 @app.post("/api/paper/export/pdf")
 def export_paper_pdf(payload: dict, db: Session = Depends(get_db)):
     """在线静默编译生成高清 PDF"""
@@ -4234,9 +4641,130 @@ def export_paper_pdf(payload: dict, db: Session = Depends(get_db)):
                 "Content-Disposition": f'inline; filename="{filename}"'
             })
         else:
-            return JSONResponse(content={"status": "error", "message": log_or_err}, status_code=400)
+            diagnostic = explain_latex_compile_error(log_or_err, tex_content)
+            return JSONResponse(
+                content={
+                    "status": "error",
+                    "message": diagnostic.get("summary", "PDF 编译失败"),
+                    "diagnostic": diagnostic,
+                },
+                status_code=400,
+            )
     except Exception as e:
         return JSONResponse(content={"status": "error", "message": f"编译 PDF 异常: {str(e)}"}, status_code=500)
+
+
+@app.post("/api/paper/export/word")
+def export_paper_word(payload: dict, db: Session = Depends(get_db)):
+    """导出包含试卷正文与含答案解析两个 Word 文件的 ZIP 压缩包。"""
+    try:
+        title = payload.get("title", "2026年高中数学模拟考试试卷")
+        subtitle = payload.get("subtitle", "")
+        paper_type = payload.get("paper_type", "exam")
+        show_secret = payload.get("show_secret", True)
+        show_notice = payload.get("show_notice", True)
+        questions_input = payload.get("questions", [])
+        as_single_docx = bool(payload.get("as_single_docx", False))
+        include_answers = bool(payload.get("include_answers", False))
+
+        q_ids = [int(q.get("id")) for q in questions_input if q.get("id")]
+        questions_db = db.query(Question).filter(Question.id.in_(q_ids)).all()
+        q_map = {q.id: q.to_dict() for q in questions_db}
+
+        questions_data = []
+        for item in questions_input:
+            qid = int(item.get("id"))
+            if qid not in q_map:
+                continue
+            q_dict = dict(q_map[qid])
+            if item.get("figure_align"):
+                q_dict["figure_align"] = item.get("figure_align")
+            q_item = {
+                "question": q_dict,
+                "score": int(item.get("score", 5)),
+            }
+            if item.get("solution_space") is not None:
+                q_item["solution_space"] = item.get("solution_space")
+            questions_data.append(q_item)
+
+        if not questions_data:
+            return JSONResponse(
+                content={"status": "error", "message": "卷面为空，无法导出 Word。"},
+                status_code=400,
+            )
+
+        from urllib.parse import quote
+        safe_title = re.sub(r'[/\\?%*:|"<>]', "_", title.strip()) or "试卷"
+
+        if as_single_docx:
+            docx_bytes, diagnostics = build_word_document(
+                title,
+                subtitle,
+                paper_type,
+                questions_data,
+                include_answers=include_answers,
+                show_secret=show_secret,
+                show_notice=show_notice,
+                uploads_dir=UPLOAD_DIR,
+            )
+            suffix = "_含答案与解析" if include_answers else ""
+            filename = f"{safe_title}{suffix}.docx"
+            encoded_filename = quote(filename)
+            return Response(
+                content=docx_bytes,
+                media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                headers={
+                    "Content-Disposition": f"attachment; filename=\"paper.docx\"; filename*=utf-8''{encoded_filename}",
+                    "X-Word-Native-Formulas": str(diagnostics.get("native_formulas", 0)),
+                    "X-Word-Fallback-Formulas": str(diagnostics.get("fallback_formulas", 0)),
+                    "X-Word-Failed-Formulas": str(diagnostics.get("failed_formulas", 0)),
+                    "X-Word-Missing-Images": str(diagnostics.get("missing_images", 0)),
+                    "X-Word-Answer-Card-Omitted": "1" if diagnostics.get("answer_card_omitted") else "0",
+                },
+            )
+
+        # Default: build clean student docx and full teacher docx with answers into a ZIP bundle
+        main_docx, main_diag = build_word_document(
+            title,
+            subtitle,
+            paper_type,
+            questions_data,
+            include_answers=False,
+            show_secret=show_secret,
+            show_notice=show_notice,
+            uploads_dir=UPLOAD_DIR,
+        )
+        ans_docx, ans_diag = build_word_document(
+            title,
+            subtitle,
+            paper_type,
+            questions_data,
+            include_answers=True,
+            show_secret=show_secret,
+            show_notice=show_notice,
+            uploads_dir=UPLOAD_DIR,
+        )
+
+        zip_bytes = create_word_bundle_zip(title, main_docx, ans_docx)
+        filename = f"{safe_title}_Word打包.zip"
+        encoded_filename = quote(filename)
+        return Response(
+            content=zip_bytes,
+            media_type="application/zip",
+            headers={
+                "Content-Disposition": f"attachment; filename=\"paper_word_bundle.zip\"; filename*=utf-8''{encoded_filename}",
+                "X-Word-Native-Formulas": str(main_diag.get("native_formulas", 0) + ans_diag.get("native_formulas", 0)),
+                "X-Word-Fallback-Formulas": str(main_diag.get("fallback_formulas", 0) + ans_diag.get("fallback_formulas", 0)),
+                "X-Word-Failed-Formulas": str(main_diag.get("failed_formulas", 0) + ans_diag.get("failed_formulas", 0)),
+                "X-Word-Missing-Images": str(main_diag.get("missing_images", 0) + ans_diag.get("missing_images", 0)),
+                "X-Word-Answer-Card-Omitted": "1" if main_diag.get("answer_card_omitted") else "0",
+            },
+        )
+    except Exception as e:
+        return JSONResponse(
+            content={"status": "error", "message": f"生成 Word 试卷包失败: {str(e)}"},
+            status_code=500,
+        )
 
 # ----------------- Mount Static Folder last to allow API override -----------------
 app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")

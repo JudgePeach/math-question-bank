@@ -290,6 +290,7 @@ def test_api_ai_solve_with_ocr(client):
 
 def test_parse_paper_flows_use_shared_provider_resolution(client):
     from unittest.mock import MagicMock, patch
+    import re
     from main import parse_paper_text_internal
 
     headers = {"X-Local-Token": LOCAL_TOKEN}
@@ -312,13 +313,35 @@ def test_parse_paper_flows_use_shared_provider_resolution(client):
         ]
     }
 
+    def provider_response(_url, **kwargs):
+        user_content = kwargs["json"]["messages"][1]["content"]
+        lock_ids = re.findall(r'id="(MBM_[^"]+)"', user_content)
+        if not lock_ids:
+            return mock_resp
+        locked_resp = MagicMock()
+        locked_resp.status_code = 200
+        locked_resp.json.return_value = {
+            "choices": [{
+                "message": {
+                    "content": json.dumps({
+                        "questions": [{
+                            "content": f"求 [[{lock_ids[0]}]] 的值。",
+                            "answer_markdown": "",
+                            "referenced_images": [],
+                        }]
+                    }, ensure_ascii=False)
+                }
+            }]
+        }
+        return locked_resp
+
     provider_env = {
         "PREFER_PARSE_MODEL": "BAILIAN/qwen3.7-max",
         "ALI_BAILIAN_API_KEY": "fake-bailian-key",
         "ALI_BAILIAN_API_BASE": "https://bailian.example/v1/",
     }
     with patch.dict(os.environ, provider_env):
-        with patch("mathbank.ai_http.robust_request_post", return_value=mock_resp) as mock_post:
+        with patch("mathbank.ai_http.robust_request_post", side_effect=provider_response) as mock_post:
             response = client.post(
                 "/api/ai/parse-paper",
                 data={
@@ -376,3 +399,57 @@ def test_figure_align_api(client):
     res_get = client.get(f"/api/questions/{q_id}")
     assert res_get.status_code == 200
     assert res_get.json()["figure_align"] == "center"
+
+
+def test_version_and_update_check_api(client):
+    from unittest.mock import patch, MagicMock
+    from main import parse_version_tuple
+    
+    # 1. Test version tuple parser
+    assert parse_version_tuple("v2.0.1") == (2, 0, 1)
+    assert parse_version_tuple("2.1.0-beta") == (2, 1, 0)
+    assert parse_version_tuple("V3") == (3, 0, 0)
+    assert parse_version_tuple("v2.1.0") > parse_version_tuple("2.0.1")
+    
+    # 2. Test GET /api/version
+    res_ver = client.get("/api/version")
+    assert res_ver.status_code == 200
+    data_ver = res_ver.json()
+    assert "current_version" in data_ver
+    assert data_ver["repo"] == "JudgePeach/math-question-bank"
+
+    # 3. Test GET /api/version/check-update with mocked GitHub response
+    mock_resp = MagicMock()
+    mock_resp.status_code = 200
+    mock_resp.json.return_value = {
+        "tag_name": "v9.9.9",
+        "name": "Release 9.9.9",
+        "body": "Mocked changelog",
+        "html_url": "https://github.com/JudgePeach/math-question-bank/releases/tag/v9.9.9",
+        "published_at": "2026-08-09T00:00:00Z",
+        "assets": [
+            {
+                "name": "MathBank-macOS.zip",
+                "size": 10485760,
+                "download_count": 100,
+                "browser_download_url": "https://example.com/mac.zip"
+            },
+            {
+                "name": "MathBank-Windows-x64.zip",
+                "size": 20971520,
+                "download_count": 200,
+                "browser_download_url": "https://example.com/win.zip"
+            }
+        ]
+    }
+    
+    with patch("mathbank.ai_http.requests.get", return_value=mock_resp):
+        res_update = client.get("/api/version/check-update")
+        assert res_update.status_code == 200
+        data_update = res_update.json()
+        assert data_update["status"] == "success"
+        assert data_update["has_update"] is True
+        assert data_update["latest_version"] == "v9.9.9"
+        assert "macOS" in data_update["assets"]
+        assert "Windows" in data_update["assets"]
+        assert data_update["assets"]["macOS"]["size_mb"] == 10.0

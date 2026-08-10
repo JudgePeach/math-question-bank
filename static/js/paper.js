@@ -782,6 +782,9 @@
                         ],
                         throwOnError: false
                     });
+                    if (typeof window.adaptChoicesGridLayout === 'function') {
+                        window.adaptChoicesGridLayout(el);
+                    }
                 } catch (e) { }
             }
         });
@@ -887,23 +890,23 @@
                     <!-- Row 2: Paper Management Actions (Clear, Save, History) -->
                     <div class="flex items-center justify-between gap-2.5 pb-2 border-b border-slate-100 dark:border-slate-800/60">
                         ${totalCount > 0 ? `
-                            <button onclick="clearCart()" class="flex-1 py-1.5 justify-center rounded-xl text-xs font-semibold bg-rose-50/80 text-rose-600 border border-rose-200/70 hover:bg-rose-100/80 active:scale-95 transition-all flex items-center space-x-1.5 whitespace-nowrap dark:bg-rose-950/40 dark:border-rose-800/60 dark:text-rose-300" title="清空当前试卷中的所有已选题目">
+                            <button onclick="clearCart()" class="flex-1 py-1.5 justify-center rounded-xl text-xs font-semibold bg-rose-50/80 text-rose-600 border border-rose-200/70 hover:bg-rose-100/80 active:scale-95 transition-all flex items-center space-x-1.5 whitespace-nowrap dark:bg-rose-950/40 dark:border-rose-800/60 dark:text-rose-300" title="清空当前试卷已选题目">
                                 <i class="fa-solid fa-trash-can"></i>
                                 <span>清空卷面</span>
                             </button>
                         ` : ''}
-                        <button onclick="savePaperToDb()" class="flex-1 py-1.5 justify-center rounded-xl text-xs font-semibold bg-emerald-600 text-white shadow-xs hover:bg-emerald-700 active:scale-95 transition-all flex items-center space-x-1.5 whitespace-nowrap" title="将此试卷归档保存至系统数据库，并自动更新题目的引用使用次数">
+                        <button onclick="savePaperToDb()" class="flex-1 py-1.5 justify-center rounded-xl text-xs font-semibold bg-emerald-600 text-white shadow-xs hover:bg-emerald-700 active:scale-95 transition-all flex items-center space-x-1.5 whitespace-nowrap" title="保存当前试卷至本地数据库">
                             <i class="fa-solid fa-floppy-disk"></i>
                             <span>保存试卷</span>
                         </button>
-                        <button onclick="openSavedPapersModal()" class="flex-1 py-1.5 justify-center rounded-xl text-xs font-semibold bg-amber-500 text-white shadow-xs hover:bg-amber-600 active:scale-95 transition-all flex items-center space-x-1.5 whitespace-nowrap" title="打开历史试卷归档库，查阅、删除或一键载入重新导出">
+                        <button onclick="openSavedPapersModal()" class="flex-1 py-1.5 justify-center rounded-xl text-xs font-semibold bg-amber-500 text-white shadow-xs hover:bg-amber-600 active:scale-95 transition-all flex items-center space-x-1.5 whitespace-nowrap" title="查阅与管理历史归档试卷">
                             <i class="fa-solid fa-folder-open"></i>
                             <span>历史试卷库</span>
                         </button>
                     </div>
 
                     <!-- Row 3: Preview & Export Options -->
-                    <div class="flex items-center justify-between gap-2 sm:gap-2.5">
+                    <div class="flex flex-wrap items-center justify-between gap-2 sm:gap-2.5">
                         ${meta.paper_type === 'exam_19' ? `
                             <button onclick="exportPaperPdf('paper')" class="flex-1 px-2.5 py-1.5 justify-center rounded-xl text-xs font-semibold bg-slate-100 text-slate-700 border border-slate-200 hover:bg-slate-200/80 active:scale-95 transition-all flex items-center space-x-1.5 whitespace-nowrap dark:bg-slate-800 dark:text-slate-200 dark:border-slate-700 dark:hover:bg-slate-700" title="编译并打开试卷 PDF 预览">
                                 <i class="fa-solid fa-file-pdf"></i>
@@ -913,26 +916,26 @@
                                 <i class="fa-solid fa-file-lines"></i>
                                 <span>答题卡 PDF 预览</span>
                             </button>
-                            <button onclick="exportPaperTex()" class="flex-1 px-2.5 py-1.5 justify-center rounded-xl text-xs font-semibold bg-slate-100 text-slate-700 border border-slate-200 hover:bg-slate-200/80 active:scale-95 transition-all flex items-center space-x-1.5 whitespace-nowrap dark:bg-slate-800 dark:text-slate-200 dark:border-slate-700 dark:hover:bg-slate-700" title="打包导出完整的 LaTeX 源码与关联插图 Zip 压缩包">
-                                <i class="fa-solid fa-file-zipper"></i>
-                                <span>LaTeX 导出</span>
+                            <button onclick="exportPaperWord()" class="flex-1 px-2.5 py-1.5 justify-center rounded-xl text-xs font-semibold bg-slate-100 text-slate-700 border border-slate-200 hover:bg-slate-200/80 active:scale-95 transition-all flex items-center space-x-1.5 whitespace-nowrap dark:bg-slate-800 dark:text-slate-200 dark:border-slate-700 dark:hover:bg-slate-700" title="导出可编辑 Word 试卷正文（不含答题卡）">
+                                <i class="fa-solid fa-file-word"></i>
+                                <span>Word 导出</span>
                             </button>
-                            <button onclick="exportPaperBundle()" class="flex-1 px-2.5 py-1.5 justify-center rounded-xl text-xs font-semibold bg-slate-100 text-slate-700 border border-slate-200 hover:bg-slate-200/80 active:scale-95 transition-all flex items-center space-x-1.5 whitespace-nowrap dark:bg-slate-800 dark:text-slate-200 dark:border-slate-700 dark:hover:bg-slate-700" title="LaTeX与PDF合并打包">
+                            <button onclick="exportPaperBundle()" class="flex-1 px-2.5 py-1.5 justify-center rounded-xl text-xs font-semibold bg-slate-100 text-slate-700 border border-slate-200 hover:bg-slate-200/80 active:scale-95 transition-all flex items-center space-x-1.5 whitespace-nowrap dark:bg-slate-800 dark:text-slate-200 dark:border-slate-700 dark:hover:bg-slate-700" title="打包导出 LaTeX 源码、插图及编译好的 PDF 全套文件">
                                 <i class="fa-solid fa-box-archive"></i>
-                                <span>合并导出</span>
+                                <span>LaTeX 打包</span>
                             </button>
                         ` : `
-                            <button onclick="exportPaperPdf('paper')" class="flex-1 py-1.5 justify-center rounded-xl text-xs font-semibold bg-slate-100 text-slate-700 border border-slate-200 hover:bg-slate-200/80 active:scale-95 transition-all flex items-center space-x-1.5 whitespace-nowrap dark:bg-slate-800 dark:text-slate-200 dark:border-slate-700 dark:hover:bg-slate-700" title="编译并打开高清 PDF 预览">
+                            <button onclick="exportPaperPdf('paper')" class="flex-1 py-1.5 justify-center rounded-xl text-xs font-semibold bg-slate-100 text-slate-700 border border-slate-200 hover:bg-slate-200/80 active:scale-95 transition-all flex items-center space-x-1.5 whitespace-nowrap dark:bg-slate-800 dark:text-slate-200 dark:border-slate-700 dark:hover:bg-slate-700" title="编译并打开试卷 PDF 预览">
                                 <i class="fa-solid fa-file-pdf"></i>
                                 <span>PDF 预览</span>
                             </button>
-                            <button onclick="exportPaperTex()" class="flex-1 py-1.5 justify-center rounded-xl text-xs font-semibold bg-slate-100 text-slate-700 border border-slate-200 hover:bg-slate-200/80 active:scale-95 transition-all flex items-center space-x-1.5 whitespace-nowrap dark:bg-slate-800 dark:text-slate-200 dark:border-slate-700 dark:hover:bg-slate-700" title="打包导出完整的 LaTeX 源码与关联插图 Zip 压缩包">
-                                <i class="fa-solid fa-file-zipper"></i>
-                                <span>LaTeX 导出</span>
+                            <button onclick="exportPaperWord()" class="flex-1 py-1.5 justify-center rounded-xl text-xs font-semibold bg-slate-100 text-slate-700 border border-slate-200 hover:bg-slate-200/80 active:scale-95 transition-all flex items-center space-x-1.5 whitespace-nowrap dark:bg-slate-800 dark:text-slate-200 dark:border-slate-700 dark:hover:bg-slate-700" title="导出保留原生公式的可编辑 Word 试卷">
+                                <i class="fa-solid fa-file-word"></i>
+                                <span>Word 导出</span>
                             </button>
-                            <button onclick="exportPaperBundle()" class="flex-1 py-1.5 justify-center rounded-xl text-xs font-semibold bg-slate-100 text-slate-700 border border-slate-200 hover:bg-slate-200/80 active:scale-95 transition-all flex items-center space-x-1.5 whitespace-nowrap dark:bg-slate-800 dark:text-slate-200 dark:border-slate-700 dark:hover:bg-slate-700" title="LaTeX与PDF合并打包">
+                            <button onclick="exportPaperBundle()" class="flex-1 py-1.5 justify-center rounded-xl text-xs font-semibold bg-slate-100 text-slate-700 border border-slate-200 hover:bg-slate-200/80 active:scale-95 transition-all flex items-center space-x-1.5 whitespace-nowrap dark:bg-slate-800 dark:text-slate-200 dark:border-slate-700 dark:hover:bg-slate-700" title="打包导出 LaTeX 源码、插图及编译好的 PDF 全套文件">
                                 <i class="fa-solid fa-box-archive"></i>
-                                <span>合并导出</span>
+                                <span>LaTeX 打包</span>
                             </button>
                         `}
                     </div>
@@ -958,6 +961,9 @@
                     ],
                     throwOnError: false
                 });
+                if (typeof window.adaptChoicesGridLayout === 'function') {
+                    window.adaptChoicesGridLayout(sheet);
+                }
             } catch (e) { }
         }
 
@@ -1698,7 +1704,7 @@
         });
     }
 
-    // Export PDF, Tex, and Save Handlers
+    // Export PDF, Word, TeX, and Save Handlers
     window.exportPaperPdf = async function (target = 'paper') {
         const cart = window.PaperStore.cart;
         if (cart.length === 0) {
@@ -1744,12 +1750,15 @@
                 }
                 if (window.showToast) window.showToast(`${targetName} PDF 编译成功！已在新窗口打开`, 'success');
             } else {
-                if (tab && !tab.closed) tab.close();
                 let errLog = `${targetName} PDF 编译失败`;
+                let errData = {};
                 try {
-                    const errData = await res.json();
+                    errData = await res.json();
                     if (errData.message) errLog = errData.message;
                 } catch (e) {}
+                if (tab && !tab.closed) {
+                    setPdfTabErrorState(tab, `${targetName} PDF 编译失败`, errData.diagnostic, errLog);
+                }
                 if (window.showToast) window.showToast(errLog, 'error');
             }
         } catch (e) {
@@ -1838,86 +1847,167 @@
         } catch(e) {}
     }
 
-    window.exportPaperTex = async function () {
+    function setPdfTabErrorState(tab, title, diagnostic, fallbackMessage) {
+        if (!tab) return;
+        const report = diagnostic || {};
+        const fixes = Array.isArray(report.fixes) && report.fixes.length
+            ? report.fixes
+            : ['返回题目编辑页，核对报错位置附近的公式或排版命令。'];
+        const fixesHtml = fixes.map(item => `<li>${escapeHtml(item)}</li>`).join('');
+        const sourceHtml = report.source_context
+            ? `<details><summary>查看出错位置附近的 LaTeX 源码</summary><pre>${escapeHtml(report.source_context)}</pre></details>`
+            : '';
+        const technicalHtml = report.technical_error
+            ? `<details><summary>查看编译器技术信息</summary><pre>${escapeHtml(report.technical_error)}</pre></details>`
+            : '';
+        try {
+            tab.document.open();
+            tab.document.write(`
+                <!DOCTYPE html>
+                <html lang="zh-CN">
+                <head>
+                    <meta charset="utf-8">
+                    <title>${escapeHtml(title)}</title>
+                    <style>
+                        * { box-sizing: border-box; }
+                        body { margin: 0; padding: 36px 20px; background: #f8fafc; color: #1e293b; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", sans-serif; }
+                        .card { max-width: 760px; margin: 0 auto; background: white; border: 1px solid #e2e8f0; border-radius: 18px; padding: 28px; box-shadow: 0 18px 45px rgba(15,23,42,.08); }
+                        .head { display: flex; gap: 14px; align-items: flex-start; }
+                        .icon { width: 46px; height: 46px; flex: 0 0 46px; border-radius: 13px; background: #fff1f2; color: #e11d48; display: grid; place-items: center; font-size: 23px; }
+                        h1 { margin: 0 0 6px; font-size: 20px; }
+                        .badge { display: inline-block; margin-top: 4px; padding: 3px 8px; border-radius: 999px; background: ${report.ai_used ? '#eef2ff' : '#f1f5f9'}; color: ${report.ai_used ? '#4f46e5' : '#64748b'}; font-size: 12px; }
+                        .section { margin-top: 22px; padding-top: 18px; border-top: 1px solid #e2e8f0; }
+                        h2 { margin: 0 0 8px; font-size: 14px; color: #475569; }
+                        p, li { font-size: 14px; line-height: 1.75; }
+                        p { margin: 0; }
+                        ol { margin: 6px 0 0; padding-left: 22px; }
+                        code { background: #f1f5f9; border-radius: 5px; padding: 2px 5px; }
+                        details { margin-top: 14px; border: 1px solid #e2e8f0; border-radius: 10px; padding: 10px 12px; }
+                        summary { cursor: pointer; color: #475569; font-size: 13px; font-weight: 600; }
+                        pre { margin: 10px 0 0; padding: 12px; border-radius: 8px; overflow: auto; background: #0f172a; color: #e2e8f0; font-size: 12px; line-height: 1.55; white-space: pre-wrap; }
+                        button { margin-top: 22px; border: 0; border-radius: 9px; padding: 10px 16px; background: #334155; color: white; cursor: pointer; }
+                    </style>
+                </head>
+                <body>
+                    <main class="card">
+                        <div class="head">
+                            <div class="icon">!</div>
+                            <div>
+                                <h1>${escapeHtml(report.summary || fallbackMessage || title)}</h1>
+                                <p>${escapeHtml(report.location || '试卷公式或模板附近')}</p>
+                                <span class="badge">${report.ai_used ? 'AI 已结合编译日志解释' : '本地诊断结果'}</span>
+                            </div>
+                        </div>
+                        <section class="section"><h2>为什么会这样</h2><p>${escapeHtml(report.cause || fallbackMessage || 'LaTeX 编译没有完成。')}</p></section>
+                        <section class="section"><h2>建议如何修复</h2><ol>${fixesHtml}</ol></section>
+                        ${sourceHtml}
+                        ${technicalHtml}
+                        <button onclick="window.close()">关闭此页并返回修改</button>
+                    </main>
+                </body>
+                </html>
+            `);
+            tab.document.close();
+        } catch (e) {}
+    }
+
+    window.exportPaperWord = async function () {
         const cart = window.PaperStore.cart;
         if (cart.length === 0) {
-            if (window.showToast) window.showToast('卷面为空，无法导出 LaTeX 源码', 'warning');
+            if (window.showToast) window.showToast('卷面为空，无法导出 Word 试卷', 'warning');
             return;
         }
 
         try {
-            if (window.showToast) window.showToast('正在打包 LaTeX 源码与图片...', 'info');
-
-            const cartQuestions = buildCartQuestionsPayload();
-
+            const isExam19 = window.PaperStore.meta.paper_type === 'exam_19';
+            if (window.showToast) {
+                window.showToast(isExam19 ? '正在生成 Word 试卷及解析压缩包（正文+解析，不含答题卡）...' : '正在生成 Word 试卷及参考答案压缩包...', 'info');
+            }
             const payload = {
                 title: window.PaperStore.meta.title,
                 subtitle: window.PaperStore.meta.subtitle,
                 paper_type: window.PaperStore.meta.paper_type,
                 show_notice: window.PaperStore.meta.show_notice !== false,
                 show_secret: window.PaperStore.meta.show_secret !== false,
-                questions: cartQuestions
+                questions: buildCartQuestionsPayload()
             };
-
-            const res = await fetch('/api/paper/export/tex', {
+            const res = await fetch('/api/paper/export/word', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(payload)
             });
+            if (!res.ok) {
+                let message = 'Word 导出失败';
+                try {
+                    const data = await res.json();
+                    message = data.message || message;
+                } catch (e) {}
+                if (window.showToast) window.showToast(message, 'error');
+                return;
+            }
 
-            if (res.ok) {
-                const blob = await res.blob();
-                const rawTitle = (window.PaperStore.meta.title || '试卷').trim();
-                const safeTitle = rawTitle.replace(/[/\\?%*:|"<>]/g, '_') || '试卷';
-                const filename = `${safeTitle}.zip`;
+            const blob = await res.blob();
+            const rawTitle = (window.PaperStore.meta.title || '试卷').trim();
+            const safeTitle = rawTitle.replace(/[/\\?%*:|"<>]/g, '_') || '试卷';
+            const filename = `${safeTitle}_Word打包.zip`;
+            const nativeCount = parseInt(res.headers.get('X-Word-Native-Formulas') || '0', 10);
+            const fallbackCount = parseInt(res.headers.get('X-Word-Fallback-Formulas') || '0', 10);
+            const failedCount = parseInt(res.headers.get('X-Word-Failed-Formulas') || '0', 10);
 
-                // 1. Try modern Web File System Access API (Pops up native "Save As" / "另存为" file picker)
-                if (typeof window.showSaveFilePicker === 'function') {
-                    try {
-                        const handle = await window.showSaveFilePicker({
-                            suggestedName: filename,
-                            types: [{
-                                description: 'Zip Archive',
-                                accept: { 'application/zip': ['.zip'] }
-                            }]
-                        });
-                        const writable = await handle.createWritable();
-                        await writable.write(blob);
-                        await writable.close();
-                        if (window.showToast) window.showToast(`LaTeX 源码包已保存至指定目录`, 'success');
-                        return;
-                    } catch (err) {
-                        // User clicked cancel in native Save As dialog
-                        if (err && err.name === 'AbortError') return;
-                    }
+            if (typeof window.showSaveFilePicker === 'function') {
+                try {
+                    const handle = await window.showSaveFilePicker({
+                        suggestedName: filename,
+                        types: [{
+                            description: 'Zip Archive',
+                            accept: { 'application/zip': ['.zip'] }
+                        }]
+                    });
+                    const writable = await handle.createWritable();
+                    await writable.write(blob);
+                    await writable.close();
+                } catch (err) {
+                    if (err && err.name === 'AbortError') return;
+                    const url = URL.createObjectURL(blob);
+                    const anchor = document.createElement('a');
+                    anchor.href = url;
+                    anchor.download = filename;
+                    anchor.click();
+                    URL.revokeObjectURL(url);
                 }
-
-                // 2. Fallback to standard browser download
-                const url = URL.createObjectURL(blob);
-                const a = document.createElement('a');
-                a.href = url;
-                a.download = filename;
-                a.click();
-                URL.revokeObjectURL(url);
-                if (window.showToast) window.showToast(`LaTeX 源码包《${filename}》导出成功！`, 'success');
             } else {
-                const errData = await res.json();
-                if (window.showToast) window.showToast(errData.message || '导出失败', 'error');
+                const url = URL.createObjectURL(blob);
+                const anchor = document.createElement('a');
+                anchor.href = url;
+                anchor.download = filename;
+                anchor.click();
+                URL.revokeObjectURL(url);
+            }
+
+            if (window.showToast) {
+                const baseTip = `Word 打包《${filename}》导出成功（含试卷正文与含答案解析两份文档）！`;
+                if (failedCount > 0) {
+                    window.showToast(`${baseTip}，有 ${failedCount} 处公式已用红字标出`, 'warning');
+                } else if (fallbackCount > 0) {
+                    window.showToast(`${baseTip}，${nativeCount} 处原生公式，${fallbackCount} 处图片保真公式`, 'warning');
+                } else {
+                    window.showToast(`${baseTip}，${nativeCount} 处公式均可直接编辑`, 'success');
+                }
             }
         } catch (e) {
-            if (window.showToast) window.showToast('LaTeX 打包请求异常', 'error');
+            if (window.showToast) window.showToast('Word 生成请求异常', 'error');
         }
     };
 
     window.exportPaperBundle = async function () {
         const cart = window.PaperStore.cart;
         if (cart.length === 0) {
-            if (window.showToast) window.showToast('卷面为空，无法合并导出全套包', 'warning');
+            if (window.showToast) window.showToast('卷面为空，无法打包导出 LaTeX 资源包', 'warning');
             return;
         }
 
         try {
-            if (window.showToast) window.showToast('正在在线静默编译全套 PDF 并打包 LaTeX 源码...', 'info');
+            if (window.showToast) window.showToast('正在打包 LaTeX 源码并编译全套 PDF 归档...', 'info');
 
             const cartQuestions = buildCartQuestionsPayload();
 
@@ -1940,7 +2030,7 @@
                 const blob = await res.blob();
                 const rawTitle = (window.PaperStore.meta.title || '试卷').trim();
                 const safeTitle = rawTitle.replace(/[/\\?%*:|"<>]/g, '_') || '试卷';
-                const filename = `${safeTitle}_全套合并归档.zip`;
+                const filename = `${safeTitle}_LaTeX打包.zip`;
 
                 if (typeof window.showSaveFilePicker === 'function') {
                     try {
@@ -1954,7 +2044,7 @@
                         const writable = await handle.createWritable();
                         await writable.write(blob);
                         await writable.close();
-                        if (window.showToast) window.showToast(`全套合并归档包已保存至指定目录`, 'success');
+                        if (window.showToast) window.showToast(`LaTeX 打包归档已保存至指定目录`, 'success');
                         return;
                     } catch (err) {
                         if (err && err.name === 'AbortError') return;
@@ -1967,13 +2057,13 @@
                 a.download = filename;
                 a.click();
                 URL.revokeObjectURL(url);
-                if (window.showToast) window.showToast(`全套合并归档包《${filename}》导出成功！`, 'success');
+                if (window.showToast) window.showToast(`LaTeX 打包《${filename}》导出成功！`, 'success');
             } else {
                 const errData = await res.json();
                 if (window.showToast) window.showToast(errData.message || '导出失败', 'error');
             }
         } catch (e) {
-            if (window.showToast) window.showToast('合并导出打包请求异常', 'error');
+            if (window.showToast) window.showToast('LaTeX 打包请求异常', 'error');
         }
     };
 
@@ -2107,7 +2197,7 @@
                                 ${p.subtitle ? `<p class="text-xs text-slate-400 mt-1 truncate italic">备注: ${escapeHtml(p.subtitle)}</p>` : ''}
                             </div>
                             <div class="flex items-center space-x-2 shrink-0">
-                                <button onclick="loadSavedPaper(${p.id})" class="px-3 py-1.5 rounded-xl bg-brand-500 hover:bg-brand-600 active:scale-95 text-white text-xs font-semibold shadow-xs transition-all flex items-center space-x-1" title="将此试卷一键载入到组卷工作台">
+                                <button onclick="loadSavedPaper(${p.id})" class="px-3 py-1.5 rounded-xl bg-brand-500 hover:bg-brand-600 active:scale-95 text-white text-xs font-semibold shadow-xs transition-all flex items-center space-x-1" title="载入试卷至工作台">
                                     <i class="fa-solid fa-arrow-right-to-bracket text-[11px]"></i>
                                     <span>载入试卷</span>
                                 </button>
@@ -2231,8 +2321,12 @@
                         tab.location.href = url;
                     }
                 } else {
-                    if (tab && !tab.closed) tab.close();
-                    if (window.showToast) window.showToast('编译 PDF 失败', 'error');
+                    let errorData = {};
+                    try { errorData = await pdfRes.json(); } catch (e) {}
+                    if (tab && !tab.closed) {
+                        setPdfTabErrorState(tab, '试卷 PDF 编译失败', errorData.diagnostic, errorData.message || '编译 PDF 失败');
+                    }
+                    if (window.showToast) window.showToast(errorData.message || '编译 PDF 失败', 'error');
                 }
             }
         } catch (e) {
@@ -2500,11 +2594,32 @@
                 return `<div>${stemText}</div><div class="my-2 text-center">${imgControlHtml}</div>`;
             } else if (effectiveAlign === 'bottom_right') {
                 return `<div>${stemText}</div><div class="my-2 text-right">${imgControlHtml}</div>`;
-            } else { // default 'right'
+            } else { // default 'right': Give text 70%+ dominant width, constrain figure container to 160px
+                const rightImgsHtml = imgSrcList.map((src, idx) => {
+                    const imgEvents = showControls ? `
+                        onclick="event.stopPropagation(); window.showFigureAlignPopover(event, ${qidAttr})"
+                        oncontextmenu="event.preventDefault(); event.stopPropagation(); window.showFigureAlignPopover(event, ${qidAttr})"
+                        title="点击或右击可切换插图排版位置 (图${idx + 1} 当前: ${currentLabel})"
+                    ` : '';
+                    const rightImgClass = showControls
+                        ? `${imgSrcList.length > 1 ? 'max-w-[125px] max-h-[115px]' : 'max-w-[155px] max-h-[135px]'} object-contain rounded-lg border border-slate-200 shadow-xs cursor-pointer hover:ring-2 hover:ring-brand-500 hover:scale-[1.02] transition-all inline-block`
+                        : `${imgSrcList.length > 1 ? 'max-w-[125px] max-h-[115px]' : 'max-w-[155px] max-h-[135px]'} object-contain rounded-lg border border-slate-200 shadow-xs inline-block`;
+                    return `<img src="${src}" class="${rightImgClass}" ${imgEvents}>`;
+                }).join('');
+
+                const rightImgControlHtml = `
+                    <div class="inline-block relative group/fig">
+                        <div class="flex flex-wrap items-center justify-end gap-1.5">
+                            ${rightImgsHtml}
+                        </div>
+                        ${btnHtml}
+                    </div>
+                `;
+
                 return `
                     <div class="flex items-start justify-between gap-3 my-1">
-                        <div class="flex-1 min-w-0">${stemText}</div>
-                        <div class="shrink-0 text-right">${imgControlHtml}</div>
+                        <div class="flex-1 min-w-0 pr-1" style="max-width: calc(100% - 170px);">${stemText}</div>
+                        <div class="shrink-0 text-right" style="width: 160px; max-width: 160px;">${rightImgControlHtml}</div>
                     </div>
                 `;
             }
