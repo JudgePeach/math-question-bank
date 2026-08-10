@@ -14,6 +14,47 @@ Out of the box without complex installation or frontend build steps. Supports se
 
 ---
 
+## 🤖 AI Agent / Harness Workflows
+
+MathBank features multiple highly automated, fault-tolerant, and self-healing AI Agent / Harness workflows to ensure high reliability across exam parsing, geometry redrawing, and concurrent solving:
+
+### 1. PDF Parsing Harness
+```mermaid
+flowchart LR
+    PDF[PDF Input] --> Inspector[Inspector Engine]
+    Inspector --> Route{Page-Level<br/>Confidence & Routing}
+    Route -->|High Confidence (0 Token)| Native[Native Text & Formula Extraction]
+    Route -->|Low Confidence / Fallback| VLM[Multimodal VLM OCR Fallback]
+    Native --> Merge[Cross-Page Text Merge & Clean]
+    VLM --> Merge
+    Merge --> LLM[LLM Structured Slice Parsing]
+```
+
+### 2. Geometry Reconstruction & Self-Correction Harness
+```mermaid
+flowchart LR
+    Img[Question Image] --> VLM[Multimodal VLM OCR & BBox]
+    VLM --> Crop[Auto Smart Crop]
+    Crop --> Reason[Multimodal Spatial Reasoning]
+    Reason --> TikZ[TikZ Code Generation]
+    TikZ --> Engine[Local XeLaTeX Execution]
+    Engine --> Feedback{Compile Logs &<br/>Visual Feedback}
+    Feedback -->|Compile Error| Repair[AI Code Self-Correction Loop]
+    Repair --> Engine
+    Feedback -->|Success| Output[HD Vector Graphics & Preview]
+```
+
+### 3. Paper Ingestion & Concurrent Solving Harness
+```mermaid
+flowchart LR
+    Doc[Document Parsing] --> Seg[Question Segmentation]
+    Seg --> Classify[Curriculum Tagging & Classification]
+    Classify --> Validate[Structured JSON Fault-Tolerant Validation]
+    Validate --> Solve[Async Concurrent AI Solving Engine]
+```
+
+---
+
 ## ✨ Key Highlights
 
 With just basic LaTeX math formula syntax, MathBank empowers frontline math teachers to efficiently solve exam generation and lesson preparation challenges:

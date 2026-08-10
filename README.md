@@ -14,6 +14,47 @@
 
 ---
 
+## 🤖 AI Agent / Harness 工作流
+
+系统内置了多套高度自动化、容错与自愈的 AI Agent / Harness 工作流，保障试卷拆解、几何绘图与并发解题的高可靠性：
+
+### 1. PDF 试卷智能解析 (PDF Parsing Harness)
+```mermaid
+flowchart LR
+    PDF[PDF 试卷输入] --> Inspector[Inspector 属性探测]
+    Inspector --> Route{页级置信度<br/>计算与路由决策}
+    Route -->|高置信度 (0 Token)| Native[原生矢量文本/公式直提]
+    Route -->|低置信度 / 丢公式| VLM[多模态 VLM 视觉 OCR 降级]
+    Native --> Merge[跨页文本缝合与清洗]
+    VLM --> Merge
+    Merge --> LLM[大语言模型结构化切片拆题]
+```
+
+### 2. 几何图形重构与闭环自愈 (Geometry Reconstruction Harness)
+```mermaid
+flowchart LR
+    Img[题目图像输入] --> VLM[多模态 VLM 识图与 BBox]
+    VLM --> Crop[智能精准裁剪]
+    Crop --> Reason[多模态空间几何推理]
+    Reason --> TikZ[TikZ 代码生成]
+    TikZ --> Engine[本地 XeLaTeX 编译执行]
+    Engine --> Feedback{编译日志与<br/>视觉诊断反馈}
+    Feedback -->|编译失败/语法错误| Repair[AI 代码自动闭环纠错]
+    Repair --> Engine
+    Feedback -->|编译成功| Output[高清矢量图形与预览]
+```
+
+### 3. 试卷切片与并发解题管道 (Paper Ingestion Harness)
+```mermaid
+flowchart LR
+    Doc[试卷文档解析] --> Seg[题目切片分割]
+    Seg --> Classify[教材大纲智能分类与打标]
+    Classify --> Validate[结构化 JSON 容错校验]
+    Validate --> Solve[异步并发 AI 解题引擎]
+```
+
+---
+
 ## ✨ 核心亮点
 
 只需了解一些基础的 LaTeX 数学公式语法，MathBank 就能帮一线数学老师高效解决组卷与备课难题：
