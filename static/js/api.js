@@ -942,35 +942,59 @@
             activeSettingsTab = tabName;
             const btnApi = document.getElementById('btn-settings-api');
             const btnMeta = document.getElementById('btn-settings-metadata');
+            const btnAbout = document.getElementById('btn-settings-about');
             const tabApi = document.getElementById('settings-tab-api');
             const tabMeta = document.getElementById('settings-tab-metadata');
+            const tabAbout = document.getElementById('settings-tab-about');
+            const btnSave = document.getElementById('btnSettingsSave');
+            
+            // Reset all buttons
+            [btnApi, btnMeta, btnAbout].forEach(b => {
+                if (b) {
+                    b.classList.remove('border-brand-500', 'text-brand-600');
+                    b.classList.add('border-transparent', 'text-slate-500');
+                }
+            });
+            // Hide all tabs
+            [tabApi, tabMeta, tabAbout].forEach(t => {
+                if (t) t.classList.add('hidden');
+            });
             
             if (tabName === 'api') {
-                btnApi.classList.add('border-brand-500', 'text-brand-600');
-                btnApi.classList.remove('border-transparent', 'text-slate-500');
-                btnMeta.classList.add('border-transparent', 'text-slate-500');
-                btnMeta.classList.remove('border-brand-500', 'text-brand-600');
-                
-                tabApi.classList.remove('hidden');
-                tabMeta.classList.add('hidden');
-            } else {
-                btnMeta.classList.add('border-brand-500', 'text-brand-600');
-                btnMeta.classList.remove('border-transparent', 'text-slate-500');
-                btnApi.classList.add('border-transparent', 'text-slate-500');
-                btnApi.classList.remove('border-brand-500', 'text-brand-600');
-                
-                tabMeta.classList.remove('hidden');
-                tabApi.classList.add('hidden');
+                if (btnApi) {
+                    btnApi.classList.add('border-brand-500', 'text-brand-600');
+                    btnApi.classList.remove('border-transparent', 'text-slate-500');
+                }
+                if (tabApi) tabApi.classList.remove('hidden');
+                if (btnSave) btnSave.classList.remove('hidden');
+            } else if (tabName === 'metadata') {
+                if (btnMeta) {
+                    btnMeta.classList.add('border-brand-500', 'text-brand-600');
+                    btnMeta.classList.remove('border-transparent', 'text-slate-500');
+                }
+                if (tabMeta) tabMeta.classList.remove('hidden');
+                if (btnSave) btnSave.classList.remove('hidden');
                 
                 // Load latest JSON from API
                 fetch('/api/config/metadata')
                     .then(r => r.json())
                     .then(data => {
-                        document.getElementById('settingsMetadataJson').value = JSON.stringify(data, null, 2);
+                        const el = document.getElementById('settingsMetadataJson');
+                        if (el) el.value = JSON.stringify(data, null, 2);
                     })
                     .catch(err => {
                         showToast('加载元数据配置失败: ' + err, 'error');
                     });
+            } else if (tabName === 'about') {
+                if (btnAbout) {
+                    btnAbout.classList.add('border-brand-500', 'text-brand-600');
+                    btnAbout.classList.remove('border-transparent', 'text-slate-500');
+                }
+                if (tabAbout) tabAbout.classList.remove('hidden');
+                if (btnSave) btnSave.classList.add('hidden');
+                
+                // Refresh update status in About tab
+                refreshAboutTabUpdateInfo();
             }
         };
 
@@ -998,6 +1022,308 @@
                 .catch(error => {
                     showToast('加载教材大纲预设失败: ' + error.message, 'error');
                 });
+        };
+
+        // ----------------- App Version & Update Management -----------------
+
+        let latestReleaseCache = null;
+        const IGNORED_UPDATE_KEY = 'mathbank_ignored_update_version';
+        const LAST_CHECK_TIME_KEY = 'mathbank_last_update_check_time';
+
+        // Check if user is on Mac or Windows
+        function getClientOS() {
+            const ua = navigator.userAgent || '';
+            if (/macintosh|mac os x/i.test(ua)) return 'macOS';
+            if (/windows|win32/i.test(ua)) return 'Windows';
+            return 'Other';
+        }
+
+        // Open update modal with data
+        window.openUpdateModal = function(releaseData) {
+            if (!releaseData) return;
+            const modal = document.getElementById('updateModal');
+            if (!modal) return;
+
+            const titleEl = document.getElementById('updateModalTitle');
+            const badgeEl = document.getElementById('updateModalBadge');
+            const dateEl = document.getElementById('updateModalDate');
+            const bodyEl = document.getElementById('updateModalBody');
+            const btnGithub = document.getElementById('btnViewOnGithub');
+            const btnIgnoreText = document.getElementById('btnIgnoreVersionText');
+            const gitTip = document.getElementById('updateGitTip');
+
+            const latestVer = releaseData.latest_version || releaseData.current_version || 'v2.0.1';
+            if (titleEl) titleEl.innerText = `发现新版本 ${latestVer}`;
+            if (badgeEl) badgeEl.innerText = releaseData.release_title || 'NEW RELEASE';
+            
+            if (dateEl) {
+                if (releaseData.published_at) {
+                    const d = new Date(releaseData.published_at);
+                    dateEl.innerText = `发布于 ${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+                } else {
+                    dateEl.innerText = '官方正式发布';
+                }
+            }
+
+            if (bodyEl) {
+                bodyEl.innerText = releaseData.release_body || '本版本包含多项性能与体验优化，推荐升级。';
+            }
+
+            if (btnGithub && releaseData.release_url) {
+                btnGithub.href = releaseData.release_url;
+            }
+
+            if (btnIgnoreText) {
+                btnIgnoreText.innerText = `忽略此版本 (${latestVer})`;
+            }
+
+            if (gitTip) {
+                if (releaseData.is_git_repo) {
+                    gitTip.classList.remove('hidden');
+                } else {
+                    gitTip.classList.add('hidden');
+                }
+            }
+
+            // Bind assets download URLs
+            const clientOS = getClientOS();
+            const btnMac = document.getElementById('btnDownloadMac');
+            const btnWin = document.getElementById('btnDownloadWin');
+            const macSize = document.getElementById('macDownloadSize');
+            const winSize = document.getElementById('winDownloadSize');
+
+            const macAsset = releaseData.assets && releaseData.assets.macOS;
+            const winAsset = releaseData.assets && releaseData.assets.Windows;
+
+            if (btnMac) {
+                if (macAsset && macAsset.url) {
+                    btnMac.href = macAsset.url;
+                    btnMac.classList.remove('opacity-50', 'pointer-events-none');
+                    if (macSize) macSize.innerText = `${macAsset.size_mb} MB • .zip 格式`;
+                } else {
+                    btnMac.href = releaseData.release_url || 'https://github.com/JudgePeach/math-question-bank/releases';
+                    if (macSize) macSize.innerText = '前往 Releases 下载';
+                }
+                if (clientOS === 'macOS') {
+                    btnMac.classList.add('ring-2', 'ring-brand-500', 'bg-brand-50/50');
+                } else {
+                    btnMac.classList.remove('ring-2', 'ring-brand-500', 'bg-brand-50/50');
+                }
+            }
+
+            if (btnWin) {
+                if (winAsset && winAsset.url) {
+                    btnWin.href = winAsset.url;
+                    btnWin.classList.remove('opacity-50', 'pointer-events-none');
+                    if (winSize) winSize.innerText = `${winAsset.size_mb} MB • .zip 格式`;
+                } else {
+                    btnWin.href = releaseData.release_url || 'https://github.com/JudgePeach/math-question-bank/releases';
+                    if (winSize) winSize.innerText = '前往 Releases 下载';
+                }
+                if (clientOS === 'Windows') {
+                    btnWin.classList.add('ring-2', 'ring-brand-500', 'bg-brand-50/50');
+                } else {
+                    btnWin.classList.remove('ring-2', 'ring-brand-500', 'bg-brand-50/50');
+                }
+            }
+
+            // Show modal
+            modal.classList.remove('hidden');
+            setTimeout(() => {
+                modal.classList.remove('opacity-0');
+                const content = modal.querySelector('.glass-modal');
+                if (content) content.classList.remove('scale-95');
+            }, 10);
+        };
+
+        window.closeUpdateModal = function() {
+            const modal = document.getElementById('updateModal');
+            if (!modal) return;
+            modal.classList.add('opacity-0');
+            const content = modal.querySelector('.glass-modal');
+            if (content) content.classList.add('scale-95');
+            setTimeout(() => {
+                modal.classList.add('hidden');
+            }, 300);
+        };
+
+        // Ignore current version update
+        window.ignoreCurrentVersionUpdate = function() {
+            if (latestReleaseCache && latestReleaseCache.latest_version) {
+                localStorage.setItem(IGNORED_UPDATE_KEY, latestReleaseCache.latest_version);
+                const badge = document.getElementById('updateBadge');
+                if (badge) badge.classList.add('hidden');
+                showToast(`已忽略版本 ${latestReleaseCache.latest_version} 的更新提醒。后续若有更高版本将再次通知您。`);
+            }
+            closeUpdateModal();
+            refreshAboutTabUpdateInfo();
+        };
+
+        // Clear ignored version
+        window.clearIgnoredVersion = function() {
+            localStorage.removeItem(IGNORED_UPDATE_KEY);
+            const badge = document.getElementById('updateBadge');
+            if (badge && latestReleaseCache && latestReleaseCache.has_update) {
+                badge.classList.remove('hidden');
+            }
+            showToast('已恢复版本更新提醒。');
+            refreshAboutTabUpdateInfo();
+        };
+
+        // Toggle ignore current version directly from Settings panel
+        window.toggleIgnoreCurrentVersionFromSettings = function() {
+            if (!latestReleaseCache || !latestReleaseCache.latest_version) return;
+            const currentIgnored = localStorage.getItem(IGNORED_UPDATE_KEY);
+            const latestVer = latestReleaseCache.latest_version;
+            const badge = document.getElementById('updateBadge');
+
+            if (currentIgnored === latestVer) {
+                // Was ignored -> unignore
+                localStorage.removeItem(IGNORED_UPDATE_KEY);
+                if (badge && latestReleaseCache.has_update) {
+                    badge.classList.remove('hidden');
+                }
+                showToast(`已恢复版本 ${latestVer} 的更新提醒。`);
+            } else {
+                // Ignore it
+                localStorage.setItem(IGNORED_UPDATE_KEY, latestVer);
+                if (badge) {
+                    badge.classList.add('hidden');
+                }
+                showToast(`已忽略版本 ${latestVer} 的更新提醒。若后续发布更高版本将再次通知您。`);
+            }
+            refreshAboutTabUpdateInfo();
+        };
+
+        // Refresh update info in About Tab
+        window.refreshAboutTabUpdateInfo = function() {
+            const textEl = document.getElementById('aboutUpdateStatusText');
+            const badgeVer = document.getElementById('aboutCurrentVersionBadge');
+            const ignoredRow = document.getElementById('ignoredVersionRow');
+            const ignoredText = document.getElementById('ignoredVersionText');
+            const ignoredVer = localStorage.getItem(IGNORED_UPDATE_KEY);
+            const btnToggleIgnore = document.getElementById('btnToggleIgnoreVersion');
+            const iconToggleIgnore = document.getElementById('iconToggleIgnore');
+            const textToggleIgnore = document.getElementById('textToggleIgnore');
+
+            if (ignoredVer && ignoredRow && ignoredText) {
+                ignoredRow.classList.remove('hidden');
+                ignoredText.innerText = `您已忽略版本 ${ignoredVer} 的更新提醒。`;
+            } else if (ignoredRow) {
+                ignoredRow.classList.add('hidden');
+            }
+
+            if (latestReleaseCache) {
+                if (badgeVer) badgeVer.innerText = `v${latestReleaseCache.current_version.replace(/^v/i, '')}`;
+                if (textEl) {
+                    if (latestReleaseCache.has_update) {
+                        textEl.innerHTML = `<span class="text-brand-600 font-bold">发现新版本 ${latestReleaseCache.latest_version}</span>（当前为 v${latestReleaseCache.current_version}）`;
+                    } else {
+                        textEl.innerText = `当前已是最新版本 (v${latestReleaseCache.current_version}) • 运行环境正常`;
+                    }
+                }
+
+                // Update the quick ignore button on Settings card
+                if (latestReleaseCache.has_update && btnToggleIgnore) {
+                    btnToggleIgnore.classList.remove('hidden');
+                    if (ignoredVer === latestReleaseCache.latest_version) {
+                        if (iconToggleIgnore) iconToggleIgnore.className = 'fa-solid fa-bell text-[11px] text-amber-500';
+                        if (textToggleIgnore) textToggleIgnore.innerText = '恢复提醒';
+                        btnToggleIgnore.title = '恢复该版本的更新提醒与呼吸徽章';
+                    } else {
+                        if (iconToggleIgnore) iconToggleIgnore.className = 'fa-solid fa-bell-slash text-[11px] text-slate-400';
+                        if (textToggleIgnore) textToggleIgnore.innerText = '忽略此版本';
+                        btnToggleIgnore.title = '忽略当前版本的更新提醒';
+                    }
+                } else if (btnToggleIgnore) {
+                    btnToggleIgnore.classList.add('hidden');
+                }
+            }
+        };
+
+        // Check update manually
+        window.checkAppUpdateManually = async function(isUserTriggered = false) {
+            const spinIcon = document.getElementById('checkUpdateSpinIcon');
+            const textEl = document.getElementById('aboutUpdateStatusText');
+            if (spinIcon) spinIcon.classList.add('fa-spin');
+            if (textEl) textEl.innerText = '正在连接 GitHub 检测最新版本...';
+
+            try {
+                const res = await fetch('/api/version/check-update');
+                const data = await res.json();
+                latestReleaseCache = data;
+                localStorage.setItem(LAST_CHECK_TIME_KEY, Date.now().toString());
+
+                if (spinIcon) spinIcon.classList.remove('fa-spin');
+                refreshAboutTabUpdateInfo();
+
+                if (data.status === 'success') {
+                    const ignoredVer = localStorage.getItem(IGNORED_UPDATE_KEY);
+                    const badge = document.getElementById('updateBadge');
+
+                    if (data.has_update) {
+                        if (badge && (!ignoredVer || ignoredVer !== data.latest_version)) {
+                            badge.classList.remove('hidden');
+                        }
+                        if (isUserTriggered) {
+                            openUpdateModal(data);
+                        } else if (!ignoredVer || ignoredVer !== data.latest_version) {
+                            showToast(`🎉 发现新版本 ${data.latest_version}，可前往设置查看更新内容。`, 'info');
+                        }
+                    } else {
+                        if (badge) badge.classList.add('hidden');
+                        if (isUserTriggered) {
+                            showToast(`✨ 当前已是最新版本 (v${data.current_version})！`, 'success');
+                        }
+                    }
+                } else if (isUserTriggered) {
+                    showToast(data.message || '检查更新失败，请稍后重试', 'warning');
+                }
+            } catch (err) {
+                if (spinIcon) spinIcon.classList.remove('fa-spin');
+                if (textEl) textEl.innerText = '检查更新连接超时，请检查网络';
+                if (isUserTriggered) {
+                    showToast('连接 GitHub 检查更新失败: ' + err.message, 'warning');
+                }
+            }
+        };
+
+        // Developer / user demo preview
+        window.previewUpdateModalDemo = function() {
+            if (latestReleaseCache) {
+                openUpdateModal(latestReleaseCache);
+            } else {
+                fetch('/api/version/check-update')
+                    .then(r => r.json())
+                    .then(data => {
+                        latestReleaseCache = data;
+                        openUpdateModal(data);
+                    })
+                    .catch(err => {
+                        // Fallback demo data
+                        const demoData = {
+                            current_version: "2.0.1",
+                            latest_version: "v2.0.1",
+                            release_title: "v2.0.1 正式发布",
+                            release_body: "1. 新增 Word (.docx) 试卷 OMML 公式与插图 0 损直提智能拆解。\n2. 全新升级 KaTeX 填空题 \\fillin 宏与数学比较符号防撕裂转义自愈。\n3. 优化拖放区域 UI 与拆分进度动画盒模型。\n4. 内置版本自动检测、忽略更新与便携包一键直链更新体系。",
+                            release_url: "https://github.com/JudgePeach/math-question-bank/releases",
+                            published_at: new Date().toISOString(),
+                            is_git_repo: true,
+                            assets: {
+                                macOS: { name: "MathBank-macOS.zip", size_mb: 11.7, downloads: 40, url: "https://github.com/JudgePeach/math-question-bank/releases" },
+                                Windows: { name: "MathBank-Windows-x64.zip", size_mb: 51.2, downloads: 171, url: "https://github.com/JudgePeach/math-question-bank/releases" }
+                            }
+                        };
+                        openUpdateModal(demoData);
+                    });
+            }
+        };
+
+        // Silent background check on app startup
+        window.silentCheckAppUpdateOnStart = function() {
+            setTimeout(() => {
+                checkAppUpdateManually(false);
+            }, 1000);
         };
 
 
@@ -1378,7 +1704,156 @@
             }
         }
 
-        // Initialize theme on DOMContentLoaded
+        // Initialize theme and check update on DOMContentLoaded
         document.addEventListener('DOMContentLoaded', () => {
             initTheme();
+            if (window.silentCheckAppUpdateOnStart) {
+                window.silentCheckAppUpdateOnStart();
+            }
         });
+
+        /**
+         * =========================================================================
+         * 全局极速自定义 Tooltip 悬浮提示系统 (Global Fast Tooltip System)
+         * =========================================================================
+         * 自动接管全局所有带有 title 与 data-tooltip 属性的按钮与元素：
+         * 1. 移入按钮稳定停顿 0.5 秒 (500ms) 后平滑浮现提示文字。
+         * 2. 移出按钮瞬间 0ms 立即消失隐藏，杜绝旧按钮文字滞留与残影。
+         * 3. 滑入新按钮重新独立计时 0.5 秒，鼠标快速扫过不闪烁。
+         * 4. 自动移除原生 title 属性暂存至 dataset.tooltip，防止 2 秒后原生浏览器气泡重叠打架。
+         * 5. 智能自适应视口边缘碰撞与上下翻转，点击、滚动与按键时即刻淡出隐藏。
+         */
+        (function initGlobalFastTooltip() {
+            let tooltipEl = null;
+            let showTimer = null;
+            let activeTarget = null;
+            const SHOW_DELAY = 500; // 首次悬停停顿 0.5 秒 (500ms) 后显示
+            const OFFSET_Y = 6;     // 与目标元素的垂直微间距
+
+            function ensureTooltipElement() {
+                if (!tooltipEl) {
+                    tooltipEl = document.createElement('div');
+                    tooltipEl.className = 'global-tooltip';
+                    tooltipEl.setAttribute('role', 'tooltip');
+                    tooltipEl.setAttribute('aria-hidden', 'true');
+                    document.body.appendChild(tooltipEl);
+                }
+                return tooltipEl;
+            }
+
+            function getTooltipText(element) {
+                if (!element || element.nodeType !== 1) return '';
+                // 1. 优先读取已缓存或声明的 data-tooltip
+                if (element.dataset && element.dataset.tooltip) {
+                    return element.dataset.tooltip.trim();
+                }
+                // 2. 自动捕获原生 title 并抹除原生属性以防原生 2s 延迟黑框弹出
+                if (element.hasAttribute('title')) {
+                    const rawTitle = element.getAttribute('title') || '';
+                    if (rawTitle.trim()) {
+                        element.dataset.tooltip = rawTitle.trim();
+                        element.removeAttribute('title');
+                        return rawTitle.trim();
+                    }
+                }
+                return '';
+            }
+
+            function positionTooltip(target, el) {
+                const rect = target.getBoundingClientRect();
+                if (rect.width === 0 && rect.height === 0) return;
+
+                // 强制测量当前 tooltip 尺寸
+                el.style.left = '0px';
+                el.style.top = '0px';
+                const tipWidth = el.offsetWidth || 100;
+                const tipHeight = el.offsetHeight || 28;
+                const viewportWidth = window.innerWidth;
+                const viewportHeight = window.innerHeight;
+
+                // 水平居中计算并进行安全边缘 Clamp (左右保留 8px 安全边距)
+                let left = rect.left + (rect.width - tipWidth) / 2;
+                left = Math.max(8, Math.min(left, viewportWidth - tipWidth - 8));
+
+                // 垂直定位计算：优先放置在下方，若下方空间不足则放置在上方
+                let top = rect.bottom + OFFSET_Y;
+                if (top + tipHeight > viewportHeight - 8) {
+                    top = rect.top - tipHeight - OFFSET_Y;
+                }
+                if (top < 8) {
+                    top = 8;
+                }
+
+                el.style.left = Math.round(left) + 'px';
+                el.style.top = Math.round(top) + 'px';
+            }
+
+            function hideImmediately() {
+                if (showTimer) {
+                    clearTimeout(showTimer);
+                    showTimer = null;
+                }
+                if (tooltipEl) {
+                    tooltipEl.classList.remove('is-visible');
+                    tooltipEl.setAttribute('aria-hidden', 'true');
+                }
+                activeTarget = null;
+            }
+
+            function scheduleShow(target, text) {
+                hideImmediately();
+                activeTarget = target;
+                showTimer = setTimeout(() => {
+                    if (!target || !target.isConnected || activeTarget !== target) return;
+                    const el = ensureTooltipElement();
+                    el.textContent = text;
+                    positionTooltip(target, el);
+                    el.classList.add('is-visible');
+                    el.setAttribute('aria-hidden', 'false');
+                }, SHOW_DELAY);
+            }
+
+            // 全局捕获 mouseover 事件代理
+            document.addEventListener('mouseover', (e) => {
+                const target = e.target && e.target.closest ? e.target.closest('[title], [data-tooltip]') : null;
+                if (!target) {
+                    if (activeTarget && !e.target.closest('.global-tooltip')) {
+                        hideImmediately();
+                    }
+                    return;
+                }
+
+                const text = getTooltipText(target);
+                if (!text) {
+                    hideImmediately();
+                    return;
+                }
+
+                if (activeTarget === target) {
+                    return;
+                }
+
+                scheduleShow(target, text);
+            }, true);
+
+            // 鼠标移出目标：立即瞬间隐藏，绝不滞留
+            document.addEventListener('mouseout', (e) => {
+                const target = e.target && e.target.closest ? e.target.closest('[title], [data-tooltip]') : null;
+                if (target && target === activeTarget) {
+                    if (!e.relatedTarget || !target.contains(e.relatedTarget)) {
+                        hideImmediately();
+                    }
+                }
+            }, true);
+
+            // 点击、触控、滚动或按键时瞬间隐藏，绝不遮挡操作
+            ['mousedown', 'pointerdown', 'touchstart', 'wheel', 'scroll'].forEach((evtName) => {
+                window.addEventListener(evtName, hideImmediately, { passive: true, capture: true });
+            });
+
+            document.addEventListener('keydown', (e) => {
+                if (e.key === 'Escape') hideImmediately();
+            });
+
+            window.addEventListener('blur', hideImmediately);
+        })();

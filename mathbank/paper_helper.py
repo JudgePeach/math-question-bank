@@ -11,11 +11,26 @@ from io import BytesIO
 from sqlalchemy.orm import Session
 from mathbank.database import Question, Paper, PaperQuestion, QuestionCurriculum
 from mathbank.paths import TEMPLATES_DIR
+from mathbank.latex_diagnostics import build_local_latex_diagnostic
 
 # In-memory LRU cache for compiled PDF bytes
 _PDF_CACHE_LOCK = threading.Lock()
 _PDF_CACHE = OrderedDict()  # key -> (pdf_bytes, log_or_err)
 _MAX_PDF_CACHE_SIZE = 20
+
+# Only these known, offline TeX Live packages may be inserted automatically.
+# A model response can never add a package to this allowlist at runtime.
+_AUTO_LATEX_PACKAGES = frozenset({
+    "amsmath",
+    "cancel",
+    "extarrows",
+    "graphicx",
+    "mathtools",
+    "mhchem",
+    "siunitx",
+    "yhmath",
+})
+_MAX_AUTO_PACKAGE_REPAIRS = 3
 
 # Constants for question type labels
 TYPE_LABELS = {
@@ -171,15 +186,24 @@ def build_latex_document(
     
     lines = []
     lines.append(r"\let\stop\empty")
-    lines.append(r"\documentclass{exam-zh}")
-    lines.append(r"\usepackage{siunitx}")
+    # Fandol ships with TeX Live and avoids platform-specific ctex font names
+    # such as STHeiti, which XeLaTeX may fail to resolve on macOS.
+    lines.append(r"\documentclass[fontset=fandol]{exam-zh}")
+    # Stable high-school mathematics baseline. Keep packages that alter core
+    # math semantics (for example physics/unicode-math) out of this default.
+    lines.append(r"\usepackage{amsmath,mathtools,cancel,cases,mhchem,siunitx,extarrows}")
+    # exam-zh uses unicode-math, which rejects the legacy bm package. Preserve
+    # imported \bm{...} formulas through the native unicode-math equivalent.
+    lines.append(r"\providecommand{\bm}[1]{\symbf{#1}}")
+    # Tables: standard/aligned columns, three-line tables, adaptive width,
+    # long tables, merged cells, diagonal headers, colored cells and tblr.
+    lines.append(r"\usepackage{array,booktabs,tabularx,longtable,multirow,makecell,diagbox,colortbl,tabularray,threeparttable}")
+    lines.append(r"\UseTblrLibrary{booktabs}")
     lines.append(r"\usepackage{tkz-euclide}")
-    lines.append(r"\usepackage{diagbox}")
     lines.append(r"\usepackage{lastpage}")
     lines.append(r"\usepackage{caption}")
     lines.append(r"\usepackage{wrapfig}")
     lines.append(r"\usepackage{graphicx}")
-    lines.append(r"\usepackage{amsmath}")
     lines.append(r"\usepackage{adjustbox}")
     lines.append(r"\examsetup{")
     lines.append(r"  page/size=a4paper,")
@@ -349,6 +373,9 @@ def build_latex_document(
             if len(fig_elements) > 1 and fig_align == "right":
                 fig_align = "center"
 
+            question_id = q.get("id")
+            if question_id is not None:
+                lines.append(f"% MathBank-Question-ID: {question_id}")
             lines.append(f"\\begin{{{env_name}}}{points_arg}")
             if fig_body:
                 choices_part = ""
@@ -449,6 +476,58 @@ def collect_referenced_images(questions_data: list, uploads_dir: str) -> list:
 
     return image_paths
 
+
+def _latex_failure_message(processes: list, temp_dir: str) -> str:
+    """Collect the first actionable TeX error plus the final log summary."""
+    log_parts = []
+    for proc in processes:
+        if proc is None:
+            continue
+        log_parts.extend((getattr(proc, "stdout", "") or "", getattr(proc, "stderr", "") or ""))
+    log_path = os.path.join(temp_dir, "paper.log")
+    if os.path.exists(log_path):
+        with open(log_path, "r", encoding="utf-8", errors="ignore") as log_file:
+            log_parts.append(log_file.read())
+    log_txt = "\n".join(part for part in log_parts if part)
+    first_error = log_txt.find("\n!")
+    if len(log_txt) <= 8000:
+        diagnostic = log_txt
+    elif first_error >= 0:
+        diagnostic = f"{log_txt[max(0, first_error - 1000):first_error + 3000]}\n...\n{log_txt[-4000:]}"
+    else:
+        diagnostic = f"{log_txt[:2000]}\n...\n{log_txt[-6000:]}"
+    return f"编译失败，无法生成完整 PDF:\n{diagnostic}"
+
+
+def _has_latex_package(tex_content: str, package: str) -> bool:
+    for match in re.finditer(r"\\(?:usepackage|RequirePackage)(?:\[[^\]]*\])?\{([^}]*)\}", tex_content):
+        packages = {item.strip() for item in match.group(1).split(",")}
+        if package in packages:
+            return True
+    return False
+
+
+def _inject_latex_package(tex_content: str, package: str) -> str | None:
+    """Insert an allowlisted package without changing generated source line numbers."""
+    if package not in _AUTO_LATEX_PACKAGES or _has_latex_package(tex_content, package):
+        return None
+    document_class = re.search(r"\\documentclass(?:\[[^\]]*\])?\{[^}]+\}", tex_content)
+    if not document_class:
+        return None
+    insertion = document_class.group(0) + rf"\usepackage{{{package}}}"
+    return tex_content[:document_class.start()] + insertion + tex_content[document_class.end():]
+
+
+def _clear_latex_intermediates(temp_dir: str) -> None:
+    for suffix in ("aux", "log", "out", "toc", "xdv", "pdf"):
+        path = os.path.join(temp_dir, f"paper.{suffix}")
+        try:
+            if os.path.exists(path):
+                os.remove(path)
+        except OSError:
+            pass
+
+
 def compile_tex_to_pdf(tex_content: str, image_paths: list = None) -> tuple:
     """
     Compiles LaTeX string into PDF using system xelatex.
@@ -480,9 +559,6 @@ def compile_tex_to_pdf(tex_content: str, image_paths: list = None) -> tuple:
     print(f"[PDF_CACHE_MISS] ⚡ Compiling TeX via xelatex... Key: {cache_key[:10]}...", flush=True)
     with tempfile.TemporaryDirectory() as temp_dir:
         tex_path = os.path.join(temp_dir, "paper.tex")
-        with open(tex_path, "w", encoding="utf-8") as f:
-            f.write(tex_content)
-            
         # Copy images into temp_dir
         for img_p in image_paths:
             if os.path.exists(img_p):
@@ -493,42 +569,73 @@ def compile_tex_to_pdf(tex_content: str, image_paths: list = None) -> tuple:
 
         # Try compiling with xelatex (requires 2 passes to resolve \pageref{LastPage} and .aux references)
         try:
-            cmd = ["xelatex", "-interaction=nonstopmode", "paper.tex"]
-            # Pass 1: Generate .aux file and initial layout
-            subprocess.run(cmd, cwd=temp_dir, capture_output=True, text=True, timeout=30)
-            # Pass 2: Resolve \pageref{LastPage} and cross references from .aux
-            proc = subprocess.run(cmd, cwd=temp_dir, capture_output=True, text=True, timeout=30)
-            
-            pdf_path = os.path.join(temp_dir, "paper.pdf")
-            if os.path.exists(pdf_path):
-                with open(pdf_path, "rb") as pf:
-                    pdf_bytes = pf.read()
-                
-                # Save to LRU Cache on success
-                with _PDF_CACHE_LOCK:
-                    if cache_key in _PDF_CACHE:
-                        _PDF_CACHE.pop(cache_key)
-                    _PDF_CACHE[cache_key] = (pdf_bytes, proc.stdout)
-                    while len(_PDF_CACHE) > _MAX_PDF_CACHE_SIZE:
-                        _PDF_CACHE.popitem(last=False)
+            cmd = [
+                "xelatex",
+                "-interaction=nonstopmode",
+                "-halt-on-error",
+                "-file-line-error",
+                "paper.tex",
+            ]
+            current_tex = tex_content
+            auto_loaded_packages = []
+            failure_message = ""
 
-                return (pdf_bytes, proc.stdout)
-            else:
-                log_path = os.path.join(temp_dir, "paper.log")
-                log_txt = proc.stdout + "\n" + proc.stderr
-                if os.path.exists(log_path):
-                    with open(log_path, "r", encoding="utf-8", errors="ignore") as lf:
-                        log_txt += "\n" + lf.read()
-                # Preserve both the first error and the final summary; either can
-                # contain the actionable diagnostic depending on the TeX engine.
-                first_error = log_txt.find("\n!")
-                if len(log_txt) <= 8000:
-                    diagnostic = log_txt
-                elif first_error >= 0:
-                    diagnostic = f"{log_txt[max(0, first_error - 1000):first_error + 3000]}\n...\n{log_txt[-4000:]}"
-                else:
-                    diagnostic = f"{log_txt[:2000]}\n...\n{log_txt[-6000:]}"
-                return (None, f"编译失败，无法生成 PDF:\n{diagnostic}")
+            for repair_round in range(_MAX_AUTO_PACKAGE_REPAIRS + 1):
+                _clear_latex_intermediates(temp_dir)
+                with open(tex_path, "w", encoding="utf-8") as tex_file:
+                    tex_file.write(current_tex)
+
+                # Pass 1: Generate .aux file and initial layout.
+                first_proc = subprocess.run(cmd, cwd=temp_dir, capture_output=True, text=True, timeout=30)
+                if first_proc.returncode != 0:
+                    failure_message = _latex_failure_message([first_proc], temp_dir)
+                    local = build_local_latex_diagnostic(failure_message, current_tex)
+                    package = str(local.get("package") or "")
+                    repaired_tex = _inject_latex_package(current_tex, package)
+                    if repair_round < _MAX_AUTO_PACKAGE_REPAIRS and repaired_tex is not None:
+                        current_tex = repaired_tex
+                        auto_loaded_packages.append(package)
+                        continue
+                    if auto_loaded_packages:
+                        failure_message = (
+                            f"[MathBank 自动修复] 已尝试加载宏包：{', '.join(auto_loaded_packages)}。\n"
+                            + failure_message
+                        )
+                    return (None, failure_message)
+
+                # Pass 2: Resolve \pageref{LastPage} and cross references from .aux.
+                proc = subprocess.run(cmd, cwd=temp_dir, capture_output=True, text=True, timeout=30)
+                pdf_path = os.path.join(temp_dir, "paper.pdf")
+                if proc.returncode == 0 and os.path.exists(pdf_path) and os.path.getsize(pdf_path) > 0:
+                    with open(pdf_path, "rb") as pf:
+                        pdf_bytes = pf.read()
+
+                    # Save to LRU Cache on success, using the user's original source key.
+                    with _PDF_CACHE_LOCK:
+                        if cache_key in _PDF_CACHE:
+                            _PDF_CACHE.pop(cache_key)
+                        _PDF_CACHE[cache_key] = (pdf_bytes, proc.stdout)
+                        while len(_PDF_CACHE) > _MAX_PDF_CACHE_SIZE:
+                            _PDF_CACHE.popitem(last=False)
+
+                    return (pdf_bytes, proc.stdout)
+
+                failure_message = _latex_failure_message([first_proc, proc], temp_dir)
+                local = build_local_latex_diagnostic(failure_message, current_tex)
+                package = str(local.get("package") or "")
+                repaired_tex = _inject_latex_package(current_tex, package)
+                if repair_round < _MAX_AUTO_PACKAGE_REPAIRS and repaired_tex is not None:
+                    current_tex = repaired_tex
+                    auto_loaded_packages.append(package)
+                    continue
+                if auto_loaded_packages:
+                    failure_message = (
+                        f"[MathBank 自动修复] 已尝试加载宏包：{', '.join(auto_loaded_packages)}。\n"
+                        + failure_message
+                    )
+                return (None, failure_message)
+
+            return (None, failure_message or "LaTeX 自动修复后仍未能生成 PDF。")
         except FileNotFoundError:
             return (None, "系统未检测到 xelatex 编译器，请确保已安装 TeX Live / MiKTeX / MacTeX 并加入 PATH。")
         except subprocess.TimeoutExpired:

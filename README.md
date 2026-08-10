@@ -20,7 +20,7 @@
 - ⚡ **秒级公式渲染与高考级导出**：内置专业数学公式排版引擎，网页上修改秒级实时预览。支持一键导出高考标准的高清 PDF 试卷与完整的排版源码包。
 - 🤖 **AI 智能组卷与辅助解答**：内置 DeepSeek 等大语言模型，能根据考点细目表与难度阶梯一键自动挑选题目生成试卷；支持单题一键 AI 生成详细解析与教学反思。
 - 📚 **主流教材大纲一键切换**：原生预设 **人教A版**、**人教B版**、**苏教版**与**沪教版**标准高中大纲目录，切换大纲时系统自动智能映射，无需手动重新整理题目。
-- 🔍 **便捷识别与标签管理**：支持批量上传截图或 PDF 快速拆题入库，自带“易错”、“挑战”、“强基”等四档难度标签与变式题/子母题关联管理。
+- 📄 **多格式试卷智能拆解与 PDF 双策略分流**：支持直接拖入 **LaTeX 源码 (.tex)**、**PDF 试卷 (.pdf)** 或 **Word 试卷 (.docx)** 快速智能切片拆题。PDF 拆解原生提供 **【原生文字公式提取】（默认推荐）** 与 **【全图视觉 OCR】** 双解析策略：推荐优先使用原生提取模式，享受 `PDF Inspector` 毫秒级 0 视觉 Token 损耗的极速提取，当遇到 Word/MathType 特殊导出卷导致公式硬转化为图片时，系统会自动平滑降级并触发 VLM 视觉 OCR 识图补全；同时，为避免极少数排版极其特殊的试卷使自愈规则失效，系统亦保留了全图视觉 OCR 的强力备选通道，保障 100% 拆解成功率。Word 导入则会结构化转换 Office OMML，并从 OLE `Equation Native` 流解析 MathType 结构，不能高置信转换的公式保留原预览图并标记人工核对。
 
 ---
 
@@ -29,7 +29,7 @@
 - **LaTeX 本地编译环境依赖**：只有当您需要使用 **TikZ 几何图形重绘** 或 **一键导出高清 PDF 试卷** 这两项功能时，系统才需要调用本地的 LaTeX 编译工具链。如果您仅进行题目录入、公式预览、题库检索、AI 智能解答与排版源码导出，**完全不需要安装 LaTeX**。若需使用上述两项功能，建议您在本地安装：
   * **macOS 用户**：推荐安装 [**MacTeX 官网**](https://www.tug.org/mactex/)（安装包约 5GB，国内推荐使用 [清华大学镜像站](https://mirrors.tuna.tsinghua.edu.cn/CTAN/systems/mac/mactex/) 极速下载）
   * **Windows 用户**：推荐安装 [**TeX Live 官网**](https://www.tug.org/texlive/)（ISO 镜像约 5GB，国内推荐使用 [清华大学镜像站](https://mirrors.tuna.tsinghua.edu.cn/CTAN/systems/texlive/Images/) 极速下载；也可选择 MiKTeX）
-- **关于 Word (.docx) 格式支持的说明**：系统目前专注于基于 LaTeX 排版系统进行高考级高精排版与高清 PDF 试卷导出，**目前对 Word 格式的支持尚不够完善**。我们计划在后续版本更新中加入对 Word 格式的兼容与支持（这可能需要较长时间）。
+- **📄 Word (.docx) 试卷安全导入**：无需安装 Microsoft Word 或 MathType。系统可转换常见 OMML 公式，并使用 `olefile` + MTEF v5 记录树解析 MathType 结构；普通 `32`、拉丁 `p` 等不会再因旧的字符规则被误判。系统还会递归保留超链接/修订文字/Symbol 字符并提取表格与原图，不能高置信转换的公式则保留 Word 预览图。拆卷报告会分别显示结构转换、内嵌 LaTeX、有限兼容及人工核对数量。
 
 ---
 
@@ -64,7 +64,9 @@
    * **命令行启动**：运行 `python -m uvicorn main:app --reload`，浏览器访问 `http://127.0.0.1:8000`
 
 > [!TIP]
-> **PDF 试卷拆解导入建议**：导入试卷 PDF 时，建议优先选用**仅含题干（无冗长解析）**的短试卷。详细解析推荐在题目拆解入库后，使用系统内置的 AI 一键推导或手动补充。
+> **PDF & Word 试卷智能拆解建议**：
+> 1. **PDF 策略选型**：导入 PDF 试卷时，建议保持默认选中的**【原生文字公式提取】**模式，享受毫秒级 0 视觉 Token 损耗极速切片；若遇到图片公式导致丢公式系统会自动触发 VLM OCR 补全；遇排版极其特殊的扫描卷可手动切换为**【全图视觉 OCR】**模式。
+> 2. **试卷内容建议（避免超出 Token 限制）**：无论导入 **PDF 试卷** 还是 **Word (.docx) 试卷**，为防止试卷过长超出大模型单次 Context Window / Token 窗口上限，强烈建议优先选用**仅含题干（无冗长详细解析）**的试卷进行切片拆分。
 
 ---
 
@@ -112,7 +114,8 @@
 
 ### 升级方式
 
-- **方式 A：Git 升级（推荐）**
+- **✨ 界面一键检查更新与便携包直链**：系统内置自动版本检测机制。进入网页右上角【设置】$\rightarrow$【版本更新】，即可一键实时比对 GitHub 官方 Release，查阅最新版本特性并一键下载对应系统的便携包；亦支持一键忽略不常更新的版本。
+- **方式 A：Git 升级（源码用户推荐）**
   ```bash
   git pull
   ```
@@ -170,6 +173,12 @@ python3 -m scripts.search_questions -q "导数"
 │   ├── ai_providers.py         # AI Provider 与模型参数解析
 │   ├── ai_http.py              # AI HTTP 请求与鉴权
 │   ├── ai_json.py              # AI 结构化 JSON 容错解析
+│   ├── latex_diagnostics.py    # XeLaTeX 错误定位、本地解释与 AI 诊断合并
+│   ├── content_locks.py        # Word 公式原位可见锁定、原文恢复与完整性校验
+│   ├── omml_helper.py          # Office OMML 结构化公式转换器
+│   ├── mtef_helper.py          # MathType OLE/MTEF v5 结构解析与失败诊断
+│   ├── docx_helper.py          # Word 文字/表格/图片安全提取与诊断报告
+│   ├── pdf_inspector_helper.py # PDF Inspector 原生矢量直提与双轨探测
 │   └── resources/curriculums/  # A/B/S/H 四套共享 JSON 大纲
 ├── scripts/                    # 运维、迁移、检索与 Release 工具
 │   ├── search_questions.py

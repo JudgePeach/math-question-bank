@@ -841,10 +841,26 @@ header, main {
 /* Math rendering dynamic custom rules */
 .choices-grid {
     align-items: first baseline !important;
+    grid-template-columns: repeat(var(--choices-columns, 4), minmax(0, 1fr)) !important;
+    width: 100%;
+    min-width: 0;
 }
 .choices-grid > div {
     align-items: first baseline !important;
     min-height: 1.75rem;
+    min-width: 0;
+    max-width: 100%;
+}
+.choices-grid .choices-content {
+    display: block;
+    min-width: 0;
+    max-width: 100%;
+    overflow-x: auto;
+    overflow-y: hidden;
+    scrollbar-width: thin;
+}
+.choices-grid .choices-content > .katex {
+    white-space: nowrap;
 }
 
 .preview-box img {
@@ -1028,16 +1044,49 @@ button, a, input, select, textarea {
 }
 
 /* Tooltip - Apple Style */
-.glass-tooltip {
-    background: rgba(30, 30, 30, 0.85);
-    backdrop-filter: blur(20px);
-    -webkit-backdrop-filter: blur(20px);
-    color: white;
+.glass-tooltip,
+.global-tooltip {
+    position: fixed;
+    top: 0;
+    left: 0;
+    z-index: 99999;
+    pointer-events: none;
+    padding: 5px 9px;
     border-radius: 8px;
-    font-size: 12px;
-    padding: 6px 12px;
-    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.2);
+    font-size: 11px;
+    line-height: 1.35;
+    font-weight: 500;
+    letter-spacing: 0.01em;
+    color: #f8fafc;
+    background: rgba(15, 23, 42, 0.92);
+    backdrop-filter: blur(16px);
+    -webkit-backdrop-filter: blur(16px);
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    box-shadow: 0 4px 16px -2px rgba(0, 0, 0, 0.35), 0 2px 6px -1px rgba(0, 0, 0, 0.2);
+    white-space: nowrap;
+    max-width: 480px;
+    opacity: 0;
+    visibility: hidden;
+    transform: scale(0.96) translateY(2px);
+    transition: none;
+    will-change: opacity, transform, top, left;
 }
+
+.global-tooltip.is-visible {
+    opacity: 1;
+    visibility: visible;
+    transform: scale(1) translateY(0);
+    transition: opacity 120ms cubic-bezier(0.16, 1, 0.3, 1), transform 120ms cubic-bezier(0.16, 1, 0.3, 1), visibility 120ms;
+}
+
+.dark .glass-tooltip,
+.dark .global-tooltip {
+    background: rgba(15, 23, 42, 0.96);
+    border-color: rgba(148, 163, 184, 0.22);
+    color: #f1f5f9;
+    box-shadow: 0 4px 20px -2px rgba(0, 0, 0, 0.6), 0 2px 8px -1px rgba(0, 0, 0, 0.4);
+}
+
 
 /* ===== Responsive Breakpoints ===== */
 
@@ -1335,5 +1384,4 @@ button, a, input, select, textarea {
 .dark .glass-btn:hover i.text-slate-500 {
     color: #ffffff !important;
 }
-
 

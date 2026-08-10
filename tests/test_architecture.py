@@ -83,7 +83,8 @@ def test_multimodal_ai_routes_use_shared_provider_resolvers():
 def test_paper_parsers_use_defensive_ai_json_parser():
     main_source = (PROJECT_ROOT / "main.py").read_text(encoding="utf-8")
 
-    assert main_source.count("parse_ai_json(raw_ai_text, raw_markdown=latex_content)") == 2
+    assert main_source.count("parse_ai_json(raw_ai_text, raw_markdown=latex_content)") == 1
+    assert main_source.count("parse_ai_json(raw_ai_text, raw_markdown=model_source)") == 1
 
 
 def test_backend_modules_and_cli_tools_live_in_packages():

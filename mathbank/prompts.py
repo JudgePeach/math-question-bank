@@ -177,9 +177,11 @@ def build_pdf_parse_system_prompt(curriculum: dict, generate_answers_bool: bool)
         f"{curriculum_text}\n"
         "【核心拆题与分类规范】:\n"
         "1. 字段分类：挑选精确匹配的学段 `category_compulsory` 与章节 `category_chapter`；题型 `question_type`（single_choice / multi_choice / fill_in_blank / detailed_answer）；难度 `difficulty`（easy_error / challenge / qiangji）；剥离题号与出处信息（如 2024·全国·高考真题）填入 `source`。\n"
-        "2. 文字与插图忠实保留：100% 完整保留题干所有汉字，绝对禁止删除“（如图）”、“如图所示”、“如右图所示”等几何指代描述！绝对保留 Markdown/LaTeX 原有的图片链接（如 `![](/static/uploads/...)` 或 `\\includegraphics{...}`），并将其 URL/文件名提取至 `referenced_images` 数组中。\n"
+        "2. 文字与插图忠实保留：100% 完整保留题干所有汉字，绝对禁止删除“（如图）”、“如图所示”、“如右图所示”等几何指代描述！绝对保留 Markdown/LaTeX 原有的图片链接（如 `![](/static/uploads/...)` 或 `\\includegraphics{...}`），并将其 URL/文件名提取至 `referenced_images` 数组中。如输入中出现 `[公式待核对]`、`[公式结构待核对]`、`[特殊字符待核对]` 或“公式无法安全提取”，必须原样保留标记及紧随的预览图，绝不得猜测、补写或替换公式。\n"
+        "2.1 公式锁定协议：若正文出现 `<mathbank-math id=\"MBM_...\">完整公式</mathbank-math>`，标签内公式在原位置完整可见，可用于理解、分类和解题，但它是只读来源。输出题干或原版答案时，必须在同一语义位置将每个标签替换为且仅替换为一次 `[[对应的完整 id]]`，例如 `[[MBM_xxx_0001]]`；禁止遗漏、重复、改名或把同一 id 放入多个题目。若需要生成新解析，可另写普通 LaTeX 公式，但不得在新解析中重复这些锁定 id。\n"
         "3. 公式格式化与排版环境：选择题选项统一格式化为 `\\begin{choices} \\item ... \\end{choices}` 环境；填空题下划线统一使用标准的 `\\fillin` 宏；文本加粗必须使用 `\\textbf{...}`（严禁双星号 `**`）。\n"
-        "4. 符号与公式自愈：识别 Unicode 字符（如 √、∈、α、β）规范化为 LaTeX 语法（如 `\\sqrt{...}`, `\\frac{...}{...}`, `\\in`, `\\alpha`）；识别 MathType 常见音译与分写简写（如希腊字母 `j` -> `\\varphi`, `p` -> `\\pi`；分式 `p6` -> `\\dfrac{\\pi}{6}`, `p3` -> `\\dfrac{\\pi}{3}`），结合语境自愈补全为完整数学公式。\n"
+        "4. 符号与公式规范：仅对含义明确的 Unicode 数学字符与结构（如 √、∈、α、β以及分子/分母边界清晰的分式）规范化为等价 LaTeX 语法（如 `\\sqrt{...}`, `\\frac{...}{...}`, `\\in`, `\\alpha`）。不得将普通字母 `j`、`p` 等根据语境猜成希腊字母或分式；不得根据题意自行重建原文中已损坏、缺失或标记待核对的公式。\n"
+        "4.1 PDF 跨页协议：`<!-- MATHBANK_PDF_PAGE:N -->` 仅表示后续原文来自 PDF 第 N 页，用于来源追踪，不是题目边界，也不得出现在输出题干中。若一道题的题干、公式、表格、选项或解析跨越页标，必须按上下文合并为同一道完整题目，禁止按页拆成两题。\n"
         "5. 换行与段落规范：不同小问（如 (1)、(2)、(i)、(ii)）、证明推导步骤与自然段落之间，必须使用双换行/空行（`\\n\\n`）分隔！\n"
         "6. 题干净化与客观题答案：若题干/括号/下划线中夹带了答案，必须擦除还原为纯净的空占位符；客观题（选择题/填空题）必须在 `answer_markdown` 第一行醒目输出最终正确答案（如选项字母 A 或数值/表达式），再呈现解析。\n"
         f"{answer_rule}\n\n"
@@ -204,8 +206,41 @@ def build_pdf_parse_system_prompt(curriculum: dict, generate_answers_bool: bool)
 
 
 def build_import_parse_system_prompt(curriculum: dict) -> str:
-    """Unified prompt for online text-paste and Word paper parsing."""
-    return build_pdf_parse_system_prompt(curriculum, generate_answers_bool=False)
+    """Prompt for pasted and uploaded single-file TeX paper parsing."""
+    return build_pdf_parse_system_prompt(curriculum, generate_answers_bool=False) + (
+        "\n【单文件 TeX 源码专项规则】:\n"
+        "1. 输入已由本地预处理器提取 document 正文并清除普通注释；不得把 documentclass、usepackage、页眉页脚或宏定义上下文当成题目。\n"
+        "2. 识别 question/problem/exercise/enumerate/item、parts/subparts/part、choices/choice/CorrectChoice、tasks/task 等常见结构。每个顶层题目只输出一次，小问必须保留在所属大题内。\n"
+        "3. `[MATHBANK_ORIGINAL_CORRECT]` 只表示原卷标注的正确选项：将其转换为带 `[EXTRACTED_ORIGINAL]` 的答案字母，题干 choices 中不得保留该标记。\n"
+        "4. solution/answer/analysis/proof 等原卷答案环境必须关联到前一道题并标记 `[EXTRACTED_ORIGINAL]`，不得把答案误拆成新题。\n"
+        "5. `[MATHBANK_TEX_MACRO_CONTEXT_BEGIN/END]` 之间仅是未展开宏的定义上下文。应将正文中的自定义宏转换为等价标准 LaTeX，不得把上下文或未定义宏原样写进题干。\n"
+        "6. 完整保留 tabular/array/matrix/cases/aligned 等数学和表格结构；TikZ 源码不得擅自改写，若无法安全转为题干插图则原样保留并提示人工核对。\n"
+        "7. includegraphics 的原始文件名必须同时放入 referenced_images；不要虚构、改名或丢弃图片引用。\n"
+        "8. input/include 指向的外部子文件在单文件模式下不可读取，不得根据文件名猜测缺失题目。\n"
+    )
+
+
+def build_latex_error_explanation_prompts(diagnostic: dict) -> tuple[str, str]:
+    """Build a privacy-minimized prompt for explaining one compile error."""
+    system_prompt = (
+        "你是一名高中数学试卷 LaTeX 排版故障解释助手。"
+        "请把编译错误解释成普通教师能看懂的中文，并给出可操作的修复方法。"
+        "只能依据提供的错误和局部源码判断，不得编造不存在的题目内容、宏包或文件。"
+        "不要重写整份试卷，不要改变数学含义。"
+        "必须只返回严格 JSON 对象，字段为 summary、cause、location、fixes、package、command；"
+        "fixes 必须是 1 至 4 条短句组成的数组。"
+    )
+    user_prompt = (
+        "请解释下面这一个 XeLaTeX 编译错误：\n"
+        f"本地初步判断：{diagnostic.get('summary', '')}\n"
+        f"技术错误：{diagnostic.get('technical_error', '')}\n"
+        f"疑似命令：{diagnostic.get('command', '')}\n"
+        f"疑似宏包：{diagnostic.get('package', '')}\n"
+        f"位置：{diagnostic.get('location', '')}\n"
+        "出错位置附近的最小源码片段：\n"
+        f"{diagnostic.get('source_context', '')}"
+    )
+    return system_prompt, user_prompt
 
 
 def build_tikz_draw_prompt(latex_content: str = "", multimodal: bool = True) -> str:

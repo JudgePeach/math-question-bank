@@ -49,10 +49,10 @@ if [ ! -d "venv" ]; then
     echo ""
 fi
 
-# 检查是否缺少必要的依赖（如新增的 pymupdf）
+# 检查是否缺少必要的依赖（包括 PDF 原生直提与 Word/MathType 安全解析依赖）
 echo "正在检查运行环境依赖是否完整..."
-if ! ./venv/bin/python -c "import fastapi, uvicorn, sqlalchemy, multipart, dotenv, requests, PIL, fitz" &>/dev/null; then
-    echo "检测到有新增或缺失的的依赖包，正在为您自动增量安装..."
+if ! ./venv/bin/python -c "import fastapi, uvicorn, sqlalchemy, multipart, dotenv, requests, PIL, fitz, docx, lxml, defusedxml, olefile, exceptiongroup, sniffio; import pdf_inspector" &>/dev/null; then
+    echo "检测到有新增或缺失的依赖包 (如 pdf-inspector)，正在为您自动增量安装..."
     ./venv/bin/pip install -r requirements.txt
     if [ $? -ne 0 ]; then
         echo "⚠️ 增量安装依赖包失败，请检查网络连接或代理设置。"

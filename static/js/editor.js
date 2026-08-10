@@ -1373,6 +1373,63 @@ const PAGE_LIMIT = 20;
         }
         window.renderEditorPaperMeta = renderEditorPaperMeta;
 
+        const choicesGridResizeObservers = new WeakMap();
+
+        function getPreferredChoicesColumns(grid) {
+            const stored = parseInt(grid.dataset.preferredColumns || '', 10);
+            if ([1, 2, 4].includes(stored)) return stored;
+            if (grid.classList.contains('grid-cols-1')) return 1;
+            if (grid.classList.contains('grid-cols-2')) return 2;
+            return 4;
+        }
+
+        function choicesGridOverflows(grid) {
+            return Array.from(grid.children).some(item => {
+                const content = item.querySelector('.choices-content') || item;
+                return content.scrollWidth > content.clientWidth + 1;
+            });
+        }
+
+        function adaptSingleChoicesGrid(grid) {
+            if (!grid || !grid.isConnected || grid.clientWidth <= 0) return;
+            const preferred = getPreferredChoicesColumns(grid);
+            const candidates = [4, 2, 1].filter(cols => cols <= preferred);
+            let selected = 1;
+
+            for (const columns of candidates) {
+                grid.style.setProperty('--choices-columns', String(columns));
+                // Force the browser to resolve the candidate track widths before
+                // comparing each rendered KaTeX option's real scroll width.
+                void grid.offsetWidth;
+                if (!choicesGridOverflows(grid)) {
+                    selected = columns;
+                    break;
+                }
+            }
+
+            grid.style.setProperty('--choices-columns', String(selected));
+            grid.dataset.choiceColumns = String(selected);
+        }
+
+        function adaptChoicesGridLayout(root) {
+            if (!root) return;
+            const grids = [];
+            if (root.matches && root.matches('.choices-grid')) grids.push(root);
+            if (root.querySelectorAll) grids.push(...root.querySelectorAll('.choices-grid'));
+
+            grids.forEach(grid => {
+                adaptSingleChoicesGrid(grid);
+                if (typeof ResizeObserver !== 'undefined' && !choicesGridResizeObservers.has(grid)) {
+                    const observer = new ResizeObserver(() => {
+                        window.requestAnimationFrame(() => adaptSingleChoicesGrid(grid));
+                    });
+                    observer.observe(grid);
+                    choicesGridResizeObservers.set(grid, observer);
+                }
+            });
+        }
+        window.adaptChoicesGridLayout = adaptChoicesGridLayout;
+
         function setupRealtimePreviews() {
             const editContent = document.getElementById('editContent');
             const editAnswer = document.getElementById('editAnswerMarkdown');
@@ -1423,6 +1480,8 @@ const PAGE_LIMIT = 20;
                         ],
                         throwOnError: false
                     });
+                    adaptChoicesGridLayout(previewContainer);
+                    adaptChoicesGridLayout(paperContainer);
                 } catch(e) {
                     console.error('KaTeX rendering error: ', e);
                 }
@@ -1687,7 +1746,8 @@ const PAGE_LIMIT = 20;
                     gridCols = "grid-cols-2";
                 }
 
-                let html = `<div class="grid ${gridCols} gap-2 my-2 select-none choices-grid items-baseline">`;
+                const preferredColumns = gridCols === 'grid-cols-1' ? 1 : (gridCols === 'grid-cols-2' ? 2 : 4);
+                let html = `<div class="grid ${gridCols} gap-2 my-2 select-none choices-grid items-baseline" data-preferred-columns="${preferredColumns}">`;
                 items.forEach((item, idx) => {
                     const label = labels[idx] || (idx + 1);
                     let cleanItem = item;
@@ -1695,15 +1755,103 @@ const PAGE_LIMIT = 20;
                     if (/\\(dfrac|frac|sqrt|cdot|times|pm|le|ge|ne|in|vec|mathbf|mathrm|text|alpha|beta|gamma|delta|theta|pi|varphi|omega)\b/.test(cleanItem) && !/\$/.test(cleanItem)) {
                         cleanItem = '$' + cleanItem + '$';
                     }
-                    html += `<div class="flex items-baseline"><span class="font-bold mr-1.5 text-slate-800 shrink-0">${label}.</span><span class="flex-1 [&>p]:m-0 [&>p]:inline">${cleanItem}</span></div>`;
+                    html += `<div class="choices-item flex items-baseline"><span class="choices-label font-bold mr-1.5 text-slate-800 shrink-0">${label}.</span><span class="choices-content flex-1 [&>p]:m-0 [&>p]:inline">${cleanItem}</span></div>`;
                 });
                 html += '</div>';
                 return html;
             });
 
-            // Process tabular environments (convert LaTeX tabular into modern responsive HTML tables with alignment, booktabs and multicolumn)
+            function splitLatexTableParts(source, mode) {
+                const parts = [];
+                let current = "";
+                let braceDepth = 0;
+                for (let i = 0; i < source.length; i++) {
+                    const ch = source[i];
+                    const next = source[i + 1];
+                    if (ch === "\\") {
+                        if (mode === "rows" && braceDepth === 0 && next === "\\") {
+                            parts.push(current);
+                            current = "";
+                            i++;
+                            continue;
+                        }
+                        if (mode === "rows" && braceDepth === 0 && source.slice(i, i + 3) === "\\cr") {
+                            parts.push(current);
+                            current = "";
+                            i += 2;
+                            continue;
+                        }
+                        current += ch;
+                        if (i + 1 < source.length) {
+                            current += source[i + 1];
+                            i++;
+                        }
+                        continue;
+                    }
+                    if (ch === "{") braceDepth++;
+                    else if (ch === "}" && braceDepth > 0) braceDepth--;
+                    if (mode === "cells" && ch === "&" && braceDepth === 0) {
+                        parts.push(current);
+                        current = "";
+                    } else {
+                        current += ch;
+                    }
+                }
+                parts.push(current);
+                return parts;
+            }
+
+            function readLatexGroup(source, startIndex) {
+                if (source[startIndex] !== "{") return null;
+                let depth = 0;
+                for (let i = startIndex; i < source.length; i++) {
+                    if (source[i] === "\\" && i + 1 < source.length) {
+                        i++;
+                        continue;
+                    }
+                    if (source[i] === "{") depth++;
+                    else if (source[i] === "}") {
+                        depth--;
+                        if (depth === 0) {
+                            return { value: source.slice(startIndex + 1, i), end: i + 1 };
+                        }
+                    }
+                }
+                return null;
+            }
+
+            function parseLeadingLatexCommand(source, command, groupCount) {
+                const trimmed = source.trim();
+                const prefix = "\\" + command;
+                if (!trimmed.startsWith(prefix)) return null;
+                let cursor = prefix.length;
+                const groups = [];
+                for (let i = 0; i < groupCount; i++) {
+                    while (/\s/.test(trimmed[cursor] || "")) cursor++;
+                    const group = readLatexGroup(trimmed, cursor);
+                    if (!group) return null;
+                    groups.push(group.value);
+                    cursor = group.end;
+                }
+                return { groups: groups, remainder: trimmed.slice(cursor).trim() };
+            }
+
+            function unescapeTableCellForHtml(value) {
+                return value.replace(/\\textbackslash\{\}/g, "&#92;")
+                            .replace(/\\textdollar\{\}/g, "$")
+                            .replace(/\\textasciicircum\{\}/g, "^")
+                            .replace(/\\textasciitilde\{\}/g, "~")
+                            .replace(/\\&/g, "&amp;")
+                            .replace(/\\%/g, "%")
+                            .replace(/\\#/g, "#")
+                            .replace(/\\_/g, "_")
+                            .replace(/\\\{/g, "{")
+                            .replace(/\\\}/g, "}");
+            }
+
+            // Process tabular environments with brace-aware cell splitting and
+            // native colspan/rowspan support for Word merged cells.
             tempText = tempText.replace(/\\begin\{tabular\*?\}\s*\{([^}]*?)\}([\s\S]*?)\\end\{tabular\*?\}/g, function(match, colSpec, inner) {
-                // 1. 解析列对齐与列边框规格
                 const alignList = [];
                 let colIdx = 0;
                 for (let i = 0; i < colSpec.length; i++) {
@@ -1713,59 +1861,85 @@ const PAGE_LIMIT = 20;
                         colIdx++;
                     }
                 }
-                
-                // 2. 清理行高间距修饰符如 \\\\[5pt] -> \\\\
+
                 const normalizedInner = inner.replace(/\\\\\[[^\]]*?\]/g, "\\\\");
-                
-                // 3. 逐行拆解与三线表感知
-                const rawRows = normalizedInner.split(/\\\\|\\cr/);
+                const rawRows = splitLatexTableParts(normalizedInner, "rows");
+                let activeRowspans = [];
                 let html = '<div class="overflow-x-auto my-3 max-w-full text-center select-none"><table class="inline-table mx-auto text-xs text-slate-700 dark:text-slate-200 border-collapse border border-slate-300 dark:border-slate-600 bg-slate-50/60 dark:bg-slate-800/40 rounded-lg shadow-2xs"><tbody>';
-                
+
                 rawRows.forEach((rowStr) => {
-                    let trimmed = rowStr.trim();
+                    const trimmed = rowStr.trim();
                     if (!trimmed) return;
-                    
-                    let isTopRule = /\\toprule/.test(trimmed);
-                    let isMidRule = /\\midrule/.test(trimmed);
-                    let isBottomRule = /\\bottomrule/.test(trimmed);
-                    
-                    let cleanRow = trimmed.replace(/\\(hline|toprule|midrule|bottomrule|cline\{[^}]*?\})/g, "").trim();
+
+                    const isTopRule = /\\toprule/.test(trimmed);
+                    const isMidRule = /\\midrule/.test(trimmed);
+                    const isBottomRule = /\\bottomrule/.test(trimmed);
+                    const cleanRow = trimmed.replace(/\\(?:hline|toprule|midrule|bottomrule)\b/g, "")
+                                            .replace(/\\cline\s*\{[^}]*?\}/g, "")
+                                            .trim();
                     if (!cleanRow) return;
-                    
+
                     let rowClass = "border-b border-slate-250 dark:border-slate-700 hover:bg-slate-100/40 dark:hover:bg-slate-700/30 transition-colors";
                     if (isTopRule) rowClass += " border-t-2 border-t-slate-800 dark:border-t-slate-200";
                     if (isMidRule) rowClass += " border-b-2 border-b-slate-600 dark:border-b-slate-400";
                     if (isBottomRule) rowClass += " border-b-2 border-b-slate-800 dark:border-b-slate-200";
-                    
+
                     html += '<tr class="' + rowClass + '">';
-                    
-                    // 拆分单元格并支持 \\multicolumn{N}{spec}{content}
-                    const rawCells = cleanRow.split("&");
+                    const rawCells = splitLatexTableParts(cleanRow, "cells");
+                    const nextActiveRowspans = activeRowspans.map((count) => Math.max(0, count - 1));
                     let currentCol = 0;
-                    
+
                     rawCells.forEach((cellStr) => {
                         let cell = cellStr.trim();
                         let colspan = 1;
+                        let rowspan = 1;
                         let alignClass = alignList[currentCol] || "text-center";
-                        
-                        const multiMatch = cell.match(/\\multicolumn\s*\{(\d+)\}\s*\{([^}]*?)\}\s*\{([\s\S]*?)\}/);
-                        if (multiMatch) {
-                            colspan = parseInt(multiMatch[1], 10) || 1;
-                            const mSpec = multiMatch[2].toLowerCase();
-                            if (mSpec.includes("l")) alignClass = "text-left";
-                            else if (mSpec.includes("r")) alignClass = "text-right";
+
+                        const multicolumn = parseLeadingLatexCommand(cell, "multicolumn", 3);
+                        if (multicolumn) {
+                            colspan = parseInt(multicolumn.groups[0], 10) || 1;
+                            const spec = multicolumn.groups[1].toLowerCase();
+                            if (spec.includes("l")) alignClass = "text-left";
+                            else if (spec.includes("r")) alignClass = "text-right";
                             else alignClass = "text-center";
-                            cell = multiMatch[3].trim();
+                            cell = (multicolumn.groups[2] + multicolumn.remainder).trim();
                         }
-                        
-                        let borderClass = "border border-slate-250 dark:border-slate-650";
-                        html += '<td colspan="' + colspan + '" class="px-3 py-1.5 ' + borderClass + ' ' + alignClass + ' font-normal">' + cell + '</td>';
+
+                        const multirow = parseLeadingLatexCommand(cell, "multirow", 3);
+                        if (multirow) {
+                            rowspan = parseInt(multirow.groups[0], 10) || 1;
+                            cell = (multirow.groups[2] + multirow.remainder).trim();
+                        }
+
+                        let coveredByPriorRow = true;
+                        for (let offset = 0; offset < colspan; offset++) {
+                            if (!(activeRowspans[currentCol + offset] > 0)) {
+                                coveredByPriorRow = false;
+                                break;
+                            }
+                        }
+                        if (!cell && coveredByPriorRow) {
+                            currentCol += colspan;
+                            return;
+                        }
+
+                        if (rowspan > 1) {
+                            for (let offset = 0; offset < colspan; offset++) {
+                                nextActiveRowspans[currentCol + offset] = rowspan - 1;
+                            }
+                        }
+
+                        cell = unescapeTableCellForHtml(cell);
+                        const borderClass = "border border-slate-250 dark:border-slate-650";
+                        const rowspanAttr = rowspan > 1 ? ' rowspan="' + rowspan + '"' : "";
+                        html += '<td colspan="' + colspan + '"' + rowspanAttr + ' class="px-3 py-1.5 ' + borderClass + ' ' + alignClass + ' font-normal align-middle">' + cell + '</td>';
                         currentCol += colspan;
                     });
-                    
+
+                    activeRowspans = nextActiveRowspans;
                     html += '</tr>';
                 });
-                
+
                 html += '</tbody></table></div>';
                 return html;
             });
