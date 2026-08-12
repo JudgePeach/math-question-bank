@@ -257,6 +257,43 @@ def test_reviewed_certifi_tests_are_pruned_before_strict_release_check(tmp_path)
     assert not certifi_tests.exists()
 
 
+def test_reviewed_dependency_non_runtime_payloads_are_pruned(tmp_path):
+    _make_minimal_macos_tree(tmp_path)
+    site_packages = tmp_path / "python" / "site-packages"
+    payloads = (
+        site_packages / "colorama" / "tests",
+        site_packages / "fastapi" / ".agents",
+        site_packages / "greenlet" / "tests",
+    )
+    for payload in payloads:
+        payload.mkdir(parents=True)
+        (payload / "fixture.txt").write_text("non-runtime\n", encoding="utf-8")
+
+    with pytest.raises(RuntimeError, match="forbidden artifacts"):
+        build_release.assert_release_tree_clean(tmp_path, "macos")
+
+    build_release._prune_dependency_test_artifacts(site_packages)
+    build_release.assert_release_tree_clean(tmp_path, "macos")
+    assert all(not payload.exists() for payload in payloads)
+
+
+def test_docx_relationship_metadata_is_allowed(tmp_path):
+    _make_minimal_macos_tree(tmp_path)
+    relationship_file = (
+        tmp_path
+        / "python"
+        / "site-packages"
+        / "docx"
+        / "templates"
+        / "default-docx-template"
+        / "_rels"
+        / ".rels"
+    )
+    relationship_file.parent.mkdir(parents=True)
+    relationship_file.write_text("relationships\n", encoding="utf-8")
+    build_release.assert_release_tree_clean(tmp_path, "macos")
+
+
 def test_finished_archive_crc_manifest_and_sidecar(tmp_path):
     staging = tmp_path / "staging"
     _make_minimal_macos_tree(staging)

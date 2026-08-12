@@ -154,6 +154,7 @@
 ## 5. 启动诊断与双平台 Release 构建
 - **启动诊断**：服务启动打印 Python 环境、PDF Inspector、PyMuPDF、XeLaTeX、Pandoc 及数据库状态。
 - **打包脚本 (`scripts/build_release.py`)**：构建 Windows (`MathBank-Windows-x64.zip`，内嵌 Python 3.10 + 依赖 + `.bat`) 与 macOS (`MathBank-macOS.zip`，含 `.command`) 发布包。Python 嵌入运行时与官方 CPython NuGet 包必须使用默认 TLS、固定可信 SHA-256 和原子下载，缓存每次复验；校验缺失或不匹配必须失败关闭。应用文件采用显式白名单，禁止测试、隐藏、数据库、日志和上传残留。打包前必须解析 Release 关键函数的类型注解，并在可用时执行 Python 3.10 导入检查；构建后执行源码/运行时可行 smoke，写入 `RELEASE-MANIFEST.json`，完成 ZIP CRC 检查并依据包内清单逐项重算文件 SHA-256，最后生成 `.zip.sha256`。任何构建异常必须以非零状态退出，禁止生成或发布启动即失败的静默坏包。
+- **依赖运行时净化**：Release 构建仅按 `scripts/build_release.py` 中的显式审查清单移除固定依赖 wheel 携带的非运行时测试/代理文档目录（如 `certifi`、`colorama`、`fastapi`、`greenlet`）；Word 模板所需的 `.rels` 关系元数据必须保留并纳入清单校验。
 - **依赖与目标平台**：`requirements.txt` 与 `requirements-dev.txt` 使用精确版本；Windows 交叉构建额外读取 `requirements-windows.txt`，目标平台依赖必须在共享运行时锁或 Windows 锁中显式固定，禁止依赖构建主机的 `sys_platform` marker。构建下载 wheel 必须使用 `sys.executable -m pip`。
 
 ## 6. 界面设计与交互规范

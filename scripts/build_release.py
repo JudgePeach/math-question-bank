@@ -64,7 +64,7 @@ STATIC_ALLOWLIST = (
     "js",
     "lib",
 )
-HIDDEN_FILE_ALLOWLIST = {".env.example", ".gitkeep"}
+HIDDEN_FILE_ALLOWLIST = {".env.example", ".gitkeep", ".rels"}
 FORBIDDEN_RELEASE_PARTS = {
     ".DS_Store",
     ".git",
@@ -94,7 +94,15 @@ RELEASE_OUTPUT_NAMES = (
     "MathBank-macOS.zip",
     "MathBank-macOS.zip.sha256",
 )
-DEPENDENCY_TEST_PATHS = (Path("certifi", "tests"),)
+# These directories are shipped by pinned wheels but are not needed at runtime.
+# Keep the list explicit so a newly introduced package payload still fails the
+# release allowlist review instead of being silently discarded.
+DEPENDENCY_TEST_PATHS = (
+    Path("certifi", "tests"),
+    Path("colorama", "tests"),
+    Path("fastapi", ".agents"),
+    Path("greenlet", "tests"),
+)
 OVERLAY_PROTECTED_PATHS = (
     ".env",
     ".system_generated",
