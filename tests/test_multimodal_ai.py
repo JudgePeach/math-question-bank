@@ -43,6 +43,34 @@ def test_ocr_request_uses_resolved_multimodal_provider(tmp_path):
     assert image_item["image_url"]["url"].startswith("data:image/png;base64,")
 
 
+def test_bailian_ocr_disables_thinking_and_uses_completion_cap(tmp_path):
+    image_path = tmp_path / "question.png"
+    image_path.write_bytes(b"fake-image-bytes")
+    provider = resolve_ocr_provider(
+        "bailian",
+        {
+            "ALI_BAILIAN_API_KEY": "ocr-key",
+            "ALI_BAILIAN_OCR_MODEL": "qwen3.7-flash",
+        },
+    )
+    response = MagicMock(status_code=200)
+    response.json.return_value = {
+        "choices": [{"message": {"content": "识别结果 $x=1$"}}]
+    }
+
+    with patch(
+        "mathbank.ai_http.robust_request_post", return_value=response
+    ) as mock_post:
+        result = ocr_via_provider(str(image_path), provider)
+
+    assert result == "识别结果 $x=1$"
+    payload = mock_post.call_args.kwargs["json"]
+    assert payload["enable_thinking"] is False
+    assert payload["max_completion_tokens"] == 16384
+    assert "thinking_budget" not in payload
+    assert "reasoning_effort" not in payload
+
+
 def test_draw_request_strips_siliconflow_provider_prefix(tmp_path):
     image_path = tmp_path / "diagram.png"
     image_path.write_bytes(b"fake-diagram-bytes")
@@ -135,5 +163,9 @@ def test_tikz_correction_uses_resolved_bailian_provider(tmp_path):
     assert result["status"] == "success"
     args, kwargs = mock_post.call_args
     assert args[0] == "https://draw.example/v1/chat/completions"
-    assert kwargs["json"]["model"] == "qwen-max"
+    assert kwargs["json"]["model"] == "qwen3.7-max"
+    assert kwargs["json"]["enable_thinking"] is True
+    assert kwargs["json"]["thinking_budget"] == 8192
+    assert kwargs["json"]["max_completion_tokens"] == 16384
+    assert "reasoning_effort" not in kwargs["json"]
     assert len(kwargs["json"]["messages"][0]["content"]) == 2

@@ -80,6 +80,27 @@ def test_multimodal_ai_routes_use_shared_provider_resolvers():
     assert main_source.count("resolve_draw_provider(prefer_draw)") == 2
 
 
+def test_bailian_model_presets_are_current_and_task_specific():
+    api_source = (STATIC_JS_DIR / "api.js").read_text(encoding="utf-8")
+
+    assert "const BAILIAN_MODEL_PRESETS_BY_TASK" in api_source
+    assert "const BAILIAN_MODEL_DEFAULTS_BY_TASK" in api_source
+    for task_key in ("solve", "parse", "classify", "ocr", "draw"):
+        assert f"{task_key}:" in api_source
+    for current_model in ("qwen3.7-flash", "qwen3.7-plus", "qwen3.8-max"):
+        assert current_model in api_source
+    for removed_preset in (
+        '"qwen3-vl-flash"',
+        '"qwen-vl-plus"',
+        '"qwen-vl-max"',
+        '"qwen-max"',
+        '"qwen-plus"',
+        '"qwen3.5-ocr"',
+    ):
+        assert removed_preset not in api_source
+    assert "models = [selectedValue, ...models]" in api_source
+
+
 def test_paper_parsers_use_defensive_ai_json_parser():
     main_source = (PROJECT_ROOT / "main.py").read_text(encoding="utf-8")
 

@@ -50,6 +50,7 @@ from mathbank.ai_http import (
 )
 from mathbank.ai_providers import (
     MultimodalProviderConfig,
+    apply_bailian_thinking_policy,
     resolve_draw_provider,
     resolve_ocr_fallbacks,
     resolve_ocr_provider,
@@ -617,6 +618,13 @@ def ocr_via_provider(
         payload["reasoning_effort"] = provider.reasoning_effort.lower()
         payload["enable_thinking"] = True
 
+    payload = apply_bailian_thinking_policy(
+        payload,
+        provider_code=provider.provider_code,
+        model_name=provider.model_name,
+        task="ocr",
+    )
+
     max_retries = 3
     timeout = 240
     response = None
@@ -728,6 +736,13 @@ def draw_tikz_via_high_model(image_path: str, prefer_draw: str, latex_content: s
         ],
         "stream": False
     }
+
+    payload = apply_bailian_thinking_policy(
+        payload,
+        provider_code=provider.provider_code,
+        model_name=provider.model_name,
+        task="draw",
+    )
 
     try:
         response = post_chat_completion(
@@ -957,7 +972,7 @@ async def ai_solve(
         is_deepseek = ("deepseek" in model_name.lower() or "deepseek" in api_base.lower()) and "deepseek-chat" not in model_name.lower() and "deepseek-reasoner" not in model_name.lower()
         is_siliconflow = api_base and "siliconflow" in api_base.lower()
         
-        is_bailian = api_base and "aliyuncs.com" in api_base.lower()
+        is_bailian = provider.provider_code == "bailian"
         if is_bailian:
             # Connect the front-end '深度思考' toggle button to Alibaba Bailian's 'enable_thinking' API parameter
             if thinking == "enabled":
@@ -993,6 +1008,14 @@ async def ai_solve(
         if explicit_effort and explicit_effort != "default":
             data["reasoning_effort"] = explicit_effort.lower()
             data["enable_thinking"] = True
+
+        data = apply_bailian_thinking_policy(
+            data,
+            provider_code=provider.provider_code,
+            model_name=model_name,
+            task="solve",
+            thinking_enabled=thinking == "enabled",
+        )
             
         # When thinking mode is active, temperature is ignored/deprecated by DeepSeek.
         # But when thinking is disabled or non-DeepSeek model, specify it.
@@ -1131,7 +1154,7 @@ def get_settings():
     
     prefer_engine = os.getenv("OCR_PREFER_ENGINE", "siliconflow")
     sf_model = os.getenv("SILICONFLOW_OCR_MODEL", "Qwen/Qwen3-VL-8B-Instruct")
-    ali_model = os.getenv("ALI_BAILIAN_OCR_MODEL", "qwen3-vl-flash")
+    ali_model = os.getenv("ALI_BAILIAN_OCR_MODEL", "qwen3.7-flash")
     prefer_solve_model = os.getenv("PREFER_SOLVE_MODEL", "deepseek-v4-pro")
     prefer_parse_model = os.getenv("PREFER_PARSE_MODEL", "deepseek-v4-flash")
     prefer_classify_model = os.getenv("PREFER_CLASSIFY_MODEL") or os.getenv("DEEPSEEK_CLASSIFY_MODEL", "deepseek-v4-flash")
@@ -1189,7 +1212,7 @@ async def save_settings(
     zhongzhan_claude_ocr_model: str = Form(""),
     prefer_engine: str = Form("siliconflow"),
     siliconflow_model: str = Form("Qwen/Qwen3-VL-8B-Instruct"),
-    ali_bailian_model: str = Form("qwen3-vl-flash"),
+    ali_bailian_model: str = Form("qwen3.7-flash"),
     prefer_solve_model: str = Form("deepseek-v4-pro"),
     prefer_parse_model: str = Form("deepseek-v4-flash"),
     prefer_classify_model: str = Form("deepseek-v4-flash"),
@@ -1700,6 +1723,13 @@ def correct_tikz_endpoint(
         ],
         "stream": False
     }
+
+    payload = apply_bailian_thinking_policy(
+        payload,
+        provider_code=draw_provider.provider_code,
+        model_name=draw_provider.model_name,
+        task="draw",
+    )
 
     try:
         response = post_chat_completion(
@@ -2682,6 +2712,13 @@ async def ai_classify(content: str = Form(...)):
             data["thinking"] = {
                 "type": "disabled"
             }
+
+        data = apply_bailian_thinking_policy(
+            data,
+            provider_code=provider.provider_code,
+            model_name=model_name,
+            task="classify",
+        )
         
         
         response = post_chat_completion(
@@ -2870,6 +2907,13 @@ def parse_paper_text_internal(
         data["thinking"] = {
             "type": "disabled"
         }
+
+    data = apply_bailian_thinking_policy(
+        data,
+        provider_code=provider.provider_code,
+        model_name=model_name,
+        task="parse",
+    )
     
     response = post_chat_completion(
         provider,
@@ -2983,6 +3027,13 @@ async def ai_parse_paper(
             data["thinking"] = {
                 "type": "disabled"
             }
+
+        data = apply_bailian_thinking_policy(
+            data,
+            provider_code=provider.provider_code,
+            model_name=model_name,
+            task="parse",
+        )
         
         
         response = post_chat_completion(
@@ -3488,47 +3539,56 @@ def ai_select_paper(payload: dict, db: Session = Depends(get_db)):
         api_base = None
         model_name = target_model
         provider_name = "DeepSeek"
+        provider_code = "deepseek"
 
         if "/" in target_model:
             parts = target_model.split("/", 1)
             prefix, model_name = parts[0].upper(), parts[1]
             if prefix == "SILICONFLOW":
+                provider_code = "siliconflow"
                 api_key = os.getenv("SILICONFLOW_API_KEY")
                 api_base = "https://api.siliconflow.cn/v1"
                 provider_name = "硅基流动"
             elif prefix == "BAILIAN":
+                provider_code = "bailian"
                 api_key = os.getenv("ALI_BAILIAN_API_KEY")
                 api_base = os.getenv("ALI_BAILIAN_API_BASE", "https://dashscope.aliyuncs.com/compatible-mode/v1")
                 provider_name = "阿里百炼"
-                if model_name == "qwen3.7-max": model_name = "qwen-max"
             elif prefix == "DEEPSEEK":
+                provider_code = "deepseek"
                 api_key = os.getenv("DEEPSEEK_API_KEY")
                 api_base = os.getenv("DEEPSEEK_API_BASE", "https://api.deepseek.com")
                 provider_name = "DeepSeek"
             elif prefix == "ZHONGZHAN_GPT":
+                provider_code = "zhongzhan_gpt"
                 api_key = os.getenv("ZHONGZHAN_GPT_API_KEY")
                 api_base = os.getenv("ZHONGZHAN_GPT_BASE_URL", "https://api.openai.com/v1")
                 provider_name = "中转站 A"
             elif prefix == "ZHONGZHAN_CLAUDE":
+                provider_code = "zhongzhan_claude"
                 api_key = os.getenv("ZHONGZHAN_CLAUDE_API_KEY")
                 api_base = os.getenv("ZHONGZHAN_CLAUDE_BASE_URL", "https://api.openai.com/v1")
                 provider_name = "中转站 B"
         else:
             if "qwen" in target_model.lower():
+                provider_code = "bailian"
                 api_key = os.getenv("ALI_BAILIAN_API_KEY")
                 api_base = os.getenv("ALI_BAILIAN_API_BASE", "https://dashscope.aliyuncs.com/compatible-mode/v1")
                 provider_name = "阿里百炼"
-                model_name = "qwen-max" if target_model == "qwen3.7-max" else target_model
+                model_name = target_model
             else:
                 api_key = os.getenv("DEEPSEEK_API_KEY") or os.getenv("ALI_BAILIAN_API_KEY") or os.getenv("SILICONFLOW_API_KEY")
                 if os.getenv("DEEPSEEK_API_KEY"):
+                    provider_code = "deepseek"
                     api_base = os.getenv("DEEPSEEK_API_BASE", "https://api.deepseek.com")
                     provider_name = "DeepSeek"
                 elif os.getenv("ALI_BAILIAN_API_KEY"):
+                    provider_code = "bailian"
                     api_base = os.getenv("ALI_BAILIAN_API_BASE", "https://dashscope.aliyuncs.com/compatible-mode/v1")
                     provider_name = "阿里百炼"
                     model_name = "qwen-max"
                 elif os.getenv("SILICONFLOW_API_KEY"):
+                    provider_code = "siliconflow"
                     api_base = "https://api.siliconflow.cn/v1"
                     provider_name = "硅基流动"
                     model_name = "Qwen/Qwen2.5-72B-Instruct"
@@ -3569,6 +3629,12 @@ def ai_select_paper(payload: dict, db: Session = Depends(get_db)):
                         ],
                         "temperature": 0.3
                     }
+                    payload_data = apply_bailian_thinking_policy(
+                        payload_data,
+                        provider_code=provider_code,
+                        model_name=model_name,
+                        task="paper_selection",
+                    )
                     response = robust_request_post(url, headers=headers, json=payload_data, timeout=20)
                     if response.status_code == 200:
                         res_json = response.json()
@@ -4579,6 +4645,13 @@ def explain_latex_compile_error(log_text: str, tex_content: str) -> dict:
     ) and provider.model_name not in {"deepseek-chat", "deepseek-reasoner"}
     if is_deepseek:
         payload["thinking"] = {"type": "disabled"}
+
+    payload = apply_bailian_thinking_policy(
+        payload,
+        provider_code=provider.provider_code,
+        model_name=provider.model_name,
+        task="latex_diagnostic",
+    )
 
     try:
         response = post_chat_completion(

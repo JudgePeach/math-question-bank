@@ -160,7 +160,11 @@ def test_ai_explanation_uses_parse_model_and_minimal_context():
     assert result["ai_used"] is True
     assert result["summary"] == "划线命令缺少支持"
     sent_payload = request_mock.call_args.args[1]
-    assert sent_payload["model"] == "qwen-max"
+    assert sent_payload["model"] == "qwen3.7-max"
+    assert sent_payload["enable_thinking"] is False
+    assert "reasoning_effort" not in sent_payload
+    assert "thinking_budget" not in sent_payload
+    assert "max_tokens" not in sent_payload
     sent_context = sent_payload["messages"][1]["content"]
     assert "题目公式" in sent_context
     assert "不应发送的整份试卷机密" not in sent_context

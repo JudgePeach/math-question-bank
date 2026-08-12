@@ -288,6 +288,52 @@ def test_api_ai_solve_with_ocr(client):
             assert "已知 $f(x) = x^2$" in user_msg
 
 
+@pytest.mark.parametrize(
+    ("model", "thinking", "expected_limit", "expected_budget", "expected_effort"),
+    [
+        ("BAILIAN/qwen3.7-plus", "enabled", 32768, 16384, None),
+        ("BAILIAN/qwen3.7-plus", "disabled", 16384, None, None),
+        ("BAILIAN/qwen3.8-max", "enabled", 32768, None, "medium"),
+    ],
+)
+def test_bailian_solve_uses_model_specific_thinking_policy(
+    client, model, thinking, expected_limit, expected_budget, expected_effort
+):
+    from unittest.mock import MagicMock, patch
+
+    response = MagicMock(status_code=200)
+    response.json.return_value = {
+        "choices": [{"message": {"content": "【参考答案】：2"}}]
+    }
+    with patch.dict(os.environ, {"ALI_BAILIAN_API_KEY": "fake-key"}):
+        with patch(
+            "mathbank.ai_http.robust_request_post", return_value=response
+        ) as mock_post:
+            result = client.post(
+                "/api/ai/solve",
+                data={
+                    "content": "求 $1+1$。",
+                    "thinking": thinking,
+                    "model": model,
+                },
+                headers={"X-Local-Token": LOCAL_TOKEN},
+            )
+
+    assert result.status_code == 200
+    sent = mock_post.call_args.kwargs["json"]
+    assert sent["enable_thinking"] is (thinking == "enabled")
+    assert sent["max_completion_tokens"] == expected_limit
+    assert "max_tokens" not in sent
+    if expected_budget is None:
+        assert "thinking_budget" not in sent
+    else:
+        assert sent["thinking_budget"] == expected_budget
+    if expected_effort is None:
+        assert "reasoning_effort" not in sent
+    else:
+        assert sent["reasoning_effort"] == expected_effort
+
+
 def test_parse_paper_flows_use_shared_provider_resolution(client):
     from unittest.mock import MagicMock, patch
     import re
@@ -363,7 +409,11 @@ def test_parse_paper_flows_use_shared_provider_resolution(client):
     for call in mock_post.call_args_list:
         args, kwargs = call
         assert args[0] == "https://bailian.example/v1/chat/completions"
-        assert kwargs["json"]["model"] == "qwen-max"
+        assert kwargs["json"]["model"] == "qwen3.7-max"
+        assert kwargs["json"]["enable_thinking"] is False
+        assert "reasoning_effort" not in kwargs["json"]
+        assert "thinking_budget" not in kwargs["json"]
+        assert "max_tokens" not in kwargs["json"]
         assert kwargs["timeout"] == 180
 
 def test_figure_align_api(client):

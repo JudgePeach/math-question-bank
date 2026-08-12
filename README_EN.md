@@ -122,7 +122,7 @@ Directly using [DeepSeek Official Open Platform](https://platform.deepseek.com/)
 
 ### 2. 📷 Default Formula OCR Model (Must use Multimodal VLM)
 * **Must use Multimodal LLMs**: Formula OCR reads images, so **pure language models (like DeepSeek V3/R1 text-only) cannot be used for OCR**.
-* **Domestic Model Options**: Recommend **Qwen-VL** or **MIMO** series. E.g., registering via [SiliconFlow Referral Link](https://cloud.siliconflow.cn/i/hkgjSWrg) grants a **¥16 voucher**; or register on [Aliyun Bailian Platform](https://bailian.console.aliyun.com/), which offers a **3-month free trial quota** for multimodal models. `Qwen/Qwen3-VL-8B-Instruct` or `qwen3-vl-flash` yields strong results.
+* **Domestic Model Options**: Recommend **Qwen-VL** or **MIMO** series. E.g., registering via [SiliconFlow Referral Link](https://cloud.siliconflow.cn/i/hkgjSWrg) grants a **¥16 voucher**; or register on [Aliyun Bailian Platform](https://bailian.console.aliyun.com/), which offers a **3-month free trial quota** for multimodal models. Use `Qwen/Qwen3-VL-8B-Instruct` on SiliconFlow; on Bailian, use `qwen3.7-flash` for routine OCR, paper parsing, and classification, or `qwen3.7-plus` for solving and TikZ drawing.
 * **Overseas / Aggregator Providers**: If you have access to API relay platforms, **`GPT-5.6 Luna` is strongly recommended**! Recent price drops make GPT-5.6 Luna perform significantly better than most models in formula extraction accuracy while being **cheaper than Qwen**, making it the top choice for OCR.
 
 ### 3. 🎨 TikZ Geometry Diagram Redrawing Model (`PREFER_DRAW_MODEL`)

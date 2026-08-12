@@ -1,6 +1,7 @@
 import pytest
 
 from mathbank.ai_providers import (
+    apply_bailian_thinking_policy,
     parse_model_and_effort,
     resolve_draw_provider,
     resolve_ocr_fallbacks,
@@ -75,7 +76,7 @@ def test_explicit_text_providers_resolve_to_expected_defaults(
     assert "secret-value" not in repr(config)
 
 
-def test_unprefixed_models_keep_legacy_provider_selection_and_alias():
+def test_unprefixed_models_keep_provider_selection_and_model_id():
     environment = {
         "ALI_BAILIAN_API_KEY": "bailian-key",
         "DEEPSEEK_API_KEY": "deepseek-key",
@@ -86,7 +87,7 @@ def test_unprefixed_models_keep_legacy_provider_selection_and_alias():
 
     assert (qwen.provider_code, qwen.model_name, qwen.api_key) == (
         "bailian",
-        "qwen-max",
+        "qwen3.7-max",
         "bailian-key",
     )
     assert (deepseek.provider_code, deepseek.model_name, deepseek.api_key) == (
@@ -121,7 +122,7 @@ def test_effort_parsing_can_be_disabled_for_legacy_call_sites():
     assert config.reasoning_effort is None
 
 
-def test_bailian_alias_keeps_legacy_order_when_effort_is_present():
+def test_bailian_model_id_is_preserved_after_effort_is_removed():
     config = resolve_text_provider(
         "BAILIAN/qwen3.7-max:high",
         {"ALI_BAILIAN_API_KEY": "key"},
@@ -129,6 +130,118 @@ def test_bailian_alias_keeps_legacy_order_when_effort_is_present():
 
     assert config.model_name == "qwen3.7-max"
     assert config.reasoning_effort == "high"
+
+
+@pytest.mark.parametrize(
+    "provider_code",
+    ["deepseek", "siliconflow", "zhongzhan_gpt", "zhongzhan_claude"],
+)
+def test_bailian_thinking_policy_does_not_change_other_providers(provider_code):
+    original = {
+        "model": "qwen3.8-max",
+        "max_tokens": 4096,
+        "reasoning_effort": "high",
+        "enable_thinking": True,
+    }
+
+    result = apply_bailian_thinking_policy(
+        original,
+        provider_code=provider_code,
+        model_name="qwen3.8-max",
+        task="solve",
+        thinking_enabled=False,
+    )
+
+    assert result == original
+    assert result is not original
+
+
+def test_bailian_thinking_policy_preserves_legacy_custom_models():
+    original = {"model": "qwen-vl-plus", "max_tokens": 2048}
+
+    result = apply_bailian_thinking_policy(
+        original,
+        provider_code="bailian",
+        model_name="qwen-vl-plus",
+        task="ocr",
+    )
+
+    assert result == original
+
+
+@pytest.mark.parametrize(
+    ("enabled", "expected_limit"),
+    [(True, 32768), (False, 16384)],
+)
+def test_qwen37_solve_uses_bounded_thinking_budget(enabled, expected_limit):
+    result = apply_bailian_thinking_policy(
+        {
+            "model": "qwen3.7-plus",
+            "max_tokens": 8192,
+            "reasoning_effort": "high",
+        },
+        provider_code="bailian",
+        model_name="qwen3.7-plus",
+        task="solve",
+        thinking_enabled=enabled,
+    )
+
+    assert result["enable_thinking"] is enabled
+    assert result["max_completion_tokens"] == expected_limit
+    assert "max_tokens" not in result
+    assert "reasoning_effort" not in result
+    if enabled:
+        assert result["thinking_budget"] == 16384
+    else:
+        assert "thinking_budget" not in result
+
+
+def test_qwen38_draw_uses_medium_effort_without_thinking_budget():
+    result = apply_bailian_thinking_policy(
+        {"model": "qwen3.8-max", "thinking_budget": 99999},
+        provider_code="bailian",
+        model_name="qwen3.8-max",
+        task="draw",
+    )
+
+    assert result["enable_thinking"] is True
+    assert result["reasoning_effort"] == "medium"
+    assert result["max_completion_tokens"] == 32768
+    assert "thinking_budget" not in result
+
+
+@pytest.mark.parametrize(
+    "task",
+    ["classify", "parse", "paper_selection", "latex_diagnostic"],
+)
+def test_bailian_structured_tasks_disable_thinking_and_old_token_cap(task):
+    result = apply_bailian_thinking_policy(
+        {
+            "model": "qwen3.7-flash",
+            "max_tokens": 512,
+            "reasoning_effort": "high",
+        },
+        provider_code="bailian",
+        model_name="qwen3.7-flash",
+        task=task,
+    )
+
+    assert result["enable_thinking"] is False
+    assert "max_tokens" not in result
+    assert "reasoning_effort" not in result
+    assert "thinking_budget" not in result
+
+
+def test_bailian_ocr_disables_thinking_with_bounded_completion():
+    result = apply_bailian_thinking_policy(
+        {"model": "qwen3.7-flash"},
+        provider_code="bailian",
+        model_name="qwen3.7-flash",
+        task="ocr",
+    )
+
+    assert result["enable_thinking"] is False
+    assert result["max_completion_tokens"] == 16384
 
 
 def test_unknown_explicit_prefix_is_not_silently_rerouted():

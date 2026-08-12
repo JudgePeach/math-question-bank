@@ -8,12 +8,85 @@ model name, and optional reasoning effort.
 from dataclasses import dataclass, field
 import os
 import re
-from typing import List, Mapping, Optional, Tuple
+from typing import Any, Dict, List, Mapping, Optional, Tuple
 
 
 _VALID_REASONING_EFFORTS = frozenset(
     {"high", "medium", "low", "xhigh", "max", "default"}
 )
+
+_BAILIAN_NO_THINKING_TASKS = frozenset(
+    {"classify", "parse", "paper_selection", "latex_diagnostic"}
+)
+
+
+def apply_bailian_thinking_policy(
+    payload: Mapping[str, Any],
+    *,
+    provider_code: str,
+    model_name: str,
+    task: str,
+    thinking_enabled: Optional[bool] = None,
+) -> Dict[str, Any]:
+    """Apply task-specific reasoning parameters only to current Bailian Qwen.
+
+    Other providers and legacy/custom Bailian models are returned unchanged so
+    this policy cannot alter DeepSeek, SiliconFlow, transit, or saved legacy
+    behavior. Qwen3.7 uses ``thinking_budget`` while Qwen3.8 Max uses
+    ``reasoning_effort``; the two controls are never sent together.
+    """
+
+    result = dict(payload)
+    normalized_provider = str(provider_code or "").strip().lower()
+    normalized_model = str(model_name or "").strip().lower()
+    is_qwen37 = normalized_model.startswith("qwen3.7-")
+    is_qwen38_max = normalized_model == "qwen3.8-max" or normalized_model.startswith(
+        "qwen3.8-max-"
+    )
+    if normalized_provider != "bailian" or not (is_qwen37 or is_qwen38_max):
+        return result
+
+    normalized_task = str(task or "").strip().lower()
+    result.pop("reasoning_effort", None)
+    result.pop("thinking_budget", None)
+    result.pop("max_completion_tokens", None)
+    # Current Qwen APIs deprecate max_tokens; structured JSON tasks should not
+    # impose the old answer-only cap because it can truncate valid JSON.
+    result.pop("max_tokens", None)
+
+    if normalized_task == "ocr":
+        result["enable_thinking"] = False
+        result["max_completion_tokens"] = 16384
+        return result
+
+    if normalized_task in _BAILIAN_NO_THINKING_TASKS:
+        result["enable_thinking"] = False
+        return result
+
+    if normalized_task == "solve":
+        enabled = bool(thinking_enabled)
+        result["enable_thinking"] = enabled
+        result["max_completion_tokens"] = 32768 if enabled else 16384
+        if enabled:
+            if is_qwen38_max:
+                result["reasoning_effort"] = "medium"
+            else:
+                result["thinking_budget"] = 16384
+        return result
+
+    if normalized_task == "draw":
+        result["enable_thinking"] = True
+        if is_qwen38_max:
+            # Medium effort maps to a 16K reasoning budget, so reserve another
+            # 16K for the emitted TikZ source itself.
+            result["reasoning_effort"] = "medium"
+            result["max_completion_tokens"] = 32768
+        else:
+            result["thinking_budget"] = 8192
+            result["max_completion_tokens"] = 16384
+        return result
+
+    raise ValueError(f"未知的百炼思考策略任务: {task}")
 
 
 @dataclass(frozen=True)
@@ -182,11 +255,6 @@ def resolve_text_provider(
     else:
         spec = _PROVIDER_SPECS["DEEPSEEK"]
 
-    # Keep the legacy order: provider-specific aliases were applied before the
-    # optional effort suffix was removed by the solve route.
-    if spec.code == "bailian" and model_name == "qwen3.7-max":
-        model_name = "qwen-max"
-
     if parse_effort:
         model_name, reasoning_effort = parse_model_and_effort(model_name)
     else:
@@ -235,7 +303,7 @@ def resolve_ocr_provider(
             api_key=environment.get("ALI_BAILIAN_API_KEY"),
             # Preserve the OCR flow's historical fixed compatible-mode URL.
             api_base="https://dashscope.aliyuncs.com/compatible-mode/v1",
-            model_name=environment.get("ALI_BAILIAN_OCR_MODEL", "qwen3-vl-flash"),
+            model_name=environment.get("ALI_BAILIAN_OCR_MODEL", "qwen3.7-flash"),
             reasoning_effort=None,
             supports_image_input=True,
             raw_config=normalized_engine,
@@ -347,8 +415,6 @@ def resolve_draw_provider(
             "https://dashscope.aliyuncs.com/compatible-mode/v1",
         )
         model_name = raw_config.split("/", 1)[1]
-        if model_name == "qwen3.7-max":
-            model_name = "qwen-max"
         force_multimodal = True
     elif raw_config.startswith("ZHONGZHAN_GPT/") or raw_config.startswith(
         "ZHONGZHAN/"

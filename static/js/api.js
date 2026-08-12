@@ -234,7 +234,7 @@
                         ocrProv.value = ocrProvider;
                         let ocrModel = "";
                         if (ocrProvider === 'siliconflow') ocrModel = settings.siliconflow_model || 'Qwen/Qwen3-VL-8B-Instruct';
-                        else if (ocrProvider === 'bailian') ocrModel = settings.ali_bailian_model || 'qwen3-vl-flash';
+                        else if (ocrProvider === 'bailian') ocrModel = settings.ali_bailian_model || 'qwen3.7-flash';
                         else if (ocrProvider === 'zhongzhan_gpt') ocrModel = settings.zhongzhan_gpt_ocr_model || 'gpt-4o';
                         else if (ocrProvider === 'zhongzhan_claude') ocrModel = settings.zhongzhan_claude_ocr_model || 'claude-3-5-sonnet';
                         renderModelSelector('ocr', ocrProvider, ocrModel);
@@ -269,6 +269,23 @@
                 });
         }
 
+        // 百炼模型按任务隔离，避免分类/OCR 等轻量任务误选高价旗舰模型。
+        const BAILIAN_MODEL_PRESETS_BY_TASK = {
+            solve: ["qwen3.7-plus", "qwen3.8-max", "qwen3.7-flash"],
+            parse: ["qwen3.7-flash", "qwen3.7-plus", "qwen3.8-max"],
+            classify: ["qwen3.7-flash", "qwen3.7-plus"],
+            ocr: ["qwen3.7-flash", "qwen3.7-plus"],
+            draw: ["qwen3.7-plus", "qwen3.8-max", "qwen3.7-flash"]
+        };
+
+        const BAILIAN_MODEL_DEFAULTS_BY_TASK = {
+            solve: "qwen3.7-plus",
+            parse: "qwen3.7-flash",
+            classify: "qwen3.7-flash",
+            ocr: "qwen3.7-flash",
+            draw: "qwen3.7-plus"
+        };
+
         // 默认预设模型列表
         const MODEL_PRESETS = {
             deepseek: [
@@ -281,20 +298,27 @@
                 "deepseek-ai/DeepSeek-V4-Pro",
                 "deepseek-ai/DeepSeek-V4-Flash"
             ],
-            bailian: [
-                "qwen3-vl-flash",
-                "qwen-vl-plus",
-                "qwen-vl-max",
-                "qwen-max",
-                "qwen-plus"
-            ],
+            bailian: BAILIAN_MODEL_PRESETS_BY_TASK,
             zhongzhan_gpt: [],
             zhongzhan_claude: []
         };
 
+        function getPresetModels(provider, typeKey = "") {
+            const configured = MODEL_PRESETS[provider];
+            if (Array.isArray(configured)) return configured;
+            if (configured && typeof configured === 'object') {
+                return configured[typeKey] || [];
+            }
+            return [];
+        }
+
+        function isPresetModel(provider, typeKey, modelValue) {
+            return getPresetModels(provider, typeKey).includes(modelValue);
+        }
+
         // 从 localStorage 恢复自定义模型，或者初始化
         function getModelListForProvider(provider, typeKey = "") {
-            let presets = MODEL_PRESETS[provider] || [];
+            const presets = getPresetModels(provider, typeKey);
             let customs = [];
             try {
                 const customStr = localStorage.getItem(`custom_models_${provider}`);
@@ -315,14 +339,14 @@
         }
 
         function addCustomModelName(provider, typeKey) {
-            const newName = prompt(`请输入要为 [${provider}] 新增的模型名称 (如 qwen-max):`);
+            const newName = prompt(`请输入要为 [${provider}] 新增的模型名称 (如 qwen3.7-flash):`);
             if (!newName || !newName.trim()) return;
             
             const trimmed = newName.trim();
             const customStr = localStorage.getItem(`custom_models_${provider}`);
             const customs = customStr ? JSON.parse(customStr) : [];
             
-            if (MODEL_PRESETS[provider] && MODEL_PRESETS[provider].includes(trimmed)) {
+            if (isPresetModel(provider, typeKey, trimmed)) {
                 alert("该预设模型已存在于列表中！");
                 return;
             }
@@ -339,7 +363,7 @@
         }
 
         function removeCustomModelName(provider, typeKey, modelValue) {
-            if (MODEL_PRESETS[provider] && MODEL_PRESETS[provider].includes(modelValue)) {
+            if (isPresetModel(provider, typeKey, modelValue)) {
                 alert("预设的核心模型不支持删除，只能删除自定义追加的模型。");
                 return;
             }
@@ -451,7 +475,11 @@
                 }
 
                 const datalistId = `datalist_${typeKey}_${provider}`;
-                const models = getModelListForProvider(provider, typeKey);
+                let models = getModelListForProvider(provider, typeKey);
+                // 旧版预设或手工写入的当前配置必须继续可见，避免打开设置即被首项覆盖。
+                if (selectedValue && !models.includes(selectedValue)) {
+                    models = [selectedValue, ...models];
+                }
                 let optionsHtml = models.map(m => `<option value="${m}">`).join('');
                 
                 container.innerHTML = `
@@ -524,7 +552,7 @@
             else if (provider === 'siliconflow') {
                 defVal = typeKey === 'ocr' ? "Qwen/Qwen3-VL-8B-Instruct" : "deepseek-ai/DeepSeek-V4-Flash";
             } else if (provider === 'bailian') {
-                defVal = typeKey === 'ocr' ? "qwen3-vl-flash" : "qwen-max";
+                defVal = BAILIAN_MODEL_DEFAULTS_BY_TASK[typeKey] || "qwen3.7-flash";
             } else if (provider === 'zhongzhan_gpt') {
                 defVal = ""; // 默认空白，供用户填写
             } else if (provider === 'zhongzhan_claude') {
@@ -589,7 +617,7 @@
                     
                     let ocrModel = "";
                     if (ocrProvider === 'siliconflow') ocrModel = settings.siliconflow_model || 'Qwen/Qwen3-VL-8B-Instruct';
-                    else if (ocrProvider === 'bailian') ocrModel = settings.ali_bailian_model || 'qwen3-vl-flash';
+                    else if (ocrProvider === 'bailian') ocrModel = settings.ali_bailian_model || 'qwen3.7-flash';
                     else if (ocrProvider === 'zhongzhan_gpt') ocrModel = settings.zhongzhan_gpt_ocr_model || 'gpt-4o';
                     else if (ocrProvider === 'zhongzhan_claude') ocrModel = settings.zhongzhan_claude_ocr_model || 'claude-3-5-sonnet';
                     
