@@ -1,0 +1,66 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: Python ${{ matrix.python-version }} / tests and static JS
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.10", "3.14"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+          cache-dependency-path: |
+            requirements.txt
+            requirements-dev.txt
+      - name: Install locked dependencies
+        run: python -m pip install --disable-pip-version-check -r requirements-dev.txt
+      - name: Verify dependency consistency
+        run: python -m pip check
+      - name: Run test suite
+        run: python -m pytest tests/
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Parse browser JavaScript
+        shell: bash
+        run: |
+          for script in static/js/*.js; do
+            node --check "$script"
+          done
+
+  release-guards:
+    name: Release guards / ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-14, windows-2022]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+      - name: Install guard-test runner
+        run: python -m pip install --disable-pip-version-check pytest==9.0.3
+      - name: Run Release and launcher guard tests without app conftest
+        run: python -m pytest --noconftest tests/test_release_hardening.py
+      - name: Parse macOS launcher
+        if: runner.os == 'macOS'
+        shell: bash
+        run: bash -n '启动题库系统.command'

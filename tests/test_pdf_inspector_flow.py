@@ -1,7 +1,10 @@
 # -*- coding: utf-8 -*-
 
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import ANY, MagicMock, patch
+
+import pytest
 
 from mathbank import pdf_inspector_helper
 from mathbank.prompts import build_pdf_parse_system_prompt
@@ -139,7 +142,7 @@ def test_pdf_inspector_detects_formula_loss_and_triggers_ocr_fallback():
 
 def test_pdf_parsing_force_ocr_strategy():
     """当指定 pdf_strategy="force_ocr" 时，应绕过原生提取并强制发起视觉转译。"""
-    from main import run_pdf_parsing_task, PDF_TASKS
+    from main import DOCUMENT_TASKS, run_pdf_parsing_task
     import fitz
 
     # 创建简易单页 PDF
@@ -150,6 +153,9 @@ def test_pdf_parsing_force_ocr_strategy():
     with patch("main.ocr_pdf_page_image", return_value="1. 测验题 1+1=2"), \
          patch("main.parse_paper_text_internal", return_value=[{"content": "1. 测验题 1+1=2", "answer_markdown": ""}]):
         task_id = "test-force-ocr-task"
+        if DOCUMENT_TASKS.exists(task_id):
+            DOCUMENT_TASKS.remove(task_id)
+        DOCUMENT_TASKS.create(task_id, document_type="pdf", temp_assets=[])
         run_pdf_parsing_task(
             task_id,
             pdf_bytes,
@@ -158,8 +164,74 @@ def test_pdf_parsing_force_ocr_strategy():
             page_range=None,
             pdf_strategy="force_ocr"
         )
-        task = PDF_TASKS.get(task_id)
+        task = DOCUMENT_TASKS.snapshot(task_id)
         assert task is not None
         assert task["status"] == "completed"
+        DOCUMENT_TASKS.remove(task_id)
 
 
+def test_pdf_cancel_during_ocr_prevents_paid_split_and_stays_cancelled():
+    from main import DOCUMENT_TASKS, run_pdf_parsing_task
+    import fitz
+
+    document = fitz.open()
+    document.new_page(width=595, height=842)
+    pdf_bytes = document.tobytes()
+    document.close()
+    task_id = "test-cancel-during-ocr"
+    if DOCUMENT_TASKS.exists(task_id):
+        DOCUMENT_TASKS.remove(task_id)
+    DOCUMENT_TASKS.create(task_id, document_type="pdf", temp_assets=[])
+
+    def cancel_during_ocr(_image_path):
+        DOCUMENT_TASKS.cancel(task_id)
+        return "1. 不应继续拆题"
+
+    with patch("main.ocr_pdf_page_image", side_effect=cancel_during_ocr), patch(
+        "main.parse_paper_text_internal"
+    ) as split_mock:
+        run_pdf_parsing_task(
+            task_id,
+            pdf_bytes,
+            "cancel.pdf",
+            pdf_strategy="force_ocr",
+        )
+
+    task = DOCUMENT_TASKS.snapshot(task_id)
+    assert task["status"] == "cancelled"
+    split_mock.assert_not_called()
+    DOCUMENT_TASKS.remove(task_id)
+
+
+@pytest.mark.parametrize("page_range", ["0", "4", "2-1", "a", "1,,2"])
+def test_invalid_pdf_page_range_is_rejected(page_range):
+    from main import parse_page_range
+
+    with pytest.raises(ValueError):
+        parse_page_range(page_range, total_pages=3)
+
+
+def test_late_cancel_does_not_delete_completed_task_assets():
+    from main import DOCUMENT_TASKS, TMP_UPLOAD_DIR, cancel_pdf_task
+
+    task_id = "test-late-cancel"
+    if DOCUMENT_TASKS.exists(task_id):
+        DOCUMENT_TASKS.remove(task_id)
+    asset = Path(TMP_UPLOAD_DIR) / "late-cancel-result.png"
+    asset.parent.mkdir(parents=True, exist_ok=True)
+    asset.write_bytes(b"result")
+    DOCUMENT_TASKS.create(
+        task_id,
+        document_type="pdf",
+        temp_assets=[f"/static/test_uploads/tmp/{asset.name}"],
+    )
+    DOCUMENT_TASKS.complete(task_id, questions=[])
+
+    try:
+        response = cancel_pdf_task(task_id)
+        assert response.status_code == 409
+        assert asset.is_file()
+        assert DOCUMENT_TASKS.snapshot(task_id)["status"] == "completed"
+    finally:
+        DOCUMENT_TASKS.remove(task_id)
+        asset.unlink(missing_ok=True)

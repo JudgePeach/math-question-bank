@@ -3,7 +3,7 @@
 
 /* Workspace Pre-render Flash Prevention */
 html.init-ws-paper #bankWorkspaceSection { display: none !important; }
-html.init-ws-paper #paperWorkspaceSection { display: block !important; }
+html.init-ws-paper #paperWorkspaceSection { display: flex !important; }
 html.init-ws-paper #toggleSidebarBtn { display: none !important; }
 
 /* Local Inter & Outfit Webfonts (100% Offline & Cross-Platform) */
@@ -143,7 +143,7 @@ html.init-ws-paper #toggleSidebarBtn { display: none !important; }
 
     --text-primary: #F1F5F9;
     --text-secondary: #94A3B8;
-    --text-tertiary: #64748B;
+    --text-tertiary: #94A3B8;
 
     /* Night Mode - Desaturated Neutral slate-based colors (No bright theme colors in dark mode) */
     --brand-50-rgb: 30, 41, 59;     /* slate-800 */
@@ -168,7 +168,7 @@ html.init-ws-paper #toggleSidebarBtn { display: none !important; }
 
 .dark input::placeholder,
 .dark textarea::placeholder {
-    color: #64748B !important;
+    color: #94A3B8 !important;
 }
 
 .dark select option {
@@ -513,7 +513,7 @@ html {
 
 /* Unified focus style */
 *:focus-visible {
-    outline: 2px solid rgba(99, 102, 241, 0.4);
+    outline: 2px solid rgb(var(--brand-500-rgb));
     outline-offset: 2px;
     border-radius: var(--apple-radius-sm);
 }
@@ -839,7 +839,19 @@ header, main {
 }
 
 /* Math rendering dynamic custom rules */
+.exam-zh-paren-preview {
+    float: right;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 3rem;
+    margin-left: 1rem;
+    white-space: nowrap;
+    font-family: "Times New Roman", "Songti SC", "SimSun", serif;
+}
+
 .choices-grid {
+    clear: both;
     align-items: first baseline !important;
     grid-template-columns: repeat(var(--choices-columns, 4), minmax(0, 1fr)) !important;
     width: 100%;
@@ -883,8 +895,9 @@ header, main {
 
 /* Apple-Style Focus Ring */
 *:focus-visible {
-    outline: none;
-    box-shadow: 0 0 0 3px rgba(var(--brand-rgb), 0.3);
+    outline: 2px solid rgb(var(--brand-500-rgb));
+    outline-offset: 2px;
+    box-shadow: 0 0 0 4px rgba(var(--brand-rgb), 0.18);
     border-radius: var(--apple-radius-sm);
 }
 
@@ -1122,7 +1135,8 @@ button, a, input, select, textarea {
         gap: 0.5rem;
     }
 
-    header button span {
+    header > .flex:last-child > button > span:not(#updateBadge),
+    #themeDropdownBtn > #currentThemeName {
         display: none;
     }
 
@@ -1177,6 +1191,8 @@ button, a, input, select, textarea {
 
 /* Sidebar Pagination Styling - Premium Apple Glass Style */
 #sidebarPagination {
+    min-width: 0;
+    max-width: 100%;
     border-top: 1px solid rgba(0, 0, 0, 0.05);
     background: rgba(255, 255, 255, 0.55);
     backdrop-filter: blur(12px) saturate(160%);
@@ -1377,7 +1393,7 @@ button, a, input, select, textarea {
 
 .dark .glass-btn .text-slate-500,
 .dark .glass-btn i.text-slate-500 {
-    color: rgba(255, 255, 255, 0.6) !important;
+    color: #CBD5E1 !important;
 }
 
 .dark .glass-btn:hover .text-slate-500,
@@ -1385,3 +1401,419 @@ button, a, input, select, textarea {
     color: #ffffff !important;
 }
 
+/* ===== Phase 2: Responsive usability and accessibility hardening ===== */
+
+/* Disabled and loading controls keep a consistent, visible state across modules. */
+button:disabled,
+button[aria-disabled="true"],
+[role="button"][aria-disabled="true"] {
+    opacity: 0.55;
+    cursor: not-allowed;
+    filter: saturate(0.65);
+    transform: none !important;
+    box-shadow: none;
+}
+
+button[aria-busy="true"] {
+    cursor: progress;
+}
+
+#questionsList[aria-busy="true"] {
+    opacity: 0.6;
+    cursor: progress;
+}
+
+/* Modern mobile browsers expose the usable viewport through dvh. Older browsers
+   keep the preceding vh fallback. */
+body {
+    height: 100vh;
+    height: 100dvh;
+}
+
+main {
+    min-height: 0;
+}
+
+@media (max-width: 1024px) {
+    header > .flex:first-child,
+    header > .flex:last-child {
+        gap: 0.5rem;
+    }
+
+    header > .flex:first-child > *,
+    header > .flex:last-child > * {
+        margin-left: 0 !important;
+    }
+}
+
+@media (max-width: 768px), (pointer: coarse) {
+    button,
+    [role="button"],
+    a.glass-btn,
+    a.glass-btn-primary,
+    a.glass-btn-danger,
+    a.glass-btn-success {
+        min-width: 44px;
+        min-height: 44px;
+        touch-action: manipulation;
+    }
+}
+
+@media (hover: none), (pointer: coarse) {
+    .delete-draft-btn,
+    .question-card button[aria-label="删除题目"],
+    #paperCanvasSection .paper-canvas-toolbar,
+    #paperCanvasSection button[class~="opacity-0"] {
+        opacity: 1 !important;
+    }
+}
+
+@media (max-width: 768px) {
+    body {
+        min-width: 0;
+    }
+
+    header {
+        height: 56px !important;
+        min-height: 56px;
+        padding-left: 0.5rem !important;
+        padding-right: 0.5rem !important;
+        gap: 0.5rem;
+    }
+
+    header > .flex:first-child,
+    header > .flex:last-child {
+        gap: 0.25rem;
+    }
+
+    #appLogoMark,
+    #apiStatusIndicator,
+    #currentWorkspaceName,
+    #toggleSidebarBtn {
+        display: none !important;
+    }
+
+    #workspaceDropdownBtn {
+        min-width: 44px;
+        min-height: 44px;
+        margin: 0 !important;
+        padding: 0.375rem 0.5rem;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+    }
+
+    #workspaceDropdownBtn .brand-title {
+        font-size: 1rem;
+    }
+
+    #workspaceDropdownBtn > div {
+        margin-top: 0;
+        margin-left: 0.25rem;
+    }
+
+    #themeDropdownBtn {
+        padding: 0.5rem !important;
+        justify-content: center;
+    }
+
+    #themeDropdownContainer + div {
+        margin-left: 0 !important;
+        margin-right: 0 !important;
+    }
+
+    header > .flex:last-child > div {
+        padding: 0.125rem;
+        gap: 0.125rem;
+    }
+
+    header > .flex:last-child > button {
+        padding: 0.5rem !important;
+        justify-content: center;
+    }
+
+    main {
+        height: calc(100vh - 56px) !important;
+        height: calc(100dvh - 56px) !important;
+        min-height: 0;
+    }
+
+    #bankWorkspaceSection {
+        flex-direction: column;
+        min-width: 0;
+    }
+
+    #sidebarSection {
+        width: 100% !important;
+        height: 42% !important;
+        max-height: none;
+        flex: 0 0 42%;
+        border-right: 0;
+        border-bottom: 1px solid rgba(0, 0, 0, 0.08);
+    }
+
+    #sidebarTopPanel {
+        flex: 0 0 52%;
+        min-height: 0 !important;
+        overflow-y: auto;
+    }
+
+    #questionsList {
+        min-height: 0;
+    }
+
+    #sidebarPagination {
+        overflow: hidden;
+    }
+
+    .sidebar-pagination-controls {
+        width: 100%;
+        min-width: 0;
+        justify-content: flex-start;
+        overflow-x: auto;
+        overflow-y: hidden;
+        padding-bottom: 2px;
+        scrollbar-width: thin;
+        overscroll-behavior-x: contain;
+    }
+
+    #editorSection {
+        width: 100% !important;
+        height: auto !important;
+        min-height: 0;
+        flex: 1 1 auto !important;
+    }
+
+    #previewSection,
+    #resizer-1,
+    #resizer-2,
+    #sidebar-resizer-v {
+        display: none !important;
+    }
+
+    #editorSection > .sticky {
+        padding: 0.75rem;
+        gap: 0.5rem;
+    }
+
+    #editorSection > .sticky h2 {
+        font-size: 0.95rem;
+    }
+
+    #editorSection > .sticky > div {
+        gap: 0.25rem;
+    }
+
+    #editorSection > .p-6 {
+        padding: 0.75rem;
+    }
+
+    #paperWorkspaceSection {
+        flex-direction: column;
+        min-width: 0;
+    }
+
+    #paperWorkspaceSection > div:first-child {
+        width: 100% !important;
+        height: 56%;
+        flex: 0 0 56%;
+        border-right: 0;
+        border-bottom: 1px solid rgba(0, 0, 0, 0.08);
+    }
+
+    #paperCanvasSection {
+        width: 100% !important;
+        height: 44%;
+        min-height: 0;
+        padding: 0.5rem;
+        flex: 0 0 44%;
+    }
+
+    #paperQuestionStream {
+        padding: 0.75rem;
+    }
+
+    input.glass-input,
+    .glass-select {
+        height: 44px;
+        line-height: normal;
+    }
+
+    .grid-cols-5 {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+
+    [role="dialog"].fixed {
+        padding: 0.5rem;
+        overscroll-behavior: contain;
+    }
+
+    [role="dialog"].fixed > div {
+        max-width: calc(100vw - 1rem) !important;
+        max-height: calc(100vh - 1rem) !important;
+        max-height: calc(100dvh - 1rem) !important;
+    }
+
+    #settingsModal > .glass-modal,
+    #statsModal > .glass-modal,
+    #updateModal > .glass-modal,
+    #aiClassifyModal > .glass-modal {
+        padding: 1rem;
+    }
+
+    #settingsForm > div:first-child {
+        overflow-x: auto;
+        overflow-y: hidden;
+        scrollbar-width: thin;
+    }
+
+    #settingsForm > div:first-child > button {
+        flex: 0 0 auto;
+        white-space: nowrap;
+    }
+
+    #latexImportModal > .glass-modal,
+    #pdfCropModal > .glass-modal {
+        height: calc(100vh - 1rem) !important;
+        height: calc(100dvh - 1rem) !important;
+        padding: 0;
+    }
+
+    #latexImportModal > .glass-modal > div:first-child,
+    #pdfCropModal > .glass-modal > div:first-child {
+        padding: 0.75rem;
+        gap: 0.5rem;
+    }
+
+    #latexImportModalTitle,
+    #pdfCropModalTitle {
+        font-size: 0.875rem;
+        line-height: 1.25rem;
+    }
+
+    #latexImportModalContent,
+    #pdfCropModalContent {
+        flex-direction: column;
+        min-height: 0;
+    }
+
+    #importInputPane,
+    #importReviewPane {
+        width: 100% !important;
+        height: 50%;
+        min-height: 0;
+        padding: 0.75rem;
+        border-right: 0;
+    }
+
+    #importInputPane {
+        border-bottom: 1px solid rgba(148, 163, 184, 0.35);
+    }
+
+    #pdfPagesThumbnailsContainer {
+        width: 100% !important;
+        height: 88px;
+        min-height: 88px;
+        flex-direction: row;
+        align-items: stretch;
+        overflow-x: auto;
+        overflow-y: hidden;
+        border-right: 0;
+        border-bottom: 1px solid rgba(148, 163, 184, 0.35);
+    }
+
+    #pdfPagesThumbnailsContainer > * {
+        flex: 0 0 64px;
+        margin-top: 0 !important;
+        margin-left: 0.5rem;
+    }
+
+    #pdfPagesThumbnailsContainer > :first-child {
+        margin-left: 0;
+    }
+
+    #pdfCropCanvasWrapper {
+        padding: 0.75rem;
+    }
+
+    #pdfCropActiveImage {
+        max-width: 90vw;
+        max-height: 48vh;
+    }
+
+    #pdfCropActionBar {
+        padding: 0.5rem;
+        gap: 0.5rem;
+        flex-wrap: wrap;
+    }
+
+    #pdfCropHint {
+        width: 100%;
+    }
+
+    #pdfCropHint span {
+        overflow-wrap: anywhere;
+    }
+
+    #pdfCropActionBar > div:last-child {
+        width: 100%;
+        justify-content: flex-end;
+        gap: 0.5rem;
+    }
+
+    .global-tooltip,
+    .glass-tooltip {
+        max-width: calc(100vw - 1rem);
+        white-space: normal;
+        overflow-wrap: anywhere;
+    }
+}
+
+@media (max-width: 480px) {
+    #workspaceDropdownBtn .brand-title {
+        display: none;
+    }
+
+    .grid-cols-3,
+    .grid-cols-5 {
+        grid-template-columns: 1fr;
+    }
+
+    #editorSection > .sticky h2 i {
+        display: none;
+    }
+
+    #pdfCropPageIndicator,
+    #pdfCropHint {
+        display: none;
+    }
+
+    #statsModal .grid-cols-7 {
+        gap: 0.125rem;
+    }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    html {
+        scroll-behavior: auto;
+    }
+
+    *,
+    *::before,
+    *::after {
+        animation-duration: 0.01ms !important;
+        animation-iteration-count: 1 !important;
+        transition-duration: 0.01ms !important;
+        scroll-behavior: auto !important;
+    }
+
+    .animate-ping,
+    .animate-pulse,
+    .animate-bounce,
+    .animate-spin,
+    .fa-spin,
+    .apple-spinner,
+    .skeleton {
+        animation: none !important;
+    }
+}

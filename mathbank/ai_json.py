@@ -1,7 +1,7 @@
 """Defensive parsing for structured JSON returned by AI providers."""
 
 import json
-from typing import Any, List
+from typing import Any, List, Optional
 
 
 def _strip_markdown_fence(text: str) -> str:

@@ -261,8 +261,48 @@
             return cleaned.trim();
         }
 
+        let aiSolveRequestSequence = 0;
+        let aiSolveCompletionTimer = null;
+
+        function isAiSolveRequestCurrent(sequence, controller, editorSnapshot) {
+            return sequence === aiSolveRequestSequence &&
+                controller === aiSolveAbortController &&
+                !controller.signal.aborted &&
+                EditorState.isCurrent(editorSnapshot);
+        }
+
+        function resetAiSolveUi(resetProgress = false) {
+            const btn = document.getElementById('aiSolveBtn');
+            const loader = document.getElementById('aiLoadingIndicator');
+            const progressBar = document.getElementById('aiSolveProgressBar');
+            if (btn) {
+                btn.disabled = false;
+                btn.classList.remove('opacity-50', 'pointer-events-none');
+            }
+            if (loader) loader.classList.add('hidden');
+            if (resetProgress && progressBar) progressBar.style.width = '0%';
+        }
+
+        function abortActiveAiSolve() {
+            const controller = aiSolveAbortController;
+            const hadActiveRequest = Boolean(controller || aiSolveCompletionTimer);
+            aiSolveRequestSequence += 1;
+            aiSolveAbortController = null;
+            if (aiSolveCompletionTimer) {
+                clearTimeout(aiSolveCompletionTimer);
+                aiSolveCompletionTimer = null;
+            }
+            if (controller) controller.abort();
+            if (hadActiveRequest) resetAiSolveUi(true);
+            return hadActiveRequest;
+        }
+
+        // EditorState calls this one boundary whenever a question, draft or new
+        // editor session takes ownership of the form.
+        window.invalidateEditorSessionAsyncWork = () => cancelAllOcr(false);
+
         // Cancel and abort all active OCR processes (both content and answer OCR)
-        function cancelAllOcr() {
+        function cancelAllOcr(clearWhenIdle = true) {
             let aborted = false;
             
             // Handle content OCR abort
@@ -298,27 +338,8 @@
             }
 
             // Handle AI solve abort
-            if (typeof aiSolveAbortController !== 'undefined' && aiSolveAbortController) {
-                aiSolveAbortController.abort();
-                aiSolveAbortController = null;
+            if (abortActiveAiSolve()) {
                 aborted = true;
-                
-                if (typeof aiSolveProgressTimer !== 'undefined' && aiSolveProgressTimer) {
-                    clearInterval(aiSolveProgressTimer);
-                    aiSolveProgressTimer = null;
-                }
-                const progressBar = document.getElementById('aiSolveProgressBar');
-                if (progressBar) {
-                    progressBar.style.width = '0%';
-                }
-                
-                const aiSolveBtn = document.getElementById('aiSolveBtn');
-                const aiLoader = document.getElementById('aiLoadingIndicator');
-                if (aiSolveBtn && aiLoader) {
-                    aiSolveBtn.disabled = false;
-                    aiSolveBtn.classList.remove('opacity-50', 'pointer-events-none');
-                    aiLoader.classList.add('hidden');
-                }
             }
             
             if (aborted) {
@@ -338,7 +359,7 @@
                 }
                 
                 showToast('OCR 识别已取消，按 ESC 可清除图片', 'info');
-            } else {
+            } else if (clearWhenIdle) {
                 // If no active OCR process is running, clear all image previews and results completely
                 clearContentOcrPreview();
                 clearOcrPreview();
@@ -367,6 +388,7 @@
             
             const formData = new FormData();
             formData.append('file', file);
+            const editorSession = EditorState.snapshot();
             
             showToast('正在上传插图...', 'info');
             
@@ -376,6 +398,7 @@
             })
             .then(r => r.json())
             .then(data => {
+                if (!EditorState.isCurrent(editorSession)) return;
                 if (data.status === 'success') {
                     showToast('图片上传成功！');
                     uploadedImages.push(data.file_path);
@@ -388,6 +411,7 @@
                 }
             })
             .catch(err => {
+                if (!EditorState.isCurrent(editorSession)) return;
                 showToast('上传图片出错: ' + err, 'error');
             });
         }
@@ -465,6 +489,7 @@
             
             const formData = new FormData();
             formData.append('file', file);
+            const editorSession = EditorState.snapshot();
             
             showToast('正在上传图片解答...', 'info');
             
@@ -474,6 +499,7 @@
             })
             .then(r => r.json())
             .then(data => {
+                if (!EditorState.isCurrent(editorSession)) return;
                 if (data.status === 'success') {
                     showToast('图片解答上传成功！');
                     insertAnswerImageTag(data.file_path);
@@ -482,6 +508,7 @@
                 }
             })
             .catch(err => {
+                if (!EditorState.isCurrent(editorSession)) return;
                 showToast('上传图片出错: ' + err, 'error');
             });
         }
@@ -713,10 +740,6 @@
         }
 
         // 2.2 OCR Question Content screenshot handler
-        function triggerContentOcr() {
-            document.getElementById('contentOcrFileInput').click();
-        }
-
         function runContentOcr(file) {
             if (!file.type.startsWith('image/')) {
                 showToast('请上传有效的图片格式！', 'error');
@@ -964,6 +987,7 @@
             if (lightbox && lightboxImg) {
                 lightboxImg.src = src;
                 lightbox.classList.remove('hidden');
+                window.MathBankModal.open(lightbox, { onEscape: closeLightbox });
                 // Force reflow for transitions
                 lightbox.offsetHeight;
                 lightbox.classList.remove('opacity-0');
@@ -976,6 +1000,7 @@
             const lightbox = document.getElementById('imageLightbox');
             const lightboxImg = document.getElementById('lightboxImg');
             if (lightbox && lightboxImg) {
+                window.MathBankModal.close(lightbox);
                 lightbox.classList.add('opacity-0');
                 lightboxImg.classList.remove('scale-100');
                 lightboxImg.classList.add('scale-95');
@@ -1068,11 +1093,6 @@
                 progressBar.style.width = '0%';
             }
             
-            if (typeof aiSolveProgressTimer !== 'undefined' && aiSolveProgressTimer) {
-                clearInterval(aiSolveProgressTimer);
-                aiSolveProgressTimer = null;
-            }
-            
             const formData = new FormData();
             formData.append('content', content);
             formData.append('question_type', qtype);
@@ -1082,18 +1102,36 @@
             formData.append('model', model);
             formData.append('stream', 'true'); // Opt-in to real-time streaming
             
-            if (typeof aiSolveAbortController !== 'undefined' && aiSolveAbortController) {
-                aiSolveAbortController.abort();
-            }
-            aiSolveAbortController = new AbortController();
-            const signal = aiSolveAbortController.signal;
+            abortActiveAiSolve();
+            const editorSnapshot = EditorState.snapshot();
+            const requestSequence = ++aiSolveRequestSequence;
+            const requestController = new AbortController();
+            aiSolveAbortController = requestController;
+
+            const requestIsCurrent = () => isAiSolveRequestCurrent(
+                requestSequence,
+                requestController,
+                editorSnapshot
+            );
+
+            const finishCurrentRequest = (resetProgress = false) => {
+                if (!requestIsCurrent()) return false;
+                aiSolveAbortController = null;
+                if (aiSolveCompletionTimer) {
+                    clearTimeout(aiSolveCompletionTimer);
+                    aiSolveCompletionTimer = null;
+                }
+                resetAiSolveUi(resetProgress);
+                return true;
+            };
             
             fetch('/api/ai/solve', {
                 method: 'POST',
                 body: formData,
-                signal: signal
+                signal: requestController.signal
             })
             .then(response => {
+                if (!requestIsCurrent()) return;
                 if (!response.ok) {
                     throw new Error(`HTTP ${response.status}`);
                 }
@@ -1107,8 +1145,9 @@
                 
                 function read() {
                     return reader.read().then(({ done, value }) => {
+                        if (!requestIsCurrent()) return;
                         if (done) {
-                            return;
+                            throw new Error('AI 流式响应意外中断');
                         }
                         
                         buffer += decoder.decode(value, { stream: true });
@@ -1120,6 +1159,7 @@
                             if (trimmed.startsWith('data:')) {
                                 try {
                                     const eventData = JSON.parse(trimmed.slice(5).trim());
+                                    if (!requestIsCurrent()) return;
                                     if (eventData.status === 'processing') {
                                         if (eventData.reasoning) {
                                             accumulatedReasoning += eventData.reasoning;
@@ -1148,13 +1188,15 @@
                                             }
                                         }
                                     } else if (eventData.status === 'error') {
-                                        showToast(eventData.message, 'error');
-                                        cleanupLoader();
-                                        return;
+                                        return Promise.reject(new Error(eventData.message || 'AI 服务返回错误'));
                                     } else if (eventData.status === 'done') {
                                         if (progressBar) progressBar.style.width = '100%';
-                                        setTimeout(() => {
-                                            cleanupLoader();
+                                        aiSolveCompletionTimer = setTimeout(() => {
+                                            aiSolveCompletionTimer = null;
+                                            // The editor can change during the 300ms
+                                            // completion animation. Recheck before
+                                            // touching either result field.
+                                            if (!requestIsCurrent()) return;
                                             outputBox.classList.remove('hidden');
                                             
                                             let finalOutput = '';
@@ -1166,6 +1208,7 @@
                                             
                                             loadToFinalReview('ai');
                                             showToast('AI 解析生成成功！');
+                                            finishCurrentRequest();
                                         }, 300);
                                         return;
                                     }
@@ -1178,26 +1221,16 @@
                     });
                 }
                 
-                function cleanupLoader() {
-                    btn.disabled = false;
-                    btn.classList.remove('opacity-50', 'pointer-events-none');
-                    loader.classList.add('hidden');
-                }
-                
                 return read();
             })
             .catch(err => {
-                aiSolveAbortController = null;
-                if (progressBar) progressBar.style.width = '0%';
-                
-                if (err.name === 'AbortError') {
-                    showToast('AI 解析生成已取消', 'info');
-                    return; // Gracefully handle manual abort
+                // A superseded request must not clear or re-enable the controls
+                // owned by the new request.
+                if (!requestIsCurrent()) return;
+                finishCurrentRequest(true);
+                if (err.name !== 'AbortError') {
+                    showToast('AI 生成解析出错: ' + err.message, 'error');
                 }
-                btn.disabled = false;
-                btn.classList.remove('opacity-50', 'pointer-events-none');
-                loader.classList.add('hidden');
-                showToast('AI 生成解析出错: ' + err.message, 'error');
             });
         }
 

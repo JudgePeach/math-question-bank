@@ -18,6 +18,9 @@ TEST_UPLOADS_DIR = STATIC_DIR / "test_uploads"
 
 TEMPLATES_DIR = PROJECT_ROOT / "templates"
 DATA_BACKUP_DIR = PROJECT_ROOT / "data_backup"
+FULL_BACKUP_DIR = DATA_BACKUP_DIR / "snapshots"
+PRE_RESTORE_BACKUP_DIR = DATA_BACKUP_DIR / "pre_restore"
+SCHEMA_SNAPSHOT_DIR = DATA_BACKUP_DIR / "schema_snapshots"
 SYSTEM_GENERATED_DIR = PROJECT_ROOT / ".system_generated"
 
 DATABASE_FILE = PROJECT_ROOT / "math_question_bank.db"

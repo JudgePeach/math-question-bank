@@ -47,7 +47,7 @@ def test_visible_math_lock_rejects_missing_or_duplicate_ids(content):
 
 
 def test_docx_task_restores_formula_before_returning_questions():
-    from main import PDF_TASKS, PDF_TASKS_LOCK, run_docx_parsing_task
+    from main import DOCUMENT_TASKS, run_docx_parsing_task
 
     task_id = "word-lock-integration"
     extracted = {
@@ -73,14 +73,15 @@ def test_docx_task_restores_formula_before_returning_questions():
             "referenced_images": [],
         }]
 
-    with PDF_TASKS_LOCK:
-        PDF_TASKS[task_id] = {"status": "queued"}
+    if DOCUMENT_TASKS.exists(task_id):
+        DOCUMENT_TASKS.remove(task_id)
+    DOCUMENT_TASKS.create(task_id, document_type="docx", temp_assets=[])
     with patch("main.extract_docx_markdown", return_value=extracted):
         with patch("main.parse_paper_text_internal", side_effect=fake_parse):
             run_docx_parsing_task(task_id, b"fake-docx", "公式锁定测试.docx")
 
-    with PDF_TASKS_LOCK:
-        task = dict(PDF_TASKS.pop(task_id))
+    task = DOCUMENT_TASKS.snapshot(task_id)
+    DOCUMENT_TASKS.remove(task_id)
     assert task["status"] == "completed"
     assert task["data"][0]["content"] == r"1. 已知 $f(x)=x^2+1$，求最小值。"
     assert task["diagnostics"]["math_locks_restored"] == 1

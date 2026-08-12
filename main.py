@@ -1,4 +1,5 @@
 import os
+import atexit
 import io
 import sys
 import uuid
@@ -9,6 +10,7 @@ import signal
 import datetime
 import threading
 import requests
+from pathlib import Path
 
 if hasattr(sys.stdout, "reconfigure"):
     try:
@@ -18,7 +20,7 @@ if hasattr(sys.stdout, "reconfigure"):
         pass
 import secrets
 from typing import List, Optional
-from PIL import Image, UnidentifiedImageError
+from PIL import Image
 from fastapi import FastAPI, Depends, HTTPException, UploadFile, File, Form, BackgroundTasks, Request, Response, Header
 from fastapi.responses import FileResponse, JSONResponse, HTMLResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
@@ -26,10 +28,17 @@ from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
 from dotenv import load_dotenv
 
-from mathbank.database import Question, QuestionCurriculum, Paper, PaperQuestion, get_db, init_db
-from mathbank.paper_helper import build_latex_document, build_answer_sheet_latex, compile_tex_to_pdf, create_tex_zip_package, create_full_bundle_zip_package, collect_referenced_images
+from mathbank.database import Question, QuestionCurriculum, Paper, PaperQuestion, engine, get_db, init_db
+from mathbank.paper_helper import build_latex_document, build_answer_sheet_latex, compile_tex_to_pdf, create_tex_zip_package, create_full_bundle_zip_package, collect_referenced_images, build_restricted_tex_environment
 from mathbank.word_export_helper import build_word_document, create_word_bundle_zip
 from mathbank.sync_helper import export_database_to_files
+from mathbank.backup import acquire_runtime_lock, create_full_backup_if_due
+from mathbank.health import readiness_report
+from mathbank.task_manager import (
+    TaskCancelled,
+    TaskManager,
+    TaskQueueFull,
+)
 from mathbank.docx_helper import extract_docx_markdown
 from mathbank.content_locks import lock_visible_math, restore_visible_math
 from mathbank.tex_helper import (
@@ -46,11 +55,11 @@ from mathbank.latex_diagnostics import (
 from mathbank.ai_json import parse_ai_json
 from mathbank.ai_http import (
     post_chat_completion,
-    robust_request_post,
 )
 from mathbank.ai_providers import (
     MultimodalProviderConfig,
     apply_bailian_thinking_policy,
+    inject_reasoning_effort,
     resolve_draw_provider,
     resolve_ocr_fallbacks,
     resolve_ocr_provider,
@@ -91,15 +100,63 @@ from mathbank.paths import (
     TEST_UPLOADS_DIR,
     UPLOADS_DIR,
 )
+from mathbank.asset_security import (
+    AssetSecurityError,
+    InvalidImageError,
+    MAX_OCR_IMAGE_BYTES,
+    MAX_PDF_BYTES,
+    MAX_SINGLE_IMAGE_BYTES,
+    UploadTooLargeError,
+    harden_private_path,
+    normalize_raster_image,
+    normalize_upload_asset_reference,
+    normalize_upload_asset_references,
+    read_stream_limited,
+    resolve_upload_asset,
+    write_private_text_atomic,
+)
 
 # Load environment variables
 load_dotenv(ENV_FILE)
+harden_private_path(ENV_FILE)
 
 # Unique server instance ID generated per process launch/restart
 SERVER_INSTANCE_ID = str(uuid.uuid4())
 
+# Hold an OS-backed project lock before the first database access.  The restore
+# CLI takes the same lock, so a manually started uvicorn process is protected
+# even when no launcher PID file exists.  Unit tests use isolated databases and
+# exercise the lock helper directly instead of holding the production lock.
+IS_TESTING = "pytest" in sys.modules or any("pytest" in arg for arg in sys.argv)
+_RUNTIME_LOCK = None if IS_TESTING else acquire_runtime_lock()
+if _RUNTIME_LOCK is not None:
+    atexit.register(_RUNTIME_LOCK.close)
+
 # Initialize DB
 init_db()
+
+
+def schedule_database_export(
+    background_tasks: BackgroundTasks, *, operation: str
+) -> None:
+    """Best-effort export scheduling after a database transaction commits."""
+
+    def run_export_safely() -> None:
+        try:
+            export_database_to_files()
+        except Exception as exc:
+            print(
+                f"[Database Export] Post-commit export failed for {operation} "
+                f"(type={type(exc).__name__}); the next write/startup export can retry."
+            )
+
+    try:
+        background_tasks.add_task(run_export_safely)
+    except Exception as exc:
+        print(
+            f"[Database Export] Post-commit scheduling failed for {operation} "
+            f"(type={type(exc).__name__}); the next write/startup export can retry."
+        )
 
 
 def print_startup_diagnostics():
@@ -206,18 +263,17 @@ def heal_database_curriculum_names():
     finally:
         db.close()
 
-import sys
-# 检测是否在单元测试环境下运行
-IS_TESTING = "pytest" in sys.modules or any("pytest" in arg for arg in sys.argv)
 UPLOAD_DIR_REL = "static/test_uploads" if IS_TESTING else "static/uploads"
 UPLOAD_DIR = str(TEST_UPLOADS_DIR if IS_TESTING else UPLOADS_DIR)
 
 def load_or_create_local_token() -> str:
     token_dir = str(SYSTEM_GENERATED_DIR)
     os.makedirs(token_dir, exist_ok=True)
+    harden_private_path(token_dir, directory=True)
     token_file = os.path.join(token_dir, "local_token")
     if os.path.exists(token_file):
         try:
+            harden_private_path(token_file)
             with open(token_file, "r", encoding="utf-8") as f:
                 token = f.read().strip()
                 if token and len(token) >= 16:
@@ -228,8 +284,7 @@ def load_or_create_local_token() -> str:
     # Generate new token
     token = secrets.token_hex(16)
     try:
-        with open(token_file, "w", encoding="utf-8") as f:
-            f.write(token)
+        write_private_text_atomic(token_file, token)
     except Exception as e:
         print(f"[Security] Failed to write persistent token: {e}")
     return token
@@ -261,11 +316,11 @@ async def security_and_heartbeat_middleware(request: Request, call_next):
     LAST_ACTIVE_TIME = time.time()
     
     # Verify local security token for modifying operations
-    if request.method in ("POST", "PUT", "DELETE"):
+    if request.method in ("POST", "PUT", "PATCH", "DELETE"):
         if request.url.path != "/api/heartbeat":
             token = request.headers.get("X-Local-Token")
-            if not token or token != LOCAL_TOKEN:
-                print(f"[Security Alert] Blocked {request.method} {request.url.path} - X-Local-Token: '{token}', Expected: '{LOCAL_TOKEN}'")
+            if not token or not secrets.compare_digest(token, LOCAL_TOKEN):
+                print(f"[Security Alert] Blocked {request.method} {request.url.path} - invalid local token")
                 return JSONResponse(
                     status_code=403,
                     content={"status": "error", "message": "Forbidden: Invalid or missing local token."}
@@ -389,6 +444,12 @@ def start_startup_cleanup():
     time.sleep(2.5)
     clean_orphaned_images()
     recalibrate_usage_counts()
+    try:
+        backup_path = create_full_backup_if_due()
+        if backup_path:
+            print(f"[Backup] 已创建并验证每日完整备份: {backup_path.name}")
+    except Exception as exc:
+        print(f"[Backup Error] 每日完整备份失败: {type(exc).__name__}: {exc}")
 
 # 仅在非测试环境下启动静默自愈清理后台守护线程
 if not IS_TESTING:
@@ -400,16 +461,44 @@ os.makedirs(UPLOAD_DIR, exist_ok=True)
 TMP_UPLOAD_DIR = os.path.join(UPLOAD_DIR, "tmp")
 os.makedirs(TMP_UPLOAD_DIR, exist_ok=True)
 
-# PDF tasks management global state
-import threading
-PDF_TASKS = {}
-PDF_TASKS_LOCK = threading.Lock()
+# Bounded document task manager shared by PDF and Word imports.
+DOCUMENT_TASKS = TaskManager(
+    max_workers=2,
+    max_queue=4,
+    terminal_ttl_seconds=3600,
+    temp_asset_cleanup=lambda paths: _delete_task_temp_assets(paths),
+)
+PDF_OCR_SEMAPHORE = threading.BoundedSemaphore(4)
+MAX_PDF_TASK_PAGES = 80
 
-def get_seq_mapping(db: Session):
-    all_q = db.query(Question.id).order_by(Question.id.asc()).all()
-    return {q_id: idx + 1 for idx, (q_id,) in enumerate(all_q)}
+def get_seq_mapping(db: Session, question_ids=None):
+    """Map physical ID order to the user-facing contiguous sequence number."""
+
+    if question_ids is None:
+        all_q = db.query(Question.id).order_by(Question.id.asc()).all()
+        return {q_id: idx + 1 for idx, (q_id,) in enumerate(all_q)}
+
+    normalized_ids = {int(question_id) for question_id in question_ids}
+    if not normalized_ids:
+        return {}
+    from sqlalchemy import func
+
+    ranked = db.query(
+        Question.id.label("question_id"),
+        func.row_number().over(order_by=Question.id.asc()).label("seq_num"),
+    ).subquery()
+    rows = db.query(ranked.c.question_id, ranked.c.seq_num).filter(
+        ranked.c.question_id.in_(normalized_ids)
+    ).all()
+    return {question_id: int(seq_num) for question_id, seq_num in rows}
 
 # ----------------- Static Files & Index -----------------
+
+
+@app.get("/healthz", include_in_schema=False)
+def healthz():
+    report = readiness_report(engine)
+    return JSONResponse(report, status_code=200 if report["ready"] else 503)
 
 @app.get("/")
 def read_index():
@@ -513,28 +602,39 @@ def read_apple_touch_icon():
 # ----------------- Upload API -----------------
 
 @app.post("/api/upload")
-async def upload_image(file: UploadFile = File(...)):
+def upload_image(file: UploadFile = File(...)):
     try:
-        # Generate safe unique filename
-        ext = os.path.splitext(file.filename)[1]
-        if not ext:
-            ext = ".png" # default to png
-        
-        filename = f"{uuid.uuid4().hex}{ext}"
+        raw = read_stream_limited(file.file, MAX_SINGLE_IMAGE_BYTES)
+        normalized = normalize_raster_image(raw)
+
+        # Never trust the client suffix.  The server-generated extension and
+        # re-encoded bytes prevent HTML/SVG/polyglot files being served same-origin.
+        filename = f"{uuid.uuid4().hex}{normalized.extension}"
         filepath = os.path.join(UPLOAD_DIR, filename)
-        
+
         with open(filepath, "wb") as f:
-            f.write(await file.read())
-            
+            f.write(normalized.data)
+
         relative_path = f"/{UPLOAD_DIR_REL}/{filename}"
         return {
             "status": "success",
             "file_path": relative_path,
             "filename": file.filename
         }
-    except Exception as e:
+    except UploadTooLargeError:
         return JSONResponse(
-            content={"status": "error", "message": f"文件上传失败: {str(e)}"},
+            content={"status": "error", "message": "图片过大，请上传 10MB 以内的文件。"},
+            status_code=413,
+        )
+    except InvalidImageError as e:
+        return JSONResponse(
+            content={"status": "error", "message": f"图片上传失败: {str(e)}"},
+            status_code=400,
+        )
+    except Exception as e:
+        print(f"[Upload Error] {type(e).__name__}: {e}")
+        return JSONResponse(
+            content={"status": "error", "message": "文件上传失败，请检查文件后重试。"},
             status_code=500
         )
 
@@ -614,10 +714,7 @@ def ocr_via_provider(
         "stream": False
     }
 
-    if provider.reasoning_effort and provider.reasoning_effort != "default":
-        payload["reasoning_effort"] = provider.reasoning_effort.lower()
-        payload["enable_thinking"] = True
-
+    payload = inject_reasoning_effort(payload, provider.reasoning_effort)
     payload = apply_bailian_thinking_policy(
         payload,
         provider_code=provider.provider_code,
@@ -625,45 +722,21 @@ def ocr_via_provider(
         task="ocr",
     )
 
-    max_retries = 3
     timeout = 240
-    response = None
-    last_error = None
-    
-    for attempt in range(max_retries):
-        try:
-            if attempt > 0:
-                print(
-                    f"[OCR Flow] 正在进行第 {attempt + 1}/{max_retries} 次重试"
-                    f"{provider.provider_label}请求..."
-                )
-            response = post_chat_completion(
-                provider,
-                payload,
-                timeout=timeout,
-                check_status=False,
-            )
-            if response.status_code == 200:
-                break
-            else:
-                last_error = f"HTTP 状态码: {response.status_code}，详情: {response.text}"
-                if response.status_code in [500, 502, 503, 504, 429] or "timeout" in response.text.lower():
-                    time.sleep(2 * (attempt + 1))
-                    continue
-                else:
-                    raise RuntimeError(last_error)
-        except Exception as e:
-            last_error = str(e)
-            if attempt < max_retries - 1:
-                time.sleep(2 * (attempt + 1))
-            else:
-                raise RuntimeError(
-                    f"请求{provider.provider_label}失败 "
-                    f"(已尝试 {max_retries} 次): {last_error}"
-                )
-
-    if not response or response.status_code != 200:
-        raise RuntimeError(f"{provider.provider_label} API 识别失败: {last_error}")
+    # Chat-completion POSTs are not idempotent: a read timeout can happen after
+    # the provider has accepted (and billed) the request.  Do not automatically
+    # send the same image two or three times.  The shared transport still
+    # retries a connection-establishment failure where no response was read.
+    response = post_chat_completion(
+        provider,
+        payload,
+        timeout=timeout,
+        check_status=False,
+    )
+    if response.status_code != 200:
+        raise RuntimeError(
+            f"{provider.provider_label} API 识别失败: HTTP {response.status_code}"
+        )
 
     res_json = response.json()
     try:
@@ -673,8 +746,7 @@ def ocr_via_provider(
             return content.strip()
         else:
             raise RuntimeError(
-                f"{provider.provider_label} 返回的数据中未包含 Choices 结果: "
-                f"{str(res_json)}"
+                f"{provider.provider_label} 返回的数据中未包含 Choices 结果。"
             )
     except Exception as e:
         raise RuntimeError(
@@ -736,7 +808,7 @@ def draw_tikz_via_high_model(image_path: str, prefer_draw: str, latex_content: s
         ],
         "stream": False
     }
-
+    payload = inject_reasoning_effort(payload, provider.reasoning_effort)
     payload = apply_bailian_thinking_policy(
         payload,
         provider_code=provider.provider_code,
@@ -767,7 +839,7 @@ def draw_tikz_via_high_model(image_path: str, prefer_draw: str, latex_content: s
                     return code
                 return ai_message.strip()
         else:
-            print(f"[High Model Draw Error] 接口返回 HTTP {response.status_code}: {response.text}")
+            print(f"[High Model Draw Error] 接口返回 HTTP {response.status_code}")
     except Exception as e:
         print(f"[High Model Draw Error] 大模型请求发生异常: {str(e)}")
     return None
@@ -782,10 +854,11 @@ def ocr_formula(
     import re
     temp_filepath = None
     try:
-        # 同步读取文件字节
-        file_bytes = file.file.read()
-        
-        image = Image.open(io.BytesIO(file_bytes)).convert("RGB")
+        # OCR route is synchronous and runs in FastAPI's worker pool.  Stream
+        # only up to the endpoint cap, then fully decode/re-encode the image.
+        file_bytes = read_stream_limited(file.file, MAX_OCR_IMAGE_BYTES)
+        normalized = normalize_raster_image(file_bytes)
+        image = Image.open(io.BytesIO(normalized.data)).convert("RGB")
         
         # 1. 运行自适应图像去噪/自动切边预处理
         image = auto_crop_image(image)
@@ -906,6 +979,16 @@ def ocr_formula(
             "tikz_code": tikz_code_from_high_model,
             "tikz_image_path": tikz_image_path
         }
+    except UploadTooLargeError:
+        return JSONResponse(
+            content={"status": "error", "message": "公式识图失败: 图片不能超过 10MB。"},
+            status_code=413,
+        )
+    except InvalidImageError as e:
+        return JSONResponse(
+            content={"status": "error", "message": f"公式识图失败: {str(e)}"},
+            status_code=400,
+        )
     except Exception as e:
         return JSONResponse(
             content={"status": "error", "message": f"公式识图失败: {str(e)}"},
@@ -922,7 +1005,7 @@ def ocr_formula(
 # ----------------- DeepSeek AI Solve API -----------------
 
 @app.post("/api/ai/solve")
-async def ai_solve(
+def ai_solve(
     content: str = Form(...),
     question_type: str = Form("detailed_answer"),
     ocr_result: str = Form(""),
@@ -954,8 +1037,9 @@ async def ai_solve(
             custom_prompt=custom_prompt,
         )
 
-        # Double max_tokens to 16384, but cap at 8192 for Alibaba Bailian compatible-mode endpoints
-        max_output_tokens = 8192 if (api_base and "aliyuncs.com" in api_base.lower()) else 16384
+        # Keep the legacy fallback cap for older Bailian models. Current
+        # Qwen3.7/3.8 requests are converted below to max_completion_tokens.
+        max_output_tokens = 8192 if provider.provider_code == "bailian" else 16384
             
         explicit_effort = provider.reasoning_effort
 
@@ -1004,11 +1088,9 @@ async def ai_solve(
         if is_deepseek and thinking in ["enabled", "disabled"]:
             data["thinking"] = {"type": thinking}
             
-        # Overwrite with explicit reasoning_effort parameter if set via 7:3 UI layout
-        if explicit_effort and explicit_effort != "default":
-            data["reasoning_effort"] = explicit_effort.lower()
-            data["enable_thinking"] = True
-
+        # The 7:3 model selector may provide an explicit allowlisted effort.
+        # Apply it last so it intentionally overrides the generic toggle.
+        data = inject_reasoning_effort(data, explicit_effort)
         data = apply_bailian_thinking_policy(
             data,
             provider_code=provider.provider_code,
@@ -1034,7 +1116,7 @@ async def ai_solve(
                         check_status=False,
                     )
                     if response.status_code != 200:
-                        error_msg = f"{provider_name} 接口错误: HTTP {response.status_code}, 内容: {response.text}"
+                        error_msg = f"{provider_name} 接口错误: HTTP {response.status_code}"
                         yield f"data: {json.dumps({'status': 'error', 'message': error_msg}, ensure_ascii=False)}\n\n"
                         return
                     
@@ -1111,9 +1193,10 @@ async def ai_solve(
             ai_message = f"【深度思考推理过程】\n{reasoning_content}\n\n【参考解析】已成功生成推理步骤。如果需要标准的三板块排版，请尝试在控制面板中关闭「AI 深度思考推理」再次生成。"
             
         if not ai_message:
-            print("[DEBUG Solve API] API Request Data:", json.dumps(data, ensure_ascii=False))
-            print("[DEBUG Solve API] HTTP Status:", response.status_code)
-            print("[DEBUG Solve API] Raw Response Text:", response.text)
+            print(
+                f"[Solve API] Provider returned an empty message "
+                f"(provider={provider.provider_code}, status={response.status_code})."
+            )
             raise Exception(f"{provider_name} 返回了空消息，请检查 API 或账户余额。")
             
         return {
@@ -1200,7 +1283,7 @@ def get_settings():
     }
 
 @app.post("/api/settings/save")
-async def save_settings(
+def save_settings(
     deepseek_key: str = Form(""),
     siliconflow_key: str = Form(""),
     ali_bailian_key: str = Form(""),
@@ -1219,6 +1302,27 @@ async def save_settings(
     prefer_draw_model: str = Form("Qwen/Qwen3-VL-32B-Instruct")
 ):
     try:
+        settings_values = {
+            "deepseek_key": deepseek_key,
+            "siliconflow_key": siliconflow_key,
+            "ali_bailian_key": ali_bailian_key,
+            "zhongzhan_gpt_key": zhongzhan_gpt_key,
+            "zhongzhan_gpt_base_url": zhongzhan_gpt_base_url,
+            "zhongzhan_gpt_ocr_model": zhongzhan_gpt_ocr_model,
+            "zhongzhan_claude_key": zhongzhan_claude_key,
+            "zhongzhan_claude_base_url": zhongzhan_claude_base_url,
+            "zhongzhan_claude_ocr_model": zhongzhan_claude_ocr_model,
+            "prefer_engine": prefer_engine,
+            "siliconflow_model": siliconflow_model,
+            "ali_bailian_model": ali_bailian_model,
+            "prefer_solve_model": prefer_solve_model,
+            "prefer_parse_model": prefer_parse_model,
+            "prefer_classify_model": prefer_classify_model,
+            "prefer_draw_model": prefer_draw_model,
+        }
+        if any("\r" in value or "\n" in value for value in settings_values.values()):
+            raise ValueError("配置值不能包含换行符。")
+
         # If masked, preserve current key
         if "••••" in deepseek_key:
             deepseek_key = os.getenv("DEEPSEEK_API_KEY", "")
@@ -1348,8 +1452,7 @@ async def save_settings(
         if not keys_replaced["PREFER_DRAW_MODEL"]:
             new_lines.append(f"PREFER_DRAW_MODEL={prefer_draw_model}\n")
             
-        with ENV_FILE.open("w", encoding="utf-8") as f:
-            f.writelines(new_lines)
+        write_private_text_atomic(ENV_FILE, "".join(new_lines))
             
         # Clean current process env
         os.environ.pop("PIX2TEXT_API_KEY", None)
@@ -1540,10 +1643,20 @@ def compile_tikz_to_png(tikz_code: str) -> str:
 
         # 调用 xelatex 编译
         result = subprocess.run(
-            ["xelatex", "-interaction=nonstopmode", "-halt-on-error", "-output-directory", temp_dir, tex_path],
+            [
+                "xelatex",
+                "-no-shell-escape",
+                "-interaction=nonstopmode",
+                "-halt-on-error",
+                "-file-line-error",
+                "-output-directory=.",
+                os.path.basename(tex_path),
+            ],
+            cwd=temp_dir,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
-            timeout=15
+            timeout=15,
+            env=build_restricted_tex_environment(temp_dir),
         )
 
         if result.returncode != 0:
@@ -1639,9 +1752,14 @@ def correct_tikz_endpoint(
     )
 
     # 对原始截图进行 Base64 编码
-    clean_original_path = os.path.join(str(PROJECT_ROOT), original_image_path.lstrip("/"))
-    if not os.path.exists(clean_original_path):
-        raise HTTPException(status_code=400, detail=f"找不到原始题目图片: {original_image_path}")
+    try:
+        clean_original_path = resolve_upload_asset(
+            original_image_path,
+            uploads_dir=UPLOAD_DIR,
+            url_prefix=UPLOAD_DIR_REL,
+        )
+    except AssetSecurityError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     try:
         with open(clean_original_path, "rb") as f:
@@ -1659,7 +1777,14 @@ def correct_tikz_endpoint(
 
     # 视觉比对模式（编译成功，获取到两张图）
     if rendered_image_path:
-        clean_rendered_path = os.path.join(str(PROJECT_ROOT), rendered_image_path.lstrip("/"))
+        try:
+            clean_rendered_path = resolve_upload_asset(
+                rendered_image_path,
+                uploads_dir=UPLOAD_DIR,
+                url_prefix=UPLOAD_DIR_REL,
+            )
+        except AssetSecurityError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
         try:
             with open(clean_rendered_path, "rb") as f:
                 encoded_rendered = base64.b64encode(f.read()).decode("utf-8")
@@ -1690,7 +1815,7 @@ def correct_tikz_endpoint(
         
         # 临时创建的渲染图在使用后也可以删除，以节省磁盘
         try:
-            os.remove(clean_rendered_path)
+            clean_rendered_path.unlink()
         except Exception:
             pass
 
@@ -1723,7 +1848,7 @@ def correct_tikz_endpoint(
         ],
         "stream": False
     }
-
+    payload = inject_reasoning_effort(payload, draw_provider.reasoning_effort)
     payload = apply_bailian_thinking_policy(
         payload,
         provider_code=draw_provider.provider_code,
@@ -1739,7 +1864,7 @@ def correct_tikz_endpoint(
             check_status=False,
         )
         if response.status_code != 200:
-            raise RuntimeError(f"大模型接口返回错误 HTTP {response.status_code}: {response.text}")
+            raise RuntimeError(f"大模型接口返回错误 HTTP {response.status_code}")
         
         res_json = response.json()
         choices = res_json.get("choices", [])
@@ -1767,17 +1892,19 @@ def draw_tikz_from_image_endpoint(
     x_local_token: str = Header(None, alias="X-Local-Token")
 ):
     """根据指定的题目图片，调用高级多模态模型生成对应的 LaTeX TikZ 代码"""
-    # 鉴权
-    local_token = os.getenv("LOCAL_TOKEN", "")
-    if local_token and x_local_token != local_token:
+    # Middleware already enforces this header for HTTP calls.  Keep the direct
+    # function guard tied to the same single token source for test/internal use.
+    if not x_local_token or not secrets.compare_digest(x_local_token, LOCAL_TOKEN):
         raise HTTPException(status_code=401, detail="Unauthorized")
-        
-    # 清洗并解析物理路径
-    clean_path = image_path.lstrip("/")
-    physical_path = os.path.join(str(PROJECT_ROOT), clean_path)
-    
-    if not os.path.exists(physical_path):
-        raise HTTPException(status_code=404, detail=f"找不到指定的插图物理文件: {image_path}")
+
+    try:
+        physical_path = resolve_upload_asset(
+            image_path,
+            uploads_dir=UPLOAD_DIR,
+            url_prefix=UPLOAD_DIR_REL,
+        )
+    except AssetSecurityError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
         
     # 动态读取绘图高级模型配置
     prefer_draw = os.getenv("PREFER_DRAW_MODEL") or os.getenv("PREFER_PARSE_MODEL") or "Qwen/Qwen3-VL-32B-Instruct"
@@ -1818,6 +1945,9 @@ def list_questions(
     question_type: str = None,
     difficulty: str = None,
     source: str = None,
+    page: Optional[int] = None,
+    page_size: int = 20,
+    sort: str = "desc",
     db: Session = Depends(get_db)
 ):
     search_q = q or search
@@ -1836,9 +1966,16 @@ def list_questions(
             clean_q = clean_q[1:]
         if clean_q.isdigit():
             seq_val = int(clean_q)
-            all_q_asc = db.query(Question.id).order_by(Question.id.asc()).all()
-            if 1 <= seq_val <= len(all_q_asc):
-                target_id_by_seq = all_q_asc[seq_val - 1][0]
+            if seq_val >= 1:
+                row = (
+                    db.query(Question.id)
+                    .order_by(Question.id.asc())
+                    .offset(seq_val - 1)
+                    .limit(1)
+                    .first()
+                )
+                if row:
+                    target_id_by_seq = row[0]
 
     if search_q:
         if target_id_by_seq is not None:
@@ -1871,8 +2008,36 @@ def list_questions(
     if source:
         query = query.filter(Question.source.like(f"%{source}%"))
         
-    questions = query.order_by(Question.created_at.desc()).all()
-    seq_map = get_seq_mapping(db)
+    order_columns = (
+        (Question.created_at.asc(), Question.id.asc())
+        if str(sort).lower() == "asc"
+        else (Question.created_at.desc(), Question.id.desc())
+    )
+    if page is not None:
+        safe_page_size = max(1, min(int(page_size), 100))
+        total = query.count()
+        total_pages = max(1, (total + safe_page_size - 1) // safe_page_size)
+        safe_page = max(1, min(int(page), total_pages))
+        questions = (
+            query.order_by(*order_columns)
+            .offset((safe_page - 1) * safe_page_size)
+            .limit(safe_page_size)
+            .all()
+        )
+        seq_map = get_seq_mapping(db, [item.id for item in questions])
+        return {
+            "items": [
+                {**item.to_summary_dict(), "seq_num": seq_map.get(item.id)}
+                for item in questions
+            ],
+            "total": total,
+            "page": safe_page,
+            "page_size": safe_page_size,
+            "total_pages": total_pages,
+        }
+
+    questions = query.order_by(*order_columns).all()
+    seq_map = get_seq_mapping(db, [item.id for item in questions])
     return [{**item.to_summary_dict(), "seq_num": seq_map.get(item.id)} for item in questions]
 
 @app.get("/api/questions/{question_id}")
@@ -1880,7 +2045,7 @@ def get_question(question_id: int, db: Session = Depends(get_db)):
     q = db.query(Question).filter(Question.id == question_id).first()
     if not q:
         raise HTTPException(status_code=404, detail="未找到对应的题目")
-    seq_map = get_seq_mapping(db)
+    seq_map = get_seq_mapping(db, [q.id])
     q_dict = q.to_dict()
     q_dict["seq_num"] = seq_map.get(q.id)
     return q_dict
@@ -1898,6 +2063,37 @@ def normalize_fillin_macro(text: str) -> str:
     # 4. 清理可能残留的额外右花括号 }
     text = re.sub(r'\\fillin\}', r'\\fillin', text)
     return text
+
+
+def committed_question_response(
+    db: Session,
+    db_question: Question,
+    question_id: int,
+    *,
+    operation: str,
+) -> dict:
+    """Serialize a committed write without ever misreporting it as failed."""
+
+    try:
+        db.refresh(db_question)
+        seq_map = get_seq_mapping(db, [question_id])
+        question = db_question.to_dict()
+        question["seq_num"] = seq_map.get(question_id)
+        return {"status": "success", "question": question}
+    except Exception as exc:
+        # The durable transaction is already complete.  End any failed read
+        # transaction and return enough identity for the client to continue;
+        # a later list/detail refresh can obtain the full representation.
+        try:
+            db.rollback()
+        except Exception:
+            pass
+        print(
+            f"[Question Write] Post-commit {operation} response degraded "
+            f"(type={type(exc).__name__})."
+        )
+        return {"status": "success", "question": {"id": question_id}}
+
 
 @app.post("/api/questions")
 def create_question(
@@ -1918,6 +2114,7 @@ def create_question(
     image_paths: str = Form("[]"),  # JSON array string
     db: Session = Depends(get_db)
 ):
+    asset_promotions: list[tuple[Path, Path]] = []
     try:
         # 规范化填空题下划线为 \fillin 宏
         content = normalize_fillin_macro(content)
@@ -1927,7 +2124,15 @@ def create_question(
         
         # 自动晋升临时图片
         content, answer_markdown, parsed_img_paths = promote_question_temp_assets(
-            content, answer_markdown, parsed_img_paths
+            content,
+            answer_markdown,
+            parsed_img_paths,
+            promotion_log=asset_promotions,
+        )
+        parsed_img_paths = normalize_upload_asset_references(
+            parsed_img_paths,
+            uploads_dir=UPLOAD_DIR,
+            url_prefix=UPLOAD_DIR_REL,
         )
         
         # 1. Fallback if third level is empty, default to chapter
@@ -1964,10 +2169,9 @@ def create_question(
                     db_question.association_group_id = g2
         
         db.add(db_question)
-        db.commit()
-        db.refresh(db_question)
-        
-        # Save to active QuestionCurriculum mapping
+        db.flush()
+
+        # Save the question and its active curriculum mirror atomically.
         active_version = get_active_version_code()
         curriculum_map = QuestionCurriculum(
             question_id=db_question.id,
@@ -1977,19 +2181,22 @@ def create_question(
             knowledge=category_knowledge
         )
         db.add(curriculum_map)
+        committed_question_id = db_question.id
         db.commit()
-        
-        # Auto export database to files for Git synchronization and AI referencing (Async Background Task)
-        background_tasks.add_task(export_database_to_files)
-        
-        seq_map = get_seq_mapping(db)
-        q_dict = db_question.to_dict()
-        q_dict["seq_num"] = seq_map.get(db_question.id)
-        
-        return {"status": "success", "question": q_dict}
     except Exception as e:
         db.rollback()
+        rollback_question_asset_promotions(asset_promotions)
         raise HTTPException(status_code=400, detail=f"保存题目失败: {str(e)}")
+
+    # Everything below is compensating or response work after the durable
+    # success boundary; none of it may turn the write into a misleading 400.
+    schedule_database_export(background_tasks, operation="create_question")
+    return committed_question_response(
+        db,
+        db_question,
+        committed_question_id,
+        operation="create_question",
+    )
 
 @app.put("/api/questions/{question_id}")
 def update_question(
@@ -2015,6 +2222,8 @@ def update_question(
     if not db_question:
         raise HTTPException(status_code=404, detail="未找到对应的题目")
         
+    asset_promotions: list[tuple[Path, Path]] = []
+    old_images = list(db_question.image_paths)
     try:
         # 规范化填空题下划线为 \fillin 宏
         content = normalize_fillin_macro(content)
@@ -2023,7 +2232,15 @@ def update_question(
         
         # 自动晋升临时图片
         content, answer_markdown, parsed_img_paths = promote_question_temp_assets(
-            content, answer_markdown, parsed_img_paths
+            content,
+            answer_markdown,
+            parsed_img_paths,
+            promotion_log=asset_promotions,
+        )
+        parsed_img_paths = normalize_upload_asset_references(
+            parsed_img_paths,
+            uploads_dir=UPLOAD_DIR,
+            url_prefix=UPLOAD_DIR_REL,
         )
         
         # 1. Fallback if third level is empty, default to chapter
@@ -2043,17 +2260,8 @@ def update_question(
         if figure_align in ["right", "center", "bottom_right"]:
             db_question.figure_align = figure_align
         db_question.tags = tags
-        # Clean up removed images from disk to prevent storage leaks
-        old_images = db_question.image_paths
+        # Physical cleanup happens only after the database commit succeeds.
         removed_images = set(old_images) - set(parsed_img_paths)
-        for img_path in removed_images:
-            rel_path = img_path.lstrip("/")
-            physical_path = os.path.join(str(PROJECT_ROOT), rel_path)
-            if rel_path.startswith(f"{UPLOAD_DIR_REL}/") and os.path.exists(physical_path):
-                try:
-                    os.remove(physical_path)
-                except Exception:
-                    pass
 
         db_question.image_paths = parsed_img_paths
         
@@ -2097,19 +2305,28 @@ def update_question(
         curriculum_map.knowledge = category_knowledge
         
         db.commit()
-        db.refresh(db_question)
-        
-        # Auto export database to files for Git synchronization and AI referencing (Async Background Task)
-        background_tasks.add_task(export_database_to_files)
-        
-        seq_map = get_seq_mapping(db)
-        q_dict = db_question.to_dict()
-        q_dict["seq_num"] = seq_map.get(db_question.id)
-        
-        return {"status": "success", "question": q_dict}
     except Exception as e:
         db.rollback()
+        rollback_question_asset_promotions(asset_promotions)
         raise HTTPException(status_code=400, detail=f"更新题目失败: {str(e)}")
+
+    # The question is already durably updated at this point.  Best-effort
+    # cleanup and response assembly must not turn success into a false failure.
+    try:
+        delete_unreferenced_question_assets(db, removed_images)
+    except Exception as cleanup_exc:
+        print(
+            "[Storage Cleanup] Post-commit update cleanup failed "
+            f"(type={type(cleanup_exc).__name__}); it will be retried by "
+            "the startup orphan cleanup."
+        )
+    schedule_database_export(background_tasks, operation="update_question")
+    return committed_question_response(
+        db,
+        db_question,
+        question_id,
+        operation="update_question",
+    )
 
 @app.post("/api/questions/{question_id}/figure_align")
 def update_question_figure_align(
@@ -2142,7 +2359,7 @@ def get_associated_questions(question_id: int, db: Session = Depends(get_db)):
         Question.id != question_id
     ).all()
     
-    seq_map = get_seq_mapping(db)
+    seq_map = get_seq_mapping(db, [item.id for item in associated])
     return [{**item.to_dict(), "seq_num": seq_map.get(item.id)} for item in associated]
 
 @app.post("/api/questions/{question_id}/associate")
@@ -2182,7 +2399,7 @@ def associate_questions_endpoint(
         db.commit()
         
         # Auto export database to files for Git synchronization and AI referencing (Async Background Task)
-        background_tasks.add_task(export_database_to_files)
+        schedule_database_export(background_tasks, operation="associate_questions")
         
         return {"status": "success", "message": "关联成功"}
     except Exception as e:
@@ -2220,7 +2437,7 @@ def remove_association(
         db.commit()
         
         # Auto export database to files for Git synchronization and AI referencing (Async Background Task)
-        background_tasks.add_task(export_database_to_files)
+        schedule_database_export(background_tasks, operation="remove_association")
         
         return {"status": "success", "message": "已成功解除所有关联"}
     except Exception as e:
@@ -2237,29 +2454,56 @@ def delete_question(
     if not db_question:
         raise HTTPException(status_code=404, detail="未找到对应的题目")
         
+    image_paths_to_check = list(db_question.image_paths)
     try:
-        # Delete associated images from disk to clean up storage if they exist
-        # Only delete files under /static/uploads/
-        for img_path in db_question.image_paths:
-            # normalize and strip prefix slash
-            rel_path = img_path.lstrip("/")
-            physical_path = os.path.join(str(PROJECT_ROOT), rel_path)
-            if rel_path.startswith(f"{UPLOAD_DIR_REL}/") and os.path.exists(physical_path):
-                try:
-                    os.remove(physical_path)
-                except Exception:
-                    pass
-                    
+        from sqlalchemy import func
+
+        affected_paper_ids = [
+            paper_id
+            for (paper_id,) in db.query(PaperQuestion.paper_id)
+            .filter(PaperQuestion.question_id == question_id)
+            .distinct()
+            .all()
+        ]
+        if affected_paper_ids:
+            remaining_scores = dict(
+                db.query(
+                    PaperQuestion.paper_id,
+                    func.coalesce(func.sum(PaperQuestion.score), 0),
+                )
+                .filter(
+                    PaperQuestion.paper_id.in_(affected_paper_ids),
+                    PaperQuestion.question_id != question_id,
+                )
+                .group_by(PaperQuestion.paper_id)
+                .all()
+            )
+            for paper in db.query(Paper).filter(
+                Paper.id.in_(affected_paper_ids)
+            ):
+                paper.total_score = int(remaining_scores.get(paper.id, 0))
         db.delete(db_question)
         db.commit()
-        
-        # Auto export database to files for Git synchronization and AI referencing (Async Background Task)
-        background_tasks.add_task(export_database_to_files)
-        
-        return {"status": "success", "message": "题目删除成功"}
     except Exception as e:
         db.rollback()
         raise HTTPException(status_code=400, detail=f"删除题目失败: {str(e)}")
+
+    # The database delete is complete.  Image cleanup is intentionally
+    # best-effort so a locked/missing file cannot make the client believe the
+    # question still exists and submit a duplicate delete.
+    try:
+        delete_unreferenced_question_assets(db, image_paths_to_check)
+    except Exception as cleanup_exc:
+        print(
+            "[Storage Cleanup] Post-commit delete cleanup failed "
+            f"(type={type(cleanup_exc).__name__}); it will be retried by "
+            "the startup orphan cleanup."
+        )
+
+    # Auto export database to files for Git synchronization and AI referencing (Async Background Task)
+    schedule_database_export(background_tasks, operation="delete_question")
+
+    return {"status": "success", "message": "题目删除成功"}
 
 # ----------------- Category Hierarchy Autocomplete API -----------------
 
@@ -2314,8 +2558,10 @@ def load_or_init_metadata():
                     if modified:
                         loaded["curriculum"] = new_curriculum
                         try:
-                            with open(METADATA_FILE, "w", encoding="utf-8") as f:
-                                json.dump(loaded, f, ensure_ascii=False, indent=2)
+                            write_private_text_atomic(
+                                METADATA_FILE,
+                                json.dumps(loaded, ensure_ascii=False, indent=2),
+                            )
                             print(f"[Metadata Self-Heal] Upgraded {METADATA_FILE} with simplified book names and normal difficulty.")
                         except Exception as e:
                             print(f"[Metadata Self-Heal Error] Failed to write updated metadata: {e}")
@@ -2329,8 +2575,10 @@ def load_or_init_metadata():
             
     # Self-heal / initialize
     try:
-        with open(METADATA_FILE, "w", encoding="utf-8") as f:
-            json.dump(default_metadata, f, ensure_ascii=False, indent=2)
+        write_private_text_atomic(
+            METADATA_FILE,
+            json.dumps(default_metadata, ensure_ascii=False, indent=2),
+        )
         print(f"[Metadata] Initialized default metadata at {METADATA_FILE}")
     except Exception as e:
         print(f"[Metadata Error] Could not write default metadata: {e}")
@@ -2478,7 +2726,11 @@ def route_chapter(comp: str, chap: str, know: str, target: str) -> tuple[str, st
     return new_comp, new_chap, new_know
 
 @app.post("/api/config/metadata")
-def save_metadata_config(payload: dict, db: Session = Depends(get_db)):
+def save_metadata_config(
+    payload: dict,
+    background_tasks: BackgroundTasks,
+    db: Session = Depends(get_db),
+):
     global METADATA_CACHE
     # Validation
     if not isinstance(payload, dict):
@@ -2495,7 +2747,15 @@ def save_metadata_config(payload: dict, db: Session = Depends(get_db)):
     if not isinstance(payload["curriculum"], dict):
         raise HTTPException(status_code=400, detail="curriculum 必须是字典对象")
         
-    # Write to file
+    old_metadata = METADATA_CACHE
+    metadata_path = Path(METADATA_FILE)
+    old_file_contents = (
+        metadata_path.read_text(encoding="utf-8") if metadata_path.exists() else None
+    )
+    file_replaced = False
+    transaction_committed = False
+
+    # Update the curriculum mirror and metadata as one compensated operation.
     try:
         source_version = get_active_version_code()
         # Detect target version
@@ -2513,11 +2773,6 @@ def save_metadata_config(payload: dict, db: Session = Depends(get_db)):
         else:
             target_version = "A"
 
-        with open(METADATA_FILE, "w", encoding="utf-8") as f:
-            json.dump(payload, f, ensure_ascii=False, indent=2)
-        METADATA_CACHE = payload
-        print(f"[Metadata] Saved new custom metadata to {METADATA_FILE} (Detected version: {target_version})")
-        
         # Incremental migration if curriculum version shifts
         if source_version != target_version:
             # Check and run incremental migration for all questions that do not have classifications for target_version
@@ -2545,24 +2800,49 @@ def save_metadata_config(payload: dict, db: Session = Depends(get_db)):
                         target_map.compulsory = new_comp
                         target_map.chapter = new_chap
                         target_map.knowledge = new_know
-            db.commit()
-
         # Batch update main questions table categories with target version values
         from sqlalchemy import text
+        db.flush()
         db.execute(text("""
             UPDATE questions 
             SET category_compulsory = COALESCE((SELECT compulsory FROM question_curriculums WHERE question_id = questions.id AND version_code = :v), ''),
                 category_chapter = COALESCE((SELECT chapter FROM question_curriculums WHERE question_id = questions.id AND version_code = :v), ''),
                 category_knowledge = COALESCE((SELECT knowledge FROM question_curriculums WHERE question_id = questions.id AND version_code = :v), '')
         """), {"v": target_version})
-        db.commit()
 
-        # Trigger export in background to update AI library with new mappings
-        export_database_to_files(db)
-        
-        return {"status": "success", "message": "元数据配置保存成功！"}
+        write_private_text_atomic(
+            metadata_path,
+            json.dumps(payload, ensure_ascii=False, indent=2),
+        )
+        file_replaced = True
+        db.commit()
+        transaction_committed = True
     except Exception as e:
+        db.rollback()
+        if not transaction_committed:
+            METADATA_CACHE = old_metadata
+        if file_replaced and not transaction_committed:
+            try:
+                if old_file_contents is None:
+                    metadata_path.unlink(missing_ok=True)
+                else:
+                    write_private_text_atomic(metadata_path, old_file_contents)
+            except OSError as restore_error:
+                print(
+                    "[Metadata] Failed to restore metadata after DB rollback "
+                    f"(type={type(restore_error).__name__})."
+                )
         raise HTTPException(status_code=500, detail=f"保存元数据失败: {str(e)}")
+
+    # Everything below is post-commit and must not change the successful save
+    # into an error response or compensate already-durable database changes.
+    METADATA_CACHE = payload
+    print(
+        f"[Metadata] Saved new custom metadata to {METADATA_FILE} "
+        f"(Detected version: {target_version})"
+    )
+    schedule_database_export(background_tasks, operation="save_metadata")
+    return {"status": "success", "message": "元数据配置保存成功！"}
 
 # ----------------- DB Statistics API -----------------
 
@@ -2666,7 +2946,7 @@ def list_categories(db: Session = Depends(get_db)):
 # ----------------- AI Auto-Classification API -----------------
 
 @app.post("/api/ai/classify")
-async def ai_classify(content: str = Form(...)):
+def ai_classify(content: str = Form(...)):
     classify_model = (
         os.getenv("PREFER_CLASSIFY_MODEL") 
         or os.getenv("DEEPSEEK_CLASSIFY_MODEL") 
@@ -2674,9 +2954,7 @@ async def ai_classify(content: str = Form(...)):
         or "deepseek-v4-flash"
     )
     
-    # Classification historically treats the configured value as a literal
-    # model name, so keep effort parsing disabled on this route for now.
-    provider = resolve_text_provider(classify_model, parse_effort=False)
+    provider = resolve_text_provider(classify_model)
     api_key = provider.api_key
     api_base = provider.api_base
     model_name = provider.model_name
@@ -2708,18 +2986,17 @@ async def ai_classify(content: str = Form(...)):
         
         # Only add thinking if using a DeepSeek model or DeepSeek base URL, excluding legacy models that don't support it
         is_deepseek = ("deepseek" in model_name.lower() or "deepseek" in api_base.lower()) and "deepseek-chat" not in model_name.lower() and "deepseek-reasoner" not in model_name.lower()
-        if is_deepseek:
+        if is_deepseek and provider.reasoning_effort in {None, "default"}:
             data["thinking"] = {
                 "type": "disabled"
             }
-
+        data = inject_reasoning_effort(data, provider.reasoning_effort)
         data = apply_bailian_thinking_policy(
             data,
             provider_code=provider.provider_code,
             model_name=model_name,
             task="classify",
         )
-        
         
         response = post_chat_completion(
             provider,
@@ -2789,7 +3066,7 @@ async def ai_classify(content: str = Form(...)):
 # ----------------- LaTeX Batch Paper Import APIs -----------------
 
 @app.post("/api/upload/tex-source")
-async def upload_tex_source(file: UploadFile = File(...)):
+def upload_tex_source(file: UploadFile = File(...)):
     """Decode and inspect a single TeX source file without executing it."""
     filename = file.filename or ""
     if not filename.lower().endswith(".tex"):
@@ -2798,12 +3075,7 @@ async def upload_tex_source(file: UploadFile = File(...)):
             status_code=400,
         )
     try:
-        content = await file.read(MAX_TEX_BYTES + 1)
-        if len(content) > MAX_TEX_BYTES:
-            return JSONResponse(
-                content={"status": "error", "message": "TeX 文件过大，请上传 5MB 以内的单文件试卷源码！"},
-                status_code=400,
-            )
+        content = read_stream_limited(file.file, MAX_TEX_BYTES)
         result = decode_and_prepare_tex(content)
         return {
             "status": "success",
@@ -2811,49 +3083,51 @@ async def upload_tex_source(file: UploadFile = File(...)):
             "title": result["title"],
             "diagnostics": result["diagnostics"],
         }
+    except UploadTooLargeError:
+        return JSONResponse(
+            content={"status": "error", "message": "TeX 文件过大，请上传 5MB 以内的单文件试卷源码！"},
+            status_code=413,
+        )
     except ValueError as exc:
         return JSONResponse(content={"status": "error", "message": str(exc)}, status_code=400)
 
 
 @app.post("/api/upload/batch")
-async def upload_batch_images(files: List[UploadFile] = File(...)):
+def upload_batch_images(files: List[UploadFile] = File(...)):
     try:
         if not files or len(files) > 20:
             return JSONResponse(
                 content={"status": "error", "message": "配图数量必须为 1 至 20 张。"},
                 status_code=400,
             )
-        validated: list[tuple[str, bytes, str]] = []
+        validated = []
         total_bytes = 0
         seen_names: set[str] = set()
-        format_extensions = {"PNG": ".png", "JPEG": ".jpg", "GIF": ".gif", "WEBP": ".webp"}
         for file in files:
             original_name = tex_asset_basename(file.filename or "image") or "image"
             normalized_name = original_name.casefold()
             if normalized_name in seen_names:
                 raise ValueError(f"存在重名配图 {original_name}，请保留一张或先重命名。")
             seen_names.add(normalized_name)
-            raw = await file.read(10 * 1024 * 1024 + 1)
-            if len(raw) > 10 * 1024 * 1024:
-                raise ValueError(f"图片 {original_name} 超过 10MB。")
+            try:
+                raw = read_stream_limited(file.file, MAX_SINGLE_IMAGE_BYTES)
+            except UploadTooLargeError as exc:
+                raise ValueError(f"图片 {original_name} 超过 10MB。") from exc
             total_bytes += len(raw)
             if total_bytes > 50 * 1024 * 1024:
                 raise ValueError("配图总大小不能超过 50MB。")
-            with Image.open(io.BytesIO(raw)) as image:
-                if image.width <= 0 or image.height <= 0 or image.width * image.height > 30_000_000:
-                    raise ValueError(f"图片 {original_name} 的像素尺寸不安全。")
-                image_format = (image.format or "").upper()
-                if image_format not in format_extensions:
-                    raise ValueError(f"图片 {original_name} 不是受支持的 PNG/JPEG/GIF/WebP 格式。")
-                image.verify()
-            validated.append((original_name, raw, format_extensions[image_format]))
+            try:
+                normalized = normalize_raster_image(raw)
+            except InvalidImageError as exc:
+                raise ValueError(f"图片 {original_name} 不是安全的栅格图片。") from exc
+            validated.append((original_name, normalized))
 
         mapping = {}
-        for original_name, raw, ext in validated:
-            filename = f"{uuid.uuid4().hex}{ext}"
+        for original_name, normalized in validated:
+            filename = f"{uuid.uuid4().hex}{normalized.extension}"
             filepath = os.path.join(UPLOAD_DIR, filename)
             with open(filepath, "wb") as f:
-                f.write(raw)
+                f.write(normalized.data)
             relative_path = f"/{UPLOAD_DIR_REL}/{filename}"
             mapping[original_name] = relative_path
             
@@ -2861,7 +3135,7 @@ async def upload_batch_images(files: List[UploadFile] = File(...)):
             "status": "success",
             "mapping": mapping
         }
-    except (ValueError, UnidentifiedImageError, OSError, Image.DecompressionBombError) as e:
+    except (ValueError, OSError, Image.DecompressionBombError) as e:
         return JSONResponse(
             content={"status": "error", "message": f"批量图片上传失败: {str(e)}"},
             status_code=400
@@ -2874,7 +3148,7 @@ def parse_paper_text_internal(
 ) -> list:
     """内部通用函数：调用选定的 LLM 接口，将 LaTeX 试卷内容解析拆分为结构化 JSON 卡片"""
     parse_model = os.getenv("PREFER_PARSE_MODEL") or os.getenv("DEEPSEEK_PARSE_MODEL", "deepseek-v4-flash")
-    provider = resolve_text_provider(parse_model, parse_effort=False)
+    provider = resolve_text_provider(parse_model)
     api_key = provider.api_key
     api_base = provider.api_base
     model_name = provider.model_name
@@ -2903,11 +3177,11 @@ def parse_paper_text_internal(
     }
     
     is_deepseek = ("deepseek" in model_name.lower() or "deepseek" in api_base.lower()) and "deepseek-chat" not in model_name.lower() and "deepseek-reasoner" not in model_name.lower()
-    if is_deepseek:
+    if is_deepseek and provider.reasoning_effort in {None, "default"}:
         data["thinking"] = {
             "type": "disabled"
         }
-
+    data = inject_reasoning_effort(data, provider.reasoning_effort)
     data = apply_bailian_thinking_policy(
         data,
         provider_code=provider.provider_code,
@@ -2963,7 +3237,7 @@ def parse_paper_text_internal(
 
 
 @app.post("/api/ai/parse-paper")
-async def ai_parse_paper(
+def ai_parse_paper(
     latex_content: str = Form(...),
     paper_title: str = Form(""),
     image_mapping_json: str = Form("{}"),
@@ -2971,7 +3245,7 @@ async def ai_parse_paper(
 ):
     generate_answers_bool = generate_answers.lower() in ("true", "1", "yes")
     parse_model = os.getenv("PREFER_PARSE_MODEL") or os.getenv("DEEPSEEK_PARSE_MODEL", "deepseek-v4-flash")
-    provider = resolve_text_provider(parse_model, parse_effort=False)
+    provider = resolve_text_provider(parse_model)
     api_key = provider.api_key
     api_base = provider.api_base
     model_name = provider.model_name
@@ -3023,18 +3297,17 @@ async def ai_parse_paper(
         
         # Only add thinking if using a DeepSeek model or DeepSeek base URL, excluding legacy models that don't support it
         is_deepseek = ("deepseek" in model_name.lower() or "deepseek" in api_base.lower()) and "deepseek-chat" not in model_name.lower() and "deepseek-reasoner" not in model_name.lower()
-        if is_deepseek:
+        if is_deepseek and provider.reasoning_effort in {None, "default"}:
             data["thinking"] = {
                 "type": "disabled"
             }
-
+        data = inject_reasoning_effort(data, provider.reasoning_effort)
         data = apply_bailian_thinking_policy(
             data,
             provider_code=provider.provider_code,
             model_name=model_name,
             task="parse",
         )
-        
         
         response = post_chat_completion(
             provider,
@@ -3234,72 +3507,177 @@ def shutdown_server():
 
 # ----------------- Storage Promotion Engine -----------------
 
-def promote_question_temp_assets(content: str, answer_markdown: str, image_paths_list: list) -> tuple:
+def rollback_question_asset_promotions(promotions: list[tuple[Path, Path]]) -> None:
+    """Best-effort compensation when a DB transaction rejects promoted files."""
+
+    for source, destination in reversed(promotions):
+        try:
+            if destination.is_file() and not source.exists():
+                source.parent.mkdir(parents=True, exist_ok=True)
+                shutil.move(str(destination), str(source))
+        except OSError as exc:
+            print(f"[Storage Rollback] Failed to restore a promoted asset: {type(exc).__name__}")
+
+
+def _referenced_question_assets(db: Session) -> set[Path]:
+    """Resolve every stored question image reference with one database query."""
+
+    resolved_references: set[Path] = set()
+    rows = db.query(
+        Question._image_paths,
+        Question.content,
+        Question.answer_markdown,
+    ).all()
+    for raw_paths, content, answer_markdown in rows:
+        references = []
+        try:
+            parsed = json.loads(raw_paths or "[]")
+            if isinstance(parsed, list):
+                references.extend(parsed)
+        except (TypeError, json.JSONDecodeError):
+            pass
+        references.extend(
+            re.findall(
+                r'/static/(?:uploads|test_uploads)/[a-zA-Z0-9_./-]+',
+                f"{content or ''}\n{answer_markdown or ''}",
+            )
+        )
+        for reference in references:
+            try:
+                resolved = resolve_upload_asset(
+                    reference,
+                    uploads_dir=UPLOAD_DIR,
+                    url_prefix=UPLOAD_DIR_REL,
+                    require_file=False,
+                )
+            except AssetSecurityError:
+                continue
+            resolved_references.add(resolved)
+    return resolved_references
+
+
+def delete_unreferenced_question_assets(db: Session, references) -> int:
+    """Delete committed-away images only when no remaining question uses them."""
+
+    candidates: set[Path] = set()
+    for reference in set(references or []):
+        try:
+            candidates.add(
+                resolve_upload_asset(
+                    reference,
+                    uploads_dir=UPLOAD_DIR,
+                    url_prefix=UPLOAD_DIR_REL,
+                    require_file=False,
+                )
+            )
+        except AssetSecurityError:
+            print("[Storage Cleanup] Skipped an invalid legacy image path.")
+
+    if not candidates:
+        return 0
+    referenced = _referenced_question_assets(db)
+    removed = 0
+    for candidate in candidates:
+        try:
+            if candidate.is_file() and candidate not in referenced:
+                candidate.unlink()
+                removed += 1
+        except OSError:
+            print("[Storage Cleanup] Skipped an unavailable legacy image path.")
+    return removed
+
+
+def promote_question_temp_assets(
+    content: str,
+    answer_markdown: str,
+    image_paths_list: list,
+    *,
+    promotion_log: list[tuple[Path, Path]] | None = None,
+) -> tuple:
     """物理移动临时图片到永久目录，并更新题干、解析和图片路径列表中的引用"""
     import shutil
-    import re
-    
-    updated_paths = []
-    mapping = {} # Map from tmp relative path to promoted relative path
-    
-    for path in image_paths_list:
-        if not path:
-            continue
-        normalized_path = os.path.normpath(path.lstrip("/"))
-        expected_prefix = os.path.normpath(os.path.join(UPLOAD_DIR_REL, "tmp")).lower()
-        
-        if normalized_path.lower().startswith(expected_prefix):
-            filename = os.path.basename(normalized_path)
-            src_path = os.path.join(str(PROJECT_ROOT), normalized_path)
-            dest_rel_path = f"/{UPLOAD_DIR_REL}/{filename}"
-            dest_path = os.path.join(UPLOAD_DIR, filename)
-            
-            if os.path.exists(src_path):
-                try:
-                    shutil.move(src_path, dest_path)
-                    updated_paths.append(dest_rel_path)
-                    mapping[path] = dest_rel_path
-                    print(f"[Storage Promotion] 成功升级插图: {path} -> {dest_rel_path}")
-                except Exception as e_move:
-                    print(f"[Storage Promotion Fail] 无法移动 {path}: {str(e_move)}")
-                    updated_paths.append(path)
-            else:
-                updated_paths.append(path)
-        else:
-            updated_paths.append(path)
-            
+
+    if not isinstance(image_paths_list, list):
+        raise AssetSecurityError("image_paths 必须是插图路径数组。")
+
+    embedded_paths = re.findall(
+        r'/static/(?:uploads|test_uploads)/tmp/[a-zA-Z0-9_.-]+',
+        f"{content}\n{answer_markdown}",
+    )
+    all_references = [value for value in image_paths_list if value] + embedded_paths
+
+    # Validate the complete set before moving anything.  A bad second path must
+    # not leave the first path half-promoted.
+    canonical_by_input: dict[str, str] = {}
+    resolved_by_canonical: dict[str, Path] = {}
+    for reference in all_references:
+        canonical = normalize_upload_asset_reference(
+            reference,
+            uploads_dir=UPLOAD_DIR,
+            url_prefix=UPLOAD_DIR_REL,
+        )
+        canonical_by_input[reference] = canonical
+        resolved_by_canonical.setdefault(
+            canonical,
+            resolve_upload_asset(
+                canonical,
+                uploads_dir=UPLOAD_DIR,
+                url_prefix=UPLOAD_DIR_REL,
+            ),
+        )
+
+    upload_root = Path(UPLOAD_DIR).resolve()
+    temp_root = Path(TMP_UPLOAD_DIR).resolve()
+    promoted_by_canonical: dict[str, str] = {}
+    for canonical, source in resolved_by_canonical.items():
+        if source.parent == temp_root:
+            destination_url = f"/{UPLOAD_DIR_REL}/{source.name}"
+            destination = resolve_upload_asset(
+                destination_url,
+                uploads_dir=upload_root,
+                url_prefix=UPLOAD_DIR_REL,
+                require_file=False,
+            )
+            if destination.exists():
+                raise AssetSecurityError("目标插图文件已存在，已停止覆盖。")
+            shutil.move(str(source), str(destination))
+            if promotion_log is not None:
+                promotion_log.append((source, destination))
+            promoted_by_canonical[canonical] = normalize_upload_asset_reference(
+                destination_url,
+                uploads_dir=upload_root,
+                url_prefix=UPLOAD_DIR_REL,
+            )
+        elif source.is_relative_to(upload_root):
+            promoted_by_canonical[canonical] = canonical
+        else:  # Defensive; resolve_upload_asset should already make this impossible.
+            raise AssetSecurityError("临时插图越出了上传目录。")
+
+    replacements: dict[str, str] = {}
+    for original, canonical in canonical_by_input.items():
+        promoted = promoted_by_canonical[canonical]
+        replacements[original] = promoted
+        replacements[canonical] = promoted
+
     new_content = content
     new_answer = answer_markdown
-    for old_p, new_p in mapping.items():
-        if old_p in new_content:
-            new_content = new_content.replace(old_p, new_p)
-        if old_p in new_answer:
-            new_answer = new_answer.replace(old_p, new_p)
-            
-    # Check for any other tmp paths inside content/answer_markdown
-    for text_val in [new_content, new_answer]:
-        for match in re.finditer(r'/static/(?:uploads|test_uploads)/tmp/[a-zA-Z0-9_.-]+', text_val):
-            matched_path = match.group(0)
-            if matched_path not in mapping:
-                normalized_path = os.path.normpath(matched_path.lstrip("/"))
-                filename = os.path.basename(normalized_path)
-                src_path = os.path.join(str(PROJECT_ROOT), normalized_path)
-                dest_rel_path = f"/{UPLOAD_DIR_REL}/{filename}"
-                dest_path = os.path.join(UPLOAD_DIR, filename)
-                
-                if os.path.exists(src_path):
-                    try:
-                        shutil.move(src_path, dest_path)
-                        mapping[matched_path] = dest_rel_path
-                        if matched_path in new_content:
-                            new_content = new_content.replace(matched_path, dest_rel_path)
-                        if matched_path in new_answer:
-                            new_answer = new_answer.replace(matched_path, dest_rel_path)
-                        if dest_rel_path not in updated_paths:
-                            updated_paths.append(dest_rel_path)
-                    except Exception:
-                        pass
-                        
+    for old_path, new_path in replacements.items():
+        new_content = new_content.replace(old_path, new_path)
+        new_answer = new_answer.replace(old_path, new_path)
+
+    updated_paths: list[str] = []
+    for original in image_paths_list:
+        if not original:
+            continue
+        promoted = promoted_by_canonical[canonical_by_input[original]]
+        if promoted not in updated_paths:
+            updated_paths.append(promoted)
+
+    for embedded in embedded_paths:
+        promoted = promoted_by_canonical[canonical_by_input[embedded]]
+        if promoted not in updated_paths:
+            updated_paths.append(promoted)
+
     return new_content, new_answer, updated_paths
 
 
@@ -3307,45 +3685,72 @@ def promote_question_temp_assets(content: str, answer_markdown: str, image_paths
 def manual_crop_pdf(payload: dict):
     """用户在前端手动拖拽框选后，后端根据坐标裁剪 PDF 页面的特定区域"""
     try:
-        task_id = payload.get("task_id")
+        import math
+
+        if not isinstance(payload, dict):
+            raise ValueError("裁剪参数格式不正确。")
+        try:
+            task_id = str(uuid.UUID(str(payload.get("task_id", ""))))
+        except (ValueError, AttributeError) as exc:
+            raise ValueError("任务 ID 格式不正确。") from exc
+        task = DOCUMENT_TASKS.snapshot(task_id)
+        if not task or task.get("document_type") != "pdf":
+            return JSONResponse(
+                content={"status": "error", "message": "未找到对应的 PDF 任务！"},
+                status_code=404,
+            )
+        if task.get("status") in {"cancelled", "error"}:
+            raise ValueError("已取消或失败的 PDF 任务不能再裁剪。")
         page_index = int(payload.get("page_index", 0))
+        if page_index < 0 or page_index >= MAX_PDF_TASK_PAGES:
+            raise ValueError("页码越界。")
         ymin = float(payload.get("ymin", 0))
         xmin = float(payload.get("xmin", 0))
         ymax = float(payload.get("ymax", 0))
         xmax = float(payload.get("xmax", 0))
-        
+        coordinates = (ymin, xmin, ymax, xmax)
+        if not all(math.isfinite(value) for value in coordinates):
+            raise ValueError("裁剪坐标必须是有限数值。")
+        if not (
+            0 <= ymin < ymax <= 100
+            and 0 <= xmin < xmax <= 100
+        ):
+            raise ValueError("裁剪坐标必须位于 0–100，且框选区域不能为空。")
+
         img_filename = f"pdf_page_{task_id}_{page_index}.png"
-        img_filepath = os.path.join(TMP_UPLOAD_DIR, img_filename)
+        img_filepath = Path(TMP_UPLOAD_DIR) / img_filename
         
-        if not os.path.exists(img_filepath):
+        if not img_filepath.is_file() or img_filepath.is_symlink():
             return JSONResponse(
                 content={"status": "error", "message": "未找到对应的 PDF 页面图片！"},
                 status_code=404
             )
             
-        from PIL import Image
-        img = Image.open(img_filepath)
-        w, h = img.size
-        
-        # Convert percentage to pixels
-        left = (xmin / 100.0) * w
-        top = (ymin / 100.0) * h
-        right = (xmax / 100.0) * w
-        bottom = (ymax / 100.0) * h
-        
-        left = max(0, min(left, w - 1))
-        top = max(0, min(top, h - 1))
-        right = max(left + 1, min(right, w))
-        bottom = max(top + 1, min(bottom, h))
-        
-        cropped = img.crop((left, top, right, bottom))
-        
+        with Image.open(img_filepath) as img:
+            img.load()
+            w, h = img.size
+
+            # Convert percentage to pixels.
+            left = max(0, min((xmin / 100.0) * w, w - 1))
+            top = max(0, min((ymin / 100.0) * h, h - 1))
+            right = max(left + 1, min((xmax / 100.0) * w, w))
+            bottom = max(top + 1, min((ymax / 100.0) * h, h))
+            cropped = img.crop((left, top, right, bottom))
+
         crop_filename = f"pdf_crop_{task_id}_{uuid.uuid4().hex[:12]}.png"
-        crop_filepath = os.path.join(TMP_UPLOAD_DIR, crop_filename)
+        crop_filepath = Path(TMP_UPLOAD_DIR) / crop_filename
         cropped.save(crop_filepath, format="PNG")
         
         img_url = f"/{UPLOAD_DIR_REL}/tmp/{crop_filename}"
+        if not DOCUMENT_TASKS.add_temp_asset(task_id, img_url):
+            crop_filepath.unlink(missing_ok=True)
+            raise ValueError("任务记录已过期，无法登记裁剪图片。")
         return {"status": "success", "image_path": img_url}
+    except ValueError as e:
+        return JSONResponse(
+            content={"status": "error", "message": f"手动裁剪失败: {str(e)}"},
+            status_code=400,
+        )
     except Exception as e:
         return JSONResponse(
             content={"status": "error", "message": f"手动裁剪失败: {str(e)}"},
@@ -3411,6 +3816,13 @@ def ocr_pdf_page_image(image_path: str) -> str:
         try:
             print(f"[PDF OCR Flow] 正在尝试调用识图引擎: {label}...")
             return ocr_via_provider(image_path, ocr_provider)
+        except requests.exceptions.ReadTimeout as e_single:
+            # The first provider may already have accepted the image.  Sending
+            # it immediately to another provider can create a duplicate bill.
+            raise RuntimeError(
+                f"{label} 读取超时，请求是否已被处理尚不确定。"
+                "为避免重复计费，本次未自动切换到下一家模型，请稍后手动重试。"
+            ) from e_single
         except Exception as e_single:
             err_msg = f"{label} 出错: {str(e_single)}"
             print(f"[PDF OCR Flow Warning] {err_msg}")
@@ -3420,7 +3832,7 @@ def ocr_pdf_page_image(image_path: str) -> str:
     raise RuntimeError("所有配置的识图引擎均尝试失败。详情:\n" + "\n".join(errors))
 
 
-def process_ocr_illustrations(text: str, page_image_path: str, task_id: str) -> str:
+def process_ocr_illustrations(text: str) -> str:
     """(已关闭 AI 自动插图裁剪) 仅进行安全标签清洗，擦除任何潜在的视觉定位标签或 box 坐标标记，返回纯净 OCR 结果"""
     import re
     if not text:
@@ -3486,7 +3898,7 @@ def ai_select_paper(payload: dict, db: Session = Depends(get_db)):
         compulsory = payload.get("compulsory", "")
         chapter = payload.get("chapter", "")
         knowledge = payload.get("knowledge", "")
-        limit = int(payload.get("limit", 5))
+        limit = max(1, min(int(payload.get("limit", 5)), 20))
 
         # 0. 自然语言意图智能分析 (NL Intent Parser)
         extracted_topics = []
@@ -3533,70 +3945,26 @@ def ai_select_paper(payload: dict, db: Session = Depends(get_db)):
             if not candidates:
                 candidates = db.query(Question).order_by(Question.usage_count.asc(), Question.id.desc()).limit(35).all()
 
-        # 2. 严格按用户设置解析指定的 PREFER_SOLVE_MODEL (不进行任何跨提供商串用或自动轮询)
-        target_model = os.getenv("PREFER_SOLVE_MODEL") or os.getenv("PREFER_PARSE_MODEL") or "deepseek-chat"
-        api_key = None
-        api_base = None
-        model_name = target_model
-        provider_name = "DeepSeek"
-        provider_code = "deepseek"
-
-        if "/" in target_model:
-            parts = target_model.split("/", 1)
-            prefix, model_name = parts[0].upper(), parts[1]
-            if prefix == "SILICONFLOW":
-                provider_code = "siliconflow"
-                api_key = os.getenv("SILICONFLOW_API_KEY")
-                api_base = "https://api.siliconflow.cn/v1"
-                provider_name = "硅基流动"
-            elif prefix == "BAILIAN":
-                provider_code = "bailian"
-                api_key = os.getenv("ALI_BAILIAN_API_KEY")
-                api_base = os.getenv("ALI_BAILIAN_API_BASE", "https://dashscope.aliyuncs.com/compatible-mode/v1")
-                provider_name = "阿里百炼"
-            elif prefix == "DEEPSEEK":
-                provider_code = "deepseek"
-                api_key = os.getenv("DEEPSEEK_API_KEY")
-                api_base = os.getenv("DEEPSEEK_API_BASE", "https://api.deepseek.com")
-                provider_name = "DeepSeek"
-            elif prefix == "ZHONGZHAN_GPT":
-                provider_code = "zhongzhan_gpt"
-                api_key = os.getenv("ZHONGZHAN_GPT_API_KEY")
-                api_base = os.getenv("ZHONGZHAN_GPT_BASE_URL", "https://api.openai.com/v1")
-                provider_name = "中转站 A"
-            elif prefix == "ZHONGZHAN_CLAUDE":
-                provider_code = "zhongzhan_claude"
-                api_key = os.getenv("ZHONGZHAN_CLAUDE_API_KEY")
-                api_base = os.getenv("ZHONGZHAN_CLAUDE_BASE_URL", "https://api.openai.com/v1")
-                provider_name = "中转站 B"
-        else:
-            if "qwen" in target_model.lower():
-                provider_code = "bailian"
-                api_key = os.getenv("ALI_BAILIAN_API_KEY")
-                api_base = os.getenv("ALI_BAILIAN_API_BASE", "https://dashscope.aliyuncs.com/compatible-mode/v1")
-                provider_name = "阿里百炼"
-                model_name = target_model
-            else:
-                api_key = os.getenv("DEEPSEEK_API_KEY") or os.getenv("ALI_BAILIAN_API_KEY") or os.getenv("SILICONFLOW_API_KEY")
-                if os.getenv("DEEPSEEK_API_KEY"):
-                    provider_code = "deepseek"
-                    api_base = os.getenv("DEEPSEEK_API_BASE", "https://api.deepseek.com")
-                    provider_name = "DeepSeek"
-                elif os.getenv("ALI_BAILIAN_API_KEY"):
-                    provider_code = "bailian"
-                    api_base = os.getenv("ALI_BAILIAN_API_BASE", "https://dashscope.aliyuncs.com/compatible-mode/v1")
-                    provider_name = "阿里百炼"
-                    model_name = "qwen-max"
-                elif os.getenv("SILICONFLOW_API_KEY"):
-                    provider_code = "siliconflow"
-                    api_base = "https://api.siliconflow.cn/v1"
-                    provider_name = "硅基流动"
-                    model_name = "Qwen/Qwen2.5-72B-Instruct"
+        # 2. 解题、拆卷、分类和组卷共用同一供应商解析规则。
+        # 不会因为某家 Key 缺失而静默改用另一家。
+        target_model = (
+            os.getenv("PREFER_SOLVE_MODEL")
+            or os.getenv("PREFER_PARSE_MODEL")
+            or "deepseek-chat"
+        )
+        provider = resolve_text_provider(target_model)
+        api_key = provider.api_key
+        api_base = provider.api_base
+        model_name = provider.model_name
+        provider_name = provider.provider_label
 
         api_error_detail = None
         if prompt and candidates:
             if not api_key or not api_base:
-                api_error_detail = f"指定的 AI 解题模型 ({target_model}) 未在配置文件 (.env) 中检测到有效的 API Key 或 Base URL。"
+                api_error_detail = (
+                    f"指定的 AI 解题模型 ({target_model}) 未配置有效的 "
+                    f"API Key 或 Base URL（{provider.credential_label}）。"
+                )
             else:
                 candidate_items = []
                 for q in candidates:
@@ -3619,8 +3987,6 @@ def ai_select_paper(payload: dict, db: Session = Depends(get_db)):
                 )
 
                 try:
-                    url = f"{api_base.rstrip('/')}/chat/completions"
-                    headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
                     payload_data = {
                         "model": model_name,
                         "messages": [
@@ -3629,41 +3995,66 @@ def ai_select_paper(payload: dict, db: Session = Depends(get_db)):
                         ],
                         "temperature": 0.3
                     }
+                    payload_data = inject_reasoning_effort(
+                        payload_data, provider.reasoning_effort
+                    )
                     payload_data = apply_bailian_thinking_policy(
                         payload_data,
-                        provider_code=provider_code,
+                        provider_code=provider.provider_code,
                         model_name=model_name,
                         task="paper_selection",
                     )
-                    response = robust_request_post(url, headers=headers, json=payload_data, timeout=20)
-                    if response.status_code == 200:
-                        res_json = response.json()
-                        raw_content = res_json.get("choices", [{}])[0].get("message", {}).get("content", "").strip()
-                        if raw_content.startswith("```"):
-                            raw_content = re.sub(r"^```(?:json)?\s*", "", raw_content)
-                            raw_content = re.sub(r"\s*```$", "", raw_content)
-                        
-                        parsed = json.loads(raw_content)
-                        selected_ids = parsed.get("selected_ids", [])
-                        ai_analysis = parsed.get("ai_analysis", "")
-                        
-                        if selected_ids and isinstance(selected_ids, list):
-                            db_selected = db.query(Question).filter(Question.id.in_(selected_ids)).all()
-                            id_map = {q.id: q for q in db_selected}
-                            seq_map = get_seq_mapping(db)
-                            final_questions = [{**id_map[qid].to_dict(), "seq_num": seq_map.get(qid)} for qid in selected_ids if qid in id_map]
-                            
-                            if final_questions:
-                                return {
-                                    "status": "success",
-                                    "data": final_questions,
-                                    "count": len(final_questions),
-                                    "ai_analysis": ai_analysis,
-                                    "model_used": f"{provider_name} ({model_name})",
-                                    "fallback": False
-                                }
-                    else:
-                        api_error_detail = f"{provider_name} API 响应异常 (HTTP {response.status_code}: {response.text.strip()[:150]})"
+                    response = post_chat_completion(
+                        provider,
+                        payload_data,
+                        timeout=20,
+                        provider_name=provider_name,
+                    )
+                    res_json = response.json()
+                    raw_content = res_json.get("choices", [{}])[0].get("message", {}).get("content", "").strip()
+                    if raw_content.startswith("```"):
+                        raw_content = re.sub(r"^```(?:json)?\s*", "", raw_content)
+                        raw_content = re.sub(r"\s*```$", "", raw_content)
+
+                    parsed = json.loads(raw_content)
+                    raw_selected_ids = parsed.get("selected_ids", [])
+                    ai_analysis = parsed.get("ai_analysis", "")
+
+                    if raw_selected_ids and isinstance(raw_selected_ids, list):
+                        # The model may only rank the candidate IDs that were
+                        # actually supplied after local filters.  This prevents
+                        # prompt output from bypassing chapter/type constraints
+                        # or selecting arbitrary records from the database.
+                        allowed_ids = {question.id for question in candidates}
+                        selected_ids = []
+                        seen_ids = set()
+                        for raw_id in raw_selected_ids:
+                            try:
+                                selected_id = int(raw_id)
+                            except (TypeError, ValueError):
+                                continue
+                            if (
+                                selected_id in allowed_ids
+                                and selected_id not in seen_ids
+                            ):
+                                selected_ids.append(selected_id)
+                                seen_ids.add(selected_id)
+                            if len(selected_ids) >= limit:
+                                break
+                        db_selected = db.query(Question).filter(Question.id.in_(selected_ids)).all()
+                        id_map = {q.id: q for q in db_selected}
+                        seq_map = get_seq_mapping(db, selected_ids)
+                        final_questions = [{**id_map[qid].to_dict(), "seq_num": seq_map.get(qid)} for qid in selected_ids if qid in id_map]
+
+                        if final_questions:
+                            return {
+                                "status": "success",
+                                "data": final_questions,
+                                "count": len(final_questions),
+                                "ai_analysis": ai_analysis,
+                                "model_used": f"{provider_name} ({model_name})",
+                                "fallback": False
+                            }
                 except Exception as llm_err:
                     api_error_detail = f"{provider_name} API 请求失败: {str(llm_err)}"
 
@@ -3693,8 +4084,9 @@ def ai_select_paper(payload: dict, db: Session = Depends(get_db)):
                 if len(fallback_questions) >= limit:
                     break
 
-        seq_map = get_seq_mapping(db)
-        result = [{**q.to_dict(), "seq_num": seq_map.get(q.id)} for q in fallback_questions[:limit]]
+        selected_fallback = fallback_questions[:limit]
+        seq_map = get_seq_mapping(db, [q.id for q in selected_fallback])
+        result = [{**q.to_dict(), "seq_num": seq_map.get(q.id)} for q in selected_fallback]
         
         topic_str = "、".join(extracted_topics) if extracted_topics else "通用知识点"
         err_banner = f"⚠️ 【AI 解题模型调用未成功】: {api_error_detail}\n系统已为您自动启动本地教研算法，根据意图（{topic_str}）在本地题库中筛选并组合了 {len(result)} 道精选题目。" if api_error_detail else f"【本地智能筛选分析】已为您自动识别意图（{topic_str}），从题库中精准挑选并组合了鲜活试题。"
@@ -3836,62 +4228,81 @@ def post_process_pdf_parsed_questions(parsed_questions: list, paper_title: str, 
     return parsed_questions
 
 
-def run_pdf_parsing_task(task_id: str, file_bytes: bytes, filename: str, generate_answers: bool = False, page_range: str = None, pdf_strategy: str = "native_preferred"):
-    """异步 PDF 试卷分析后台主流程：栅格化 -> 并行 OCR -> 自动裁剪 -> 大模型拆题"""
+def run_pdf_parsing_task(
+    task_id: str,
+    file_bytes: bytes,
+    filename: str,
+    generate_answers: bool = False,
+    page_range: str = None,
+    pdf_strategy: str = "native_preferred",
+):
+    """PDF parsing with bounded OCR concurrency and cooperative cancellation."""
+
     import concurrent.futures
-    import re
-    
+
+    temp_assets: list[str] = []
+    tmp_pdf_path = Path(TMP_UPLOAD_DIR) / f"{task_id}.pdf"
+
     try:
         import fitz
     except ImportError:
-        with PDF_TASKS_LOCK:
-            PDF_TASKS[task_id] = {
-                "status": "error",
-                "progress": 0,
-                "error": "本地 Python 环境未安装 PyMuPDF，请通过 pip install pymupdf 安装依赖！"
-            }
+        DOCUMENT_TASKS.fail(
+            task_id,
+            "本地 Python 环境未安装 PyMuPDF，请通过 pip install pymupdf 安装依赖！",
+            document_type="pdf",
+        )
         return
-        
-    try:
-        # 暂存 PDF 文件
-        tmp_pdf_path = os.path.join(TMP_UPLOAD_DIR, f"{task_id}.pdf")
-        with open(tmp_pdf_path, "wb") as f:
-            f.write(file_bytes)
-            
-        with PDF_TASKS_LOCK:
-            PDF_TASKS[task_id] = {
-                "status": "processing_images",
-                "progress": 10,
-                "log": "已接收文件，正在渲染 PDF 高清页面..."
-            }
-            
-        doc = fitz.open(tmp_pdf_path)
-        total_pages = len(doc)
-        if total_pages == 0:
-            raise ValueError("此 PDF 没有有效页面，或者格式已损坏！")
-            
-        # 解析指定的页码范围 (1-indexed -> 0-indexed)
-        target_page_indices = parse_page_range(page_range, total_pages)
-        total_target_pages = len(target_page_indices)
-        
-        page_images = []
-        page_urls = []
-        for page_num in target_page_indices:
-            page = doc.load_page(page_num)
-            pix = page.get_pixmap(dpi=150)
-            img_filename = f"pdf_page_{task_id}_{page_num}.png"
-            img_filepath = os.path.join(TMP_UPLOAD_DIR, img_filename)
-            pix.save(img_filepath)
-            page_images.append(img_filepath)
-            page_urls.append(f"/{UPLOAD_DIR_REL}/tmp/{img_filename}")
-            
-        try:
-            os.remove(tmp_pdf_path)
-        except Exception:
-            pass
 
-        # 若用户选择【全图视觉 OCR】策略，绕过直提，对全页强制进行视觉转译；
-        # 若选择【原生文字公式提取】（默认），则调用 pdf-inspector 并结合公式流失自愈检测。
+    try:
+        DOCUMENT_TASKS.check_cancelled(task_id)
+        tmp_pdf_path.write_bytes(file_bytes)
+        DOCUMENT_TASKS.update(
+            task_id,
+            status="processing_images",
+            progress=10,
+            log="已接收文件，正在渲染 PDF 高清页面...",
+            document_type="pdf",
+            temp_assets=[],
+        )
+
+        page_images: list[str] = []
+        page_urls: list[str] = []
+        with fitz.open(tmp_pdf_path) as document:
+            total_pages = len(document)
+            if total_pages == 0:
+                raise ValueError("此 PDF 没有有效页面，或者格式已损坏！")
+            target_page_indices = parse_page_range(page_range, total_pages)
+            if len(target_page_indices) > MAX_PDF_TASK_PAGES:
+                raise ValueError(
+                    f"单次最多解析 {MAX_PDF_TASK_PAGES} 页，请填写较小的页码范围。"
+                )
+
+            for page_num in target_page_indices:
+                DOCUMENT_TASKS.check_cancelled(task_id)
+                page = document.load_page(page_num)
+                estimated_pixels = int(
+                    (page.rect.width / 72 * 150) * (page.rect.height / 72 * 150)
+                )
+                if estimated_pixels > 30_000_000:
+                    raise ValueError(f"第 {page_num + 1} 页尺寸异常，已停止高清渲染。")
+                pixmap = page.get_pixmap(dpi=150)
+                image_filename = f"pdf_page_{task_id}_{page_num}.png"
+                image_path = Path(TMP_UPLOAD_DIR) / image_filename
+                pixmap.save(image_path)
+                image_url = f"/{UPLOAD_DIR_REL}/tmp/{image_filename}"
+                page_images.append(str(image_path))
+                page_urls.append(image_url)
+                temp_assets.append(image_url)
+                DOCUMENT_TASKS.update(
+                    task_id,
+                    page_images=list(page_urls),
+                    temp_assets=list(temp_assets),
+                )
+
+        tmp_pdf_path.unlink(missing_ok=True)
+        DOCUMENT_TASKS.check_cancelled(task_id)
+        total_target_pages = len(target_page_indices)
+
         if pdf_strategy == "force_ocr":
             inspector_result = {"pages": [], "pdf_type": "scanned"}
             inspector_pages = {}
@@ -3906,6 +4317,8 @@ def run_pdf_parsing_task(task_id: str, file_bytes: bytes, filename: str, generat
                 for page in inspector_result.get("pages", [])
                 if page.get("page_index") is not None
             }
+        DOCUMENT_TASKS.check_cancelled(task_id)
+
         ocr_results = [None] * total_target_pages
         pages_requiring_ocr = []
         native_page_count = 0
@@ -3913,7 +4326,9 @@ def run_pdf_parsing_task(task_id: str, file_bytes: bytes, filename: str, generat
             page_info = inspector_pages.get(page_num)
             native_text = str((page_info or {}).get("markdown") or "").strip()
             if page_info and not page_info.get("needs_ocr") and native_text:
-                ocr_results[local_idx] = f"<!-- MATHBANK_PDF_PAGE:{page_num + 1} -->\n{native_text}"
+                ocr_results[local_idx] = (
+                    f"<!-- MATHBANK_PDF_PAGE:{page_num + 1} -->\n{native_text}"
+                )
                 native_page_count += 1
             else:
                 pages_requiring_ocr.append(local_idx)
@@ -3921,107 +4336,150 @@ def run_pdf_parsing_task(task_id: str, file_bytes: bytes, filename: str, generat
         if native_page_count:
             print(
                 f"[PDF Inspector Flow] 原生直提 {native_page_count} 页，"
-                f"视觉 OCR {len(pages_requiring_ocr)} 页 (Type: {inspector_result.get('pdf_type')})",
+                f"视觉 OCR {len(pages_requiring_ocr)} 页 "
+                f"(Type: {inspector_result.get('pdf_type')})",
                 flush=True,
             )
 
         if not pages_requiring_ocr:
-            with PDF_TASKS_LOCK:
-                PDF_TASKS[task_id] = {
-                    "status": "ai_splitting",
-                    "progress": 60,
-                    "log": f"pdf-inspector 已按所选范围可靠提取 {native_page_count} 页原生文本，正在连续拆题...",
-                    "page_images": page_urls
-                }
+            DOCUMENT_TASKS.update(
+                task_id,
+                status="ai_splitting",
+                progress=60,
+                log=(
+                    f"pdf-inspector 已按所选范围可靠提取 {native_page_count} 页原生文本，"
+                    "正在连续拆题..."
+                ),
+                page_images=list(page_urls),
+                temp_assets=list(temp_assets),
+            )
         else:
-            with PDF_TASKS_LOCK:
-                PDF_TASKS[task_id] = {
-                    "status": "ocr_extraction",
-                    "progress": 30,
-                    "log": (
-                        f"所选 {total_target_pages} 页中，{native_page_count} 页已原生提取，"
-                        f"仅对其余 {len(pages_requiring_ocr)} 页进行视觉转译..."
-                    ),
-                    "page_images": page_urls
-                }
+            DOCUMENT_TASKS.update(
+                task_id,
+                status="ocr_extraction",
+                progress=30,
+                log=(
+                    f"所选 {total_target_pages} 页中，{native_page_count} 页已原生提取，"
+                    f"仅对其余 {len(pages_requiring_ocr)} 页进行视觉转译..."
+                ),
+                page_images=list(page_urls),
+                temp_assets=list(temp_assets),
+            )
 
-            # 仅并行 OCR 探测器明确标记或无法可靠提取的页面。
-            def ocr_worker(local_idx, img_path):
+            def ocr_worker(local_idx, image_path):
+                acquired = False
                 try:
-                    raw_text = ocr_pdf_page_image(img_path)
+                    while not acquired:
+                        DOCUMENT_TASKS.check_cancelled(task_id)
+                        acquired = PDF_OCR_SEMAPHORE.acquire(timeout=0.25)
+                    DOCUMENT_TASKS.check_cancelled(task_id)
+                    raw_text = ocr_pdf_page_image(image_path)
                     real_page_num = target_page_indices[local_idx] + 1
-                    # 注入 Debug 原始文本回显
-                    print(f"[DEBUG OCR Raw Response] 目标第 {real_page_num} 页的原始返回结果:\n{raw_text}\n" + "-"*40)
+                    print(
+                        f"[PDF OCR] 第 {real_page_num} 页识别完成 "
+                        f"(characters={len(raw_text)})."
+                    )
                     return local_idx, raw_text, None
-                except Exception as e_ocr:
-                    return local_idx, "", str(e_ocr)
-                    
-            with concurrent.futures.ThreadPoolExecutor(max_workers=min(len(pages_requiring_ocr), 8)) as executor:
-                futures = [
-                    executor.submit(ocr_worker, local_idx, page_images[local_idx])
-                    for local_idx in pages_requiring_ocr
-                ]
-                
-                completed = 0
-                for fut in concurrent.futures.as_completed(futures):
-                    local_idx, text, err = fut.result()
-                    if err:
-                        real_page_num = target_page_indices[local_idx] + 1
-                        raise RuntimeError(f"解析第 {real_page_num} 页出错: {err}")
-                    
-                    # 清洗配图并进行物理裁剪
-                    processed_text = process_ocr_illustrations(text, page_images[local_idx], task_id)
-                    real_page_num = target_page_indices[local_idx] + 1
-                    ocr_results[local_idx] = f"<!-- MATHBANK_PDF_PAGE:{real_page_num} -->\n{processed_text.strip()}"
-                    
-                    completed += 1
-                    prog = 30 + int((completed / len(pages_requiring_ocr)) * 40)
-                    with PDF_TASKS_LOCK:
-                        # 保持 page_images 的返回，使前端随时可用
-                        PDF_TASKS[task_id].update({
-                            "progress": prog,
-                            "log": f"视觉转译进度: {completed} / {len(pages_requiring_ocr)} 页已完成..."
-                        })
+                except TaskCancelled:
+                    raise
+                except Exception as ocr_error:
+                    return local_idx, "", str(ocr_error)
+                finally:
+                    if acquired:
+                        PDF_OCR_SEMAPHORE.release()
 
-        # 按用户所选页序合并后只拆题一次。相邻页之间不插入题目终止符，支持题干、
-        # 选项、公式和表格跨页延续；HTML 注释页标仅用于来源追踪。
+            executor = concurrent.futures.ThreadPoolExecutor(
+                max_workers=min(len(pages_requiring_ocr), 4),
+                thread_name_prefix="mathbank-pdf-ocr",
+            )
+            futures = []
+            try:
+                for local_idx in pages_requiring_ocr:
+                    DOCUMENT_TASKS.check_cancelled(task_id)
+                    futures.append(
+                        executor.submit(ocr_worker, local_idx, page_images[local_idx])
+                    )
+
+                completed = 0
+                for future in concurrent.futures.as_completed(futures):
+                    DOCUMENT_TASKS.check_cancelled(task_id)
+                    local_idx, text, error = future.result()
+                    if error:
+                        real_page_num = target_page_indices[local_idx] + 1
+                        raise RuntimeError(f"解析第 {real_page_num} 页出错: {error}")
+                    processed_text = process_ocr_illustrations(text)
+                    real_page_num = target_page_indices[local_idx] + 1
+                    ocr_results[local_idx] = (
+                        f"<!-- MATHBANK_PDF_PAGE:{real_page_num} -->\n"
+                        f"{processed_text.strip()}"
+                    )
+                    completed += 1
+                    progress = 30 + int(
+                        (completed / len(pages_requiring_ocr)) * 40
+                    )
+                    DOCUMENT_TASKS.update(
+                        task_id,
+                        progress=progress,
+                        log=(
+                            f"视觉转译进度: {completed} / "
+                            f"{len(pages_requiring_ocr)} 页已完成..."
+                        ),
+                    )
+            finally:
+                cancelled = DOCUMENT_TASKS.is_cancelled(task_id)
+                if cancelled:
+                    for future in futures:
+                        future.cancel()
+                executor.shutdown(wait=not cancelled, cancel_futures=True)
+
+        DOCUMENT_TASKS.check_cancelled(task_id)
         full_latex_content = merge_pdf_page_texts(ocr_results)
         if not full_latex_content.strip():
             raise ValueError("所选 PDF 页面未能提取出可解析的文字内容。")
 
-        with PDF_TASKS_LOCK:
-            PDF_TASKS[task_id].update({
-                "status": "ai_splitting",
-                "progress": 80,
-                "log": "文本与公式准备就绪！正在调用大模型拆解题目与标注属性..."
-            })
+        DOCUMENT_TASKS.update(
+            task_id,
+            status="ai_splitting",
+            progress=80,
+            log="文本与公式准备就绪！正在调用大模型拆解题目与标注属性...",
+        )
+        DOCUMENT_TASKS.check_cancelled(task_id)
 
-        # 执行拆题分析
         paper_title = os.path.splitext(filename)[0]
         auto_title = extract_title_from_latex(full_latex_content)
         if auto_title:
             paper_title = auto_title
-            
-        parsed_questions = parse_paper_text_internal(full_latex_content, generate_answers)
-        
-        # 题库卡片后处理与插图深度关联
-        final_questions = post_process_pdf_parsed_questions(parsed_questions, paper_title, task_id, ocr_results)
-        
-        with PDF_TASKS_LOCK:
-            PDF_TASKS[task_id].update({
-                "status": "completed",
-                "progress": 100,
-                "log": "完成！已为您提取并拆分全部题目卡片。",
-                "data": final_questions
-            })
-            
+        parsed_questions = parse_paper_text_internal(
+            full_latex_content,
+            generate_answers,
+        )
+        DOCUMENT_TASKS.check_cancelled(task_id)
+        final_questions = post_process_pdf_parsed_questions(
+            parsed_questions,
+            paper_title,
+            task_id,
+            ocr_results,
+        )
+        DOCUMENT_TASKS.check_cancelled(task_id)
+        DOCUMENT_TASKS.complete(
+            task_id,
+            log="完成！已为您提取并拆分全部题目卡片。",
+            data=final_questions,
+            page_images=list(page_urls),
+            temp_assets=list(temp_assets),
+            document_type="pdf",
+        )
+    except TaskCancelled:
+        _delete_task_temp_assets(temp_assets)
     except Exception as ex:
-        with PDF_TASKS_LOCK:
-            PDF_TASKS[task_id] = {
-                "status": "error",
-                "progress": 0,
-                "error": f"PDF 智能拆解解析失败: {str(ex)}"
-            }
+        _delete_task_temp_assets(temp_assets)
+        DOCUMENT_TASKS.fail(
+            task_id,
+            f"PDF 智能拆解解析失败: {str(ex)}",
+            document_type="pdf",
+        )
+    finally:
+        tmp_pdf_path.unlink(missing_ok=True)
 
 
 def parse_page_range(range_str: str, total_pages: int) -> list:
@@ -4029,45 +4487,46 @@ def parse_page_range(range_str: str, total_pages: int) -> list:
     解析用户输入的页码范围字符串（1-indexed），转换为包含 0-indexed 页面索引的列表。
     支持格式如 "1-5", "1,3,5", "1-3,5,7-9"。
     """
-    if not range_str:
+    if total_pages <= 0:
+        raise ValueError("PDF 没有有效页面。")
+    if not range_str or not range_str.strip():
         return list(range(total_pages))
-    
+
     pages = set()
-    parts = range_str.replace(" ", "").split(",")
+    parts = str(range_str).replace(" ", "").split(",")
     for part in parts:
         if not part:
-            continue
+            raise ValueError("页码范围格式无效。")
         if "-" in part:
             sub_parts = part.split("-")
-            if len(sub_parts) == 2:
-                try:
-                    start = int(sub_parts[0])
-                    end = int(sub_parts[1])
-                    start_idx = max(0, start - 1)
-                    end_idx = min(total_pages - 1, end - 1)
-                    if start_idx <= end_idx:
-                        for p in range(start_idx, end_idx + 1):
-                            pages.add(p)
-                except ValueError:
-                    pass
+            if len(sub_parts) != 2:
+                raise ValueError("页码范围格式无效。")
+            try:
+                start = int(sub_parts[0])
+                end = int(sub_parts[1])
+            except ValueError as exc:
+                raise ValueError("页码范围必须使用数字。") from exc
+            if start < 1 or end < start or end > total_pages:
+                raise ValueError(f"页码范围必须位于 1 到 {total_pages}。")
+            pages.update(range(start - 1, end))
         else:
             try:
-                p = int(part)
-                p_idx = p - 1
-                if 0 <= p_idx < total_pages:
-                    pages.add(p_idx)
-            except ValueError:
-                pass
-                
-    result = sorted(list(pages))
-    return result if result else list(range(total_pages))
+                page_number = int(part)
+            except ValueError as exc:
+                raise ValueError("页码范围必须使用数字。") from exc
+            if page_number < 1 or page_number > total_pages:
+                raise ValueError(f"页码范围必须位于 1 到 {total_pages}。")
+            pages.add(page_number - 1)
+
+    if not pages:
+        raise ValueError("页码范围不能为空。")
+    return sorted(pages)
 
 
 # ----------------- PDF Upload & Task Routing Endpoints -----------------
 
 @app.post("/api/upload/pdf-task")
-async def upload_pdf_task(
-    background_tasks: BackgroundTasks,
+def upload_pdf_task(
     file: UploadFile = File(...),
     generate_answers: str = Form("false"),
     page_range: Optional[str] = Form(None),
@@ -4077,40 +4536,53 @@ async def upload_pdf_task(
         generate_answers_bool = generate_answers.lower() in ("true", "1", "yes")
         
         # 验证文件扩展名
-        if not file.filename.lower().endswith(".pdf"):
+        filename = file.filename or ""
+        if not filename.lower().endswith(".pdf"):
             return JSONResponse(
                 content={"status": "error", "message": "上传文件格式不正确，必须为 .pdf 格式！"},
                 status_code=400
             )
             
-        # 限制文件大小（例如：30MB）
-        content = await file.read()
-        if len(content) > 30 * 1024 * 1024:
+        # Incremental cap avoids loading an arbitrarily large multipart file.
+        try:
+            content = read_stream_limited(file.file, MAX_PDF_BYTES)
+        except UploadTooLargeError:
             return JSONResponse(
                 content={"status": "error", "message": "PDF 文件过大，请上传 30MB 以内的试卷文件！"},
-                status_code=400
+                status_code=413
+            )
+        if not content.lstrip().startswith(b"%PDF-"):
+            return JSONResponse(
+                content={"status": "error", "message": "文件内容不是有效的 PDF 文档！"},
+                status_code=400,
             )
             
         task_id = str(uuid.uuid4())
         
-        # 初始化任务状态
-        with PDF_TASKS_LOCK:
-            PDF_TASKS[task_id] = {
-                "status": "pending",
-                "progress": 0,
-                "log": "任务已排队，正在准备运行异步切片分析..."
-            }
-            
-        # 运行异步后台任务
-        background_tasks.add_task(
-            run_pdf_parsing_task,
+        DOCUMENT_TASKS.create(
             task_id,
-            content,
-            file.filename,
-            generate_answers_bool,
-            page_range,
-            pdf_strategy,
+            status="pending",
+            log="任务已排队，正在准备运行异步切片分析...",
+            document_type="pdf",
+            temp_assets=[],
         )
+        try:
+            DOCUMENT_TASKS.submit(
+                task_id,
+                run_pdf_parsing_task,
+                task_id,
+                content,
+                filename,
+                generate_answers_bool,
+                page_range,
+                pdf_strategy,
+            )
+        except TaskQueueFull as exc:
+            DOCUMENT_TASKS.remove(task_id)
+            return JSONResponse(
+                content={"status": "error", "message": str(exc)},
+                status_code=429,
+            )
         
         return {
             "status": "success",
@@ -4126,22 +4598,32 @@ async def upload_pdf_task(
 def _delete_task_temp_assets(paths: list) -> int:
     """Delete only explicit files below this instance's upload tmp directory."""
     removed = 0
-    tmp_root = os.path.realpath(TMP_UPLOAD_DIR)
+    tmp_root = Path(TMP_UPLOAD_DIR).resolve()
     for url in paths or []:
-        normalized = os.path.normpath(str(url).lstrip("/"))
-        expected_prefix = os.path.normpath(os.path.join(UPLOAD_DIR_REL, "tmp"))
-        if not normalized.startswith(expected_prefix + os.sep):
+        try:
+            full_path = resolve_upload_asset(
+                str(url),
+                uploads_dir=UPLOAD_DIR,
+                url_prefix=UPLOAD_DIR_REL,
+                require_file=False,
+            )
+        except AssetSecurityError:
             continue
-        full_path = os.path.realpath(os.path.join(str(PROJECT_ROOT), normalized))
-        if os.path.dirname(full_path) != tmp_root:
+        if full_path.parent != tmp_root:
             continue
-        if os.path.isfile(full_path):
+        if full_path.is_file():
             try:
-                os.remove(full_path)
+                full_path.unlink()
                 removed += 1
             except OSError:
                 pass
     return removed
+
+
+# Start only after the cleanup callback above exists.  The one-minute sweep
+# bounds a one-hour terminal TTL even when no later request creates a task.
+if not IS_TESTING:
+    DOCUMENT_TASKS.start_maintenance(interval_seconds=60.0)
 
 
 def run_docx_parsing_task(
@@ -4152,19 +4634,15 @@ def run_docx_parsing_task(
 ):
     temp_assets = []
     try:
-        # 1. 检查任务是否已被用户手动取消 (ESC)
-        with PDF_TASKS_LOCK:
-            if PDF_TASKS.get(task_id, {}).get("status") == "cancelled":
-                return
-
-        with PDF_TASKS_LOCK:
-            PDF_TASKS[task_id] = {
-                "status": "extracting_docx",
-                "progress": 25,
-                "log": "已接收 Word 试卷，正在安全提取 OMML 公式、文字与配图...",
-                "document_type": "docx",
-                "temp_assets": [],
-            }
+        DOCUMENT_TASKS.check_cancelled(task_id)
+        DOCUMENT_TASKS.update(
+            task_id,
+            status="extracting_docx",
+            progress=25,
+            log="已接收 Word 试卷，正在安全提取 OMML 公式、文字与配图...",
+            document_type="docx",
+            temp_assets=[],
+        )
 
         # 2. 安全提取 Word Markdown；资产先放入 tmp，入库时再晋升。
         docx_res = extract_docx_markdown(
@@ -4187,19 +4665,16 @@ def run_docx_parsing_task(
             + (f"，{review_count} 处需人工核对。" if review_count else "，未发现需人工核对的内容。")
         )
 
-        # 检查取消
-        with PDF_TASKS_LOCK:
-            if PDF_TASKS.get(task_id, {}).get("status") == "cancelled":
-                _delete_task_temp_assets(temp_assets)
-                return
-            PDF_TASKS[task_id] = {
-                "status": "ai_splitting",
-                "progress": 70,
-                "log": extraction_log + " 正在调用教研模型拆题...",
-                "document_type": "docx",
-                "diagnostics": diagnostics,
-                "temp_assets": temp_assets,
-            }
+        DOCUMENT_TASKS.check_cancelled(task_id)
+        DOCUMENT_TASKS.update(
+            task_id,
+            status="ai_splitting",
+            progress=70,
+            log=extraction_log + " 正在调用教研模型拆题...",
+            document_type="docx",
+            diagnostics=diagnostics,
+            temp_assets=list(temp_assets),
+        )
 
         # 3. 智能提取标题与题目切片
         paper_title = os.path.splitext(filename)[0]
@@ -4215,44 +4690,35 @@ def run_docx_parsing_task(
             task_id.replace("-", "")[:16],
         )
         diagnostics["math_locks_created"] = len(math_locks)
+        DOCUMENT_TASKS.check_cancelled(task_id)
         parsed_questions = parse_paper_text_internal(locked_markdown_content, generate_answers)
         lock_report = restore_visible_math(parsed_questions, math_locks)
         diagnostics.update(lock_report)
 
-        # 检查取消
-        with PDF_TASKS_LOCK:
-            if PDF_TASKS.get(task_id, {}).get("status") == "cancelled":
-                return
-
+        DOCUMENT_TASKS.check_cancelled(task_id)
         final_questions = post_process_pdf_parsed_questions(parsed_questions, paper_title, task_id, [full_markdown_content])
-
-        with PDF_TASKS_LOCK:
-            if PDF_TASKS.get(task_id, {}).get("status") == "cancelled":
-                return
-            PDF_TASKS[task_id].update({
-                "status": "completed",
-                "progress": 100,
-                "log": "完成！已提取并拆分 Word 题目，请优先检查带“公式待核对”标记的内容。" if review_count else "完成！已提取并拆分全部 Word 题目卡片。",
-                "data": final_questions,
-                "document_type": "docx",
-                "diagnostics": diagnostics,
-                "temp_assets": temp_assets,
-            })
+        DOCUMENT_TASKS.check_cancelled(task_id)
+        DOCUMENT_TASKS.complete(
+            task_id,
+            log="完成！已提取并拆分 Word 题目，请优先检查带“公式待核对”标记的内容。" if review_count else "完成！已提取并拆分全部 Word 题目卡片。",
+            data=final_questions,
+            document_type="docx",
+            diagnostics=diagnostics,
+            temp_assets=list(temp_assets),
+        )
+    except TaskCancelled:
+        _delete_task_temp_assets(temp_assets)
     except Exception as ex:
         _delete_task_temp_assets(temp_assets)
-        with PDF_TASKS_LOCK:
-            if PDF_TASKS.get(task_id, {}).get("status") != "cancelled":
-                PDF_TASKS[task_id] = {
-                    "status": "error",
-                    "progress": 0,
-                    "error": f"Word 试卷拆解失败: {str(ex)}",
-                    "document_type": "docx",
-                }
+        DOCUMENT_TASKS.fail(
+            task_id,
+            f"Word 试卷拆解失败: {str(ex)}",
+            document_type="docx",
+        )
 
 
 @app.post("/api/upload/docx-task")
-async def upload_docx_task(
-    background_tasks: BackgroundTasks,
+def upload_docx_task(
     file: UploadFile = File(...),
     generate_answers: str = Form("false")
 ):
@@ -4260,18 +4726,19 @@ async def upload_docx_task(
         generate_answers_bool = generate_answers.lower() in ("true", "1", "yes")
         
         # 验证文件扩展名
-        if not file.filename.lower().endswith(".docx"):
+        filename = file.filename or ""
+        if not filename.lower().endswith(".docx"):
             return JSONResponse(
                 content={"status": "error", "message": "上传文件格式不正确，必须为 .docx 格式！"},
                 status_code=400
             )
             
-        # 最多只读取上限 + 1 字节，避免超大上传先占满内存。
-        content = await file.read(30 * 1024 * 1024 + 1)
-        if len(content) > 30 * 1024 * 1024:
+        try:
+            content = read_stream_limited(file.file, MAX_PDF_BYTES)
+        except UploadTooLargeError:
             return JSONResponse(
                 content={"status": "error", "message": "Word 文件过大，请上传 30MB 以内的试卷文件！"},
-                status_code=400
+                status_code=413
             )
         if len(content) < 4 or content[:4] != b"PK\x03\x04":
             return JSONResponse(
@@ -4281,22 +4748,28 @@ async def upload_docx_task(
             
         task_id = str(uuid.uuid4())
         
-        with PDF_TASKS_LOCK:
-            PDF_TASKS[task_id] = {
-                "status": "pending",
-                "progress": 0,
-                "log": "Word 任务已排队，正在准备安全提取公式与配图...",
-                "document_type": "docx",
-                "temp_assets": [],
-            }
-            
-        background_tasks.add_task(
-            run_docx_parsing_task,
+        DOCUMENT_TASKS.create(
             task_id,
-            content,
-            file.filename,
-            generate_answers_bool
+            status="pending",
+            log="Word 任务已排队，正在准备安全提取公式与配图...",
+            document_type="docx",
+            temp_assets=[],
         )
+        try:
+            DOCUMENT_TASKS.submit(
+                task_id,
+                run_docx_parsing_task,
+                task_id,
+                content,
+                filename,
+                generate_answers_bool,
+            )
+        except TaskQueueFull as exc:
+            DOCUMENT_TASKS.remove(task_id)
+            return JSONResponse(
+                content={"status": "error", "message": str(exc)},
+                status_code=429,
+            )
         
         return {
             "status": "success",
@@ -4311,32 +4784,67 @@ async def upload_docx_task(
 
 @app.get("/api/tasks/{task_id}/status")
 def get_pdf_task_status(task_id: str):
-    with PDF_TASKS_LOCK:
-        task = PDF_TASKS.get(task_id)
-        if not task:
-            return JSONResponse(
-                content={"status": "error", "message": "未找到对应的任务 ID！"},
-                status_code=404
-            )
-        return task
+    task = DOCUMENT_TASKS.snapshot(task_id)
+    if not task:
+        return JSONResponse(
+            content={"status": "error", "message": "未找到对应的任务 ID！"},
+            status_code=404
+        )
+    return task
 
 
 @app.post("/api/tasks/{task_id}/cancel")
 def cancel_pdf_task(task_id: str):
-    temp_assets = []
-    with PDF_TASKS_LOCK:
-        task = PDF_TASKS.get(task_id)
-        if task:
-            task["status"] = "cancelled"
-            task["log"] = "用户已手动中止任务"
-            temp_assets = list(task.get("temp_assets", []))
-        else:
-            return JSONResponse(
+    current = DOCUMENT_TASKS.snapshot(task_id)
+    if current is None:
+        return JSONResponse(
             content={"status": "error", "message": "未找到对应的任务 ID！"},
             status_code=404
         )
-    removed = _delete_task_temp_assets(temp_assets)
-    return {"status": "success", "message": f"任务已成功中止，已清理 {removed} 个临时资产"}
+
+    current_status = current.get("status")
+    if current_status in {"completed", "error"}:
+        # Never delete assets belonging to a task that already produced a
+        # result.  The previous behavior reported success and could remove
+        # completed PDF crop files after a late ESC/click.
+        return JSONResponse(
+            content={
+                "status": "error",
+                "message": "任务已结束，无法再中止。",
+                "task_status": current_status,
+            },
+            status_code=409,
+        )
+    if current_status == "cancelled":
+        return {
+            "status": "success",
+            "message": "任务已中止。",
+            "task_status": "cancelled",
+        }
+
+    task = DOCUMENT_TASKS.cancel(task_id)
+    if task is None:  # Defensive race guard; records are not normally removed here.
+        return JSONResponse(
+            content={"status": "error", "message": "未找到对应的任务 ID！"},
+            status_code=404,
+        )
+    if task.get("status") != "cancelled":
+        # The worker may have completed between the snapshot above and the
+        # atomic cancel call.  Never delete assets from that completed result.
+        return JSONResponse(
+            content={
+                "status": "error",
+                "message": "任务已结束，无法再中止。",
+                "task_status": task.get("status"),
+            },
+            status_code=409,
+        )
+    removed = _delete_task_temp_assets(list(task.get("temp_assets", [])))
+    return {
+        "status": "success",
+        "message": f"任务已成功中止，已清理 {removed} 个临时资产",
+        "task_status": "cancelled",
+    }
 
 
 @app.post("/api/ai/clear-temp-crops")
@@ -4344,21 +4852,9 @@ def clear_temp_crops(payload: dict):
     """物理删除传递来的未入库临时裁剪图片路径"""
     try:
         paths = payload.get("paths", [])
-        removed_count = 0
-        for path in paths:
-            # 严格安全边界过滤：必须是 UPLOAD_DIR 目录下的 tmp 子目录，且只包含 uuid 和文件名
-            # 防止恶意攻击者进行任意文件删除 (Directory Traversal)
-            normalized_path = os.path.normpath(path.lstrip("/"))
-            # 检查是否以 tmp 路径为前缀且位于 static/uploads 中
-            expected_prefix = os.path.normpath(os.path.join(UPLOAD_DIR_REL, "tmp")).lower()
-            if normalized_path.lower().startswith(expected_prefix):
-                full_path = os.path.join(str(PROJECT_ROOT), normalized_path)
-                if os.path.exists(full_path):
-                    try:
-                        os.remove(full_path)
-                        removed_count += 1
-                    except Exception:
-                        pass
+        if not isinstance(paths, list):
+            raise ValueError("paths 必须是数组。")
+        removed_count = _delete_task_temp_assets(paths)
         return {"status": "success", "message": f"成功物理清除 {removed_count} 张废弃插图图片。"}
     except Exception as e:
         return JSONResponse(
@@ -4389,15 +4885,45 @@ def get_paper_questions(ids: str = "", db: Session = Depends(get_db)):
 def save_paper(payload: dict, background_tasks: BackgroundTasks, db: Session = Depends(get_db)):
     """保存排版好的试卷，自增被选中题目的 usage_count"""
     try:
-        title = payload.get("title", "未命名试卷").strip()
-        subtitle = payload.get("subtitle", "").strip()
+        if not isinstance(payload, dict):
+            raise ValueError("试卷数据格式不正确。")
+        title = str(payload.get("title", "未命名试卷")).strip()
+        subtitle = str(payload.get("subtitle", "")).strip()
         paper_type = payload.get("paper_type", "exam")
         questions_payload = payload.get("questions", [])
-        
-        if not questions_payload:
-            return JSONResponse(content={"status": "error", "message": "试卷中至少需要包含一道题目"}, status_code=400)
-            
-        total_score = sum(int(q.get("score", 5)) for q in questions_payload)
+
+        if not title or len(title) > 200 or len(subtitle) > 200:
+            raise ValueError("试卷标题不能为空，且标题与副标题均不能超过 200 字。")
+        if paper_type not in {"exam", "quiz", "exam_19"}:
+            raise ValueError("不支持的试卷模板。")
+        if not isinstance(questions_payload, list) or not questions_payload:
+            raise ValueError("试卷中至少需要包含一道题目。")
+        if len(questions_payload) > 200:
+            raise ValueError("单份试卷不能超过 200 道题。")
+
+        normalized_items = []
+        seen_question_ids = set()
+        for item in questions_payload:
+            if not isinstance(item, dict):
+                raise ValueError("试卷题目数据格式不正确。")
+            question_id = int(item.get("id"))
+            score = int(item.get("score", 5))
+            if question_id <= 0 or score < 0 or score > 100:
+                raise ValueError("题目 ID 或分值不在有效范围内。")
+            if question_id in seen_question_ids:
+                raise ValueError("同一道题不能在一份试卷中重复出现。")
+            seen_question_ids.add(question_id)
+            normalized_items.append((question_id, score))
+
+        questions = db.query(Question).filter(
+            Question.id.in_(seen_question_ids)
+        ).all()
+        question_map = {question.id: question for question in questions}
+        missing_ids = sorted(seen_question_ids - set(question_map))
+        if missing_ids:
+            raise ValueError("试卷中包含已删除或不存在的题目。")
+
+        total_score = sum(score for _question_id, score in normalized_items)
         
         meta = payload.get("metadata", {})
         if not isinstance(meta, dict):
@@ -4415,9 +4941,7 @@ def save_paper(payload: dict, background_tasks: BackgroundTasks, db: Session = D
         db.add(paper)
         db.flush()
         
-        for idx, item in enumerate(questions_payload):
-            qid = int(item.get("id"))
-            score = int(item.get("score", 5))
+        for idx, (qid, score) in enumerate(normalized_items):
             pq = PaperQuestion(
                 paper_id=paper.id,
                 question_id=qid,
@@ -4425,14 +4949,17 @@ def save_paper(payload: dict, background_tasks: BackgroundTasks, db: Session = D
                 score=score
             )
             db.add(pq)
-            
-            q = db.query(Question).filter(Question.id == qid).first()
-            if q:
-                q.usage_count = (q.usage_count or 0) + 1
+            question = question_map[qid]
+            question.usage_count = (question.usage_count or 0) + 1
                 
         db.commit()
-        background_tasks.add_task(export_database_to_files)
+        schedule_database_export(background_tasks, operation="save_paper")
         return {"status": "success", "message": "试卷保存成功！", "paper_id": paper.id}
+    except (TypeError, ValueError) as e:
+        db.rollback()
+        return JSONResponse(
+            content={"status": "error", "message": str(e)}, status_code=400
+        )
     except Exception as e:
         db.rollback()
         return JSONResponse(content={"status": "error", "message": f"保存试卷失败: {str(e)}"}, status_code=500)
@@ -4441,12 +4968,19 @@ def save_paper(payload: dict, background_tasks: BackgroundTasks, db: Session = D
 def list_papers(db: Session = Depends(get_db)):
     """获取所有历史试卷列表"""
     try:
-        papers = db.query(Paper).order_by(Paper.created_at.desc()).all()
+        from sqlalchemy import func
+
+        rows = (
+            db.query(Paper, func.count(PaperQuestion.id))
+            .outerjoin(PaperQuestion, PaperQuestion.paper_id == Paper.id)
+            .group_by(Paper.id)
+            .order_by(Paper.created_at.desc())
+            .all()
+        )
         result = []
-        for p in papers:
-            q_count = db.query(PaperQuestion).filter(PaperQuestion.paper_id == p.id).count()
+        for p, q_count in rows:
             d = p.to_dict()
-            d["question_count"] = q_count
+            d["question_count"] = int(q_count)
             result.append(d)
         return {"status": "success", "data": result}
     except Exception as e:
@@ -4460,17 +4994,22 @@ def get_paper_detail(paper_id: int, db: Session = Depends(get_db)):
         if not paper:
             return JSONResponse(content={"status": "error", "message": "试卷不存在"}, status_code=404)
         
-        pqs = db.query(PaperQuestion).filter(PaperQuestion.paper_id == paper_id).order_by(PaperQuestion.order_index.asc()).all()
-        
-        questions_list = []
-        for pq in pqs:
-            q = db.query(Question).filter(Question.id == pq.question_id).first()
-            if q:
-                questions_list.append({
-                    "id": q.id,
-                    "score": pq.score,
-                    "question": q.to_dict()
-                })
+        rows = (
+            db.query(PaperQuestion, Question)
+            .join(Question, Question.id == PaperQuestion.question_id)
+            .filter(PaperQuestion.paper_id == paper_id)
+            .order_by(PaperQuestion.order_index.asc())
+            .all()
+        )
+
+        questions_list = [
+            {
+                "id": question.id,
+                "score": paper_question.score,
+                "question": question.to_dict(),
+            }
+            for paper_question, question in rows
+        ]
                 
         result = paper.to_dict()
         result["questions"] = questions_list
@@ -4487,15 +5026,25 @@ def delete_paper(paper_id: int, background_tasks: BackgroundTasks, db: Session =
             return JSONResponse(content={"status": "error", "message": "试卷不存在"}, status_code=404)
             
         pqs = db.query(PaperQuestion).filter(PaperQuestion.paper_id == paper_id).all()
-        for pq in pqs:
-            q = db.query(Question).filter(Question.id == pq.question_id).first()
-            if q and q.usage_count:
-                q.usage_count = max(0, q.usage_count - 1)
+        reference_counts = {}
+        for paper_question in pqs:
+            reference_counts[paper_question.question_id] = (
+                reference_counts.get(paper_question.question_id, 0) + 1
+            )
+        questions = db.query(Question).filter(
+            Question.id.in_(reference_counts)
+        ).all()
+        for question in questions:
+            if question.usage_count:
+                question.usage_count = max(
+                    0,
+                    question.usage_count - reference_counts.get(question.id, 0),
+                )
                 
         db.query(PaperQuestion).filter(PaperQuestion.paper_id == paper_id).delete()
         db.delete(paper)
         db.commit()
-        background_tasks.add_task(export_database_to_files)
+        schedule_database_export(background_tasks, operation="delete_paper")
         return {"status": "success", "message": "试卷记录已成功删除"}
     except Exception as e:
         db.rollback()
@@ -4539,7 +5088,7 @@ def export_paper_tex(payload: dict, db: Session = Depends(get_db)):
         else:
             tex_answer_sheet = None
 
-        image_paths = collect_referenced_images(questions_data, UPLOAD_DIR)
+        image_paths = collect_referenced_images(questions_data, UPLOAD_DIR, UPLOAD_DIR_REL)
         zip_bytes = create_tex_zip_package(title, tex_main, tex_ans, image_paths, answer_sheet_tex=tex_answer_sheet)
         
         from urllib.parse import quote
@@ -4589,7 +5138,7 @@ def export_paper_bundle(payload: dict, db: Session = Depends(get_db)):
         else:
             tex_answer_sheet = None
 
-        image_paths = collect_referenced_images(questions_data, UPLOAD_DIR)
+        image_paths = collect_referenced_images(questions_data, UPLOAD_DIR, UPLOAD_DIR_REL)
 
         # Pre-compile PDFs
         main_pdf_bytes, _ = compile_tex_to_pdf(tex_main, image_paths)
@@ -4623,7 +5172,7 @@ def explain_latex_compile_error(log_text: str, tex_content: str) -> dict:
     parse_model = os.getenv("PREFER_PARSE_MODEL") or os.getenv(
         "DEEPSEEK_PARSE_MODEL", "deepseek-v4-flash"
     )
-    provider = resolve_text_provider(parse_model, parse_effort=False)
+    provider = resolve_text_provider(parse_model)
     if not provider.api_key:
         diagnostic["ai_note"] = "试卷拆解模型未配置，当前显示本地诊断结果。"
         return diagnostic
@@ -4643,9 +5192,9 @@ def explain_latex_compile_error(log_text: str, tex_content: str) -> dict:
         "deepseek" in provider.model_name.lower()
         or "deepseek" in (provider.api_base or "").lower()
     ) and provider.model_name not in {"deepseek-chat", "deepseek-reasoner"}
-    if is_deepseek:
+    if is_deepseek and provider.reasoning_effort in {None, "default"}:
         payload["thinking"] = {"type": "disabled"}
-
+    payload = inject_reasoning_effort(payload, provider.reasoning_effort)
     payload = apply_bailian_thinking_policy(
         payload,
         provider_code=provider.provider_code,
@@ -4705,7 +5254,7 @@ def export_paper_pdf(payload: dict, db: Session = Depends(get_db)):
         else:
             tex_content = build_latex_document(title, subtitle, paper_type, questions_data, include_answers=include_answers, show_secret=show_secret, show_notice=show_notice)
 
-        image_paths = collect_referenced_images(questions_data, UPLOAD_DIR)
+        image_paths = collect_referenced_images(questions_data, UPLOAD_DIR, UPLOAD_DIR_REL)
         pdf_bytes, log_or_err = compile_tex_to_pdf(tex_content, image_paths)
         
         if pdf_bytes:

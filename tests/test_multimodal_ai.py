@@ -1,6 +1,9 @@
 import os
 from unittest.mock import MagicMock, patch
 
+import pytest
+import requests
+
 from main import (
     correct_tikz_endpoint,
     draw_tikz_via_high_model,
@@ -43,7 +46,7 @@ def test_ocr_request_uses_resolved_multimodal_provider(tmp_path):
     assert image_item["image_url"]["url"].startswith("data:image/png;base64,")
 
 
-def test_bailian_ocr_disables_thinking_and_uses_completion_cap(tmp_path):
+def test_bailian_ocr_explicitly_disables_thinking(tmp_path):
     image_path = tmp_path / "question.png"
     image_path.write_bytes(b"fake-image-bytes")
     provider = resolve_ocr_provider(
@@ -69,6 +72,41 @@ def test_bailian_ocr_disables_thinking_and_uses_completion_cap(tmp_path):
     assert payload["max_completion_tokens"] == 16384
     assert "thinking_budget" not in payload
     assert "reasoning_effort" not in payload
+
+
+def test_ocr_read_timeout_is_not_retried(tmp_path):
+    image_path = tmp_path / "question.png"
+    image_path.write_bytes(b"fake-image-bytes")
+    provider = resolve_ocr_provider(
+        "zhongzhan_gpt",
+        {
+            "ZHONGZHAN_GPT_API_KEY": "ocr-key",
+            "ZHONGZHAN_GPT_BASE_URL": "https://vision.example/v1",
+            "ZHONGZHAN_GPT_OCR_MODEL": "gpt-5.6-luna",
+        },
+    )
+
+    with patch(
+        "mathbank.ai_http.robust_request_post",
+        side_effect=requests.exceptions.ReadTimeout("unknown provider state"),
+    ) as mock_post:
+        with pytest.raises(requests.exceptions.ReadTimeout):
+            ocr_via_provider(str(image_path), provider)
+
+    mock_post.assert_called_once()
+
+
+def test_pdf_ocr_does_not_fallback_after_ambiguous_read_timeout():
+    providers = [MagicMock(provider_label="first"), MagicMock(provider_label="second")]
+
+    with patch("main.resolve_ocr_fallbacks", return_value=providers), patch(
+        "main.ocr_via_provider",
+        side_effect=requests.exceptions.ReadTimeout("unknown provider state"),
+    ) as mock_ocr:
+        with pytest.raises(RuntimeError, match="避免重复计费"):
+            ocr_pdf_page_image("/tmp/page.png")
+
+    mock_ocr.assert_called_once()
 
 
 def test_draw_request_strips_siliconflow_provider_prefix(tmp_path):
@@ -106,6 +144,32 @@ def test_draw_request_strips_siliconflow_provider_prefix(tmp_path):
     assert isinstance(kwargs["json"]["messages"][0]["content"], list)
 
 
+def test_draw_request_injects_configured_reasoning_effort(tmp_path):
+    image_path = tmp_path / "diagram.png"
+    image_path.write_bytes(b"fake-diagram-bytes")
+    response = MagicMock(status_code=200)
+    response.json.return_value = {
+        "choices": [{"message": {"content": "\\begin{tikzpicture}\\end{tikzpicture}"}}]
+    }
+    provider_env = {
+        "ZHONGZHAN_GPT_API_KEY": "draw-key",
+        "ZHONGZHAN_GPT_BASE_URL": "https://draw.example/v1",
+    }
+
+    with patch.dict(os.environ, provider_env):
+        with patch("mathbank.ai_http.robust_request_post", return_value=response) as mock_post:
+            draw_tikz_via_high_model(
+                str(image_path),
+                "ZHONGZHAN_GPT/gpt-5.6-luna:high",
+                latex_content="三角形 ABC",
+            )
+
+    payload = mock_post.call_args.kwargs["json"]
+    assert payload["model"] == "gpt-5.6-luna"
+    assert payload["reasoning_effort"] == "high"
+    assert payload["enable_thinking"] is True
+
+
 def test_pdf_ocr_uses_claude_provider_when_selected():
     provider_env = {
         "OCR_PREFER_ENGINE": "zhongzhan_claude",
@@ -128,7 +192,9 @@ def test_pdf_ocr_uses_claude_provider_when_selected():
 
 
 def test_tikz_correction_uses_resolved_bailian_provider(tmp_path):
-    original_path = tmp_path / "original.png"
+    upload_dir = tmp_path / "static" / "uploads"
+    upload_dir.mkdir(parents=True)
+    original_path = upload_dir / "original.png"
     original_path.write_bytes(b"original-image")
     response = MagicMock(status_code=200)
     response.json.return_value = {
@@ -141,13 +207,15 @@ def test_tikz_correction_uses_resolved_bailian_provider(tmp_path):
         ]
     }
     provider_env = {
-        "PREFER_DRAW_MODEL": "BAILIAN/qwen3.7-max",
+        "PREFER_DRAW_MODEL": "BAILIAN/qwen3.7-max:medium",
         "ALI_BAILIAN_API_KEY": "bailian-key",
         "ALI_BAILIAN_API_BASE": "https://draw.example/v1",
     }
 
     with patch.dict(os.environ, provider_env):
-        with patch("main.PROJECT_ROOT", tmp_path):
+        with patch("main.UPLOAD_DIR", str(upload_dir)), patch(
+            "main.UPLOAD_DIR_REL", "static/uploads"
+        ):
             with patch(
                 "main.compile_tikz_to_png", side_effect=RuntimeError("compile failed")
             ):
@@ -156,7 +224,7 @@ def test_tikz_correction_uses_resolved_bailian_provider(tmp_path):
                 ) as mock_post:
                     result = correct_tikz_endpoint(
                         tikz_code="\\begin{tikzpicture}bad\\end{tikzpicture}",
-                        original_image_path="/original.png",
+                        original_image_path="/static/uploads/original.png",
                         user_prompt="修正线条",
                     )
 

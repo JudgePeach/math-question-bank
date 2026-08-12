@@ -15,6 +15,41 @@ _VALID_REASONING_EFFORTS = frozenset(
     {"high", "medium", "low", "xhigh", "max", "default"}
 )
 
+
+def build_chat_completions_url(api_base: Optional[str]) -> Optional[str]:
+    """Normalize an OpenAI-compatible base URL to its chat endpoint."""
+
+    normalized_base = str(api_base or "").strip().rstrip("/")
+    if not normalized_base:
+        return None
+    if normalized_base.lower().endswith("/chat/completions"):
+        return normalized_base
+    return f"{normalized_base}/chat/completions"
+
+
+def inject_reasoning_effort(
+    payload: Mapping[str, Any], reasoning_effort: Optional[str]
+) -> Dict[str, Any]:
+    """Return a payload copy with one allowlisted reasoning effort applied.
+
+    ``default`` and invalid values deliberately leave provider-specific payload
+    behavior untouched.  The input mapping is never mutated.
+    """
+
+    result = dict(payload)
+    # Parsed efforts are already trimmed.  Do not silently normalize surrounding
+    # whitespace here: control characters must never reach an outbound payload.
+    normalized_effort = str(reasoning_effort or "").lower()
+    if (
+        normalized_effort not in _VALID_REASONING_EFFORTS
+        or normalized_effort == "default"
+    ):
+        return result
+    result["reasoning_effort"] = normalized_effort
+    result["enable_thinking"] = True
+    return result
+
+
 _BAILIAN_NO_THINKING_TASKS = frozenset(
     {"classify", "parse", "paper_selection", "latex_diagnostic"}
 )
@@ -114,9 +149,7 @@ class TextProviderConfig:
     def chat_completions_url(self) -> Optional[str]:
         """Return the provider's OpenAI-compatible chat completion URL."""
 
-        if not self.api_base:
-            return None
-        return f"{self.api_base.rstrip('/')}/chat/completions"
+        return build_chat_completions_url(self.api_base)
 
 
 @dataclass(frozen=True)
@@ -138,11 +171,8 @@ class MultimodalProviderConfig:
         return f"{self.provider_label} ({self.api_key_env})"
 
     @property
-    def chat_completions_url(self) -> str:
-        normalized_base = self.api_base.rstrip("/")
-        if normalized_base.endswith("/chat/completions"):
-            return normalized_base
-        return f"{normalized_base}/chat/completions"
+    def chat_completions_url(self) -> Optional[str]:
+        return build_chat_completions_url(self.api_base)
 
 
 @dataclass(frozen=True)
@@ -220,14 +250,8 @@ def parse_model_and_effort(model_str: str) -> Tuple[str, Optional[str]]:
 def resolve_text_provider(
     model_config: str,
     environ: Optional[Mapping[str, str]] = None,
-    *,
-    parse_effort: bool = True,
 ) -> TextProviderConfig:
-    """Resolve a saved model setting without performing any side effects.
-
-    ``parse_effort=False`` is available for older call sites that historically
-    treated an effort suffix as part of the literal model name.
-    """
+    """Resolve a saved model setting without performing any side effects."""
 
     environment = os.environ if environ is None else environ
     raw_model = str(model_config or "").strip()
@@ -255,10 +279,7 @@ def resolve_text_provider(
     else:
         spec = _PROVIDER_SPECS["DEEPSEEK"]
 
-    if parse_effort:
-        model_name, reasoning_effort = parse_model_and_effort(model_name)
-    else:
-        reasoning_effort = None
+    model_name, reasoning_effort = parse_model_and_effort(model_name)
 
     api_base = spec.default_api_base
     if spec.api_base_env:
@@ -405,23 +426,32 @@ def resolve_draw_provider(
     environment = os.environ if environ is None else environ
     raw_config = str(model_config or "Qwen/Qwen3-VL-32B-Instruct").strip()
 
-    if raw_config.startswith("BAILIAN/"):
-        provider_code = "bailian"
-        provider_label = "阿里百炼"
-        key_env = "ALI_BAILIAN_API_KEY"
-        api_key = environment.get(key_env)
-        api_base = environment.get(
-            "ALI_BAILIAN_API_BASE",
-            "https://dashscope.aliyuncs.com/compatible-mode/v1",
-        )
-        model_name = raw_config.split("/", 1)[1]
-        force_multimodal = True
-    elif raw_config.startswith("ZHONGZHAN_GPT/") or raw_config.startswith(
-        "ZHONGZHAN/"
-    ):
-        provider_code = "zhongzhan_gpt"
-        provider_label = "中转站 A"
-        key_env = "ZHONGZHAN_GPT_API_KEY"
+    prefix, separator, configured_model = raw_config.partition("/")
+    normalized_prefix = prefix.upper() if separator else ""
+    if normalized_prefix == "ZHONGZHAN":
+        normalized_prefix = "ZHONGZHAN_GPT"
+    known_prefixes = {
+        "BAILIAN",
+        "SILICONFLOW",
+        "ZHONGZHAN_GPT",
+        "ZHONGZHAN_CLAUDE",
+    }
+    if normalized_prefix in known_prefixes:
+        spec = _PROVIDER_SPECS[normalized_prefix]
+        model_name = configured_model
+    else:
+        spec = _PROVIDER_SPECS["SILICONFLOW"]
+        model_name = raw_config
+
+    model_name, reasoning_effort = parse_model_and_effort(model_name)
+    key_env = spec.api_key_env
+    api_key = environment.get(key_env)
+    api_base = (
+        environment.get(spec.api_base_env, spec.default_api_base)
+        if spec.api_base_env
+        else spec.default_api_base
+    )
+    if normalized_prefix == "ZHONGZHAN_GPT":
         api_key = _first_configured(
             environment, "ZHONGZHAN_GPT_API_KEY", "ZHONGZHAN_API_KEY"
         )
@@ -429,43 +459,26 @@ def resolve_draw_provider(
             environment,
             "ZHONGZHAN_GPT_BASE_URL",
             "ZHONGZHAN_BASE_URL",
-            default="https://api.openai.com/v1",
+            default=spec.default_api_base,
         )
-        model_name = raw_config.split("/", 1)[1]
-        force_multimodal = True
-    elif raw_config.startswith("ZHONGZHAN_CLAUDE/"):
-        provider_code = "zhongzhan_claude"
-        provider_label = "中转站 B"
-        key_env = "ZHONGZHAN_CLAUDE_API_KEY"
-        api_key = environment.get(key_env)
-        api_base = environment.get(
-            "ZHONGZHAN_CLAUDE_BASE_URL", "https://api.openai.com/v1"
-        )
-        model_name = raw_config.split("/", 1)[1]
-        force_multimodal = True
-    else:
-        provider_code = "siliconflow"
-        provider_label = "SiliconFlow"
-        key_env = "SILICONFLOW_API_KEY"
-        api_key = environment.get(key_env)
-        api_base = "https://api.siliconflow.cn/v1"
-        if raw_config.startswith("SILICONFLOW/"):
-            model_name = raw_config.split("/", 1)[1]
-        else:
-            model_name = raw_config
-        force_multimodal = False
+
+    force_multimodal = normalized_prefix in {
+        "BAILIAN",
+        "ZHONGZHAN_GPT",
+        "ZHONGZHAN_CLAUDE",
+    }
 
     supports_image_input = force_multimodal or any(
         marker in model_name.lower() for marker in ("vl", "thinking")
     )
     return MultimodalProviderConfig(
-        provider_code=provider_code,
-        provider_label=provider_label,
+        provider_code=spec.code,
+        provider_label=spec.label,
         api_key_env=key_env,
         api_key=api_key,
         api_base=api_base,
         model_name=model_name,
-        reasoning_effort=None,
+        reasoning_effort=reasoning_effort,
         supports_image_input=supports_image_input,
         raw_config=raw_config,
     )

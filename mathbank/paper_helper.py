@@ -12,6 +12,7 @@ from sqlalchemy.orm import Session
 from mathbank.database import Question, Paper, PaperQuestion, QuestionCurriculum
 from mathbank.paths import TEMPLATES_DIR
 from mathbank.latex_diagnostics import build_local_latex_diagnostic
+from mathbank.asset_security import AssetSecurityError, resolve_upload_asset
 
 # In-memory LRU cache for compiled PDF bytes
 _PDF_CACHE_LOCK = threading.Lock()
@@ -32,6 +33,19 @@ _AUTO_LATEX_PACKAGES = frozenset({
 })
 _MAX_AUTO_PACKAGE_REPAIRS = 3
 
+
+def build_restricted_tex_environment(output_dir: str) -> dict[str, str]:
+    """Build a minimal kpathsea policy for compiling untrusted question TeX."""
+
+    env = os.environ.copy()
+    # ``p`` forbids absolute and parent-directory input/output while keeping
+    # normal TeX tree package lookup available.  TEXMFOUTPUT pins generated
+    # artifacts to the per-request temporary directory.
+    env["openin_any"] = "p"
+    env["openout_any"] = "p"
+    env["TEXMFOUTPUT"] = os.path.abspath(output_dir)
+    return env
+
 # Constants for question type labels
 TYPE_LABELS = {
     "single_choice": "单项选择题",
@@ -43,19 +57,37 @@ TYPE_LABELS = {
 TYPE_ORDER = ["single_choice", "multi_choice", "fill_in_blank", "detailed_answer"]
 
 def clean_choice_stem_parentheses(text: str) -> str:
-    """自动清洗选择题题干末尾供填答用的全角/半角空括号（支持包裹全角空格\u3000、$公式符号、\\quad等），并保持 $ 符号闭合平衡"""
+    """清洗选择题末尾的空括号，并保持数学定界符平衡。
+
+    OCR 可能会把空括号识别为 ``$(\\quad)$`` 或 ``（$\\quad$）``。
+    这些定界符必须和括号一起移除，否则会遗留孤立的 ``$$``
+    并让 XeLaTeX 后续一直处于数学模式。
+    """
     if not text:
         return ""
     text = text.strip()
-    pattern = r'(?:[\s\xa0\u3000]*[\(（]\s*\$?\s*(?:\\quad|\\qquad|\\hspace\{.*?\}|[\s\xa0\u3000_])*?\s*\$?\s*[\)）]\s*\$?[\s\xa0\u3000]*)+$'
+
+    blank = r'(?:\\quad|\\qquad|\\hspace\{[^{}]*\}|[\s\xa0\u3000_])*'
+    plain_parens = rf'[\(（]\s*{blank}\s*[\)）]'
+    math_wrapped_parens = rf'\$\s*{plain_parens}\s*\$'
+    math_inside_parens = rf'[\(（]\s*\$\s*{blank}\s*\$\s*[\)）]'
+    pattern = (
+        rf'(?:[\s\xa0\u3000]*(?:{math_wrapped_parens}|'
+        rf'{math_inside_parens}|{plain_parens}))+[\s\xa0\u3000]*$'
+    )
     cleaned = re.sub(pattern, '', text).strip()
     cleaned = re.sub(r'\\paren\b', '', cleaned).strip()
-    
-    # 校验 $ 闭合奇偶性，若因抹除括号导致 $ 符号不成对（奇数个），在末尾补全闭合 $
-    dollars = re.findall(r'(?<!\\)\$', cleaned)
+
+    # 仅在未闭合的数学内容后补 "$"。若末尾本身就是孤立 "$"，
+    # 直接移除；追加另一个 "$" 会把它变成未闭合的行间数学定界符 "$$"。
+    dollars = list(re.finditer(r'(?<!\\)\$', cleaned))
     if len(dollars) % 2 != 0:
-        cleaned += "$"
-        
+        last_dollar = dollars[-1]
+        if cleaned[last_dollar.end():].strip():
+            cleaned += "$"
+        else:
+            cleaned = cleaned[:last_dollar.start()].rstrip()
+
     return cleaned
 
 def format_stem_paragraphs(stem_text: str) -> str:
@@ -204,6 +236,9 @@ def build_latex_document(
     lines.append(r"\usepackage{caption}")
     lines.append(r"\usepackage{wrapfig}")
     lines.append(r"\usepackage{graphicx}")
+    # Exported source packages keep figures in images/.  The ./ fallback keeps
+    # the same source compatible with the in-app compiler's temporary layout.
+    lines.append(r"\graphicspath{{images/}{./}}")
     lines.append(r"\usepackage{adjustbox}")
     lines.append(r"\examsetup{")
     lines.append(r"  page/size=a4paper,")
@@ -451,28 +486,42 @@ def build_latex_document(
     lines.append(r"\end{document}")
     return "\n".join(lines)
 
-def collect_referenced_images(questions_data: list, uploads_dir: str) -> list:
+def collect_referenced_images(
+    questions_data: list,
+    uploads_dir: str,
+    upload_url_prefix: str = "static/uploads",
+) -> list:
     """
     Find all referenced image file paths in static/uploads directory.
     Returns list of absolute image file paths.
     """
     image_paths = []
+
+    def add_reference(reference: str) -> None:
+        try:
+            path = resolve_upload_asset(
+                reference,
+                uploads_dir=uploads_dir,
+                url_prefix=upload_url_prefix,
+            )
+        except (AssetSecurityError, TypeError):
+            return
+        absolute = str(path)
+        if absolute not in image_paths:
+            image_paths.append(absolute)
+
     for item in questions_data:
         q = item.get("question", {})
         imgs = q.get("image_paths", [])
         if isinstance(imgs, list):
             for img_rel in imgs:
-                abs_p = os.path.join(uploads_dir, os.path.basename(img_rel))
-                if os.path.exists(abs_p) and abs_p not in image_paths:
-                    image_paths.append(abs_p)
+                add_reference(img_rel)
         
         # Also parse content for Markdown image paths
         content = q.get("content", "") + " " + q.get("answer_markdown", "")
         found = re.findall(r'!\[.*?\]\((?:/static/uploads/|static/uploads/|/uploads/|uploads/)?([^)]+)\)', content)
         for fname in found:
-            abs_p = os.path.join(uploads_dir, os.path.basename(fname))
-            if os.path.exists(abs_p) and abs_p not in image_paths:
-                image_paths.append(abs_p)
+            add_reference(fname)
 
     return image_paths
 
@@ -571,6 +620,7 @@ def compile_tex_to_pdf(tex_content: str, image_paths: list = None) -> tuple:
         try:
             cmd = [
                 "xelatex",
+                "-no-shell-escape",
                 "-interaction=nonstopmode",
                 "-halt-on-error",
                 "-file-line-error",
@@ -586,7 +636,14 @@ def compile_tex_to_pdf(tex_content: str, image_paths: list = None) -> tuple:
                     tex_file.write(current_tex)
 
                 # Pass 1: Generate .aux file and initial layout.
-                first_proc = subprocess.run(cmd, cwd=temp_dir, capture_output=True, text=True, timeout=30)
+                first_proc = subprocess.run(
+                    cmd,
+                    cwd=temp_dir,
+                    capture_output=True,
+                    text=True,
+                    timeout=30,
+                    env=build_restricted_tex_environment(temp_dir),
+                )
                 if first_proc.returncode != 0:
                     failure_message = _latex_failure_message([first_proc], temp_dir)
                     local = build_local_latex_diagnostic(failure_message, current_tex)
@@ -604,7 +661,14 @@ def compile_tex_to_pdf(tex_content: str, image_paths: list = None) -> tuple:
                     return (None, failure_message)
 
                 # Pass 2: Resolve \pageref{LastPage} and cross references from .aux.
-                proc = subprocess.run(cmd, cwd=temp_dir, capture_output=True, text=True, timeout=30)
+                proc = subprocess.run(
+                    cmd,
+                    cwd=temp_dir,
+                    capture_output=True,
+                    text=True,
+                    timeout=30,
+                    env=build_restricted_tex_environment(temp_dir),
+                )
                 pdf_path = os.path.join(temp_dir, "paper.pdf")
                 if proc.returncode == 0 and os.path.exists(pdf_path) and os.path.getsize(pdf_path) > 0:
                     with open(pdf_path, "rb") as pf:
@@ -855,6 +919,16 @@ def build_answer_sheet_latex(title: str, subtitle: str, questions_data: list) ->
 \end{tikzpicture}
 \end{document}
 """
+
+    # Answer-sheet figures use the same ZIP layout as the main paper.  Inject
+    # the search path for both the built-in fallback and any future file-backed
+    # answer-sheet template without rewriting every \includegraphics command.
+    if r"\graphicspath" not in content:
+        content = content.replace(
+            r"\begin{document}",
+            "\\graphicspath{{images/}{./}}\n\\begin{document}",
+            1,
+        )
 
     lines = content.splitlines()
     cleaned_lines = []

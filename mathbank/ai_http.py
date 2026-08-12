@@ -17,7 +17,12 @@ class AIProviderHTTPError(RuntimeError):
 
 
 def robust_request_post(url: str, **kwargs):
-    """POST with the project's existing proxy-bypass retry behavior."""
+    """POST with a conservative proxy fallback.
+
+    A response/read failure may happen after the provider has already started
+    and billed the request, so non-idempotent POSTs are only retried for an
+    explicit proxy failure or a connection-establishment timeout.
+    """
 
     is_domestic = any(
         domain in url.lower() for domain in ("aliyuncs.com", "siliconflow")
@@ -27,12 +32,15 @@ def robust_request_post(url: str, **kwargs):
 
     try:
         return requests.post(url, **kwargs)
-    except requests.exceptions.RequestException as exc:
+    except (
+        requests.exceptions.ProxyError,
+        requests.exceptions.ConnectTimeout,
+    ) as exc:
         if kwargs.get("proxies") == {"http": None, "https": None}:
             raise
         print(
-            f"[Robust Network] POST request to {url} failed: {str(exc)}. "
-            "Retrying with proxies bypassed..."
+            f"[Robust Network] Provider connection failed before a response "
+            f"(type={type(exc).__name__}). Retrying once without proxies..."
         )
         retry_kwargs = kwargs.copy()
         retry_kwargs["proxies"] = {"http": None, "https": None}
@@ -106,7 +114,20 @@ def post_chat_completion(
     )
     if check_status and response.status_code != 200:
         display_name = provider_name or provider.provider_label
+        # Provider bodies can echo prompt fragments or internal diagnostics.
+        # Keep them out of browser-visible exceptions and logs; a request ID is
+        # sufficient for support without exposing user content.
+        request_id = ""
+        headers = getattr(response, "headers", None)
+        if headers:
+            request_id = (
+                headers.get("x-request-id")
+                or headers.get("request-id")
+                or headers.get("x-dashscope-request-id")
+                or ""
+            )
+        suffix = f" (request_id={request_id})" if request_id else ""
         raise AIProviderHTTPError(
-            f"{display_name} 接口错误: HTTP {response.status_code}, 内容: {response.text}"
+            f"{display_name} 接口错误: HTTP {response.status_code}{suffix}"
         )
     return response

@@ -1,8 +1,327 @@
+        // Shared frontend trust boundary. All later cascade modules must use this
+        // helper before inserting database, OCR, import or AI output into HTML.
+        const MathBankSafe = (() => {
+            const RICH_HTML_CONFIG = Object.freeze({
+                ALLOWED_TAGS: [
+                    'div', 'span', 'p', 'br', 'strong', 'b', 'em', 'i',
+                    'ul', 'ol', 'li', 'table', 'thead', 'tbody', 'tfoot',
+                    'tr', 'th', 'td', 'img', 'sub', 'sup', 'code', 'pre', 'hr'
+                ],
+                ALLOWED_ATTR: [
+                    'class', 'src', 'alt', 'title', 'colspan', 'rowspan',
+                    'role', 'aria-label', 'aria-hidden',
+                    'data-preferred-columns', 'data-choice-columns',
+                    'data-safe-image-open', 'data-figure-align-qid'
+                ],
+                ALLOW_DATA_ATTR: false,
+                ALLOW_ARIA_ATTR: true,
+                KEEP_CONTENT: true,
+                RETURN_TRUSTED_TYPE: false
+            });
+            function asString(value) {
+                return value == null ? '' : String(value);
+            }
+
+            function escapeHtmlRaw(value) {
+                return asString(value)
+                    .replace(/&/g, '&amp;')
+                    .replace(/</g, '&lt;')
+                    .replace(/>/g, '&gt;')
+                    .replace(/"/g, '&quot;')
+                    .replace(/'/g, '&#039;');
+            }
+
+            function purify(value, config) {
+                if (window.DOMPurify && typeof window.DOMPurify.sanitize === 'function') {
+                    return String(window.DOMPurify.sanitize(asString(value), config));
+                }
+                // DOMPurify is bundled locally. If it ever fails to load, render
+                // inert text instead of falling back to unsafe HTML.
+                return escapeHtmlRaw(value);
+            }
+
+            function sanitizePlainText(value) {
+                // Plain-text sinks (.value, .textContent, title) do not parse
+                // HTML and therefore need no HTML sanitizer. Returning the exact
+                // string also preserves mathematical comparison signs.
+                return asString(value);
+            }
+
+            function escapeText(value) {
+                // This helper is used while constructing HTML. Encode the raw
+                // characters directly: parsing "plain text" as HTML first would
+                // treat expressions such as x<y>z as tags and silently drop them.
+                return escapeHtmlRaw(value);
+            }
+
+            function escapeAttribute(value) {
+                return escapeText(value).replace(/\r?\n/g, ' ');
+            }
+
+            function safeClassList(value, fallback = '') {
+                const tokens = sanitizePlainText(value).split(/\s+/).filter(Boolean);
+                const safeTokens = tokens.filter((token) => /^[A-Za-z0-9_:\[\]()./%#-]+$/.test(token));
+                return safeTokens.length > 0 ? safeTokens.join(' ') : fallback;
+            }
+
+            function safeImageUrl(value) {
+                const raw = asString(value).trim();
+                if (!raw || /[\u0000-\u001F\u007F\\]/.test(raw)) return '';
+
+                try {
+                    const url = new URL(raw, window.location.href);
+                    if (url.origin !== window.location.origin) return '';
+                    if (url.protocol !== 'http:' && url.protocol !== 'https:') return '';
+
+                    const decodedPath = decodeURIComponent(url.pathname);
+                    const allowedPrefix = decodedPath.startsWith('/static/uploads/')
+                        || decodedPath.startsWith('/static/test_uploads/');
+                    if (!allowedPrefix || decodedPath.split('/').includes('..')) return '';
+
+                    // Only passive raster assets may be opened under the app's
+                    // origin. In particular, never turn a legacy uploaded
+                    // HTML/SVG file into a same-origin window via the preview
+                    // click handler.
+                    if (!/\.(?:png|jpe?g|gif|webp)$/i.test(decodedPath)) return '';
+
+                    return url.pathname;
+                } catch (error) {
+                    return '';
+                }
+            }
+
+            function sanitizeRichHtml(value) {
+                const purified = purify(value, RICH_HTML_CONFIG);
+                if (typeof document === 'undefined' || !document.createElement) {
+                    return purified;
+                }
+
+                const template = document.createElement('template');
+                template.innerHTML = purified;
+                template.content.querySelectorAll('img').forEach((img) => {
+                    const safeUrl = safeImageUrl(img.getAttribute('src'));
+                    if (!safeUrl) {
+                        img.remove();
+                        return;
+                    }
+                    img.setAttribute('src', safeUrl);
+                    img.setAttribute('loading', 'lazy');
+                    img.setAttribute('decoding', 'async');
+                });
+                return template.innerHTML;
+            }
+
+            return Object.freeze({
+                escapeText,
+                escapeAttribute,
+                sanitizePlainText,
+                sanitizeRichHtml,
+                safeImageUrl,
+                safeClassList
+            });
+        })();
+        window.MathBankSafe = MathBankSafe;
+
+        // Safe image previews use one delegated listener rather than interpolated
+        // inline handlers containing untrusted URLs.
+        document.addEventListener('click', (event) => {
+            const image = event.target && event.target.closest
+                ? event.target.closest('img[data-safe-image-open]')
+                : null;
+            if (!image) return;
+            const safeUrl = MathBankSafe.safeImageUrl(image.getAttribute('src'));
+            if (!safeUrl) return;
+            const opened = window.open(safeUrl, '_blank', 'noopener,noreferrer');
+            if (opened) opened.opener = null;
+        });
+
+        // Shared, build-free dialog accessibility manager. Feature modules keep
+        // their visual transitions while this layer owns focus trapping, Escape
+        // handling, background isolation and focus restoration.
+        const MathBankModal = (() => {
+            const dialogStack = [];
+            const focusableSelector = [
+                'a[href]:not([tabindex="-1"])',
+                'button:not([disabled]):not([tabindex="-1"])',
+                'input:not([disabled]):not([type="hidden"]):not([tabindex="-1"])',
+                'select:not([disabled]):not([tabindex="-1"])',
+                'textarea:not([disabled]):not([tabindex="-1"])',
+                '[tabindex]:not([tabindex="-1"])',
+                '[contenteditable="true"]'
+            ].join(',');
+
+            function getFocusable(dialog) {
+                return Array.from(dialog.querySelectorAll(focusableSelector)).filter((element) => {
+                    return !element.hidden && element.getAttribute('aria-hidden') !== 'true'
+                        && element.getClientRects().length > 0;
+                });
+            }
+
+            function isolateBackground(isIsolated) {
+                ['header', 'main'].forEach((selector) => {
+                    const element = document.querySelector(selector);
+                    if (!element) return;
+                    element.inert = isIsolated;
+                    if (isIsolated) {
+                        element.setAttribute('aria-hidden', 'true');
+                    } else {
+                        element.removeAttribute('aria-hidden');
+                    }
+                });
+            }
+
+            function open(dialog, options = {}) {
+                if (!dialog) return;
+                const existingIndex = dialogStack.findIndex((entry) => entry.dialog === dialog);
+                if (existingIndex !== -1) dialogStack.splice(existingIndex, 1);
+
+                const previousDialog = dialogStack.length > 0 ? dialogStack[dialogStack.length - 1].dialog : null;
+                if (previousDialog) previousDialog.setAttribute('aria-hidden', 'true');
+
+                dialog.setAttribute('role', dialog.getAttribute('role') || 'dialog');
+                dialog.setAttribute('aria-modal', 'true');
+                dialog.setAttribute('aria-hidden', 'false');
+                dialogStack.push({
+                    dialog,
+                    previousFocus: document.activeElement,
+                    onEscape: typeof options.onEscape === 'function' ? options.onEscape : null
+                });
+                isolateBackground(true);
+
+                requestAnimationFrame(() => {
+                    const target = dialog.querySelector('[autofocus], [data-modal-close]')
+                        || getFocusable(dialog)[0]
+                        || dialog.querySelector('.glass-modal')
+                        || dialog;
+                    if (!target.hasAttribute('tabindex') && !target.matches(focusableSelector)) {
+                        target.setAttribute('tabindex', '-1');
+                    }
+                    target.focus({ preventScroll: true });
+                });
+            }
+
+            function close(dialog) {
+                if (!dialog) return;
+                const index = dialogStack.findIndex((entry) => entry.dialog === dialog);
+                if (index === -1) {
+                    dialog.setAttribute('aria-hidden', 'true');
+                    return;
+                }
+
+                const [entry] = dialogStack.splice(index, 1);
+                dialog.setAttribute('aria-hidden', 'true');
+                const currentEntry = dialogStack.length > 0 ? dialogStack[dialogStack.length - 1] : null;
+                if (currentEntry) {
+                    currentEntry.dialog.setAttribute('aria-hidden', 'false');
+                } else {
+                    isolateBackground(false);
+                }
+
+                requestAnimationFrame(() => {
+                    const restoreTarget = entry.previousFocus;
+                    if (restoreTarget && restoreTarget.isConnected && typeof restoreTarget.focus === 'function') {
+                        restoreTarget.focus({ preventScroll: true });
+                    } else if (currentEntry) {
+                        const fallback = getFocusable(currentEntry.dialog)[0] || currentEntry.dialog;
+                        fallback.focus({ preventScroll: true });
+                    }
+                });
+            }
+
+            document.addEventListener('keydown', (event) => {
+                const entry = dialogStack.length > 0 ? dialogStack[dialogStack.length - 1] : null;
+                if (!entry) return;
+
+                if (event.key === 'Escape' || event.key === 'Esc') {
+                    event.preventDefault();
+                    event.stopImmediatePropagation();
+                    if (entry.onEscape) {
+                        entry.onEscape();
+                    } else {
+                        const closeButton = entry.dialog.querySelector('[data-modal-close]');
+                        if (closeButton) closeButton.click();
+                    }
+                    return;
+                }
+
+                if (event.key !== 'Tab') return;
+                const focusable = getFocusable(entry.dialog);
+                if (focusable.length === 0) {
+                    event.preventDefault();
+                    entry.dialog.focus({ preventScroll: true });
+                    return;
+                }
+                const first = focusable[0];
+                const last = focusable[focusable.length - 1];
+                if (!entry.dialog.contains(document.activeElement)) {
+                    event.preventDefault();
+                    (event.shiftKey ? last : first).focus();
+                } else if (event.shiftKey && document.activeElement === first) {
+                    event.preventDefault();
+                    last.focus();
+                } else if (!event.shiftKey && document.activeElement === last) {
+                    event.preventDefault();
+                    first.focus();
+                }
+            }, true);
+
+            return Object.freeze({ open, close });
+        })();
+        window.MathBankModal = MathBankModal;
+
+        // Mirror native disabled/loading state to assistive technology. This also
+        // covers dynamically rendered import and paper buttons without requiring
+        // each feature module to duplicate ARIA bookkeeping.
+        function syncButtonAccessibility(button) {
+            if (!(button instanceof HTMLButtonElement)) return;
+            if (button.disabled) {
+                button.setAttribute('aria-disabled', 'true');
+            } else {
+                button.removeAttribute('aria-disabled');
+            }
+            const hasSpinner = Boolean(button.querySelector('.animate-spin, .fa-spin, .apple-spinner'));
+            if (button.disabled && hasSpinner) {
+                button.setAttribute('aria-busy', 'true');
+            } else if (button.id !== 'saveQuestionBtn') {
+                button.removeAttribute('aria-busy');
+            }
+        }
+
+        const buttonStateObserver = new MutationObserver((mutations) => {
+            mutations.forEach((mutation) => {
+                const target = mutation.target instanceof HTMLButtonElement
+                    ? mutation.target
+                    : mutation.target.closest && mutation.target.closest('button');
+                if (target) syncButtonAccessibility(target);
+                mutation.addedNodes.forEach((node) => {
+                    if (!(node instanceof Element)) return;
+                    if (node.matches('button')) syncButtonAccessibility(node);
+                    node.querySelectorAll('button').forEach(syncButtonAccessibility);
+                });
+            });
+        });
+        buttonStateObserver.observe(document.documentElement, {
+            subtree: true,
+            childList: true,
+            attributes: true,
+            attributeFilter: ['disabled']
+        });
+        document.querySelectorAll('button').forEach(syncButtonAccessibility);
+
         // CSRF Token protection & window.fetch Monkey Patch
         (() => {
             const originalFetch = window.fetch;
-            window.fetch = async function (input, init = {}) {
-                init = init || {};
+            window.fetch = async function (input, init) {
+                const requestInit = init || {};
+                const isRequest = typeof Request !== 'undefined' && input instanceof Request;
+                const requestMethod = String(requestInit.method || (isRequest ? input.method : 'GET')).toUpperCase();
+                const requestUrlValue = isRequest ? input.url : input;
+                let requestUrl = null;
+                try {
+                    requestUrl = new URL(String(requestUrlValue), window.location.href);
+                } catch (error) {
+                    // Preserve native fetch error behaviour for malformed inputs.
+                }
                 
                 // 1. Try to read local token from window global variable (injected directly into HTML)
                 let localToken = window.__localToken || '';
@@ -39,25 +358,20 @@
                     }
                 }
                 
-                if (localToken) {
-                    const method = (init.method || 'GET').toUpperCase();
-                    if (['POST', 'PUT', 'DELETE'].includes(method)) {
-                        init.headers = init.headers || {};
-                        if (init.headers instanceof Headers) {
-                            init.headers.set('X-Local-Token', localToken);
-                        } else if (Array.isArray(init.headers)) {
-                            const hasToken = init.headers.some(h => h[0].toLowerCase() === 'x-local-token');
-                            if (!hasToken) {
-                                init.headers.push(['X-Local-Token', localToken]);
-                            }
-                        } else {
-                            const keys = Object.keys(init.headers);
-                            const hasToken = keys.some(k => k.toLowerCase() === 'x-local-token');
-                            if (!hasToken) {
-                                init.headers['X-Local-Token'] = localToken;
-                            }
-                        }
+                const isSameOriginApi = requestUrl
+                    && requestUrl.origin === window.location.origin
+                    && requestUrl.pathname.startsWith('/api/');
+                const isWriteRequest = ['POST', 'PUT', 'PATCH', 'DELETE'].includes(requestMethod);
+
+                if (localToken && isSameOriginApi && isWriteRequest) {
+                    const headers = new Headers(isRequest ? input.headers : undefined);
+                    new Headers(requestInit.headers || undefined).forEach((value, name) => {
+                        headers.set(name, value);
+                    });
+                    if (!headers.has('X-Local-Token')) {
+                        headers.set('X-Local-Token', localToken);
                     }
+                    return originalFetch.call(this, input, { ...requestInit, headers });
                 }
                 
                 return originalFetch.call(this, input, init);
@@ -72,10 +386,19 @@
                 seqNum: null,
                 createdAt: null,
                 draftId: null,
-                mode: 'new'
+                mode: 'new',
+                generation: 0
+            };
+
+            const invalidateAsyncWork = () => {
+                state.generation += 1;
+                if (typeof window.invalidateEditorSessionAsyncWork === 'function') {
+                    window.invalidateEditorSessionAsyncWork();
+                }
             };
 
             const reset = () => {
+                invalidateAsyncWork();
                 state.questionId = null;
                 state.seqNum = null;
                 state.createdAt = null;
@@ -84,6 +407,7 @@
             };
 
             const useQuestion = (question) => {
+                invalidateAsyncWork();
                 state.questionId = question && question.id != null ? question.id : null;
                 state.seqNum = question && question.seq_num != null ? question.seq_num : null;
                 state.createdAt = question && question.created_at ? question.created_at : null;
@@ -92,11 +416,16 @@
             };
 
             const useDraft = (draft) => {
+                invalidateAsyncWork();
                 state.questionId = null;
                 state.seqNum = null;
                 state.createdAt = null;
                 state.draftId = draft && draft.id != null ? draft.id : null;
                 state.mode = state.draftId == null ? 'new' : 'draft';
+            };
+
+            const beginTransition = () => {
+                invalidateAsyncWork();
             };
 
             const setDraftId = (draftId) => {
@@ -112,6 +441,11 @@
             };
 
             const snapshot = () => ({ ...state });
+            const isCurrent = (candidate) => Boolean(candidate) &&
+                state.generation === candidate.generation &&
+                state.questionId === candidate.questionId &&
+                state.draftId === candidate.draftId &&
+                state.mode === candidate.mode;
 
             return Object.freeze({
                 get questionId() { return state.questionId; },
@@ -119,12 +453,15 @@
                 get createdAt() { return state.createdAt; },
                 get draftId() { return state.draftId; },
                 get mode() { return state.mode; },
+                get generation() { return state.generation; },
                 reset,
                 useQuestion,
                 useDraft,
+                beginTransition,
                 setDraftId,
                 clearDraft,
-                snapshot
+                snapshot,
+                isCurrent
             });
         })();
         window.EditorState = EditorState;
@@ -139,7 +476,6 @@
         let contentOcrAbortController = null;
         let answerOcrAbortController = null;
         let aiSolveAbortController = null;
-        let aiSolveProgressTimer = null;
 
         // Global debounce utility
         const debounce = (func, delay) => {
@@ -165,7 +501,7 @@
                 iconContainer.className = "h-6 w-6 rounded-full flex items-center justify-center text-xs bg-red-500/20 text-red-400";
                 iconContainer.innerHTML = '<i class="fa-solid fa-triangle-exclamation"></i>';
             } else {
-                iconContainer.className = "h-6 w-6 rounded-full flex items-center justify-center text-xs bg-brand-500/20 text-brand-400";
+                iconContainer.className = "h-6 w-6 rounded-full flex items-center justify-center text-xs bg-brand-500/20 text-brand-500";
                 iconContainer.innerHTML = '<i class="fa-solid fa-circle-info"></i>';
             }
             
@@ -260,22 +596,40 @@
                 .then(r => r.json())
                 .then(() => {
                     // Config status check done. We can't query secret directly so we inspect indicator.
-                    indicator.className = "flex items-center space-x-1.5 px-3 py-1.5 rounded-full text-xs font-medium bg-green-50 text-green-700 border border-green-150";
+                    indicator.className = "flex items-center space-x-1.5 px-3 py-1.5 rounded-full text-xs font-medium bg-green-50 text-green-700 border border-green-200";
                     indicator.innerHTML = '<span class="h-1.5 w-1.5 rounded-full bg-green-500 animate-pulse"></span><span>题库就绪</span>';
                 })
                 .catch(() => {
-                    indicator.className = "flex items-center space-x-1.5 px-3 py-1.5 rounded-full text-xs font-medium bg-red-50 text-red-700 border border-red-150";
+                    indicator.className = "flex items-center space-x-1.5 px-3 py-1.5 rounded-full text-xs font-medium bg-red-50 text-red-700 border border-red-200";
                     indicator.innerHTML = '<span class="h-1.5 w-1.5 rounded-full bg-red-500"></span><span>后台连接中断</span>';
                 });
         }
 
         // 百炼模型按任务隔离，避免分类/OCR 等轻量任务误选高价旗舰模型。
         const BAILIAN_MODEL_PRESETS_BY_TASK = {
-            solve: ["qwen3.7-plus", "qwen3.8-max", "qwen3.7-flash"],
-            parse: ["qwen3.7-flash", "qwen3.7-plus", "qwen3.8-max"],
-            classify: ["qwen3.7-flash", "qwen3.7-plus"],
-            ocr: ["qwen3.7-flash", "qwen3.7-plus"],
-            draw: ["qwen3.7-plus", "qwen3.8-max", "qwen3.7-flash"]
+            solve: [
+                "qwen3.7-plus",
+                "qwen3.8-max",
+                "qwen3.7-flash"
+            ],
+            parse: [
+                "qwen3.7-flash",
+                "qwen3.7-plus",
+                "qwen3.8-max"
+            ],
+            classify: [
+                "qwen3.7-flash",
+                "qwen3.7-plus"
+            ],
+            ocr: [
+                "qwen3.7-flash",
+                "qwen3.7-plus"
+            ],
+            draw: [
+                "qwen3.7-plus",
+                "qwen3.8-max",
+                "qwen3.7-flash"
+            ]
         };
 
         const BAILIAN_MODEL_DEFAULTS_BY_TASK = {
@@ -475,20 +829,18 @@
                 }
 
                 const datalistId = `datalist_${typeKey}_${provider}`;
-                let models = getModelListForProvider(provider, typeKey);
-                // 旧版预设或手工写入的当前配置必须继续可见，避免打开设置即被首项覆盖。
-                if (selectedValue && !models.includes(selectedValue)) {
-                    models = [selectedValue, ...models];
-                }
-                let optionsHtml = models.map(m => `<option value="${m}">`).join('');
+                const models = getModelListForProvider(provider, typeKey);
+                const safeDatalistId = MathBankSafe.escapeAttribute(datalistId);
+                const safeRawModel = MathBankSafe.escapeAttribute(rawModel);
+                let optionsHtml = models.map(m => `<option value="${MathBankSafe.escapeAttribute(m)}">`).join('');
                 
                 container.innerHTML = `
                     <div class="flex items-center space-x-1.5 flex-1 min-w-0">
                         <!-- 70% 宽度：模型名称输入框 -->
                         <div class="w-[68%] min-w-0">
-                            <input type="text" id="settings_${typeKey}_model_input" list="${datalistId}" 
+                            <input type="text" id="settings_${typeKey}_model_input" list="${safeDatalistId}"
                                    placeholder="输入模型名称 (如 gpt-5.6-sol)"
-                                   value="${rawModel}" class="glass-input w-full px-2.5 py-1.5 rounded-lg text-xs font-mono">
+                                   value="${safeRawModel}" class="glass-input w-full px-2.5 py-1.5 rounded-lg text-xs font-mono">
                         </div>
                         <!-- 30% 宽度：推理强度选择框 -->
                         <div class="w-[32%] shrink-0">
@@ -502,7 +854,7 @@
                             </select>
                         </div>
                     </div>
-                    <datalist id="${datalistId}">
+                    <datalist id="${safeDatalistId}">
                         ${optionsHtml}
                     </datalist>
                     <button type="button" onclick="saveCustomZhongzhanModel('${provider}', '${typeKey}')" 
@@ -516,12 +868,16 @@
                 `;
             } else {
                 // 下拉菜单列表模式
-                const models = getModelListForProvider(provider, typeKey);
+                let models = getModelListForProvider(provider, typeKey);
+                // 旧版预设或手工写入的当前配置必须继续可见，避免打开设置即被首项覆盖。
+                if (selectedValue && !models.includes(selectedValue)) {
+                    models = [selectedValue, ...models];
+                }
                 const selectId = `settings_${typeKey}_model_select`;
                 
                 let optionsHtml = models.map(m => {
                     const isSel = m === selectedValue ? 'selected' : '';
-                    return `<option value="${m}" ${isSel}>${m}</option>`;
+                    return `<option value="${MathBankSafe.escapeAttribute(m)}" ${isSel}>${MathBankSafe.escapeText(m)}</option>`;
                 }).join('');
                 
                 container.innerHTML = `
@@ -644,6 +1000,7 @@
                 });
                 
             modal.classList.remove('hidden');
+            window.MathBankModal.open(modal, { onEscape: closeSettingsModal });
             setTimeout(() => {
                 modal.classList.remove('opacity-0');
                 modal.querySelector('div').classList.remove('scale-95');
@@ -653,6 +1010,7 @@
 
         function closeSettingsModal() {
             const modal = document.getElementById('settingsModal');
+            window.MathBankModal.close(modal);
             document.body.classList.remove('modal-active');
             
             modal.classList.add('opacity-0');
@@ -676,6 +1034,10 @@
                 // Show a beautiful premium full-screen overlay to block user interactions cleanly
                 const overlay = document.createElement('div');
                 overlay.className = "fixed inset-0 bg-slate-900/95 backdrop-blur-md flex flex-col items-center justify-center text-white z-[9999] transition-all duration-500 opacity-0";
+                overlay.setAttribute('role', 'alertdialog');
+                overlay.setAttribute('aria-modal', 'true');
+                overlay.setAttribute('aria-live', 'assertive');
+                overlay.setAttribute('aria-label', '题库系统正在关闭');
                 overlay.innerHTML = `
                     <div class="p-8 max-w-md text-center space-y-5">
                         <div class="h-16 w-16 rounded-2xl bg-red-500/10 border border-red-500/20 flex items-center justify-center text-red-400 mx-auto text-3xl shadow-lg">
@@ -690,7 +1052,7 @@
                         <div class="border-t border-slate-800 pt-4 text-left">
                             <p class="text-[11px] text-slate-500 mb-2 font-semibold">🔄 如何重新启动系统？</p>
                             <p class="text-[10px] text-slate-400 leading-normal">
-                                如果需要重新开始研讨与录题，请再次双击执行工作空间下的 <code class="bg-slate-850 px-1.5 py-0.5 rounded text-red-300 font-mono text-[9px]">启动题库系统.command</code> 脚本即可。
+                                如果需要重新开始研讨与录题，请再次双击执行工作空间下的 <code class="bg-slate-900 px-1.5 py-0.5 rounded text-red-300 font-mono text-[9px]">启动题库系统.command</code> 脚本即可。
                             </p>
                         </div>
                     </div>
@@ -836,7 +1198,7 @@
                     showToast('所有配置（含自定义维度）保存成功！');
                     closeSettingsModal();
                     fetchConfigStatus();
-                    loadCategories(); // Reload all dynamic metadata and categories
+                    loadCategories({ reloadCurrentQuestion: true });
                 } else {
                     showToast(data.message, 'error');
                 }
@@ -847,8 +1209,10 @@
         }
 
         // Load Categories from Database to Autocomplete Selects
-        function loadCategories(retryCount = 0) {
-            fetch('/api/config/metadata')
+        function loadCategories(options = {}) {
+            const reloadCurrentQuestion = options.reloadCurrentQuestion === true;
+            const retryCount = Number.isInteger(options.retryCount) ? options.retryCount : 0;
+            return fetch('/api/config/metadata')
                 .then(r => {
                     if (!r.ok) {
                         throw new Error(`获取元数据状态异常: ${r.status}`);
@@ -875,19 +1239,18 @@
                     populateCategoryDropdowns();
                     populateFilterDropdowns();
                     
-                    // Reload currently active question silently if one is selected to sync with the new curriculum
-                    if (typeof window.reloadCurrentQuestionSilently === 'function') {
+                    // Most callers only need fresh dropdown data. Reloading the
+                    // editor is an explicit settings/curriculum operation because
+                    // it can replace text typed after a save or batch import.
+                    if (reloadCurrentQuestion && typeof window.reloadCurrentQuestionSilently === 'function') {
                         window.reloadCurrentQuestionSilently();
-                    }
-                    if (!EditorState.questionId && typeof window.backupEditorState === 'function') {
-                        window.backupEditorState(null, null);
                     }
                 })
                 .catch(err => {
                     console.error('加载分类目录树或元数据配置发生异常:', err);
                     if (retryCount < 3) {
                         console.warn(`[Auto-Retry] 正在尝试第 ${retryCount + 1} 次自适应重新加载数据...`);
-                        setTimeout(() => loadCategories(retryCount + 1), 1500);
+                        setTimeout(() => loadCategories({ ...options, retryCount: retryCount + 1 }), 1500);
                     } else {
                         showToast('系统正在连接或初始化后台，加载分类及大纲数据失败，请刷新重试', 'error');
                     }
@@ -1157,6 +1520,7 @@
 
             // Show modal
             modal.classList.remove('hidden');
+            window.MathBankModal.open(modal, { onEscape: window.closeUpdateModal });
             setTimeout(() => {
                 modal.classList.remove('opacity-0');
                 const content = modal.querySelector('.glass-modal');
@@ -1167,6 +1531,7 @@
         window.closeUpdateModal = function() {
             const modal = document.getElementById('updateModal');
             if (!modal) return;
+            window.MathBankModal.close(modal);
             modal.classList.add('opacity-0');
             const content = modal.querySelector('.glass-modal');
             if (content) content.classList.add('scale-95');
@@ -1245,7 +1610,7 @@
                 if (badgeVer) badgeVer.innerText = `v${latestReleaseCache.current_version.replace(/^v/i, '')}`;
                 if (textEl) {
                     if (latestReleaseCache.has_update) {
-                        textEl.innerHTML = `<span class="text-brand-600 font-bold">发现新版本 ${latestReleaseCache.latest_version}</span>（当前为 v${latestReleaseCache.current_version}）`;
+                        textEl.innerHTML = `<span class="text-brand-600 font-bold">发现新版本 ${MathBankSafe.escapeText(latestReleaseCache.latest_version)}</span>（当前为 v${MathBankSafe.escapeText(latestReleaseCache.current_version)}）`;
                     } else {
                         textEl.innerText = `当前已是最新版本 (v${latestReleaseCache.current_version}) • 运行环境正常`;
                     }
@@ -1374,18 +1739,18 @@
 
         // Helper string mappings
         function getDifficultyColor(val) {
-            if (!val) return 'text-slate-550 bg-slate-100 border border-slate-200/60';
+            if (!val) return 'text-slate-600 bg-slate-100 border border-slate-200/60';
             if (systemMetadata && Array.isArray(systemMetadata.difficulties) && systemMetadata.difficulties.length > 0) {
                 const found = systemMetadata.difficulties.find(d => d.value === val);
                 if (found && found.color) {
-                    return found.color;
+                    return MathBankSafe.safeClassList(found.color, 'text-slate-600 bg-slate-100 border border-slate-200/60');
                 }
             }
             if (val === 'easy_error') return 'text-green-600 bg-green-50 border border-green-200/60';
             if (val === 'normal') return 'text-blue-600 bg-blue-50 border border-blue-200/60';
             if (val === 'challenge') return 'text-red-600 bg-red-50 border border-red-200/60';
             if (val === 'qiangji') return 'text-purple-600 bg-purple-50 border border-purple-200/60';
-            return 'text-slate-550 bg-slate-100 border border-slate-200/60';
+            return 'text-slate-600 bg-slate-100 border border-slate-200/60';
         }
         window.getDifficultyColor = getDifficultyColor;
 
@@ -1395,15 +1760,16 @@
                 if (diff === 'normal') return '<span class="text-[9px] font-bold text-blue-600 bg-blue-50 px-1.5 py-0.5 rounded">常规</span>';
                 if (diff === 'challenge') return '<span class="text-[9px] font-bold text-red-600 bg-red-50 px-1.5 py-0.5 rounded">挑战</span>';
                 if (diff === 'qiangji') return '<span class="text-[9px] font-bold text-purple-600 bg-purple-50 px-1.5 py-0.5 rounded">强基</span>';
-                return '<span class="text-[9px] font-bold text-slate-550 bg-slate-100 px-1.5 py-0.5 rounded">未定</span>';
+                return '<span class="text-[9px] font-bold text-slate-600 bg-slate-100 px-1.5 py-0.5 rounded">未定</span>';
             }
             const found = systemMetadata.difficulties.find(d => d.value === diff);
             if (found) {
                 // Strip emojis (symbols) from label to keep badge clean and neat
-                const cleanLabel = found.label.replace(/[\u2700-\u27BF]|[\uE000-\uF8FF]|\uD83C[\uDC00-\uDFFF]|\uD83D[\uDC00-\uDFFF]|[\u2011-\u26FF]|\uD83E[\uDD00-\uDFFF]/g, '').trim();
-                return `<span class="text-[9px] font-bold ${found.color || 'text-slate-550 bg-slate-100'} px-1.5 py-0.5 rounded">${cleanLabel}</span>`;
+                const cleanLabel = String(found.label || '').replace(/[\u2700-\u27BF]|[\uE000-\uF8FF]|\uD83C[\uDC00-\uDFFF]|\uD83D[\uDC00-\uDFFF]|[\u2011-\u26FF]|\uD83E[\uDD00-\uDFFF]/g, '').trim();
+                const colorClass = MathBankSafe.safeClassList(found.color, 'text-slate-600 bg-slate-100');
+                return `<span class="text-[9px] font-bold ${colorClass} px-1.5 py-0.5 rounded">${MathBankSafe.escapeText(cleanLabel)}</span>`;
             }
-            return `<span class="text-[9px] font-bold text-slate-550 bg-slate-100 px-1.5 py-0.5 rounded">${diff}</span>`;
+            return `<span class="text-[9px] font-bold text-slate-600 bg-slate-100 px-1.5 py-0.5 rounded">${MathBankSafe.escapeText(diff)}</span>`;
         }
 
         function getTypeText(type) {
@@ -1500,6 +1866,8 @@
             } else {
                 menu.classList.remove('scale-90', 'opacity-0', 'pointer-events-none');
                 menu.classList.add('scale-100', 'opacity-100');
+                const themeDropdownButton = document.getElementById('themeDropdownBtn');
+                if (themeDropdownButton) themeDropdownButton.setAttribute('aria-expanded', 'true');
                 if (arrow) arrow.classList.add('rotate-180');
                 
                 // Add click listener to close when clicking outside
@@ -1513,6 +1881,8 @@
             if (!menu) return;
             menu.classList.add('scale-90', 'opacity-0', 'pointer-events-none');
             menu.classList.remove('scale-100', 'opacity-100');
+            const themeDropdownButton = document.getElementById('themeDropdownBtn');
+            if (themeDropdownButton) themeDropdownButton.setAttribute('aria-expanded', 'false');
             if (arrow) arrow.classList.remove('rotate-180');
             document.removeEventListener('click', closeThemeDropdownOnce);
         }
@@ -1540,6 +1910,8 @@
                 if (typeof closeThemeDropdown === 'function') closeThemeDropdown();
                 menu.classList.remove('scale-90', 'opacity-0', 'pointer-events-none');
                 menu.classList.add('scale-100', 'opacity-100');
+                const workspaceDropdownButton = document.getElementById('workspaceDropdownBtn');
+                if (workspaceDropdownButton) workspaceDropdownButton.setAttribute('aria-expanded', 'true');
                 if (arrow) arrow.classList.add('rotate-180');
                 document.addEventListener('click', closeWorkspaceDropdownOnce);
             }
@@ -1551,6 +1923,8 @@
             if (!menu) return;
             menu.classList.add('scale-90', 'opacity-0', 'pointer-events-none');
             menu.classList.remove('scale-100', 'opacity-100');
+            const workspaceDropdownButton = document.getElementById('workspaceDropdownBtn');
+            if (workspaceDropdownButton) workspaceDropdownButton.setAttribute('aria-expanded', 'false');
             if (arrow) arrow.classList.remove('rotate-180');
             document.removeEventListener('click', closeWorkspaceDropdownOnce);
         }

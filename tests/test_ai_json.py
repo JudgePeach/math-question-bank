@@ -1,4 +1,5 @@
 import json
+from typing import get_type_hints
 
 import pytest
 
@@ -7,6 +8,12 @@ from mathbank.prompts import (
     build_import_parse_system_prompt,
     build_pdf_parse_system_prompt,
 )
+
+
+def test_parse_ai_json_type_hints_resolve():
+    hints = get_type_hints(parse_ai_json)
+
+    assert "raw_markdown" in hints
 
 
 def test_parse_ai_json_keeps_valid_json_unchanged():

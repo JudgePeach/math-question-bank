@@ -1,5 +1,4 @@
-import pytest
-from mathbank.database import Question
+from mathbank.database import Paper, Question
 
 def test_question_crud_operations(db_session):
     # 1. Create Question
@@ -58,3 +57,20 @@ def test_question_crud_operations(db_session):
     
     deleted = db_session.query(Question).filter_by(id=q.id).first()
     assert deleted is None
+
+
+def test_json_model_fields_fail_closed_on_wrong_json_shapes():
+    question = Question(content="shape test")
+    for malformed_shape in ('{}', '"/static/uploads/a.png"', "null", "123"):
+        question._image_paths = malformed_shape
+        assert question.image_paths == []
+
+    paper = Paper(title="shape test", metadata_json="[]")
+    payload = paper.to_dict()
+    assert payload["show_secret"] is True
+    assert payload["show_notice"] is True
+
+    paper.metadata_json = '"not-an-object"'
+    payload = paper.to_dict()
+    assert payload["show_secret"] is True
+    assert payload["show_notice"] is True

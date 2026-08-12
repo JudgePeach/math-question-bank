@@ -1,4 +1,54 @@
+        // ocr.js is loaded immediately before this module. Keep its public badge
+        // renderers, but normalize every image path at the cascade boundary so
+        // stored answer Markdown and API payloads cannot break out through a
+        // filename/title interpolation in the legacy badge markup.
+        (() => {
+            const renderContentBadges = window.renderIllustrationBadges;
+            if (typeof renderContentBadges === 'function') {
+                window.renderIllustrationBadges = function() {
+                    uploadedImages = Array.isArray(uploadedImages)
+                        ? Array.from(new Set(uploadedImages.map(path => window.MathBankSafe.safeImageUrl(path)).filter(Boolean)))
+                        : [];
+                    return renderContentBadges();
+                };
+            }
+
+            const renderAnswerBadges = window.renderAnswerImageBadges;
+            if (typeof renderAnswerBadges === 'function') {
+                window.renderAnswerImageBadges = function() {
+                    uploadedAnswerImages = Array.isArray(uploadedAnswerImages)
+                        ? Array.from(new Set(uploadedAnswerImages.map(path => window.MathBankSafe.safeImageUrl(path)).filter(Boolean)))
+                        : [];
+                    return renderAnswerBadges();
+                };
+            }
+
+            window.syncAnswerImagesFromMarkdown = function() {
+                const textarea = document.getElementById('editAnswerMarkdown');
+                const markdown = textarea ? textarea.value : '';
+                const foundImages = [];
+                const imagePattern = /!\[.*?\]\(([^)]+)\)/g;
+                let match;
+                while ((match = imagePattern.exec(markdown)) !== null) {
+                    const safePath = window.MathBankSafe.safeImageUrl(match[1]);
+                    if (safePath && !foundImages.includes(safePath)) {
+                        foundImages.push(safePath);
+                    }
+                }
+                uploadedAnswerImages = foundImages;
+                if (typeof window.renderAnswerImageBadges === 'function') {
+                    window.renderAnswerImageBadges();
+                }
+            };
+        })();
+
         function startNewQuestionWithoutPrompt() {
+            if (window.blockEditorSessionChangeWhileSaving && window.blockEditorSessionChangeWhileSaving()) {
+                return;
+            }
+            if (typeof window.invalidatePendingQuestionDetailLoad === 'function') {
+                window.invalidatePendingQuestionDetailLoad();
+            }
             EditorState.reset();
             document.getElementById('editorTitle').textContent = '录入新数学题';
             
@@ -69,7 +119,15 @@
 
         // Upload and drag and drop system for Illustration / OCR images
         function clearEditor() {
+            // This function is called directly from index.html, so the guard
+            // must live here rather than relying on the button or caller.
+            if (window.blockEditorSessionChangeWhileSaving && window.blockEditorSessionChangeWhileSaving()) {
+                return;
+            }
             if (confirm('确认清空当前所有的编辑草稿吗？此操作无法撤销。')) {
+                if (typeof window.invalidatePendingQuestionDetailLoad === 'function') {
+                    window.invalidatePendingQuestionDetailLoad();
+                }
                 cancelAllOcr(); // Cancel any active OCR requests!
                 EditorState.reset();
                 document.getElementById('editorTitle').textContent = '录入新数学题';
@@ -116,6 +174,12 @@
         }
 
         function startNewQuestion() {
+            if (window.blockEditorSessionChangeWhileSaving && window.blockEditorSessionChangeWhileSaving()) {
+                return;
+            }
+            if (typeof window.invalidatePendingQuestionDetailLoad === 'function') {
+                window.invalidatePendingQuestionDetailLoad();
+            }
             EditorState.reset();
             document.getElementById('editorTitle').textContent = '录入新数学题';
             
@@ -364,11 +428,11 @@
                             item.onclick = () => selectQuestionById(q.id);
                             item.innerHTML = `
                                 <div class="truncate pr-2">
-                                    <span class="font-bold text-brand-600 bg-brand-50 px-1.5 py-0.5 rounded text-[10px] mr-1.5 shadow-sm">#${q.seq_num}</span>
-                                    <span class="text-[10px] bg-slate-100 px-1.5 py-0.5 rounded text-slate-500 mr-1.5">${getTypeText(q.question_type)}</span>
-                                    <span>${cleanContent}</span>
+                                    <span class="font-bold text-brand-600 bg-brand-50 px-1.5 py-0.5 rounded text-[10px] mr-1.5 shadow-sm">#${window.MathBankSafe.escapeText(q.seq_num)}</span>
+                                    <span class="text-[10px] bg-slate-100 px-1.5 py-0.5 rounded text-slate-500 mr-1.5">${window.MathBankSafe.escapeText(getTypeText(q.question_type))}</span>
+                                    <span>${window.MathBankSafe.escapeText(cleanContent)}</span>
                                 </div>
-                                <i class="fa-solid fa-chevron-right text-[9px] text-slate-350 shrink-0"></i>
+                                <i class="fa-solid fa-chevron-right text-[9px] text-slate-400 shrink-0"></i>
                             `;
                             if (container) container.appendChild(item);
                         });
@@ -396,38 +460,95 @@
                 });
         }
 
-        // Select a question to Edit & Preview
-        function selectQuestion(item) {
-            EditorState.useQuestion(item);
-            const requestedQuestionId = item.id;
-            document.getElementById('editorTitle').textContent = '编辑数学题';
-            
-            // Clear any previous OCR preview when switching questions
-            clearContentOcrPreview();
-            clearOcrPreview();
-            
-            // Sync the active card highlight - Apple Glass Style
-            const listCards = document.getElementById('questionsList').children;
-            for (let i = 0; i < listCards.length; i++) {
-                const card = listCards[i];
-                if (parseInt(card.dataset.id) === item.id) {
-                    card.classList.add('active');
-                } else {
-                    card.classList.remove('active');
-                }
+        let questionDetailLoadSequence = 0;
+        let questionDetailLoading = false;
+        let saveQuestionInFlight = null;
+
+        function blockEditorSessionChangeWhileSaving() {
+            if (!saveQuestionInFlight) return false;
+            showToast('题目正在保存，请等待完成后再重置或切换', 'info');
+            return true;
+        }
+        window.blockEditorSessionChangeWhileSaving = blockEditorSessionChangeWhileSaving;
+
+        window.isQuestionSaveInFlight = function() {
+            return Boolean(saveQuestionInFlight);
+        };
+
+        function updateQuestionSaveButtonState() {
+            const button = document.getElementById('saveQuestionBtn');
+            if (!button) return;
+
+            const isSaving = Boolean(saveQuestionInFlight);
+            const isBusy = questionDetailLoading || isSaving;
+            button.disabled = isBusy;
+            button.setAttribute('aria-busy', isBusy ? 'true' : 'false');
+            button.classList.toggle('opacity-60', isBusy);
+            button.classList.toggle('pointer-events-none', isBusy);
+
+            if (questionDetailLoading) {
+                button.innerHTML = '<i class="fa-solid fa-spinner animate-spin"></i><span>加载题目...</span>';
+            } else if (isSaving) {
+                button.innerHTML = '<i class="fa-solid fa-spinner animate-spin"></i><span>保存中...</span>';
+            } else {
+                button.innerHTML = '<i class="fa-solid fa-floppy-disk"></i><span>保存</span>';
             }
+        }
+
+        function invalidatePendingQuestionDetailLoad() {
+            questionDetailLoadSequence += 1;
+            questionDetailLoading = false;
+            updateQuestionSaveButtonState();
+        }
+        window.invalidatePendingQuestionDetailLoad = invalidatePendingQuestionDetailLoad;
+
+        // Select a question to Edit & Preview. The editor identity is committed
+        // only after the requested detail payload has arrived successfully.
+        function selectQuestion(item) {
+            if (blockEditorSessionChangeWhileSaving()) {
+                return;
+            }
+            const requestedQuestionId = Number(item && item.id);
+            if (!Number.isSafeInteger(requestedQuestionId) || requestedQuestionId <= 0) {
+                showToast('无法加载题目：题目 ID 无效', 'error');
+                return;
+            }
+            EditorState.beginTransition();
+            const loadSequence = ++questionDetailLoadSequence;
+            questionDetailLoading = true;
+            updateQuestionSaveButtonState();
 
             // Lazy-load details asynchronously
-            fetch(`/api/questions/${item.id}`)
+            fetch(`/api/questions/${requestedQuestionId}`)
                 .then(r => {
                     if (!r.ok) throw new Error('无法加载题目详情');
                     return r.json();
                 })
                 .then(fullItem => {
-                    if (EditorState.questionId !== requestedQuestionId) {
+                    if (loadSequence !== questionDetailLoadSequence) {
                         return;
                     }
+                    if (!fullItem || Number(fullItem.id) !== requestedQuestionId) {
+                        throw new Error('题目详情与请求 ID 不匹配');
+                    }
                     EditorState.useQuestion(fullItem);
+                    document.getElementById('editorTitle').textContent = '编辑数学题';
+
+                    // Clear previous OCR state only after the question switch commits.
+                    clearContentOcrPreview();
+                    clearOcrPreview();
+
+                    // Sync the active card highlight after the matching details load.
+                    const questionsList = document.getElementById('questionsList');
+                    const listCards = questionsList ? questionsList.children : [];
+                    for (let i = 0; i < listCards.length; i++) {
+                        const card = listCards[i];
+                        if (parseInt(card.dataset.id, 10) === requestedQuestionId) {
+                            card.classList.add('active');
+                        } else {
+                            card.classList.remove('active');
+                        }
+                    }
                     window.lastOcrOriginalImagePath = '';
                     window.contentLastCompiledTikzPath = '';
                     window.answerLastCompiledTikzPath = '';
@@ -457,7 +578,9 @@
                         document.getElementById('answerTikzStatusText').textContent = '未编译';
                     }
                     
-                    uploadedImages = fullItem.image_paths || [];
+                    uploadedImages = Array.isArray(fullItem.image_paths)
+                        ? fullItem.image_paths.map(path => window.MathBankSafe.safeImageUrl(path)).filter(Boolean)
+                        : [];
                     renderIllustrationBadges();
                     
                     // Show or hide Content TikZ container dynamically on load
@@ -529,24 +652,42 @@
                     backupEditorState(fullItem.id, null);
                 })
                 .catch(err => {
+                    if (loadSequence !== questionDetailLoadSequence) return;
                     console.error('Failed to load full question details:', err);
                     showToast('获取题目详情失败: ' + err.message, 'error');
+                })
+                .finally(() => {
+                    if (loadSequence !== questionDetailLoadSequence) return;
+                    questionDetailLoading = false;
+                    updateQuestionSaveButtonState();
                 });
         }
 
         window.reloadCurrentQuestionSilently = function() {
-            if (EditorState.questionId) {
-                selectQuestion({
-                    id: EditorState.questionId,
-                    seq_num: EditorState.seqNum,
-                    created_at: EditorState.createdAt
-                });
+            if (!EditorState.questionId) return false;
+            if (typeof window.isEditorModified === 'function' && window.isEditorModified()) {
+                showToast('配置已更新；当前未保存的编辑内容已保留，保存或重新打开题目后即可同步', 'info');
+                return false;
             }
+            selectQuestion({
+                id: EditorState.questionId,
+                seq_num: EditorState.seqNum,
+                created_at: EditorState.createdAt
+            });
+            return true;
         };
 
         // Save/Update Question in SQLite (returns Promise)
         function saveQuestion(skipCheck = false) {
-            return new Promise(async (resolve) => {
+            if (questionDetailLoading) {
+                showToast('题目详情仍在加载，请稍候再保存', 'info');
+                return Promise.resolve(false);
+            }
+            if (saveQuestionInFlight) {
+                return saveQuestionInFlight;
+            }
+
+            const saveOperation = (async () => {
                 const editorSession = EditorState.snapshot();
                 const content = document.getElementById('editContent').value;
                 const qtype = document.getElementById('editQType').value;
@@ -563,8 +704,7 @@
                 
                 if (!content.trim()) {
                     showToast('保存失败：题干内容不能为空！', 'error');
-                    resolve(false);
-                    return;
+                    return false;
                 }
                 
                 // Check if Compulsory or Chapter classifications are missing
@@ -603,9 +743,22 @@
                         openClassifyModal();
                         runAIClassify();
                     }
-                    resolve(false);
-                    return;
+                    return false;
                 }
+
+                const requestBackupSnapshot = Object.freeze({
+                    content: content,
+                    answer_markdown: answerMarkdown,
+                    review: review,
+                    question_type: qtype,
+                    difficulty: difficulty,
+                    source: source,
+                    category_compulsory: compulsory,
+                    category_chapter: chapter,
+                    category_knowledge: knowledge,
+                    image_paths: JSON.stringify(Array.from(uploadedImages)),
+                    tags: tags
+                });
                 
                 const formData = new FormData();
                 formData.append('content', content);
@@ -623,7 +776,7 @@
                 const combinedImages = Array.from(new Set([
                     ...uploadedImages,
                     ...(typeof uploadedAnswerImages !== 'undefined' ? uploadedAnswerImages : [])
-                ]));
+                ].map(path => window.MathBankSafe.safeImageUrl(path)).filter(Boolean)));
                 formData.append('image_paths', JSON.stringify(combinedImages));
                 
                 let url = '/api/questions';
@@ -633,30 +786,36 @@
                     url = `/api/questions/${editorSession.questionId}`;
                     method = 'PUT';
                 }
-                
-                fetch(url, {
-                    method: method,
-                    body: formData
-                })
-                .then(r => {
-                    if (!r.ok) {
-                        return r.json().then(errData => {
-                            const msg = errData.detail || errData.message || `HTTP ${r.status}`;
-                            throw new Error(msg);
-                        }).catch(e => {
-                            if (e.message && !e.message.startsWith('HTTP')) throw e;
-                            throw new Error(`服务器返回错误 HTTP ${r.status}`);
-                        });
+
+                try {
+                    const response = await fetch(url, {
+                        method: method,
+                        body: formData
+                    });
+                    if (!response.ok) {
+                        let message = `服务器返回错误 HTTP ${response.status}`;
+                        try {
+                            const errorData = await response.json();
+                            message = errorData.detail || errorData.message || message;
+                        } catch (parseError) {
+                            // Keep the HTTP fallback when the error body is not JSON.
+                        }
+                        throw new Error(message);
                     }
-                    return r.json();
-                })
-                .then(data => {
+
+                    const data = await response.json();
                     if (data.status === 'success') {
                         showToast(editorSession.questionId ? '题目已成功更新！' : '题目已成功保存！');
+                        const editorSessionStillCurrent = EditorState.isCurrent(editorSession);
+                        const requestStillVisible = editorSessionStillCurrent &&
+                            window.editorMatchesBackupSnapshot(requestBackupSnapshot);
 
-                        // Clear OCR preview on save success
-                        clearContentOcrPreview();
-                        clearOcrPreview();
+                        // Never clear OCR or overwrite fields belonging to a newer
+                        // edit/switch that happened after this request started.
+                        if (requestStillVisible) {
+                            clearContentOcrPreview();
+                            clearOcrPreview();
+                        }
 
                         // Delete draft if it was saved from a draft
                         if (editorSession.draftId) {
@@ -674,24 +833,37 @@
                         loadCategories();
                         refreshRelatedDropdown();
 
-                        if (!editorSession.questionId) {
-                            // After success insert, select it
-                            selectQuestion(data.question);
-                        } else {
-                            // Update original state to current state directly from the DOM!
-                            backupEditorState(data.question.id, null);
+                        if (!editorSession.questionId && editorSessionStillCurrent) {
+                            // The POST response already contains the complete saved
+                            // question. Commit only its identity and saved baseline;
+                            // never start a second detail request that could overwrite
+                            // input typed after the POST response arrived.
+                            EditorState.useQuestion(data.question);
+                            backupEditorState(data.question.id, null, requestBackupSnapshot);
+                            document.getElementById('editorTitle').textContent = '编辑数学题';
+                            if (!requestStillVisible) {
+                                showToast('题目已保存；保存后继续输入的内容仍待再次保存', 'info');
+                            }
+                        } else if (editorSessionStillCurrent) {
+                            backupEditorState(data.question.id, null, requestBackupSnapshot);
                         }
-                        resolve(true);
+                        return true;
                     } else {
                         showToast('保存题目失败: ' + (data.detail || data.message || '未知错误'), 'error');
-                        resolve(false);
+                        return false;
                     }
-                })
-                .catch(err => {
+                } catch (err) {
                     showToast('保存数据出错: ' + err.message, 'error');
-                    resolve(false);
-                });
+                    return false;
+                }
+            })();
+
+            saveQuestionInFlight = saveOperation.finally(() => {
+                saveQuestionInFlight = null;
+                updateQuestionSaveButtonState();
             });
+            updateQuestionSaveButtonState();
+            return saveQuestionInFlight;
         }
 
         // AI classification modal handlers
@@ -700,6 +872,7 @@
         function openClassifyModal() {
             const modal = document.getElementById('aiClassifyModal');
             modal.classList.remove('hidden');
+            window.MathBankModal.open(modal, { onEscape: closeClassifyModal });
             
             // Reset modal states
             document.getElementById('classifyLoading').classList.add('hidden');
@@ -717,6 +890,7 @@
 
         function closeClassifyModal() {
             const modal = document.getElementById('aiClassifyModal');
+            window.MathBankModal.close(modal);
             modal.classList.add('opacity-0');
             modal.querySelector('div').classList.remove('scale-100');
             modal.querySelector('div').classList.add('scale-95');
@@ -828,6 +1002,9 @@
 
         // Delete Question
         function deleteQuestion(id) {
+            if (blockEditorSessionChangeWhileSaving()) {
+                return;
+            }
             if (confirm('确认要在本地库中彻底删除此题目吗？不可恢复！')) {
                 fetch(`/api/questions/${id}`, {
                     method: 'DELETE'
@@ -878,11 +1055,36 @@
         // ==========================================
         let batchSelectedImages = [];
         let parsedQuestionsData = [];
+        let parsedQuestionsGeneration = 0;
+        const parsedQuestionSaveInFlight = new Map();
         let allSourcesList = [];
+
+        function replaceParsedQuestions(nextQuestions) {
+            parsedQuestionsGeneration += 1;
+            parsedQuestionsData = Array.isArray(nextQuestions) ? nextQuestions : [];
+            return parsedQuestionsGeneration;
+        }
+
+        function isParsedQuestionSaveContextCurrent(generation, index, question) {
+            return generation === parsedQuestionsGeneration &&
+                   parsedQuestionsData[index] === question;
+        }
+
+        function blockImportResetWhileSaving() {
+            if (parsedQuestionSaveInFlight.size === 0) return false;
+            showToast(`仍有 ${parsedQuestionSaveInFlight.size} 道题正在入库，请等待完成后再重置或关闭`, 'info');
+            return true;
+        }
 
         function openImportModal() {
             const modal = document.getElementById('latexImportModal');
             modal.classList.remove('hidden');
+            window.MathBankModal.open(modal, {
+                onEscape: () => {
+                    if (window.currentPdfTaskId) cancelCurrentImportTask();
+                    else closeImportModal();
+                }
+            });
             setTimeout(() => {
                 modal.classList.remove('opacity-0');
                 modal.querySelector('div').classList.remove('scale-95');
@@ -891,10 +1093,14 @@
         }
 
         function closeImportModal() {
+            if (blockImportResetWhileSaving()) {
+                return;
+            }
             if (typeof performOrphanedTempCropsCleanup === 'function') {
                 performOrphanedTempCropsCleanup();
             }
             const modal = document.getElementById('latexImportModal');
+            window.MathBankModal.close(modal);
             modal.classList.add('opacity-0');
             modal.querySelector('div').classList.remove('scale-100');
             modal.querySelector('div').classList.add('scale-95');
@@ -982,6 +1188,7 @@
             // Show modal
             const modal = document.getElementById('pdfCropModal');
             modal.classList.remove('hidden');
+            window.MathBankModal.open(modal, { onEscape: closePdfCropModal });
             setTimeout(() => {
                 modal.classList.remove('opacity-0');
                 modal.querySelector('div').classList.remove('scale-95');
@@ -991,6 +1198,7 @@
 
         function closePdfCropModal() {
             const modal = document.getElementById('pdfCropModal');
+            window.MathBankModal.close(modal);
             modal.classList.add('opacity-0');
             modal.querySelector('div').classList.remove('scale-100');
             modal.querySelector('div').classList.add('scale-95');
@@ -1005,10 +1213,12 @@
             container.innerHTML = '';
             
             window.pdfPageImages.forEach((url, i) => {
+                const safeUrl = window.MathBankSafe.safeImageUrl(url);
+                if (!safeUrl) return;
                 const thumb = document.createElement('div');
                 thumb.className = `cursor-pointer border-2 rounded-lg overflow-hidden transition-all duration-200 aspect-[3/4] relative group hover:border-brand-500 bg-white ${i === activePageIndex ? 'border-brand-500 shadow-md ring-2 ring-brand-500/20' : 'border-slate-200'}`;
                 thumb.innerHTML = `
-                    <img src="${url}" class="w-full h-full object-cover">
+                    <img src="${window.MathBankSafe.escapeAttribute(safeUrl)}" class="w-full h-full object-cover" loading="lazy" decoding="async">
                     <div class="absolute bottom-1 right-1 bg-black/60 text-white text-[8px] px-1 rounded font-bold">P${i + 1}</div>
                 `;
                 thumb.onclick = () => {
@@ -1034,7 +1244,8 @@
             document.getElementById('pdfCropPageIndicator').textContent = `第 ${pageIdx + 1} / ${window.pdfPageImages.length} 页`;
             
             const img = document.getElementById('pdfCropActiveImage');
-            img.src = window.pdfPageImages[pageIdx];
+            const safePageUrl = window.MathBankSafe.safeImageUrl(window.pdfPageImages[pageIdx]);
+            img.src = safePageUrl || '';
             
             clearPdfCropSelection();
         }
@@ -1195,7 +1406,8 @@
                 if (data.status === 'success') {
                     showToast("裁剪并生成配图成功！已自动关联至此题卡。");
                     
-                    const croppedUrl = data.image_path;
+                    const croppedUrl = window.MathBankSafe.safeImageUrl(data.image_path);
+                    if (!croppedUrl) throw new Error('裁剪接口返回了无效的图片路径');
                     window.tempCroppedPathsThisSession.push(croppedUrl);
                     
                     const qIdx = window.activeCropQuestionIndex;
@@ -1220,13 +1432,7 @@
                         const badgesContainer = document.getElementById(`card-images-badges-${qIdx}`);
                         if (badgesContainer) {
                             badgesContainer.innerHTML = '';
-                            q.image_paths.forEach(path => {
-                                const filename = path.split('/').pop();
-                                const badge = document.createElement('div');
-                                badge.className = "flex items-center space-x-1 px-2 py-0.5 bg-slate-100 border rounded-full text-[9px] font-semibold text-slate-500 hover:bg-white transition-colors cursor-pointer select-none";
-                                badge.innerHTML = `<i class="fa-solid fa-image text-slate-400"></i><span class="truncate max-w-[80px]" title="${filename}">${filename}</span>`;
-                                badgesContainer.appendChild(badge);
-                            });
+                            q.image_paths.forEach(path => appendSafeImageBadge(badgesContainer, path));
                         }
                     }
                     
@@ -1650,6 +1856,10 @@
                 }
             }
 
+            // One generation owns task creation, polling and terminal UI. A
+            // reset or a newer import makes every older callback inert.
+            const importTaskGeneration = beginDocumentImportTask();
+
             // Hide placeholder & results, show loading skeleton
             document.getElementById('importPlaceholder').classList.add('hidden');
             document.getElementById('parsedQuestionsWrapper').classList.add('hidden');
@@ -1699,16 +1909,17 @@
                     return r.json();
                 })
                 .then(taskData => {
+                    if (!isCurrentDocumentImportTask(importTaskGeneration)) return;
                     if (taskData.status === 'success') {
                         const taskId = taskData.task_id;
-                        window.currentPdfTaskId = taskId;
                         appendImportLog(`Word 任务已成功创建！任务 ID: ${taskId}，开始轮询分析切片进度...`, 'success');
-                        pollPdfTaskStatus(taskId, title);
+                        pollPdfTaskStatus(taskId, importTaskGeneration);
                     } else {
                         throw new Error(taskData.message || '创建 Word 解析任务失败');
                     }
                 })
                 .catch(err => {
+                    if (!isCurrentDocumentImportTask(importTaskGeneration)) return;
                     console.error(err);
                     appendImportLog(`Word 任务创建失败: ${err.message}`, 'error');
                     
@@ -1773,16 +1984,17 @@
                     return r.json();
                 })
                 .then(taskData => {
+                    if (!isCurrentDocumentImportTask(importTaskGeneration)) return;
                     if (taskData.status === 'success') {
                         const taskId = taskData.task_id;
-                        window.currentPdfTaskId = taskId;
                         appendImportLog(`任务已成功创建！任务 ID: ${taskId}，开始轮询后台分析进度...`, 'success');
-                        pollPdfTaskStatus(taskId, title);
+                        pollPdfTaskStatus(taskId, importTaskGeneration);
                     } else {
                         throw new Error(taskData.message || '创建 PDF 解析任务失败');
                     }
                 })
                 .catch(err => {
+                    if (!isCurrentDocumentImportTask(importTaskGeneration)) return;
                     console.error(err);
                     appendImportLog(`PDF 任务创建失败: ${err.message}`, 'error');
                     
@@ -1832,6 +2044,7 @@
                 })
                 .then(r => r.json())
                 .then(data => {
+                    if (!isCurrentDocumentImportTask(importTaskGeneration)) return null;
                     if (data.status === 'success') {
                         appendImportLog('批量配图上传成功！已成功建立本地重命名路径映射。', 'success');
                         return data.mapping;
@@ -1845,6 +2058,7 @@
 
             uploadPromise
                 .then(imageMapping => {
+                    if (!isCurrentDocumentImportTask(importTaskGeneration)) return null;
                     let parseModelFriendly = systemPreferParseModel.includes('/') ? systemPreferParseModel.split('/').pop() : systemPreferParseModel;
                     let parseBrand = 'AI';
                     document.getElementById('importLoadingText').textContent = `${parseBrand} 正在智能分析并拆解试卷，请稍候...`;
@@ -1866,6 +2080,7 @@
                     });
                 })
                 .then(r => {
+                    if (!isCurrentDocumentImportTask(importTaskGeneration) || !r) return null;
                     if (!r.ok) {
                         return r.json().then(errData => {
                             throw new Error(errData.detail || errData.message || `HTTP ${r.status}`);
@@ -1874,8 +2089,9 @@
                     return r.json();
                 })
                 .then(data => {
+                    if (!isCurrentDocumentImportTask(importTaskGeneration) || !data) return;
                     if (data.status === 'success') {
-                        parsedQuestionsData = data.questions;
+                        replaceParsedQuestions(data.questions);
                         appendImportLog(`试卷成功拆解完成！共提取出 ${parsedQuestionsData.length} 道高定数学题。`, 'success');
                         const texDiagnostics = data.tex_diagnostics || {};
                         const estimatedCount = texDiagnostics.question_count_estimate || 0;
@@ -1898,13 +2114,14 @@
                         document.getElementById('parsedQuestionsWrapper').classList.remove('hidden');
 
                         if (generateAnswers) {
-                            processAsyncAnswerGeneration(parsedQuestionsData);
+                            processAsyncAnswerGeneration(parsedQuestionsData, parsedQuestionsGeneration);
                         }
                     } else {
                         throw new Error(data.message || '拆解失败');
                     }
                 })
                 .catch(err => {
+                    if (!isCurrentDocumentImportTask(importTaskGeneration)) return;
                     console.error(err);
                     appendImportLog(`拆解出错: ${err.message}`, 'error');
 
@@ -1930,26 +2147,54 @@
                     showToast(`试卷拆解失败: ${err.message}`, 'error');
                 })
                 .finally(() => {
+                    if (!isCurrentDocumentImportTask(importTaskGeneration)) return;
                     runBtn.disabled = false;
                     runBtn.innerHTML = '<i class="fa-solid fa-wand-magic-sparkles"></i> <span>一键 AI 智能拆解并关联</span>';
                 });
         }
 
-        let currentPdfPollInterval = null;
+        let documentImportTaskGeneration = 0;
+        let activeDocumentPoll = null;
+
+        function stopCurrentDocumentPoll() {
+            if (activeDocumentPoll?.intervalId) clearInterval(activeDocumentPoll.intervalId);
+            activeDocumentPoll = null;
+        }
+
+        function beginDocumentImportTask() {
+            documentImportTaskGeneration += 1;
+            stopCurrentDocumentPoll();
+            window.currentPdfTaskId = null;
+            return documentImportTaskGeneration;
+        }
+
+        function isCurrentDocumentImportTask(generation) {
+            return generation === documentImportTaskGeneration;
+        }
+
+        function isCurrentDocumentPoll(identity) {
+            return activeDocumentPoll === identity &&
+                isCurrentDocumentImportTask(identity.generation) &&
+                window.currentPdfTaskId === identity.taskId;
+        }
+
+        function finishDocumentPoll(identity) {
+            if (!isCurrentDocumentPoll(identity)) return false;
+            clearInterval(identity.intervalId);
+            activeDocumentPoll = null;
+            return true;
+        }
 
         function cancelCurrentImportTask() {
-            if (currentPdfPollInterval) {
-                clearInterval(currentPdfPollInterval);
-                currentPdfPollInterval = null;
-            }
-            if (window.currentPdfTaskId) {
-                fetch(`/api/tasks/${window.currentPdfTaskId}/cancel`, {
+            const taskId = window.currentPdfTaskId;
+            beginDocumentImportTask();
+            if (taskId) {
+                fetch(`/api/tasks/${taskId}/cancel`, {
                     method: 'POST',
                     headers: {
                         'X-Local-Token': localStorage.getItem('local_token') || ''
                     }
                 }).catch(() => {});
-                window.currentPdfTaskId = null;
             }
             
             appendImportLog('[USER] 用户已手动中止当前拆分任务。', 'info');
@@ -1981,21 +2226,23 @@
             }
         });
 
-        function pollPdfTaskStatus(taskId, paperTitle) {
+        function pollPdfTaskStatus(taskId, generation) {
+            if (!isCurrentDocumentImportTask(generation)) return;
             let lastLog = '';
             const runBtn = document.getElementById('runParseBtn');
-            
-            if (currentPdfPollInterval) {
-                clearInterval(currentPdfPollInterval);
-            }
 
-            currentPdfPollInterval = setInterval(() => {
+            stopCurrentDocumentPoll();
+            window.currentPdfTaskId = taskId;
+            const identity = { generation, taskId, intervalId: null };
+            activeDocumentPoll = identity;
+            identity.intervalId = setInterval(() => {
                 fetch(`/api/tasks/${taskId}/status`)
                 .then(r => {
                     if (!r.ok) throw new Error("获取任务进度失败");
                     return r.json();
                 })
                 .then(task => {
+                    if (!isCurrentDocumentPoll(identity)) return;
                     if (task.progress !== undefined) {
                         document.getElementById('importProgressBar').style.width = `${task.progress}%`;
                     }
@@ -2024,9 +2271,8 @@
                     }
                     
                     if (task.status === 'completed') {
-                        clearInterval(currentPdfPollInterval);
-                        currentPdfPollInterval = null;
-                        parsedQuestionsData = task.data || [];
+                        if (!finishDocumentPoll(identity)) return;
+                        replaceParsedQuestions(task.data || []);
                         const isWordTask = task.document_type === 'docx';
                         const documentLabel = isWordTask ? 'Word' : 'PDF';
                         appendImportLog(`${documentLabel} 试卷分析并拆解成功！共分析出 ${parsedQuestionsData.length} 道数学题。`, 'success');
@@ -2066,14 +2312,12 @@
                         runBtn.disabled = false;
                         runBtn.innerHTML = '<i class="fa-solid fa-wand-magic-sparkles"></i> <span>一键 AI 智能拆解并关联</span>';
                     } else if (task.status === 'cancelled') {
-                        clearInterval(currentPdfPollInterval);
-                        currentPdfPollInterval = null;
+                        if (!finishDocumentPoll(identity)) return;
                         document.getElementById('importLoadingState').classList.add('hidden');
                         runBtn.disabled = false;
                         runBtn.innerHTML = '<i class="fa-solid fa-wand-magic-sparkles"></i> <span>一键 AI 智能拆解并关联</span>';
                     } else if (task.status === 'error') {
-                        clearInterval(currentPdfPollInterval);
-                        currentPdfPollInterval = null;
+                        if (!finishDocumentPoll(identity)) return;
                         appendImportLog(`分析失败: ${task.error || '未知错误'}`, 'error');
                         
                         const loadingIcon = document.querySelector('#importLoadingState .fa-spinner');
@@ -2102,7 +2346,7 @@
                     }
                 })
                 .catch(err => {
-                    console.error(err);
+                    if (isCurrentDocumentPoll(identity)) console.error(err);
                 });
             }, 1500);
         }
@@ -2154,6 +2398,9 @@
         }
 
         function clearAllImportInputs() {
+            if (blockImportResetWhileSaving()) {
+                return false;
+            }
             // 清空左侧输入栏
             const titleInput = document.getElementById('importPaperTitle');
             if (titleInput) titleInput.value = '';
@@ -2205,6 +2452,10 @@
         }
 
         function resetImportState(showToastMessage = true) {
+            if (blockImportResetWhileSaving()) {
+                return false;
+            }
+            beginDocumentImportTask();
             // 隐藏加载状态和结果视图
             document.getElementById('importLoadingState').classList.add('hidden');
             document.getElementById('parsedQuestionsWrapper').classList.add('hidden');
@@ -2237,7 +2488,7 @@
             runBtn.innerHTML = '<i class="fa-solid fa-wand-magic-sparkles"></i> <span>一键 AI 智能拆解并关联</span>';
 
             // 清空解析结果数据
-            parsedQuestionsData = [];
+            replaceParsedQuestions([]);
             if (typeof updateSelectedCount === 'function') {
                 updateSelectedCount();
             }
@@ -2258,6 +2509,28 @@
             }
         }
 
+        function appendSafeImageBadge(container, imagePath) {
+            if (!container) return;
+            const safePath = window.MathBankSafe.safeImageUrl(imagePath);
+            if (!safePath) return;
+
+            let filename = safePath.split('/').pop() || '题目配图';
+            try {
+                filename = decodeURIComponent(filename.split('?')[0]);
+            } catch (error) { }
+            filename = window.MathBankSafe.sanitizePlainText(filename);
+
+            const badge = document.createElement('div');
+            badge.className = 'flex items-center space-x-1 px-2 py-0.5 bg-slate-100 border rounded-full text-[9px] font-semibold text-slate-500 hover:bg-white transition-colors cursor-pointer select-none';
+            const icon = document.createElement('i');
+            icon.className = 'fa-solid fa-image text-slate-400';
+            const label = document.createElement('span');
+            label.className = 'truncate max-w-[80px]';
+            label.title = filename;
+            label.textContent = filename;
+            badge.append(icon, label);
+            container.appendChild(badge);
+        }
 
         function renderParsedQuestionsList(questions) {
             const container = document.getElementById('parsedCardsContainer');
@@ -2274,7 +2547,7 @@
                 let qTypeOptionsHtml = '';
                 if (window.systemMetadata && window.systemMetadata.question_types) {
                     window.systemMetadata.question_types.forEach(item => {
-                        qTypeOptionsHtml += `<option value="${item.value}" ${q.question_type === item.value ? 'selected' : ''}>${item.label}</option>`;
+                        qTypeOptionsHtml += `<option value="${window.MathBankSafe.escapeAttribute(item.value)}" ${q.question_type === item.value ? 'selected' : ''}>${window.MathBankSafe.escapeText(item.label)}</option>`;
                     });
                 } else {
                     qTypeOptionsHtml = `
@@ -2288,7 +2561,7 @@
                 let difficultyOptionsHtml = '';
                 if (window.systemMetadata && window.systemMetadata.difficulties) {
                     window.systemMetadata.difficulties.forEach(item => {
-                        difficultyOptionsHtml += `<option value="${item.value}" ${q.difficulty === item.value ? 'selected' : ''}>${item.label}</option>`;
+                        difficultyOptionsHtml += `<option value="${window.MathBankSafe.escapeAttribute(item.value)}" ${q.difficulty === item.value ? 'selected' : ''}>${window.MathBankSafe.escapeText(item.label)}</option>`;
                     });
                 } else {
                     difficultyOptionsHtml = `
@@ -2311,28 +2584,28 @@
                             <span class="h-5 w-5 bg-brand-50 text-brand-600 rounded-full flex items-center justify-center text-[10px] font-bold border border-brand-100">${index + 1}</span>
                             <span>题型与难度</span>
                         </div>
-                        <select class="card-qtype glass-select px-2 py-1.5 rounded-lg text-2xs font-semibold">
+                        <select class="card-qtype glass-select px-2 py-1.5 rounded-lg text-[10px] font-semibold">
                             ${qTypeOptionsHtml}
                         </select>
-                        <select class="card-difficulty glass-select px-2 py-1.5 rounded-lg text-2xs font-semibold">
+                        <select class="card-difficulty glass-select px-2 py-1.5 rounded-lg text-[10px] font-semibold">
                             ${difficultyOptionsHtml}
                         </select>
-                        <input type="text" class="card-source glass-input px-2.5 py-1.5 rounded-lg text-2xs font-semibold" value="${q.source || ''}" placeholder="题目来源">
+                        <input type="text" class="card-source glass-input px-2.5 py-1.5 rounded-lg text-[10px] font-semibold" placeholder="题目来源">
                         <!-- Success / Saved indicator -->
                         <div class="flex items-center justify-end">
-                            <span class="card-status-badge text-[10px] font-bold px-2 py-0.5 rounded ${q.saved ? 'bg-green-50 text-green-700 border border-green-150' : 'bg-slate-100 text-slate-500'}">${q.saved ? '已导入' : '待导入'}</span>
+                            <span class="card-status-badge text-[10px] font-bold px-2 py-0.5 rounded ${q.saved ? 'bg-green-50 text-green-700 border border-green-200' : 'bg-slate-100 text-slate-500'}">${q.saved ? '已导入' : '待导入'}</span>
                         </div>
                     </div>
 
                     <!-- Curriculum linkage section -->
                     <div class="grid grid-cols-3 gap-2 border-b pb-3 shrink-0">
-                        <select class="card-compulsory glass-select px-2 py-1.5 rounded-lg text-2xs font-semibold">
+                        <select class="card-compulsory glass-select px-2 py-1.5 rounded-lg text-[10px] font-semibold">
                             <option value="">所有学段</option>
                         </select>
-                        <select class="card-chapter glass-select px-2 py-1.5 rounded-lg text-2xs font-semibold">
+                        <select class="card-chapter glass-select px-2 py-1.5 rounded-lg text-[10px] font-semibold">
                             <option value="">所有章节</option>
                         </select>
-                        <select class="card-knowledge glass-select px-2 py-1.5 rounded-lg text-2xs font-semibold">
+                        <select class="card-knowledge glass-select px-2 py-1.5 rounded-lg text-[10px] font-semibold">
                             <option value="">所有小节</option>
                         </select>
                     </div>
@@ -2342,20 +2615,20 @@
                         <!-- Left Side: Inputs -->
                         <div class="space-y-2 flex flex-col justify-start">
                             <div class="space-y-1">
-                                <label class="text-[9px] font-bold text-slate-450 tracking-wider">题干编辑</label>
-                                <textarea class="card-content-textarea glass-input w-full h-24 p-2.5 rounded-lg font-mono text-2xs resize-none custom-scrollbar">${q.content || ''}</textarea>
+                                <label class="text-[9px] font-bold text-slate-500 tracking-wider">题干编辑</label>
+                                <textarea class="card-content-textarea glass-input w-full h-24 p-2.5 rounded-lg font-mono text-[10px] resize-none custom-scrollbar"></textarea>
                             </div>
                             <div class="space-y-1">
-                                <label class="text-[9px] font-bold text-slate-450 tracking-wider">答案与解析编辑</label>
-                                <textarea class="card-answer-textarea glass-input w-full h-24 p-2.5 rounded-lg font-mono text-2xs resize-none custom-scrollbar">${q.answer_markdown || ''}</textarea>
+                                <label class="text-[9px] font-bold text-slate-500 tracking-wider">答案与解析编辑</label>
+                                <textarea class="card-answer-textarea glass-input w-full h-24 p-2.5 rounded-lg font-mono text-[10px] resize-none custom-scrollbar"></textarea>
                             </div>
                         </div>
 
                         <!-- Right Side: Realtime KaTeX Previews -->
-                        <div class="border border-slate-150 rounded-xl bg-slate-50/60 p-3 overflow-y-auto max-h-56 space-y-2.5 text-xs font-serif leading-relaxed custom-scrollbar flex flex-col justify-start relative select-text">
+                        <div class="border border-slate-200 rounded-xl bg-slate-50/60 p-3 overflow-y-auto max-h-56 space-y-2.5 text-xs font-serif leading-relaxed custom-scrollbar flex flex-col justify-start relative select-text">
                             <span class="absolute top-2 right-2 text-[8px] font-bold text-slate-400 bg-white/80 px-1.5 py-0.5 rounded border tracking-wider select-none">实时渲染</span>
                             <div class="card-content-preview border-b border-slate-200/60 pb-2 text-slate-800"></div>
-                            <div class="card-answer-preview text-slate-650"></div>
+                            <div class="card-answer-preview text-slate-700"></div>
                         </div>
                     </div>
 
@@ -2366,16 +2639,16 @@
                         </div>
                         <div class="flex items-center space-x-2">
                             ${window.pdfPageImages && window.pdfPageImages.length > 0 ? `
-                                <button onclick="openPdfCropModalForQuestion(${index})" class="glass-btn text-amber-700 font-bold px-3 py-1.5 rounded-lg text-2xs flex items-center space-x-1" title="查看 PDF 页面并拖拽框选截图">
+                                <button onclick="openPdfCropModalForQuestion(${index})" class="glass-btn text-amber-700 font-bold px-3 py-1.5 rounded-lg text-[10px] flex items-center space-x-1" title="查看 PDF 页面并拖拽框选截图">
                                     <i class="fa-solid fa-scissors"></i>
                                     <span>手动截图</span>
                                 </button>
                             ` : ''}
-                            <button onclick="generateSingleAnswer(${index})" class="card-solve-btn glass-btn text-indigo-700 font-bold px-3 py-1.5 rounded-lg text-2xs flex items-center space-x-1 shrink-0" title="对本题单独调用 AI 生成详细解答与解析">
+                            <button onclick="generateSingleAnswer(${index})" class="card-solve-btn glass-btn text-indigo-700 font-bold px-3 py-1.5 rounded-lg text-[10px] flex items-center space-x-1 shrink-0" title="对本题单独调用 AI 生成详细解答与解析">
                                 <i class="fa-solid fa-wand-magic-sparkles text-indigo-500"></i>
                                 <span>${q.answer_markdown ? '重生成解析' : 'AI 生成解析'}</span>
                             </button>
-                            <button onclick="saveParsedQuestion(${index})" class="card-save-btn px-4 py-1.5 rounded-lg text-2xs flex items-center space-x-1 shrink-0 ${q.saved ? 'bg-emerald-50 text-emerald-700 font-bold border border-emerald-250 hover:bg-emerald-100' : 'glass-btn text-brand-700 font-bold'}">
+                            <button onclick="saveParsedQuestion(${index})" class="card-save-btn px-4 py-1.5 rounded-lg text-[10px] flex items-center space-x-1 shrink-0 ${q.saved ? 'bg-emerald-50 text-emerald-700 font-bold border border-emerald-300 hover:bg-emerald-100' : 'glass-btn text-brand-700 font-bold'}">
                                 <i class="fa-solid ${q.saved ? 'fa-rotate-right' : 'fa-file-arrow-up'}"></i>
                                 <span>${q.saved ? '再次导入' : '导入此题'}</span>
                             </button>
@@ -2383,19 +2656,23 @@
                     </div>
                 `;
 
+                // Never interpolate AI/import values into attributes or textarea
+                // HTML. Property assignment preserves LaTeX verbatim and prevents
+                // attribute/textarea breakout payloads.
+                card.querySelector('.card-source').value = window.MathBankSafe.sanitizePlainText(q.source || '');
+                card.querySelector('.card-content-textarea').value = String(q.content || '');
+                card.querySelector('.card-answer-textarea').value = String(q.answer_markdown || '');
+
                 container.appendChild(card);
                 setupCardCategoryLinkage(card, q);
 
                 // Populate image badges
                 const badgesContainer = document.getElementById(`card-images-badges-${index}`);
-                const mappedImgs = q.image_paths || [];
-                mappedImgs.forEach(path => {
-                    const filename = path.split('/').pop();
-                    const badge = document.createElement('div');
-                    badge.className = "flex items-center space-x-1 px-2 py-0.5 bg-slate-100 border rounded-full text-[9px] font-semibold text-slate-500 hover:bg-white transition-colors cursor-pointer select-none";
-                    badge.innerHTML = `<i class="fa-solid fa-image text-slate-400"></i><span class="truncate max-w-[80px]" title="${filename}">${filename}</span>`;
-                    badgesContainer.appendChild(badge);
-                });
+                const mappedImgs = Array.isArray(q.image_paths)
+                    ? q.image_paths.map(path => window.MathBankSafe.safeImageUrl(path)).filter(Boolean)
+                    : [];
+                q.image_paths = Array.from(new Set(mappedImgs));
+                q.image_paths.forEach(path => appendSafeImageBadge(badgesContainer, path));
 
                 // Set up checkbox listener
                 const selectCb = card.querySelector('.card-select-checkbox');
@@ -2497,7 +2774,7 @@
             
             // For content
             if (!contentText.trim()) {
-                contentPrev.innerHTML = '<span class="text-slate-400 italic text-2xs">题干预览将在此实时渲染...</span>';
+                contentPrev.innerHTML = '<span class="text-slate-400 italic text-[10px]">题干预览将在此实时渲染...</span>';
             } else {
                 try {
                     let processedContent = contentText;
@@ -2511,11 +2788,12 @@
                         let hasUnrenderedImage = false;
                         let imgHtml = '<div class="flex flex-wrap gap-2 mt-3 pt-2.5 border-t border-dashed border-slate-200/60">';
                         q.image_paths.forEach(p => {
-                            if (p && !html.includes(p)) {
+                            const safePath = window.MathBankSafe.safeImageUrl(p);
+                            if (safePath && !html.includes(safePath)) {
                                 hasUnrenderedImage = true;
                                 imgHtml += `
-                                    <div class="relative group border border-slate-150 rounded-lg overflow-hidden bg-white max-w-[120px] aspect-[4/3] flex items-center justify-center shadow-2xs hover:shadow-sm transition-all duration-300">
-                                        <img src="${p}" class="max-h-full max-w-full object-contain cursor-zoom-in hover:scale-105 transition-transform duration-300" onclick="window.open('${p}', '_blank')" title="点击在新标签页中查看大图">
+                                    <div class="relative group border border-slate-200 rounded-lg overflow-hidden bg-white max-w-[120px] aspect-[4/3] flex items-center justify-center shadow-sm hover:shadow-sm transition-all duration-300">
+                                        <img src="${window.MathBankSafe.escapeAttribute(safePath)}" class="max-h-full max-w-full object-contain cursor-zoom-in hover:scale-105 transition-transform duration-300" data-safe-image-open="true" title="点击在新标签页中查看大图">
                                     </div>`;
                             }
                         });
@@ -2525,7 +2803,7 @@
                         }
                     }
                     
-                    contentPrev.innerHTML = html;
+                    contentPrev.innerHTML = window.MathBankSafe.sanitizeRichHtml(html);
                     renderMathInElement(contentPrev, {
                         delimiters: [
                             {left: '$$', right: '$$', display: true},
@@ -2545,7 +2823,7 @@
 
             // For answer
             if (!answerText.trim()) {
-                answerPrev.innerHTML = '<span class="text-slate-400 italic text-2xs">解析预览将在此实时渲染...</span>';
+                answerPrev.innerHTML = '<span class="text-slate-400 italic text-[10px]">解析预览将在此实时渲染...</span>';
             } else {
                 try {
                     answerPrev.innerHTML = parseMarkdownWithMath(answerText);
@@ -2567,6 +2845,10 @@
         function saveParsedQuestion(index) {
             const q = parsedQuestionsData[index];
             if (!q) return Promise.resolve(true);
+            const existingSave = parsedQuestionSaveInFlight.get(q);
+            if (existingSave) return existingSave;
+
+            const saveGeneration = parsedQuestionsGeneration;
 
             const card = document.getElementById(`parsed-card-${index}`);
             if (!card) return Promise.reject(new Error('Card element not found'));
@@ -2620,22 +2902,31 @@
             formData.append('difficulty', difficulty);
             formData.append('source', source);
             formData.append('answer_markdown', answer_markdown);
-            formData.append('image_paths', JSON.stringify(q.image_paths || []));
+            const safeImagePaths = Array.isArray(q.image_paths)
+                ? q.image_paths.map(path => window.MathBankSafe.safeImageUrl(path)).filter(Boolean)
+                : [];
+            formData.append('image_paths', JSON.stringify(Array.from(new Set(safeImagePaths))));
 
-            return fetch('/api/questions', {
+            const saveOperation = fetch('/api/questions', {
                 method: 'POST',
                 body: formData
             })
             .then(r => r.json())
             .then(data => {
                 if (data.status === 'success') {
+                    // The request may finish after a new paper has replaced this
+                    // index. The backend save remains valid, but stale callbacks
+                    // must never mutate the new import session or its card.
+                    if (!isParsedQuestionSaveContextCurrent(saveGeneration, index, q)) {
+                        return true;
+                    }
                     q.saved = true;
                     
                     const statusBadge = card.querySelector('.card-status-badge');
                     statusBadge.textContent = '已导入';
-                    statusBadge.className = 'card-status-badge text-[10px] font-bold px-2 py-0.5 rounded bg-green-50 text-green-700 border border-green-150 animate-pulse';
+                    statusBadge.className = 'card-status-badge text-[10px] font-bold px-2 py-0.5 rounded bg-green-50 text-green-700 border border-green-200 animate-pulse';
                     
-                    saveBtn.className = 'card-save-btn px-4 py-1.5 rounded-lg bg-emerald-50 text-emerald-700 font-bold text-2xs border border-emerald-250 hover:bg-emerald-100 transition-colors';
+                    saveBtn.className = 'card-save-btn px-4 py-1.5 rounded-lg bg-emerald-50 text-emerald-700 font-bold text-[10px] border border-emerald-300 hover:bg-emerald-100 transition-colors';
                     saveBtn.innerHTML = '<i class="fa-solid fa-rotate-right"></i> <span>再次导入</span>';
                     saveBtn.disabled = false;
                     
@@ -2659,14 +2950,27 @@
                 }
             })
             .catch(err => {
-                showToast(`第 ${index + 1} 题保存出错: ${err.message}`, 'error');
-                saveBtn.disabled = false;
-                saveBtn.innerHTML = '<i class="fa-solid fa-file-arrow-up"></i> <span>导入此题</span>';
+                if (isParsedQuestionSaveContextCurrent(saveGeneration, index, q)) {
+                    showToast(`第 ${index + 1} 题保存出错: ${err.message}`, 'error');
+                    saveBtn.disabled = false;
+                    saveBtn.innerHTML = '<i class="fa-solid fa-file-arrow-up"></i> <span>导入此题</span>';
+                }
                 throw err;
             });
+
+            const trackedSave = saveOperation.finally(() => {
+                if (parsedQuestionSaveInFlight.get(q) === trackedSave) {
+                    parsedQuestionSaveInFlight.delete(q);
+                }
+            });
+            parsedQuestionSaveInFlight.set(q, trackedSave);
+            return trackedSave;
         }
 
         function confirmClearAllParsed() {
+            if (blockImportResetWhileSaving()) {
+                return;
+            }
             if (confirm('确定要清空输入的试卷源码及拆解出的所有草稿题目吗？\n清空后，当前列表中的草稿题目及文件映射将恢复初始状态。')) {
                 if (typeof performOrphanedTempCropsCleanup === 'function') {
                     performOrphanedTempCropsCleanup();
@@ -2783,6 +3087,7 @@
 
         function saveAllParsedQuestions() {
             const selectedIndices = getCheckedUnsavedIndices();
+            const batchGeneration = parsedQuestionsGeneration;
 
             if (selectedIndices.length === 0) {
                 const unsavedCount = parsedQuestionsData.filter(q => !q.saved).length;
@@ -2817,6 +3122,9 @@
 
             Promise.all(promises)
                 .then(results => {
+                    if (batchGeneration !== parsedQuestionsGeneration) {
+                        return;
+                    }
                     const successCount = results.filter(r => r === true).length;
                     
                     updateSelectedCount();
@@ -2826,6 +3134,12 @@
                         showToast(`批量导入完成！共 ${successCount} 道题目已全部成功导入本地库！`, 'success');
                         
                         setTimeout(() => {
+                            if (batchGeneration !== parsedQuestionsGeneration) {
+                                return;
+                            }
+                            if (blockImportResetWhileSaving()) {
+                                return;
+                            }
                             clearAllImportInputs();
                             resetImportState(false); 
                             closeImportModal();      
@@ -2835,9 +3149,15 @@
                     }
                 })
                 .catch(err => {
+                    if (batchGeneration !== parsedQuestionsGeneration) {
+                        return;
+                    }
                     showToast(`批量导入时发生严重错误: ${err.message}`, 'error');
                 })
                 .finally(() => {
+                    if (batchGeneration !== parsedQuestionsGeneration) {
+                        return;
+                    }
                     mainBtn.disabled = false;
                     if (icon) {
                         icon.className = originalIconClass;
@@ -2877,7 +3197,7 @@
             function renderSuggestions(list) {
                 suggestionsDiv.innerHTML = '';
                 if (list.length === 0) {
-                    suggestionsDiv.innerHTML = '<div class="px-3 py-2 text-2xs text-slate-400 italic text-center select-none">无匹配来源</div>';
+                    suggestionsDiv.innerHTML = '<div class="px-3 py-2 text-[10px] text-slate-400 italic text-center select-none">无匹配来源</div>';
                     suggestionsDiv.classList.remove('hidden');
                     chevronIcon.classList.add('rotate-180');
                     return;
@@ -3195,6 +3515,18 @@
             backupEditorState(null, null);
 
             // ================== TikZ Geometry Drawing & AI Correction Helpers (双通道分离设计) ==================
+            function beginEditorBoundRequest(button, idleHtml) {
+                const editorSession = EditorState.snapshot();
+                const requestToken = {};
+                button._mathbankEditorRequestToken = requestToken;
+                return () => {
+                    if (button._mathbankEditorRequestToken !== requestToken) return false;
+                    button.disabled = false;
+                    button.innerHTML = idleHtml;
+                    return EditorState.isCurrent(editorSession);
+                };
+            }
+
             window.extractTikzCodeFromTextarea = function(textareaId) {
                 const textarea = document.getElementById(textareaId);
                 if (!textarea) return;
@@ -3228,9 +3560,11 @@
                     // Auto-compile
                     const compileFn = isContent ? window.renderContentTikzToImage : window.renderAnswerTikzToImage;
                     if (typeof compileFn === 'function') {
+                        const editorSession = EditorState.snapshot();
                         const targetName = isContent ? '题干' : '解答';
                         showToast(`🎉 检测到${targetName}中的 TikZ 代码！已自动提取并开始编译。`, 'info');
                         setTimeout(() => {
+                            if (!EditorState.isCurrent(editorSession)) return;
                             compileFn();
                             
                             // Scroll to focus
@@ -3269,6 +3603,10 @@
                 btn.disabled = true;
                 btn.innerHTML = '<i class="fa-solid fa-spinner animate-spin"></i> <span>编译中...</span>';
                 statusText.textContent = '编译中...';
+                const finishRequest = beginEditorBoundRequest(
+                    btn,
+                    '<i class="fa-solid fa-circle-play"></i> <span>编译并插入题干</span>'
+                );
                 
                 const formData = new FormData();
                 formData.append('tikz_code', tikzCode);
@@ -3284,8 +3622,7 @@
                     return r.json();
                 })
                 .then(data => {
-                    btn.disabled = false;
-                    btn.innerHTML = '<i class="fa-solid fa-circle-play"></i> <span>编译并插入题干</span>';
+                    if (!finishRequest()) return;
                     
                     if (data.status === 'success') {
                         showToast('题干 TikZ 几何图编译成功，已插入插图列表！');
@@ -3325,8 +3662,7 @@
                     }
                 })
                 .catch(err => {
-                    btn.disabled = false;
-                    btn.innerHTML = '<i class="fa-solid fa-circle-play"></i> <span>编译并插入题干</span>';
+                    if (!finishRequest()) return;
                     statusText.textContent = '编译出错';
                     placeholder.classList.remove('hidden');
                     previewImg.classList.add('hidden');
@@ -3355,6 +3691,10 @@
                 btn.disabled = true;
                 btn.innerHTML = '<i class="fa-solid fa-spinner animate-spin"></i> <span>纠错中...</span>';
                 statusText.textContent = '纠错中...';
+                const finishRequest = beginEditorBoundRequest(
+                    btn,
+                    '<i class="fa-solid fa-wand-magic-sparkles animate-pulse"></i> <span>AI 纠错</span>'
+                );
                 
                 const formData = new FormData();
                 formData.append('tikz_code', tikzCode);
@@ -3375,8 +3715,7 @@
                     return r.json();
                 })
                 .then(data => {
-                    btn.disabled = false;
-                    btn.innerHTML = '<i class="fa-solid fa-wand-magic-sparkles animate-pulse"></i> <span>AI 纠错</span>';
+                    if (!finishRequest()) return;
                     
                     if (data.status === 'success') {
                         showToast('AI 纠错完成，已回填并重新编译代码！');
@@ -3386,8 +3725,7 @@
                     }
                 })
                 .catch(err => {
-                    btn.disabled = false;
-                    btn.innerHTML = '<i class="fa-solid fa-wand-magic-sparkles animate-pulse"></i> <span>AI 纠错</span>';
+                    if (!finishRequest()) return;
                     statusText.textContent = '纠错失败';
                     showToast('AI 纠错出错: ' + err.message, 'error');
                 });
@@ -3419,6 +3757,10 @@
                 btn.disabled = true;
                 btn.innerHTML = '<i class="fa-solid fa-spinner animate-spin"></i> <span>编译中...</span>';
                 statusText.textContent = '编译中...';
+                const finishRequest = beginEditorBoundRequest(
+                    btn,
+                    '<i class="fa-solid fa-play"></i> <span>编译并插入解答</span>'
+                );
                 
                 const formData = new FormData();
                 formData.append('tikz_code', tikzCode);
@@ -3434,8 +3776,7 @@
                     return r.json();
                 })
                 .then(data => {
-                    btn.disabled = false;
-                    btn.innerHTML = '<i class="fa-solid fa-play"></i> <span>编译并插入解答</span>';
+                    if (!finishRequest()) return;
                     
                     if (data.status === 'success') {
                         showToast('解答 TikZ 几何图编译成功，已插入解答文本中！');
@@ -3466,8 +3807,7 @@
                     }
                 })
                 .catch(err => {
-                    btn.disabled = false;
-                    btn.innerHTML = '<i class="fa-solid fa-play"></i> <span>编译并插入解答</span>';
+                    if (!finishRequest()) return;
                     statusText.textContent = '编译出错';
                     placeholder.classList.remove('hidden');
                     previewImg.classList.add('hidden');
@@ -3496,6 +3836,10 @@
                 btn.disabled = true;
                 btn.innerHTML = '<i class="fa-solid fa-spinner animate-spin"></i> <span>纠错中...</span>';
                 statusText.textContent = '纠错中...';
+                const finishRequest = beginEditorBoundRequest(
+                    btn,
+                    '<i class="fa-solid fa-wand-magic-sparkles animate-pulse"></i> <span>AI 纠错</span>'
+                );
                 
                 const formData = new FormData();
                 formData.append('tikz_code', tikzCode);
@@ -3516,8 +3860,7 @@
                     return r.json();
                 })
                 .then(data => {
-                    btn.disabled = false;
-                    btn.innerHTML = '<i class="fa-solid fa-wand-magic-sparkles animate-pulse"></i> <span>AI 纠错</span>';
+                    if (!finishRequest()) return;
                     
                     if (data.status === 'success') {
                         showToast('AI 纠错完成，已回填并重新编译代码！');
@@ -3527,8 +3870,7 @@
                     }
                 })
                 .catch(err => {
-                    btn.disabled = false;
-                    btn.innerHTML = '<i class="fa-solid fa-wand-magic-sparkles animate-pulse"></i> <span>AI 纠错</span>';
+                    if (!finishRequest()) return;
                     statusText.textContent = '纠错失败';
                     showToast('AI 纠错出错: ' + err.message, 'error');
                 });
@@ -3555,6 +3897,10 @@
                 btn.disabled = true;
                 btn.innerHTML = '<i class="fa-solid fa-spinner animate-spin"></i> <span>识别绘制中...</span>';
                 statusText.textContent = '识别绘制中...';
+                const finishRequest = beginEditorBoundRequest(
+                    btn,
+                    '<i class="fa-solid fa-circle-nodes"></i> <span>AI 识图绘图</span>'
+                );
                 
                 const formData = new FormData();
                 formData.append('image_path', originalPath);
@@ -3573,8 +3919,7 @@
                     return r.json();
                 })
                 .then(data => {
-                    btn.disabled = false;
-                    btn.innerHTML = '<i class="fa-solid fa-circle-nodes"></i> <span>AI 识图绘图</span>';
+                    if (!finishRequest()) return;
                     
                     if (data.status === 'success') {
                         showToast('AI 识图绘图完成，已生成 TikZ 代码并开始自动编译！');
@@ -3586,8 +3931,7 @@
                     }
                 })
                 .catch(err => {
-                    btn.disabled = false;
-                    btn.innerHTML = '<i class="fa-solid fa-circle-nodes"></i> <span>AI 识图绘图</span>';
+                    if (!finishRequest()) return;
                     statusText.textContent = '识别绘图失败';
                     showToast('AI 识图绘图出错: ' + err.message, 'error');
                 });
@@ -3614,6 +3958,10 @@
                 btn.disabled = true;
                 btn.innerHTML = '<i class="fa-solid fa-spinner animate-spin"></i> <span>识别绘制中...</span>';
                 statusText.textContent = '识别绘制中...';
+                const finishRequest = beginEditorBoundRequest(
+                    btn,
+                    '<i class="fa-solid fa-circle-nodes"></i> <span>AI 识图绘图</span>'
+                );
                 
                 const formData = new FormData();
                 formData.append('image_path', originalPath);
@@ -3632,8 +3980,7 @@
                     return r.json();
                 })
                 .then(data => {
-                    btn.disabled = false;
-                    btn.innerHTML = '<i class="fa-solid fa-circle-nodes"></i> <span>AI 识图绘图</span>';
+                    if (!finishRequest()) return;
                     
                     if (data.status === 'success') {
                         showToast('AI 识图绘图完成，已生成 TikZ 代码并开始自动编译！');
@@ -3645,8 +3992,7 @@
                     }
                 })
                 .catch(err => {
-                    btn.disabled = false;
-                    btn.innerHTML = '<i class="fa-solid fa-circle-nodes"></i> <span>AI 识图绘图</span>';
+                    if (!finishRequest()) return;
                     statusText.textContent = '识别绘图失败';
                     showToast('AI 识图绘图出错: ' + err.message, 'error');
                 });
@@ -3655,17 +4001,21 @@
 
         // 单题一键补全/重生成 AI 解答
         async function generateSingleAnswer(index) {
-            if (!window.parsedQuestionsData) return;
-            const q = window.parsedQuestionsData[index];
+            const answerGeneration = parsedQuestionsGeneration;
+            const q = parsedQuestionsData[index];
             if (!q) return;
             const card = document.getElementById(`parsed-card-${index}`);
             if (!card) return;
+            const requestIsCurrent = () => isParsedQuestionSaveContextCurrent(
+                answerGeneration,
+                index,
+                q
+            );
 
             const btn = card.querySelector('.card-solve-btn');
             const answerTextarea = card.querySelector('.card-answer-textarea');
             const answerPrev = card.querySelector('.card-answer-preview');
             
-            const originalBtnHtml = btn ? btn.innerHTML : '';
             if (btn) {
                 btn.disabled = true;
                 btn.innerHTML = '<i class="fa-solid fa-spinner animate-spin"></i><span>AI 解答中...</span>';
@@ -3687,13 +4037,16 @@
                     },
                     body: formData
                 });
+                if (!requestIsCurrent()) return;
                 
                 if (!res.ok) {
                     const err = await res.json();
+                    if (!requestIsCurrent()) return;
                     throw new Error(err.message || `HTTP ${res.status}`);
                 }
 
                 const data = await res.json();
+                if (!requestIsCurrent()) return;
                 if (data.status === 'success' && data.solution) {
                     q.answer_markdown = data.solution;
                     if (answerTextarea) answerTextarea.value = data.solution;
@@ -3703,11 +4056,12 @@
                     throw new Error(data.message || '生成解答失败');
                 }
             } catch (err) {
+                if (!requestIsCurrent()) return;
                 console.error(err);
                 showToast(`生成第 ${index + 1} 题解答失败: ${err.message}`, 'error');
                 renderParsedCardPreview(card, q.content || '', q.answer_markdown || '');
             } finally {
-                if (btn) {
+                if (requestIsCurrent() && btn) {
                     btn.disabled = false;
                     btn.innerHTML = q.answer_markdown ? '<i class="fa-solid fa-wand-magic-sparkles text-indigo-500"></i><span>重生成解析</span>' : '<i class="fa-solid fa-wand-magic-sparkles text-indigo-500"></i><span>AI 生成解析</span>';
                 }
@@ -3715,8 +4069,11 @@
         }
 
         // 智能并发队列解答生成器
-        async function processAsyncAnswerGeneration(questions) {
+        async function processAsyncAnswerGeneration(questions, generation = parsedQuestionsGeneration) {
             if (!questions || questions.length === 0) return;
+            const requestIsCurrent = () => generation === parsedQuestionsGeneration &&
+                questions === parsedQuestionsData;
+            if (!requestIsCurrent()) return;
 
             const needAnswersIndices = [];
             questions.forEach((q, idx) => {
@@ -3740,7 +4097,7 @@
                 if (card) {
                     const answerPrev = card.querySelector('.card-answer-preview');
                     if (answerPrev) {
-                        answerPrev.innerHTML = '<div class="flex items-center space-x-1.5 text-indigo-600 font-bold text-2xs py-1 animate-pulse"><i class="fa-solid fa-spinner animate-spin"></i><span>AI 队列排队中，准备推导解答...</span></div>';
+                        answerPrev.innerHTML = '<div class="flex items-center space-x-1.5 text-indigo-600 font-bold text-[10px] py-1 animate-pulse"><i class="fa-solid fa-spinner animate-spin"></i><span>AI 队列排队中，准备推导解答...</span></div>';
                     }
                 }
             });
@@ -3752,6 +4109,7 @@
 
             async function worker() {
                 while (currentPointer < needAnswersIndices.length) {
+                    if (!requestIsCurrent()) return;
                     const taskIdx = needAnswersIndices[currentPointer++];
                     const q = questions[taskIdx];
                     if (!q) continue;
@@ -3760,7 +4118,7 @@
                     if (card) {
                         const answerPrev = card.querySelector('.card-answer-preview');
                         if (answerPrev) {
-                            answerPrev.innerHTML = '<div class="flex items-center space-x-1.5 text-indigo-600 font-bold text-2xs py-1"><i class="fa-solid fa-brain animate-bounce"></i><span>AI 正在深入推导解答...</span></div>';
+                            answerPrev.innerHTML = '<div class="flex items-center space-x-1.5 text-indigo-600 font-bold text-[10px] py-1"><i class="fa-solid fa-brain animate-bounce"></i><span>AI 正在深入推导解答...</span></div>';
                         }
                     }
 
@@ -3777,9 +4135,11 @@
                             },
                             body: formData
                         });
+                        if (!requestIsCurrent()) return;
 
                         if (res.ok) {
                             const data = await res.json();
+                            if (!requestIsCurrent()) return;
                             if (data.status === 'success' && data.solution) {
                                 q.answer_markdown = data.solution;
                                 finishedCount++;
@@ -3794,6 +4154,7 @@
                             }
                         }
                     } catch (e) {
+                        if (!requestIsCurrent()) return;
                         console.error(`第 ${taskIdx + 1} 题推导解答失败:`, e);
                         if (card) {
                             renderParsedCardPreview(card, q.content || '', q.answer_markdown || '');
@@ -3807,6 +4168,7 @@
                 workers.push(worker());
             }
             await Promise.all(workers);
+            if (!requestIsCurrent()) return;
             appendImportLog(`🎉 试卷所有空缺题目（共 ${needAnswersIndices.length} 题）的 AI 解答推导全部完成！`, 'success');
         }
 

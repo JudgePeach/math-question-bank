@@ -3,6 +3,7 @@ import json
 import re
 import datetime
 import threading
+import tempfile
 from sqlalchemy.orm import Session
 from mathbank.database import Question, SessionLocal
 from mathbank.paths import DATA_BACKUP_DIR
@@ -14,10 +15,30 @@ MD_BACKUP_PATH = os.path.join(BACKUP_DIR, "questions_library.md")
 # 线程锁，防止并发执行 background_tasks 时的写盘冲突
 _export_lock = threading.Lock()
 
+
+def _temporary_output_path(final_path: str) -> str:
+    directory = os.path.dirname(final_path) or "."
+    os.makedirs(directory, exist_ok=True)
+    descriptor, temp_path = tempfile.mkstemp(prefix=".mathbank-export-", dir=directory)
+    os.close(descriptor)
+    return temp_path
+
+
+def _fsync_file(path: str) -> None:
+    with open(path, "rb") as handle:
+        os.fsync(handle.fileno())
+
+
 def export_database_to_files(db: Session = None):
-    """将 SQLite 数据库中的所有题目导出为 JSON 备份和 Markdown 格式的 AI 可读题库"""
+    """Atomically export questions to portable JSON and AI-readable Markdown.
+
+    These files are exports, not full disaster-recovery backups.  Use
+    ``python3 -m scripts.backup`` for a verified full backup.
+    """
     with _export_lock:
         local_session = None
+        json_temp = None
+        markdown_temp = None
         try:
             if db is None:
                 db = SessionLocal()
@@ -29,21 +50,42 @@ def export_database_to_files(db: Session = None):
             # 查询所有题目，按 ID 升序排列
             questions = db.query(Question).order_by(Question.id.asc()).all()
             
-            # 1. 导出为 JSON 备份
-            questions_list = []
-            for q in questions:
-                questions_list.append(q.to_dict())
-                
-            with open(JSON_BACKUP_PATH, "w", encoding="utf-8") as f:
+            questions_list = [q.to_dict() for q in questions]
+            json_temp = _temporary_output_path(JSON_BACKUP_PATH)
+            markdown_temp = _temporary_output_path(MD_BACKUP_PATH)
+            with open(json_temp, "w", encoding="utf-8") as f:
                 json.dump(questions_list, f, ensure_ascii=False, indent=2)
-                
-            # 2. 导出为精美的 Markdown 文件供 Claude Code / 人工阅读参考
-            generate_markdown_library(questions, MD_BACKUP_PATH)
+                f.flush()
+                os.fsync(f.fileno())
+
+            # Generate both temporary files before replacing either good export.
+            generate_markdown_library(questions, markdown_temp)
+            _fsync_file(markdown_temp)
+            os.replace(json_temp, JSON_BACKUP_PATH)
+            json_temp = None
+            os.replace(markdown_temp, MD_BACKUP_PATH)
+            markdown_temp = None
             
             print(f"[Sync] 成功导出 {len(questions)} 道题目到 {JSON_BACKUP_PATH} 和 {MD_BACKUP_PATH}")
+            return {
+                "status": "success",
+                "question_count": len(questions),
+                "json_path": JSON_BACKUP_PATH,
+                "markdown_path": MD_BACKUP_PATH,
+            }
         except Exception as e:
-            print(f"[Sync 错误] 导出数据库失败: {str(e)}")
+            raise RuntimeError(f"导出题目文件失败: {e}") from e
         finally:
+            if json_temp:
+                try:
+                    os.unlink(json_temp)
+                except FileNotFoundError:
+                    pass
+            if markdown_temp:
+                try:
+                    os.unlink(markdown_temp)
+                except FileNotFoundError:
+                    pass
             if local_session:
                 local_session.close()
 

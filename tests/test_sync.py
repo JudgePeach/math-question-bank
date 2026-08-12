@@ -2,6 +2,7 @@ import os
 import json
 import time
 import pytest
+from unittest.mock import patch
 from mathbank.database import Question
 from mathbank.sync_helper import clean_latex_to_markdown_for_ai, export_database_to_files
 from main import clean_orphaned_images
@@ -70,7 +71,9 @@ def test_export_database_to_files(db_session, tmp_path):
 
     try:
         # Run export
-        export_database_to_files(db=db_session)
+        result = export_database_to_files(db=db_session)
+        assert result["status"] == "success"
+        assert result["question_count"] == 1
 
         # Check JSON export
         assert os.path.exists(sync_helper.JSON_BACKUP_PATH)
@@ -89,6 +92,35 @@ def test_export_database_to_files(db_session, tmp_path):
     finally:
         # Restore paths
         sync_helper.BACKUP_DIR = original_backup_dir
+        sync_helper.JSON_BACKUP_PATH = original_json_path
+        sync_helper.MD_BACKUP_PATH = original_md_path
+
+
+def test_export_failure_preserves_last_good_files(db_session, tmp_path):
+    from mathbank import sync_helper
+
+    q = Question(content="测试原子导出", question_type="single_choice")
+    db_session.add(q)
+    db_session.commit()
+    json_path = tmp_path / "questions_backup.json"
+    markdown_path = tmp_path / "questions_library.md"
+    json_path.write_text("last-good-json", encoding="utf-8")
+    markdown_path.write_text("last-good-markdown", encoding="utf-8")
+    original_json_path = sync_helper.JSON_BACKUP_PATH
+    original_md_path = sync_helper.MD_BACKUP_PATH
+    sync_helper.JSON_BACKUP_PATH = str(json_path)
+    sync_helper.MD_BACKUP_PATH = str(markdown_path)
+
+    try:
+        with patch(
+            "mathbank.sync_helper.generate_markdown_library",
+            side_effect=OSError("disk full"),
+        ):
+            with pytest.raises(RuntimeError, match="导出题目文件失败"):
+                export_database_to_files(db=db_session)
+        assert json_path.read_text(encoding="utf-8") == "last-good-json"
+        assert markdown_path.read_text(encoding="utf-8") == "last-good-markdown"
+    finally:
         sync_helper.JSON_BACKUP_PATH = original_json_path
         sync_helper.MD_BACKUP_PATH = original_md_path
 

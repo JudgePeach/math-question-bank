@@ -1,7 +1,10 @@
 import os
 import json
 import pytest
+from unittest.mock import MagicMock, patch
+
 from main import LOCAL_TOKEN
+from mathbank.database import Paper, PaperQuestion, Question
 
 def test_paper_api_flow(client):
     headers = {"X-Local-Token": LOCAL_TOKEN}
@@ -79,6 +82,104 @@ def test_paper_api_flow(client):
     del_res = client.delete(f"/api/papers/{paper_id}", headers=headers)
     assert del_res.status_code == 200
     assert del_res.json()["status"] == "success"
+
+
+def test_ai_paper_selection_uses_shared_provider_and_clean_effort(
+    client, db_session
+):
+    question = Question(
+        content="求函数的导数",
+        question_type="detailed_answer",
+        difficulty="medium",
+    )
+    excluded_question = Question(
+        content="不应越过类型筛选的选择题",
+        question_type="single_choice",
+        difficulty="medium",
+    )
+    db_session.add_all([question, excluded_question])
+    db_session.commit()
+    response = MagicMock(status_code=200)
+    response.json.return_value = {
+        "choices": [
+            {
+                "message": {
+                    "content": json.dumps(
+                        {
+                            "selected_ids": [
+                                excluded_question.id,
+                                question.id,
+                                question.id,
+                            ],
+                            "ai_analysis": "选取一道导数题",
+                        },
+                        ensure_ascii=False,
+                    )
+                }
+            }
+        ]
+    }
+    provider_env = {
+        "PREFER_SOLVE_MODEL": "ZHONGZHAN_GPT/gpt-5.6-sol:high",
+        "ZHONGZHAN_GPT_API_KEY": "transit-key",
+        "ZHONGZHAN_GPT_BASE_URL": (
+            "https://transit.example/v1/chat/completions/"
+        ),
+    }
+
+    with patch.dict(os.environ, provider_env, clear=False), patch(
+        "mathbank.ai_http.robust_request_post", return_value=response
+    ) as mock_post:
+        result = client.post(
+            "/api/paper/ai-select",
+            json={
+                "prompt": "请选 1 道函数题",
+                "question_type": "detailed_answer",
+                "limit": 1,
+            },
+            headers={"X-Local-Token": LOCAL_TOKEN},
+        )
+
+    assert result.status_code == 200
+    assert result.json()["fallback"] is False
+    assert [item["id"] for item in result.json()["data"]] == [question.id]
+    args, kwargs = mock_post.call_args
+    assert args[0] == "https://transit.example/v1/chat/completions"
+    assert kwargs["json"]["model"] == "gpt-5.6-sol"
+    assert kwargs["json"]["reasoning_effort"] == "high"
+    assert kwargs["json"]["enable_thinking"] is True
+
+
+@pytest.mark.parametrize(
+    "questions",
+    [
+        [{"id": 999999, "score": 5}],
+        [{"id": 1, "score": 5}, {"id": 1, "score": 5}],
+        [{"id": 1, "score": -1}],
+    ],
+)
+def test_invalid_paper_items_are_rejected_without_partial_rows(
+    client, db_session, questions
+):
+    question = Question(content="组卷事务题", question_type="single_choice")
+    db_session.add(question)
+    db_session.commit()
+    # Parameter values use the first SQLite ID in this isolated fixture.
+    for item in questions:
+        if item["id"] == 1:
+            item["id"] = question.id
+
+    result = client.post(
+        "/api/paper/save",
+        json={"title": "无效试卷", "paper_type": "exam", "questions": questions},
+        headers={"X-Local-Token": LOCAL_TOKEN},
+    )
+
+    assert result.status_code == 400
+    assert db_session.query(Paper).count() == 0
+    assert db_session.query(PaperQuestion).count() == 0
+    db_session.refresh(question)
+    assert question.usage_count in {None, 0}
 
 def test_exam_19_and_answer_sheet_generation(client):
     headers = {"X-Local-Token": LOCAL_TOKEN}

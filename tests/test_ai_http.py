@@ -48,7 +48,11 @@ def test_post_chat_completion_raises_consistent_http_error():
         "DEEPSEEK/deepseek-chat",
         {"DEEPSEEK_API_KEY": "secret-key"},
     )
-    response = MagicMock(status_code=429, text="rate limited")
+    response = MagicMock(
+        status_code=429,
+        text="sensitive prompt fragment",
+        headers={"x-request-id": "req-safe-123"},
+    )
 
     with patch("mathbank.ai_http.robust_request_post", return_value=response):
         with pytest.raises(AIProviderHTTPError) as exc_info:
@@ -61,8 +65,9 @@ def test_post_chat_completion_raises_consistent_http_error():
 
     assert str(exc_info.value) == (
         "DeepSeek (DEEPSEEK_API_KEY) 接口错误: "
-        "HTTP 429, 内容: rate limited"
+        "HTTP 429 (request_id=req-safe-123)"
     )
+    assert "sensitive prompt fragment" not in str(exc_info.value)
 
 
 @pytest.mark.parametrize(
@@ -88,12 +93,12 @@ def test_domestic_provider_requests_bypass_proxies_immediately(
     )
 
 
-def test_external_request_retries_once_without_proxies():
+def test_external_request_retries_once_without_proxies_on_proxy_error():
     response = MagicMock(status_code=200)
 
     with patch(
         "mathbank.ai_http.requests.post",
-        side_effect=[requests.exceptions.ConnectionError("proxy failed"), response],
+        side_effect=[requests.exceptions.ProxyError("proxy failed"), response],
     ) as request_mock:
         result = robust_request_post("https://transit.example/v1", timeout=10)
 
@@ -101,3 +106,14 @@ def test_external_request_retries_once_without_proxies():
     assert request_mock.call_count == 2
     retry_kwargs = request_mock.call_args_list[1].kwargs
     assert retry_kwargs["proxies"] == {"http": None, "https": None}
+
+
+def test_post_read_timeout_is_not_retried_to_avoid_duplicate_billing():
+    with patch(
+        "mathbank.ai_http.requests.post",
+        side_effect=requests.exceptions.ReadTimeout("provider timed out"),
+    ) as request_mock:
+        with pytest.raises(requests.exceptions.ReadTimeout):
+            robust_request_post("https://transit.example/v1", timeout=10)
+
+    request_mock.assert_called_once()

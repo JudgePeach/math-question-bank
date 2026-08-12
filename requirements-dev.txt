@@ -1,2 +1,10 @@
 -r requirements.txt
-pytest>=8.0.0
+pytest==9.0.3
+httpx2==2.7.0
+httpcore2==2.7.0
+truststore==0.10.4
+iniconfig==2.3.0
+packaging==26.3
+pluggy==1.6.0
+pygments==2.20.0
+tomli==2.4.1

@@ -1,0 +1,19 @@
+MathBank 便携包覆盖升级
+
+1. 先创建一份可验证完整备份。
+2. 在网页右上角点击电源按钮安全关闭，确认服务已停止。
+3. 将新版 ZIP 解压到一个临时新目录。
+4. 打开新版文件夹，只复制其中的“内容”到原项目目录。
+   - Windows：选择替换所有同名文件。
+   - macOS Finder：先按 Command + Shift + . 显示隐藏文件，再全选内容并合并同名目录；不要“替换整个文件夹”。
+5. 双击新版启动器。如 Release 校验失败，请重新解压并完整合并覆盖。
+
+不要删除原项目目录。升级会保护：
+- 根目录数据库及 .db-wal / .db-shm
+- .env
+- data_backup/
+- static/uploads/
+- .system_generated/
+- venv/
+
+Windows 便携包自带 Python。macOS 需要本机 Python 3.10+，首次创建 venv 或依赖变化时需要联网。

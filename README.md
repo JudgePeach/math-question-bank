@@ -80,10 +80,12 @@ flowchart LR
 
 ### 📦 方式一：下载便携包（非技术/小白用户首选）
 
-如果您不熟悉命令行或 Python 环境，可以直接前往 [**Releases 页面**](https://github.com/JudgePeach/math-question-bank/releases) 下载官方编译好的双平台便携包，解压即用：
+如果您不熟悉命令行或 Python 环境，可以直接前往 [**Releases 页面**](https://github.com/JudgePeach/math-question-bank/releases) 下载官方构建包。发布页同时提供 `.zip.sha256` 校验文件，建议核对后再解压：
 
-* **Windows 用户**：下载 `MathBank-Windows-x64.zip`，解压后双击运行 **`启动题库系统.bat`**
-* **macOS 用户**：下载 `MathBank-macOS.zip`，解压后双击运行 **`启动题库系统.command`**
+* **Windows 用户**：下载 `MathBank-Windows-x64.zip`（内含 Python 3.10 运行时），解压后双击运行 **`启动题库系统.bat`**
+* **macOS 用户**：下载 `MathBank-macOS.zip`，准备 Python 3.10+；首次运行需要联网创建隔离的 `venv`，然后双击 **`启动题库系统.command`**
+
+两个启动器只会停止由当前项目记录且身份校验通过的旧服务；若端口 8000 被其他程序占用，会安全退出。服务健康检查失败时不会打开浏览器。
 
 ---
 
@@ -95,11 +97,11 @@ flowchart LR
    cd math-question-bank
    ```
 
-2. **安装依赖** (推荐 Python 3.8+)：
+2. **安装依赖**（要求 Python 3.10+）：
    ```bash
-   pip install -r requirements.txt
+   python -m pip install -r requirements.txt
    ```
-   参与开发或运行测试时，改用 `pip install -r requirements-dev.txt`。
+   参与开发或运行测试时，改用 `python -m pip install -r requirements-dev.txt`。依赖版本已锁定，升级时请同步运行测试与 `python -m pip check`。
 
 3. **启动项目**：
    * **Mac 用户**：双击 **`启动题库系统.command`**
@@ -142,17 +144,6 @@ flowchart LR
 > 系统的 AI 智能几何插图 TikZ 重绘和 PDF 试卷编译渲染功能，高度依赖您**本地已安装的 LaTeX 编译排版环境**（如 macOS 下的 **MacTeX**，Windows 下的 **TeX Live** 或 **MiKTeX**）。
 > 请确保安装后，您本地的命令行中能正常调用 `pdflatex` 与 `xelatex` 命令（即已正确将 LaTeX 工具链加入系统的环境变量 `PATH`）。如果本地未安装，AI 生成的 TikZ 源码和试卷 LaTeX 源码依旧能够完好保存与导出，但后台编译 PDF 将受到限制。
 
-> [!NOTE]
-> **旧版本覆盖升级用户的依赖补装说明（针对 TikZ 图形无法渲染/缺失 pymupdf 报错）**
-> 
-> 本次升级引入了用于 PDF 转图像的 `pymupdf` 核心依赖。如果您在覆盖代码后遇到 `Python 环境中未安装 'pymupdf'` 的报错，可选择以下任一方式解决：
-> * **方式 A（推荐，极速）**：直接在项目根目录下打开终端，运行命令手动补装该库：
->   - macOS 用户：`./venv/bin/pip install pymupdf`
->   - Windows 用户：`venv\Scripts\pip install pymupdf`
-> * **方式 B（清空重装）**：直接物理删除项目根目录下的 **`venv/`** 虚拟环境文件夹，重新双击执行启动脚本，系统检测到环境缺失后将自动重新拉取依赖。
-
----
-
 ## 🔄 版本升级与数据备份
 
 ### 升级方式
@@ -165,12 +156,19 @@ flowchart LR
   *说明：数据库 (`*.db`)、API 密钥 (`.env`)、维度配置 (`data_backup/`) 及插图 (`static/uploads/`) 均已被 Git 忽略，执行 `git pull` 绝不会影响本地数据。*
 
 - **方式 B：便携包覆盖更新**
-  直接解压新版压缩包，覆盖/合并到现有项目文件夹中。*请勿直接删除原文件夹。*
+  1. 先创建一份可验证完整备份（见下方“完整备份与恢复”）。
+  2. 在网页右上角点击电源按钮安全关闭题库，等待页面提示服务已停止；不要在后台运行时覆盖。
+  3. 把新版 ZIP **解压到一个临时新目录**，不要直接解压进原目录。
+  4. **Windows**：打开新版文件夹，全选其中的“内容”并复制到原项目目录，选择替换所有同名文件。
+  5. **macOS Finder**：先按 `Command + Shift + .` 显示 `.env.example` 等隐藏文件，再复制新版文件夹里的全部“内容”到原目录并合并同名目录；**不要选择“替换整个文件夹”**，否则 Finder 可能先删除原目录中的本地数据。
+  6. 双击新版启动器。启动器会在导入项目依赖前校验 Release 文件，并仅清理“上一版发布包管理且新版已删除”的旧文件；校验失败时会拒绝启动，请重新完整合并覆盖。
+
+  覆盖升级会保留根目录数据库及 WAL/SHM、`.env`、`data_backup/`、`static/uploads/`、`.system_generated/` 和 `venv/`。请勿删除原项目目录再换成新目录。Windows 便携包含完整 Python 运行时；macOS 依赖本机 Python 3.10+，仅在首次建立 `venv` 或 `requirements.txt` 变化/依赖缺失时需要联网安装。
 
 > [!IMPORTANT]
 > **数据备份建议**
 > 
-> 升级前建议手动备份以下重要文件/目录：
+> 完整备份是覆盖升级的首选保险。如需额外手动备份，请备份以下重要文件/目录：
 > - `*.db` (本地题目数据库)
 > - `.env` (API 密钥配置)
 > - `data_backup/` (自定义维度与章节大纲配置)
@@ -190,7 +188,22 @@ python3 -m scripts.search_questions -q "导数"
 ### 2. 数据清洗与自愈脚本
 - **填空题下划线全量升级**：`python3 -m scripts.migrate_fillin`（将旧下划线规范化为 `\fillin` 宏）
 - **选择题题干空括号净化**：`python3 -m scripts.migrate_choice_parentheses`（自动抹除题干末尾空括号，防止与 `\paren` 重叠）
-- **构建跨平台 Release**：`python3 -m scripts.build_release`
+- **构建跨平台 Release**：先确认 `mathbank/__init__.py` 的版本号，再运行 `python3 -m scripts.build_release`。构建器会校验固定 SHA-256 的官方 Python/NuGet 运行时、Release 白名单、运行时布局与源码 smoke，并生成包内 `RELEASE-MANIFEST.json` 和包外 `.zip.sha256`。
+
+### 3. 完整备份与恢复
+
+```bash
+# 创建数据库 + 上传图片 + 自定义元数据的可验证完整备份
+python3 -m scripts.backup
+
+# 只校验备份，不改动当前数据
+python3 -m scripts.restore data_backup/snapshots/mathbank-backup-时间戳.zip
+
+# 实际恢复：必须先完全关闭题库服务
+python3 -m scripts.restore data_backup/snapshots/mathbank-backup-时间戳.zip --apply --yes
+```
+
+完整备份含逐文件 SHA-256 清单，不包含 `.env`、本地 Token 或 API 密钥。服务与恢复工具共用跨平台运行锁，服务未完全关闭时恢复会拒绝执行。`questions_backup.json` 只是兼容检索与同步的 JSON 导出，不能代替完整备份。
 
 ---
 
@@ -200,7 +213,9 @@ python3 -m scripts.search_questions -q "导数"
 .
 ├── data_backup/                # 实时备份与 AI 专属只读题库 (已忽略)
 │   ├── archive/                # 历史迁移与测试数据库归档
-│   ├── questions_backup.json   # 完整数据库 JSON 备份
+│   ├── snapshots/              # 带清单与哈希校验的完整恢复包
+│   ├── schema_snapshots/       # 数据库迁移前独立快照及 SHA-256
+│   ├── questions_backup.json   # 题目 JSON 同步导出（非完整恢复包）
 │   └── questions_library.md    # AI 专属只读题库（过滤答案，防 AI 泄露）
 ├── docs/                       # 项目文档与 README 展示图片
 │   ├── AI_DATABASE_GUIDE.md    # AI 题库检索使用指南
@@ -208,8 +223,13 @@ python3 -m scripts.search_questions -q "导数"
 │   └── images/                 # 产品界面预览图
 ├── mathbank/                   # 后端业务领域包
 │   ├── database.py             # SQLite 数据模型与 Session
+│   ├── db_migrations.py        # 版本化、备份优先的 SQLite 迁移
+│   ├── backup.py               # 完整备份、验证、恢复与回滚
+│   ├── asset_security.py       # 上传验证与本地资产路径安全边界
+│   ├── task_manager.py         # 有界异步任务、取消与资源生命周期
+│   ├── health.py               # 启动就绪与数据库健康检查
 │   ├── paper_helper.py         # LaTeX/PDF 编译、排版与 LRU 缓存
-│   ├── sync_helper.py          # 数据备份与 AI 题库清洗
+│   ├── sync_helper.py          # JSON 同步导出与 AI 题库清洗
 │   ├── paths.py                # 与工作目录无关的项目路径单一来源
 │   ├── curriculums.py          # 四套教材预设加载与默认元数据
 │   ├── prompts.py              # OCR/解题/拆卷/TikZ/组卷提示构建器
@@ -225,6 +245,8 @@ python3 -m scripts.search_questions -q "导数"
 │   └── resources/curriculums/  # A/B/S/H 四套共享 JSON 大纲
 ├── scripts/                    # 运维、迁移、检索与 Release 工具
 │   ├── search_questions.py
+│   ├── backup.py
+│   ├── restore.py
 │   ├── migrate_fillin.py
 │   ├── migrate_choice_parentheses.py
 │   └── build_release.py

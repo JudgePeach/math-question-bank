@@ -1,0 +1,3 @@
+# Windows cross-build input. Platform dependencies are deliberately pinned in
+# the shared runtime lock so source installs and Release builds cannot drift.
+-r requirements.txt

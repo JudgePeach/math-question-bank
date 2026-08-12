@@ -2,6 +2,8 @@ import pytest
 
 from mathbank.ai_providers import (
     apply_bailian_thinking_policy,
+    build_chat_completions_url,
+    inject_reasoning_effort,
     parse_model_and_effort,
     resolve_draw_provider,
     resolve_ocr_fallbacks,
@@ -20,8 +22,12 @@ from mathbank.ai_providers import (
             "ZHONGZHAN_GPT/gpt-5.6-sol",
             "max",
         ),
+        ("  gpt-5.6-sol : LOW  ", "gpt-5.6-sol", "low"),
+        ("gpt-5.6-sol(default)", "gpt-5.6-sol", "default"),
         ("deepseek-chat", "deepseek-chat", None),
         ("model:unsupported", "model:unsupported", None),
+        ("", "", None),
+        (None, "", None),
     ],
 )
 def test_parse_model_and_effort(configured, expected_model, expected_effort):
@@ -76,7 +82,7 @@ def test_explicit_text_providers_resolve_to_expected_defaults(
     assert "secret-value" not in repr(config)
 
 
-def test_unprefixed_models_keep_provider_selection_and_model_id():
+def test_unprefixed_models_keep_provider_selection_without_rewriting_model_id():
     environment = {
         "ALI_BAILIAN_API_KEY": "bailian-key",
         "DEEPSEEK_API_KEY": "deepseek-key",
@@ -111,35 +117,82 @@ def test_custom_base_and_reasoning_effort_are_resolved_together():
     assert config.chat_completions_url == "https://transit.example/v1/chat/completions"
 
 
-def test_effort_parsing_can_be_disabled_for_legacy_call_sites():
+@pytest.mark.parametrize(
+    ("api_base", "expected"),
+    [
+        (None, None),
+        ("", None),
+        ("  ", None),
+        ("https://transit.example/v1", "https://transit.example/v1/chat/completions"),
+        ("https://transit.example/v1/", "https://transit.example/v1/chat/completions"),
+        (
+            "https://transit.example/v1/chat/completions",
+            "https://transit.example/v1/chat/completions",
+        ),
+        (
+            " https://transit.example/v1/chat/completions/ ",
+            "https://transit.example/v1/chat/completions",
+        ),
+    ],
+)
+def test_chat_completions_url_is_normalized_once(api_base, expected):
+    assert build_chat_completions_url(api_base) == expected
+
+
+def test_text_provider_does_not_duplicate_complete_chat_endpoint():
     config = resolve_text_provider(
-        "DEEPSEEK/deepseek-v4-flash:high",
-        {"DEEPSEEK_API_KEY": "key"},
-        parse_effort=False,
+        "ZHONGZHAN_GPT/gpt-5.6-sol",
+        {
+            "ZHONGZHAN_GPT_API_KEY": "transit-key",
+            "ZHONGZHAN_GPT_BASE_URL": (
+                "https://transit.example/v1/chat/completions/"
+            ),
+        },
     )
 
-    assert config.model_name == "deepseek-v4-flash:high"
-    assert config.reasoning_effort is None
-
-
-def test_bailian_model_id_is_preserved_after_effort_is_removed():
-    config = resolve_text_provider(
-        "BAILIAN/qwen3.7-max:high",
-        {"ALI_BAILIAN_API_KEY": "key"},
+    assert config.chat_completions_url == (
+        "https://transit.example/v1/chat/completions"
     )
 
-    assert config.model_name == "qwen3.7-max"
-    assert config.reasoning_effort == "high"
+
+@pytest.mark.parametrize("effort", ["low", "medium", "high", "xhigh", "max"])
+def test_reasoning_effort_is_allowlisted_normalized_and_pure(effort):
+    original = {"model": "gpt-5.6-sol", "messages": [], "temperature": 0.2}
+
+    result = inject_reasoning_effort(original, effort.upper())
+
+    assert result == {
+        **original,
+        "reasoning_effort": effort,
+        "enable_thinking": True,
+    }
+    assert result is not original
+    assert "reasoning_effort" not in original
+    assert "enable_thinking" not in original
+
+
+@pytest.mark.parametrize("effort", [None, "", "default", "unsupported", "high\n"])
+def test_default_or_invalid_reasoning_effort_leaves_payload_unchanged(effort):
+    original = {
+        "model": "gpt-5.6-sol",
+        "enable_thinking": False,
+        "provider_option": "keep-me",
+    }
+
+    result = inject_reasoning_effort(original, effort)
+
+    assert result == original
+    assert result is not original
 
 
 @pytest.mark.parametrize(
     "provider_code",
     ["deepseek", "siliconflow", "zhongzhan_gpt", "zhongzhan_claude"],
 )
-def test_bailian_thinking_policy_does_not_change_other_providers(provider_code):
+def test_bailian_thinking_policy_is_a_pure_noop_for_other_providers(provider_code):
     original = {
-        "model": "qwen3.8-max",
-        "max_tokens": 4096,
+        "model": "provider-model",
+        "max_tokens": 777,
         "reasoning_effort": "high",
         "enable_thinking": True,
     }
@@ -242,6 +295,41 @@ def test_bailian_ocr_disables_thinking_with_bounded_completion():
 
     assert result["enable_thinking"] is False
     assert result["max_completion_tokens"] == 16384
+
+
+def test_bailian_model_id_is_preserved_after_effort_is_removed():
+    config = resolve_text_provider(
+        "BAILIAN/qwen3.7-max:high",
+        {"ALI_BAILIAN_API_KEY": "key"},
+    )
+
+    assert config.model_name == "qwen3.7-max"
+    assert config.reasoning_effort == "high"
+
+
+def test_bailian_ocr_defaults_to_current_flash_model():
+    config = resolve_ocr_provider(
+        "bailian",
+        {"ALI_BAILIAN_API_KEY": "key"},
+    )
+
+    assert config.model_name == "qwen3.7-flash"
+
+
+def test_draw_provider_removes_reasoning_suffix_and_keeps_legacy_transit_env():
+    config = resolve_draw_provider(
+        "ZHONGZHAN/gpt-5.6-luna:high",
+        {
+            "ZHONGZHAN_API_KEY": "legacy-key",
+            "ZHONGZHAN_BASE_URL": "https://draw.example/v1",
+        },
+    )
+
+    assert config.provider_code == "zhongzhan_gpt"
+    assert config.model_name == "gpt-5.6-luna"
+    assert config.reasoning_effort == "high"
+    assert config.api_key == "legacy-key"
+    assert config.chat_completions_url == "https://draw.example/v1/chat/completions"
 
 
 def test_unknown_explicit_prefix_is_not_silently_rerouted():

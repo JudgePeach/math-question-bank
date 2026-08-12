@@ -2,6 +2,9 @@
 let currentBankPage = 1;
 let currentDraftPage = 1;
 const PAGE_LIMIT = 20;
+let bankQuestionsLoadController = null;
+let bankQuestionsLoadSequence = 0;
+let bankQuestionsRetryTimer = null;
 
         function initResizers() {
             const sidebar = document.getElementById('sidebarSection');
@@ -145,11 +148,11 @@ const PAGE_LIMIT = 20;
             });
         }
 
-        // Helper to backup the current editor state directly from the DOM elements
-        function backupEditorState(id = null, draftId = null) {
-            originalQuestionState = {
-                id: id,
-                draftId: draftId,
+        // Save callbacks may arrive after the user has typed more text. Accepting
+        // an explicit request snapshot keeps those later edits dirty instead of
+        // accidentally treating the current DOM as the server-confirmed state.
+        function backupEditorState(id = null, draftId = null, requestSnapshot = null) {
+            const snapshot = requestSnapshot || {
                 content: document.getElementById('editContent').value,
                 answer_markdown: document.getElementById('editAnswerMarkdown').value,
                 review: document.getElementById('editReview').value,
@@ -162,13 +165,26 @@ const PAGE_LIMIT = 20;
                 image_paths: JSON.stringify(uploadedImages),
                 tags: document.getElementById('editTags') ? document.getElementById('editTags').value : ''
             };
+            originalQuestionState = {
+                id: id,
+                draftId: draftId,
+                content: snapshot.content,
+                answer_markdown: snapshot.answer_markdown,
+                review: snapshot.review,
+                question_type: snapshot.question_type,
+                difficulty: snapshot.difficulty,
+                source: snapshot.source,
+                category_compulsory: snapshot.category_compulsory,
+                category_chapter: snapshot.category_chapter,
+                category_knowledge: snapshot.category_knowledge,
+                image_paths: snapshot.image_paths,
+                tags: snapshot.tags
+            };
         }
         window.backupEditorState = backupEditorState;
 
-        // Helper to check if the current question has been modified from its original loaded state
-        function isEditorModified() {
-            if (!originalQuestionState) return false;
-            
+        function editorMatchesBackupSnapshot(snapshot) {
+            if (!snapshot) return false;
             const currentContent = document.getElementById('editContent').value;
             const currentAnswer = document.getElementById('editAnswerMarkdown').value;
             const currentReview = document.getElementById('editReview').value;
@@ -180,30 +196,41 @@ const PAGE_LIMIT = 20;
             const currentKnow = document.getElementById('editKnowledge').value;
             const currentImages = JSON.stringify(uploadedImages);
             const currentTags = document.getElementById('editTags') ? document.getElementById('editTags').value : '';
-            
-            return currentContent !== originalQuestionState.content ||
-                   currentAnswer !== originalQuestionState.answer_markdown ||
-                   currentReview !== originalQuestionState.review ||
-                   currentType !== originalQuestionState.question_type ||
-                   currentDifficulty !== originalQuestionState.difficulty ||
-                   currentSource !== originalQuestionState.source ||
-                   currentComp !== originalQuestionState.category_compulsory ||
-                   currentChap !== originalQuestionState.category_chapter ||
-                   currentKnow !== originalQuestionState.category_knowledge ||
-                   currentImages !== originalQuestionState.image_paths ||
-                   currentTags !== originalQuestionState.tags;
+
+            return currentContent === snapshot.content &&
+                   currentAnswer === snapshot.answer_markdown &&
+                   currentReview === snapshot.review &&
+                   currentType === snapshot.question_type &&
+                   currentDifficulty === snapshot.difficulty &&
+                   currentSource === snapshot.source &&
+                   currentComp === snapshot.category_compulsory &&
+                   currentChap === snapshot.category_chapter &&
+                   currentKnow === snapshot.category_knowledge &&
+                   currentImages === snapshot.image_paths &&
+                   currentTags === snapshot.tags;
         }
+        window.editorMatchesBackupSnapshot = editorMatchesBackupSnapshot;
+
+        // Helper to check if the current question has been modified from its original loaded state
+        function isEditorModified() {
+            if (!originalQuestionState) return false;
+            return !editorMatchesBackupSnapshot(originalQuestionState);
+        }
+        window.isEditorModified = isEditorModified;
 
         // Custom Premium Confirmation Modal for Unsaved Changes (3 Options)
         function showUnsavedChangesModal() {
             return new Promise((resolve) => {
                 const modalDiv = document.createElement('div');
                 modalDiv.className = "fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center select-none";
+                modalDiv.setAttribute('role', 'dialog');
+                modalDiv.setAttribute('aria-modal', 'true');
+                modalDiv.setAttribute('aria-labelledby', 'unsavedChangesModalTitle');
                 modalDiv.innerHTML = `
                     <div class="bg-white rounded-2xl w-full max-w-sm shadow-2xl p-6 space-y-4 transform scale-100 transition-all border border-slate-100">
                         <div class="flex items-center space-x-2 pb-2 border-b">
                             <i class="fa-solid fa-circle-question text-brand-600 text-base animate-pulse"></i>
-                            <h3 class="font-bold text-sm text-slate-800">当前编辑内容有未保存的修改</h3>
+                            <h3 id="unsavedChangesModalTitle" class="font-bold text-sm text-slate-800">当前编辑内容有未保存的修改</h3>
                         </div>
                         <p class="text-xs text-slate-500 leading-relaxed">
                             您刚才编辑的题目尚未存入正式题库。请选择您希望如何处理这些修改？
@@ -223,7 +250,7 @@ const PAGE_LIMIT = 20;
                             </button>
                         </div>
                         <div class="flex justify-end pt-2 border-t">
-                            <button id="cancelBtn" type="button" class="px-4 py-1.5 border border-slate-250 rounded-xl text-slate-550 hover:bg-slate-50 transition-all text-[10px] font-medium">
+                            <button id="cancelBtn" type="button" class="px-4 py-1.5 border border-slate-300 rounded-xl text-slate-600 hover:bg-slate-50 transition-all text-[10px] font-medium">
                                 返回编辑
                             </button>
                         </div>
@@ -231,24 +258,27 @@ const PAGE_LIMIT = 20;
                 `;
                 document.body.appendChild(modalDiv);
 
+                const finish = (result) => {
+                    window.MathBankModal.close(modalDiv);
+                    if (modalDiv.isConnected) modalDiv.remove();
+                    resolve(result);
+                };
+                window.MathBankModal.open(modalDiv, { onEscape: () => finish('cancel') });
+
                 document.getElementById('saveToBankBtn').onclick = () => {
-                    document.body.removeChild(modalDiv);
-                    resolve('bank');
+                    finish('bank');
                 };
 
                 document.getElementById('saveToDraftsBtn').onclick = () => {
-                    document.body.removeChild(modalDiv);
-                    resolve('drafts');
+                    finish('drafts');
                 };
 
                 document.getElementById('discardBtn').onclick = () => {
-                    document.body.removeChild(modalDiv);
-                    resolve('discard');
+                    finish('discard');
                 };
 
                 document.getElementById('cancelBtn').onclick = () => {
-                    document.body.removeChild(modalDiv);
-                    resolve('cancel');
+                    finish('cancel');
                 };
             });
         }
@@ -258,6 +288,9 @@ const PAGE_LIMIT = 20;
             return new Promise((resolve) => {
                 const modalDiv = document.createElement('div');
                 modalDiv.className = "fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center select-none opacity-0 transition-opacity duration-300";
+                modalDiv.setAttribute('role', 'dialog');
+                modalDiv.setAttribute('aria-modal', 'true');
+                modalDiv.setAttribute('aria-labelledby', 'missingClassificationModalTitle');
                 modalDiv.innerHTML = `
                     <div class="bg-white rounded-2xl w-full max-w-md shadow-2xl p-6 space-y-4 transform scale-95 transition-all duration-300 border border-slate-100/55">
                         <div class="flex items-center space-x-2.5 pb-2.5 border-b border-slate-100">
@@ -265,7 +298,7 @@ const PAGE_LIMIT = 20;
                                 <i class="fa-solid fa-wand-magic-sparkles text-brand-600 text-sm animate-pulse"></i>
                             </div>
                             <div>
-                                <h3 class="font-bold text-sm text-slate-800">题目分类信息不完整</h3>
+                                <h3 id="missingClassificationModalTitle" class="font-bold text-sm text-slate-800">题目分类信息不完整</h3>
                                 <p class="text-[10px] text-slate-400">MATHBANK 教研分类指引</p>
                             </div>
                         </div>
@@ -299,6 +332,7 @@ const PAGE_LIMIT = 20;
                 }, 50);
 
                 const closeModal = (result) => {
+                    window.MathBankModal.close(modalDiv);
                     modalDiv.classList.add('opacity-0');
                     modalDiv.querySelector('div').classList.remove('scale-100');
                     modalDiv.querySelector('div').classList.add('scale-95');
@@ -307,6 +341,7 @@ const PAGE_LIMIT = 20;
                         resolve(result);
                     }, 300);
                 };
+                window.MathBankModal.open(modalDiv, { onEscape: () => closeModal('cancel') });
 
                 document.getElementById('manualCompulsoryBtn').onclick = () => closeModal('manual');
                 document.getElementById('autoSaveClassifyBtn').onclick = () => closeModal('ai');
@@ -316,6 +351,10 @@ const PAGE_LIMIT = 20;
 
         // Check if editor has unsaved changes, show modal if needed, then run callback
         async function checkAndSwitch(actionCallback) {
+            if (window.isQuestionSaveInFlight && window.isQuestionSaveInFlight()) {
+                showToast('题目正在保存，请等待完成后再切换', 'info');
+                return;
+            }
             if (isEditorModified()) {
                 const choice = await showUnsavedChangesModal();
                 
@@ -365,6 +404,9 @@ const PAGE_LIMIT = 20;
         }
 
         function saveCurrentToDrafts() {
+            if (window.blockEditorSessionChangeWhileSaving && window.blockEditorSessionChangeWhileSaving()) {
+                return false;
+            }
             const content = document.getElementById('editContent').value;
             const qtype = document.getElementById('editQType').value;
             const compulsory = document.getElementById('editCompulsory').value;
@@ -420,6 +462,12 @@ const PAGE_LIMIT = 20;
         }
 
         function selectDraft(draft) {
+            if (window.blockEditorSessionChangeWhileSaving && window.blockEditorSessionChangeWhileSaving()) {
+                return;
+            }
+            if (typeof window.invalidatePendingQuestionDetailLoad === 'function') {
+                window.invalidatePendingQuestionDetailLoad();
+            }
             EditorState.useDraft(draft);
             
             // Populate form fields
@@ -455,7 +503,9 @@ const PAGE_LIMIT = 20;
             }
             
             // Load images
-            uploadedImages = draft.image_paths || [];
+            uploadedImages = Array.isArray(draft.image_paths)
+                ? draft.image_paths.map(path => window.MathBankSafe.safeImageUrl(path)).filter(Boolean)
+                : [];
             renderIllustrationBadges();
             
             // Update preview and side panels
@@ -584,7 +634,7 @@ const PAGE_LIMIT = 20;
             if (totalItems === 0) {
                 qListContainer.innerHTML = `
                     <div class="p-6 text-center text-slate-400 text-xs">
-                        <i class="fa-solid fa-box-open text-2xl mb-1 text-slate-350"></i>
+                        <i class="fa-solid fa-box-open text-2xl mb-1 text-slate-400"></i>
                         <p>草稿箱空空如也</p>
                     </div>`;
                 renderSidebarPagination(0, 1, 'drafts');
@@ -603,7 +653,7 @@ const PAGE_LIMIT = 20;
                 const isActive = EditorState.draftId === item.id;
                 itemCard.className = `p-3.5 mx-1.5 rounded-xl border glass-card hover:bg-white cursor-pointer transition-all duration-200 shadow-sm flex flex-col space-y-2 select-none group relative ${isActive ? 'border-emerald-500 bg-white ring-2 ring-emerald-100 shadow-md' : 'border-slate-200'}`;
                 
-                const cleanContent = preprocessFormulaForKaTeX(item.content || '');
+                const cleanContent = parseMarkdownWithMath(item.content || '');
                 
                 let tagsHtml = '';
                 if (item.tags) {
@@ -613,11 +663,11 @@ const PAGE_LIMIT = 20;
                         const hiddenCount = tagList.length - 2;
                         
                         displayTags.forEach(tag => {
-                            tagsHtml += `<span class="text-[9px] font-bold text-amber-600 bg-amber-50 border border-amber-250/60 px-1.5 py-0.5 rounded-full flex items-center space-x-0.5"><i class="fa-solid fa-tag text-[7px] text-amber-500 mr-0.5"></i><span class="max-w-[80px] truncate">${tag}</span></span>`;
+                            tagsHtml += `<span class="text-[9px] font-bold text-amber-600 bg-amber-50 border border-amber-300/60 px-1.5 py-0.5 rounded-full flex items-center space-x-0.5"><i class="fa-solid fa-tag text-[7px] text-amber-500 mr-0.5"></i><span class="max-w-[80px] truncate">${window.MathBankSafe.escapeText(tag)}</span></span>`;
                         });
                         
                         if (hiddenCount > 0) {
-                            const fullTagsHtml = tagList.map(tag => `<span class="inline-flex items-center whitespace-nowrap"><i class="fa-solid fa-tag text-[7px] text-amber-500/80 mr-1"></i>${tag}</span>`).join('<span class="mx-1.5 text-amber-300/50">|</span>');
+                            const fullTagsHtml = tagList.map(tag => `<span class="inline-flex items-center whitespace-nowrap"><i class="fa-solid fa-tag text-[7px] text-amber-500/80 mr-1"></i>${window.MathBankSafe.escapeText(tag)}</span>`).join('<span class="mx-1.5 text-amber-300/50">|</span>');
                             tagsHtml += `
                             <div class="relative flex items-center" onclick="event.stopPropagation()">
                                 <span class="peer text-[9px] font-bold text-amber-600 bg-amber-100 border border-amber-300/60 px-1.5 py-0.5 rounded-full cursor-default flex items-center shadow-sm hover:bg-amber-200 transition-colors">+${hiddenCount}</span>
@@ -633,22 +683,30 @@ const PAGE_LIMIT = 20;
 
                 itemCard.innerHTML = `
                     <div class="flex items-start justify-between">
-                        <span class="text-[10px] font-bold px-2 py-0.5 rounded bg-emerald-50 text-emerald-700 shrink-0 mt-0.5">草稿 • ${typeText}</span>
+                        <span class="text-[10px] font-bold px-2 py-0.5 rounded bg-emerald-50 text-emerald-700 shrink-0 mt-0.5">草稿 • ${window.MathBankSafe.escapeText(typeText)}</span>
                         <div class="flex items-center gap-1.5 justify-end flex-wrap flex-1 ml-2">
                             ${tagsHtml}
                             ${difficultyBadge}
                             <!-- Delete Button -->
-                            <button onclick="event.stopPropagation(); deleteDraft('${item.id}')" class="text-slate-400 hover:text-red-500 p-0.5 rounded hover:bg-slate-100 transition-all opacity-0 group-hover:opacity-100" title="删除草稿">
+                            <button type="button" aria-label="删除草稿" class="delete-draft-btn text-slate-400 hover:text-red-500 p-0.5 rounded hover:bg-slate-100 transition-all opacity-0 group-hover:opacity-100" title="删除草稿">
                                 <i class="fa-solid fa-trash-can text-[10px]"></i>
                             </button>
                         </div>
                     </div>
                     <div class="text-xs text-slate-700 leading-relaxed font-medium line-clamp-2 card-formula-render">${cleanContent || '[未填题干]'}</div>
                     <div class="flex justify-between items-center text-[9px] text-slate-400 border-t pt-1.5">
-                        <span class="truncate max-w-[120px] font-semibold text-emerald-600"><i class="fa-solid fa-box mr-0.5"></i>${item.category_knowledge || item.category_chapter || '未分类'}</span>
-                        <span class="font-mono text-slate-400">${item.source ? item.source.substring(0, 12) : '草稿暂存'}</span>
+                        <span class="truncate max-w-[120px] font-semibold text-emerald-600"><i class="fa-solid fa-box mr-0.5"></i>${window.MathBankSafe.escapeText(item.category_knowledge || item.category_chapter || '未分类')}</span>
+                        <span class="font-mono text-slate-400">${window.MathBankSafe.escapeText(item.source ? item.source.substring(0, 12) : '草稿暂存')}</span>
                     </div>
                 `;
+
+                const deleteButton = itemCard.querySelector('.delete-draft-btn');
+                if (deleteButton) {
+                    deleteButton.addEventListener('click', (event) => {
+                        event.stopPropagation();
+                        deleteDraft(item.id);
+                    });
+                }
                 
                 // Render KaTeX inline for this card
                 try {
@@ -676,6 +734,9 @@ const PAGE_LIMIT = 20;
         }
 
         function deleteDraft(id) {
+            if (window.blockEditorSessionChangeWhileSaving && window.blockEditorSessionChangeWhileSaving()) {
+                return;
+            }
             if (confirm('确认要删除这篇草稿吗？')) {
                 let drafts = getLocalStorageDrafts();
                 drafts = drafts.filter(d => d.id !== id);
@@ -698,6 +759,14 @@ const PAGE_LIMIT = 20;
 
         function openStatsModal() {
             const modal = document.getElementById('statsModal');
+            const triggerButton = document.getElementById('statsOpenBtn');
+            if (triggerButton && triggerButton.disabled) return;
+            const triggerButtonContent = triggerButton ? triggerButton.innerHTML : '';
+            if (triggerButton) {
+                triggerButton.disabled = true;
+                triggerButton.setAttribute('aria-busy', 'true');
+                triggerButton.innerHTML = '<i class="fa-solid fa-circle-notch fa-spin" aria-hidden="true"></i><span>加载统计</span>';
+            }
             
             // 🟢 先拉取并渲染数据，让弹窗内部 DOM 完全静态就绪后再显示弹窗，完美消除毛玻璃背景下的二次重绘闪烁冲突
             fetch('/api/stats')
@@ -734,6 +803,7 @@ const PAGE_LIMIT = 20;
                         // 数据和图表完全就绪，再顺滑滑入弹窗并淡化背景
                         document.body.classList.add('modal-active');
                         modal.classList.remove('hidden');
+                        window.MathBankModal.open(modal, { onEscape: closeStatsModal });
                         setTimeout(() => {
                             modal.classList.remove('opacity-0');
                             modal.querySelector('div').classList.remove('scale-95');
@@ -745,11 +815,18 @@ const PAGE_LIMIT = 20;
                 })
                 .catch(err => {
                     showToast('请求统计数据出错: ' + err, 'error');
+                })
+                .finally(() => {
+                    if (!triggerButton) return;
+                    triggerButton.disabled = false;
+                    triggerButton.removeAttribute('aria-busy');
+                    triggerButton.innerHTML = triggerButtonContent;
                 });
         }
 
         function closeStatsModal() {
             const modal = document.getElementById('statsModal');
+            window.MathBankModal.close(modal);
             document.body.classList.remove('modal-active');
             
             modal.classList.add('opacity-0');
@@ -765,7 +842,7 @@ const PAGE_LIMIT = 20;
             compSelect.innerHTML = '<option value="">-- 选择学段 --</option>';
             if (globalStatsData && globalStatsData.compulsory_chapter_counts) {
                 Object.keys(globalStatsData.compulsory_chapter_counts).forEach(comp => {
-                    compSelect.innerHTML += `<option value="${comp}">${comp}</option>`;
+                    compSelect.innerHTML += `<option value="${window.MathBankSafe.escapeAttribute(comp)}">${window.MathBankSafe.escapeText(comp)}</option>`;
                 });
             }
         }
@@ -781,7 +858,7 @@ const PAGE_LIMIT = 20;
             if (compVal && globalStatsData && globalStatsData.compulsory_chapter_counts[compVal]) {
                 chapSelect.disabled = false;
                 Object.keys(globalStatsData.compulsory_chapter_counts[compVal]).forEach(chap => {
-                    chapSelect.innerHTML += `<option value="${chap}">${chap}</option>`;
+                    chapSelect.innerHTML += `<option value="${window.MathBankSafe.escapeAttribute(chap)}">${window.MathBankSafe.escapeText(chap)}</option>`;
                 });
             } else {
                 chapSelect.disabled = true;
@@ -829,15 +906,15 @@ const PAGE_LIMIT = 20;
                 
                 listContainer.innerHTML = '';
                 if (Object.keys(knowStats).length === 0) {
-                    listContainer.innerHTML = '<div class="text-[10px] text-slate-450 text-center py-4">本章暂无细分知识点</div>';
+                    listContainer.innerHTML = '<div class="text-[10px] text-slate-500 text-center py-4">本章暂无细分知识点</div>';
                 } else {
                     Object.entries(knowStats).forEach(([know, knCount]) => {
                         const pct = Math.round((knCount / count) * 100);
                         listContainer.innerHTML += `
                             <div class="space-y-1 bg-slate-50/70 dark:bg-slate-800/50 p-2 rounded-lg border border-slate-100 dark:border-slate-700/60">
                                 <div class="flex justify-between items-center text-[10px] font-semibold text-slate-700 dark:text-slate-200">
-                                    <span class="truncate pr-2">${know}</span>
-                                    <span class="font-mono text-slate-550 dark:text-slate-400 text-[10px]">${knCount} 题 (${pct}%)</span>
+                                    <span class="truncate pr-2">${window.MathBankSafe.escapeText(know)}</span>
+                                    <span class="font-mono text-slate-600 dark:text-slate-400 text-[10px]">${knCount} 题 (${pct}%)</span>
                                 </div>
                                 <div class="w-full bg-slate-200 dark:bg-slate-700 h-1.5 rounded-full overflow-hidden">
                                     <div class="bg-brand-500 h-1.5 rounded-full" style="width: ${pct}%"></div>
@@ -894,9 +971,9 @@ const PAGE_LIMIT = 20;
                         <span class="text-[10px] font-extrabold text-rose-600 dark:text-rose-400 font-mono animate-[bounce_1.5s_infinite]">+${count}</span>
                     `;
                 } else {
-                    dayCell.className = `p-1 bg-white dark:bg-slate-900/50 border border-slate-200/40 dark:border-slate-800 hover:bg-slate-50 dark:hover:bg-slate-800/60 rounded-lg flex flex-col justify-start items-center transition-all select-none ${isToday ? 'ring-2 ring-brand-400 border-brand-300 dark:ring-brand-500' : ''}`;
+                    dayCell.className = `p-1 bg-white dark:bg-slate-900/50 border border-slate-200/40 dark:border-slate-800 hover:bg-slate-50 dark:hover:bg-slate-800/60 rounded-lg flex flex-col justify-start items-center transition-all select-none ${isToday ? 'ring-2 ring-brand-500 border-brand-200 dark:ring-brand-500' : ''}`;
                     dayCell.innerHTML = `
-                        <span class="text-[10px] font-medium text-slate-600 dark:text-slate-300 ${isToday ? 'bg-brand-100 dark:bg-brand-900/60 text-brand-700 dark:text-brand-300 px-1 py-0.5 rounded-md font-bold' : ''}">${day}</span>
+                        <span class="text-[10px] font-medium text-slate-600 dark:text-slate-300 ${isToday ? 'bg-brand-100 dark:bg-brand-900/60 text-brand-700 dark:text-brand-200 px-1 py-0.5 rounded-md font-bold' : ''}">${day}</span>
                     `;
                 }
                 
@@ -942,7 +1019,7 @@ const PAGE_LIMIT = 20;
             // 1. Compulsory
             compSelect.innerHTML = '<option value="">-- 选择学段 --</option>';
             Object.keys(categoryTree).forEach(c => {
-                compSelect.innerHTML += `<option value="${c}">${c}</option>`;
+                compSelect.innerHTML += `<option value="${window.MathBankSafe.escapeAttribute(c)}">${window.MathBankSafe.escapeText(c)}</option>`;
             });
             
             compSelect.onchange = () => {
@@ -954,7 +1031,7 @@ const PAGE_LIMIT = 20;
                 if (comp && categoryTree[comp]) {
                     chapSelect.disabled = false;
                     Object.keys(categoryTree[comp]).forEach(ch => {
-                        chapSelect.innerHTML += `<option value="${ch}">${ch}</option>`;
+                        chapSelect.innerHTML += `<option value="${window.MathBankSafe.escapeAttribute(ch)}">${window.MathBankSafe.escapeText(ch)}</option>`;
                     });
                 } else {
                     chapSelect.disabled = true;
@@ -969,7 +1046,7 @@ const PAGE_LIMIT = 20;
                 if (comp && chap && categoryTree[comp][chap]) {
                     knowSelect.disabled = false;
                     categoryTree[comp][chap].forEach(k => {
-                        knowSelect.innerHTML += `<option value="${k}">${k}</option>`;
+                        knowSelect.innerHTML += `<option value="${window.MathBankSafe.escapeAttribute(k)}">${window.MathBankSafe.escapeText(k)}</option>`;
                     });
                 } else {
                     knowSelect.disabled = true;
@@ -1003,7 +1080,7 @@ const PAGE_LIMIT = 20;
             
             compSelect.innerHTML = '<option value="">所有学段/必选修</option>';
             Object.keys(categoryTree).forEach(c => {
-                compSelect.innerHTML += `<option value="${c}">${c}</option>`;
+                compSelect.innerHTML += `<option value="${window.MathBankSafe.escapeAttribute(c)}">${window.MathBankSafe.escapeText(c)}</option>`;
             });
             
             compSelect.onchange = () => {
@@ -1013,7 +1090,7 @@ const PAGE_LIMIT = 20;
                 if (comp && categoryTree[comp]) {
                     chapSelect.classList.remove('hidden');
                     Object.keys(categoryTree[comp]).forEach(ch => {
-                        chapSelect.innerHTML += `<option value="${ch}">${ch}</option>`;
+                        chapSelect.innerHTML += `<option value="${window.MathBankSafe.escapeAttribute(ch)}">${window.MathBankSafe.escapeText(ch)}</option>`;
                     });
                 } else {
                     chapSelect.classList.add('hidden');
@@ -1045,12 +1122,27 @@ const PAGE_LIMIT = 20;
 
         // Load and List Saved Questions
         function loadQuestions(retryCount = 0) {
+            const loadSequence = ++bankQuestionsLoadSequence;
+            if (bankQuestionsRetryTimer) {
+                clearTimeout(bankQuestionsRetryTimer);
+                bankQuestionsRetryTimer = null;
+            }
+            if (bankQuestionsLoadController) {
+                bankQuestionsLoadController.abort();
+            }
+            const requestController = typeof AbortController !== 'undefined'
+                ? new AbortController()
+                : null;
+            bankQuestionsLoadController = requestController;
+
             const q = document.getElementById('searchInput').value;
             const qtype = document.getElementById('filterType').value;
             const difficulty = document.getElementById('filterDifficulty').value;
             const compulsory = document.getElementById('filterCompulsory').value;
             const chapter = document.getElementById('filterChapter').value;
             const source = document.getElementById('filterSource') ? document.getElementById('filterSource').value : '';
+            const sortOrder = document.getElementById('filterSort') ? document.getElementById('filterSort').value : 'desc';
+            const requestedPage = Math.max(1, currentBankPage);
             
             const params = new URLSearchParams();
             if (q) params.append('q', q);
@@ -1059,52 +1151,54 @@ const PAGE_LIMIT = 20;
             if (compulsory) params.append('compulsory', compulsory);
             if (chapter) params.append('chapter', chapter);
             if (source) params.append('source', source);
+            params.append('page', String(requestedPage));
+            params.append('page_size', String(PAGE_LIMIT));
+            params.append('sort', sortOrder === 'asc' ? 'asc' : 'desc');
             
             const qListContainer = document.getElementById('questionsList');
+            if (!qListContainer) return;
+            qListContainer.setAttribute('aria-busy', 'true');
+            const fetchOptions = requestController ? { signal: requestController.signal } : undefined;
             
-            fetch(`/api/questions?${params.toString()}`)
+            fetch(`/api/questions?${params.toString()}`, fetchOptions)
                 .then(r => {
                     if (!r.ok) {
                         throw new Error(`HTTP 状态码异常: ${r.status}`);
                     }
                     return r.json();
                 })
-                .then(questions => {
+                .then(payload => {
+                    if (loadSequence !== bankQuestionsLoadSequence) return;
+                    if (!payload || !Array.isArray(payload.items)) {
+                        throw new Error('题库分页响应格式无效');
+                    }
+
+                    const questions = payload.items;
+                    const parsedTotal = Number(payload.total);
+                    const totalItems = Number.isFinite(parsedTotal) && parsedTotal >= 0 ? parsedTotal : 0;
+                    const parsedTotalPages = Number(payload.total_pages);
+                    const totalPages = Number.isFinite(parsedTotalPages) && parsedTotalPages > 0
+                        ? parsedTotalPages
+                        : Math.max(1, Math.ceil(totalItems / PAGE_LIMIT));
+                    const parsedResponsePage = Number(payload.page);
+                    const responsePage = Number.isFinite(parsedResponsePage) && parsedResponsePage > 0
+                        ? parsedResponsePage
+                        : requestedPage;
+
+                    currentBankPage = Math.min(responsePage, totalPages);
                     qListContainer.innerHTML = '';
                     
-                    if (questions.length === 0) {
+                    if (totalItems === 0) {
                         qListContainer.innerHTML = `
                             <div class="p-6 text-center text-slate-400 text-xs">
-                                <i class="fa-solid fa-box-open text-2xl mb-1 text-slate-350"></i>
+                                <i class="fa-solid fa-box-open text-2xl mb-1 text-slate-400"></i>
                                 <p>未找到匹配题目</p>
                             </div>`;
                         renderSidebarPagination(0, 1, 'bank');
                         return;
                     }
                     
-                    // Sort Questions by time
-                    const sortOrder = document.getElementById('filterSort') ? document.getElementById('filterSort').value : 'desc';
-                    questions.sort((a, b) => {
-                        const dateA = a.created_at ? new Date(a.created_at).getTime() : 0;
-                        const dateB = b.created_at ? new Date(b.created_at).getTime() : 0;
-                        if (dateA !== dateB) {
-                            return sortOrder === 'asc' ? dateA - dateB : dateB - dateA;
-                        }
-                        return sortOrder === 'asc' ? a.id - b.id : b.id - a.id;
-                    });
-                    
-                    const totalItems = questions.length;
-                    const totalPages = Math.ceil(totalItems / PAGE_LIMIT) || 1;
-                    if (currentBankPage > totalPages) {
-                        currentBankPage = totalPages;
-                    }
-                    if (currentBankPage < 1) {
-                        currentBankPage = 1;
-                    }
-                    
-                    const pageItems = questions.slice((currentBankPage - 1) * PAGE_LIMIT, currentBankPage * PAGE_LIMIT);
-                    
-                    pageItems.forEach(item => {
+                    questions.forEach(item => {
                         // Create card element
                         const difficultyBadge = getDifficultyBadge(item.difficulty);
                         const typeText = getTypeText(item.question_type);
@@ -1113,7 +1207,7 @@ const PAGE_LIMIT = 20;
                         itemCard.className = `question-card p-3.5 mx-1.5 flex flex-col space-y-2 select-none group relative ${EditorState.questionId === item.id ? 'active' : ''}`;
                         itemCard.dataset.id = item.id;
                         
-                        const cleanContent = preprocessFormulaForKaTeX(item.content || '');
+                        const cleanContent = parseMarkdownWithMath(item.content || '');
                         
                         let tagsHtml = '';
                         if (item.tags) {
@@ -1123,11 +1217,11 @@ const PAGE_LIMIT = 20;
                                 const hiddenCount = tagList.length - 2;
                                 
                                 displayTags.forEach(tag => {
-                                    tagsHtml += `<span class="text-[9px] font-bold text-amber-600 bg-amber-50 border border-amber-250/60 px-1.5 py-0.5 rounded-full flex items-center space-x-0.5"><i class="fa-solid fa-tag text-[7px] text-amber-500 mr-0.5"></i><span class="max-w-[80px] truncate">${tag}</span></span>`;
+                                    tagsHtml += `<span class="text-[9px] font-bold text-amber-600 bg-amber-50 border border-amber-300/60 px-1.5 py-0.5 rounded-full flex items-center space-x-0.5"><i class="fa-solid fa-tag text-[7px] text-amber-500 mr-0.5"></i><span class="max-w-[80px] truncate">${window.MathBankSafe.escapeText(tag)}</span></span>`;
                                 });
                                 
                                 if (hiddenCount > 0) {
-                                    const fullTagsHtml = tagList.map(tag => `<span class="inline-flex items-center whitespace-nowrap"><i class="fa-solid fa-tag text-[7px] text-amber-500/80 mr-1"></i>${tag}</span>`).join('<span class="mx-1.5 text-amber-300/50">|</span>');
+                                    const fullTagsHtml = tagList.map(tag => `<span class="inline-flex items-center whitespace-nowrap"><i class="fa-solid fa-tag text-[7px] text-amber-500/80 mr-1"></i>${window.MathBankSafe.escapeText(tag)}</span>`).join('<span class="mx-1.5 text-amber-300/50">|</span>');
                                     tagsHtml += `
                                     <div class="relative flex items-center" onclick="event.stopPropagation()">
                                         <span class="peer text-[9px] font-bold text-amber-600 bg-amber-100 border border-amber-300/60 px-1.5 py-0.5 rounded-full cursor-default flex items-center shadow-sm hover:bg-amber-200 transition-colors">+${hiddenCount}</span>
@@ -1143,13 +1237,13 @@ const PAGE_LIMIT = 20;
 
                         itemCard.innerHTML = `
                             <div class="flex items-start justify-between">
-                                <span class="text-[10px] font-bold px-2 py-0.5 rounded bg-slate-100 text-slate-500 shrink-0 mt-0.5">${typeText}</span>
+                                <span class="text-[10px] font-bold px-2 py-0.5 rounded bg-slate-100 text-slate-500 shrink-0 mt-0.5">${window.MathBankSafe.escapeText(typeText)}</span>
                                 <div class="flex items-center gap-1.5 justify-end flex-wrap flex-1 ml-2">
                                     ${tagsHtml}
                                     ${difficultyBadge}
-                                    <span class="text-[10px] font-extrabold px-1.5 py-0.5 rounded bg-brand-50 text-brand-600 shadow-sm">#${item.seq_num}</span>
+                                    <span class="text-[10px] font-extrabold px-1.5 py-0.5 rounded bg-brand-50 text-brand-600 shadow-sm">#${window.MathBankSafe.escapeText(item.seq_num)}</span>
                                     <!-- Delete Button -->
-                                    <button onclick="event.stopPropagation(); deleteQuestion(${item.id})" class="text-slate-400 hover:text-red-500 p-0.5 rounded hover:bg-slate-100 transition-all opacity-0 group-hover:opacity-100" title="删除">
+                                    <button type="button" aria-label="删除题目" onclick="event.stopPropagation(); deleteQuestion(${item.id})" class="text-slate-400 hover:text-red-500 p-0.5 rounded hover:bg-slate-100 transition-all opacity-0 group-hover:opacity-100" title="删除">
                                         <i class="fa-solid fa-trash-can text-[10px]"></i>
                                     </button>
                                 </div>
@@ -1158,11 +1252,11 @@ const PAGE_LIMIT = 20;
                             <!-- Time Badge -->
                             <div class="text-[8px] text-slate-400/80 flex items-center space-x-1 py-0.5">
                                 <i class="fa-regular fa-clock text-[8px]"></i>
-                                <span>录入：${formatChineseDate(item.created_at)}</span>
+                                <span>录入：${window.MathBankSafe.escapeText(formatChineseDate(item.created_at))}</span>
                             </div>
                             <div class="flex justify-between items-center text-[9px] text-slate-400 border-t pt-1.5">
-                                <span class="truncate max-w-[120px] font-semibold"><i class="fa-solid fa-folder-open mr-0.5"></i>${item.category_knowledge || item.category_chapter || '未分类'}</span>
-                                <span class="font-mono text-slate-400">${item.source ? item.source.substring(0, 12) : '本地录入'}</span>
+                                <span class="truncate max-w-[120px] font-semibold"><i class="fa-solid fa-folder-open mr-0.5"></i>${window.MathBankSafe.escapeText(item.category_knowledge || item.category_chapter || '未分类')}</span>
+                                <span class="font-mono text-slate-400">${window.MathBankSafe.escapeText(item.source ? item.source.substring(0, 12) : '本地录入')}</span>
                             </div>
                         `;
                         
@@ -1191,22 +1285,36 @@ const PAGE_LIMIT = 20;
                     renderSidebarPagination(totalItems, currentBankPage, 'bank');
                 })
                 .catch(err => {
+                    if ((err && err.name === 'AbortError') || loadSequence !== bankQuestionsLoadSequence) {
+                        return;
+                    }
                     console.error('加载题库列表发生异常:', err);
                     if (retryCount < 3) {
                         console.warn(`[Auto-Retry] 正在尝试第 ${retryCount + 1} 次自适应重新加载题库数据...`);
-                        setTimeout(() => loadQuestions(retryCount + 1), 1500);
+                        bankQuestionsRetryTimer = setTimeout(() => {
+                            if (loadSequence === bankQuestionsLoadSequence) {
+                                loadQuestions(retryCount + 1);
+                            }
+                        }, 1500);
                     } else {
                         qListContainer.innerHTML = `
                             <div class="p-6 text-center text-red-500 text-xs">
                                 <i class="fa-solid fa-triangle-exclamation text-2xl mb-1 text-red-400"></i>
                                 <p class="font-semibold">获取题库列表失败</p>
-                                <p class="text-[10px] text-slate-450 mt-0.5 mb-2.5">后台服务正在启动或连接超时</p>
+                                <p class="text-[10px] text-slate-500 mt-0.5 mb-2.5">后台服务正在启动或连接超时</p>
                                 <button onclick="loadQuestions()" class="px-3.5 py-1.5 bg-red-50 hover:bg-red-100 text-red-600 font-bold rounded-xl transition-all border border-red-200 hover:scale-95 text-[10px] inline-flex items-center space-x-1 cursor-pointer">
                                     <i class="fa-solid fa-arrows-rotate"></i><span>重新加载</span>
                                 </button>
                             </div>`;
                         renderSidebarPagination(0, 1, 'bank');
                         showToast('系统正在连接或初始化后台，加载题库失败，请稍后刷新重试', 'error');
+                    }
+                })
+                .finally(() => {
+                    if (loadSequence !== bankQuestionsLoadSequence) return;
+                    qListContainer.removeAttribute('aria-busy');
+                    if (bankQuestionsLoadController === requestController) {
+                        bankQuestionsLoadController = null;
                     }
                 });
         }
@@ -1279,7 +1387,7 @@ const PAGE_LIMIT = 20;
                         <span>页</span>
                     </div>
                 </div>
-                <div class="flex items-center justify-center space-x-1">
+                <div class="sidebar-pagination-controls flex items-center justify-center space-x-1">
                     <button class="pagination-btn pagination-btn-nav" ${currentPage === 1 ? 'disabled' : ''} onclick="goToSidebarPage(${currentPage - 1}, '${tabType}')">
                         <i class="fa-solid fa-chevron-left text-[9px] mr-0.5"></i>上一页
                     </button>
@@ -1321,12 +1429,7 @@ const PAGE_LIMIT = 20;
 
         // Format ISO Date string to Chinese local datetime: xxxx年xx月xx日xx时xx分
         function escapeEditorMetaText(value) {
-            return String(value == null ? '' : value)
-                .replace(/&/g, '&amp;')
-                .replace(/</g, '&lt;')
-                .replace(/>/g, '&gt;')
-                .replace(/"/g, '&quot;')
-                .replace(/'/g, '&#039;');
+            return window.MathBankSafe.escapeText(value);
         }
 
         function renderEditorPaperMeta() {
@@ -1343,7 +1446,7 @@ const PAGE_LIMIT = 20;
 
             const seqBadge = EditorState.seqNum != null
                 ? `<span class="text-[10px] font-bold px-2 py-0.5 rounded-md bg-slate-100 text-slate-700">编号：#${escapeEditorMetaText(EditorState.seqNum)}</span>`
-                : '<span class="text-[10px] font-bold px-2 py-0.5 rounded-md bg-slate-150 text-slate-500">编号：新题目</span>';
+                : '<span class="text-[10px] font-bold px-2 py-0.5 rounded-md bg-slate-200 text-slate-500">编号：新题目</span>';
 
             const createdAtBadge = EditorState.createdAt
                 ? `<span class="text-[10px] font-bold px-2 py-0.5 rounded-md bg-emerald-50 text-emerald-700 inline-flex items-center"><i class="fa-regular fa-clock mr-1"></i>录入于：${escapeEditorMetaText(formatChineseDate(EditorState.createdAt))}</span>`
@@ -1354,7 +1457,7 @@ const PAGE_LIMIT = 20;
             if (tagsVal) {
                 const tagList = tagsVal.split(/[,，]+/).map(tag => tag.trim()).filter(tag => tag.length > 0);
                 tagList.forEach(tag => {
-                    paperTagsHtml += `<span class="text-[10px] font-bold px-2 py-0.5 rounded-md bg-amber-50 text-amber-600 border border-amber-250/60 flex items-center space-x-0.5"><i class="fa-solid fa-tag text-[8px] text-amber-500 mr-1"></i>${escapeEditorMetaText(tag)}</span>`;
+                    paperTagsHtml += `<span class="text-[10px] font-bold px-2 py-0.5 rounded-md bg-amber-50 text-amber-600 border border-amber-300/60 flex items-center space-x-0.5"><i class="fa-solid fa-tag text-[8px] text-amber-500 mr-1"></i>${escapeEditorMetaText(tag)}</span>`;
                 });
             }
 
@@ -1656,6 +1759,11 @@ const PAGE_LIMIT = 20;
             });
         }
 
+        function transformExamZhParenForPreview(text) {
+            if (!text) return "";
+            return text.replace(/\\paren\b/g, '<span class="exam-zh-paren-preview" role="img" aria-label="选择题作答括号">（&nbsp;&nbsp;）</span>');
+        }
+
         function preprocessFormulaForKaTeX(text) {
             if (!text) return "";
             
@@ -1720,6 +1828,11 @@ const PAGE_LIMIT = 20;
             
             // Strip HTML tags from non-math parts
             tempText = tempText.replace(/<[^>]*>/g, '');
+
+            // exam-zh defines \paren outside math mode, while KaTeX does not.
+            // Convert only the protected-and-sanitized text portion into the
+            // same empty answer parentheses used by the A4 paper preview.
+            tempText = transformExamZhParenForPreview(tempText);
             
             // Process LaTeX lists & environments outside math blocks
             tempText = tempText.replace(/\\\\\s*\\begin\{/g, '\\begin{')
@@ -1867,7 +1980,7 @@ const PAGE_LIMIT = 20;
                 const normalizedInner = inner.replace(/\\\\\[[^\]]*?\]/g, "\\\\");
                 const rawRows = splitLatexTableParts(normalizedInner, "rows");
                 let activeRowspans = [];
-                let html = '<div class="overflow-x-auto my-3 max-w-full text-center select-none"><table class="inline-table mx-auto text-xs text-slate-700 dark:text-slate-200 border-collapse border border-slate-300 dark:border-slate-600 bg-slate-50/60 dark:bg-slate-800/40 rounded-lg shadow-2xs"><tbody>';
+                let html = '<div class="overflow-x-auto my-3 max-w-full text-center select-none"><table class="inline-table mx-auto text-xs text-slate-700 dark:text-slate-200 border-collapse border border-slate-300 dark:border-slate-600 bg-slate-50/60 dark:bg-slate-800/40 rounded-lg shadow-sm"><tbody>';
 
                 rawRows.forEach((rowStr) => {
                     const trimmed = rowStr.trim();
@@ -1881,7 +1994,7 @@ const PAGE_LIMIT = 20;
                                             .trim();
                     if (!cleanRow) return;
 
-                    let rowClass = "border-b border-slate-250 dark:border-slate-700 hover:bg-slate-100/40 dark:hover:bg-slate-700/30 transition-colors";
+                    let rowClass = "border-b border-slate-300 dark:border-slate-700 hover:bg-slate-100/40 dark:hover:bg-slate-700/30 transition-colors";
                     if (isTopRule) rowClass += " border-t-2 border-t-slate-800 dark:border-t-slate-200";
                     if (isMidRule) rowClass += " border-b-2 border-b-slate-600 dark:border-b-slate-400";
                     if (isBottomRule) rowClass += " border-b-2 border-b-slate-800 dark:border-b-slate-200";
@@ -1932,7 +2045,7 @@ const PAGE_LIMIT = 20;
                         }
 
                         cell = unescapeTableCellForHtml(cell);
-                        const borderClass = "border border-slate-250 dark:border-slate-650";
+                        const borderClass = "border border-slate-300 dark:border-slate-700";
                         const rowspanAttr = rowspan > 1 ? ' rowspan="' + rowspan + '"' : "";
                         html += '<td colspan="' + colspan + '"' + rowspanAttr + ' class="px-3 py-1.5 ' + borderClass + ' ' + alignClass + ' font-normal align-middle">' + cell + '</td>';
                         currentCol += colspan;
@@ -1979,7 +2092,10 @@ const PAGE_LIMIT = 20;
                                
             // 转换 Markdown 题目插图与配图语法 ![](/static/uploads/xxx.png) 为精美自适应预览图
             tempText = tempText.replace(/!\[(.*?)\]\(([^)]+)\)/g, function(match, alt, src) {
-                return `<div class="my-2.5 text-center"><img src="${src}" alt="${alt || '题目配图'}" class="max-w-[220px] max-h-[180px] object-contain rounded-lg border border-slate-200 shadow-2xs inline-block cursor-zoom-in hover:shadow-sm hover:scale-[1.02] transition-all" onclick="window.open('${src}', '_blank')" title="点击在新标签页查看高清原图"></div>`;
+                const safeSrc = window.MathBankSafe.safeImageUrl(src);
+                if (!safeSrc) return '';
+                const safeAlt = window.MathBankSafe.escapeAttribute(alt || '题目配图');
+                return `<div class="my-2.5 text-center"><img src="${window.MathBankSafe.escapeAttribute(safeSrc)}" alt="${safeAlt}" class="max-w-[220px] max-h-[180px] object-contain rounded-lg border border-slate-200 shadow-sm inline-block cursor-zoom-in hover:shadow-sm hover:scale-[1.02] transition-all" data-safe-image-open="true" title="点击在新标签页查看高清原图"></div>`;
             });
                                
             // Restore math blocks with HTML escaping
@@ -1999,7 +2115,7 @@ const PAGE_LIMIT = 20;
             
         function parseMarkdownWithMath(text) {
             if (!text) return "";
-            return preprocessFormulaForKaTeX(text);
+            return window.MathBankSafe.sanitizeRichHtml(preprocessFormulaForKaTeX(text));
         }
         window.parseMarkdownWithMath = parseMarkdownWithMath;
 

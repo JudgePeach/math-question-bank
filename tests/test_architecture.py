@@ -61,7 +61,12 @@ def test_editor_identity_and_meta_preview_have_single_sources():
     assert combined_source.count("getElementById('paperBadges')") == 1
     assert "window.renderEditorPaperMeta = renderEditorPaperMeta" in editor_source
     assert "renderEditorPaperMeta();" in import_source
-    assert "EditorState.questionId !== requestedQuestionId" in import_source
+    select_start = import_source.index("function selectQuestion(item)")
+    select_end = import_source.index("window.reloadCurrentQuestionSilently", select_start)
+    select_source = import_source[select_start:select_end]
+    assert "EditorState.useQuestion(item)" not in select_source
+    assert select_source.index(".then(fullItem =>") < select_source.index("EditorState.useQuestion(fullItem)")
+    assert "loadSequence !== questionDetailLoadSequence" in select_source
 
 
 def test_multimodal_ai_routes_use_shared_provider_resolvers():
@@ -78,6 +83,14 @@ def test_multimodal_ai_routes_use_shared_provider_resolvers():
     assert "resolve_ocr_provider(engine)" in main_source
     assert "resolve_ocr_fallbacks(prefer_engine)" in main_source
     assert main_source.count("resolve_draw_provider(prefer_draw)") == 2
+
+
+def test_all_text_ai_routes_parse_models_with_the_shared_effort_rules():
+    main_source = (PROJECT_ROOT / "main.py").read_text(encoding="utf-8")
+
+    assert "parse_effort=False" not in main_source
+    assert "robust_request_post" not in main_source
+    assert "inject_reasoning_effort" in main_source
 
 
 def test_bailian_model_presets_are_current_and_task_specific():
@@ -101,6 +114,23 @@ def test_bailian_model_presets_are_current_and_task_specific():
     assert "models = [selectedValue, ...models]" in api_source
 
 
+def test_blocking_upload_and_ai_handlers_run_in_fastapi_worker_threads():
+    import inspect
+    import main
+
+    for handler_name in (
+        "upload_image",
+        "upload_tex_source",
+        "upload_batch_images",
+        "upload_pdf_task",
+        "upload_docx_task",
+        "ai_solve",
+        "ai_classify",
+        "ai_parse_paper",
+    ):
+        assert not inspect.iscoroutinefunction(getattr(main, handler_name))
+
+
 def test_paper_parsers_use_defensive_ai_json_parser():
     main_source = (PROJECT_ROOT / "main.py").read_text(encoding="utf-8")
 
@@ -109,15 +139,37 @@ def test_paper_parsers_use_defensive_ai_json_parser():
 
 
 def test_backend_modules_and_cli_tools_live_in_packages():
-    for module_name in ("database.py", "paper_helper.py", "sync_helper.py"):
+    for module_name in (
+        "asset_security.py",
+        "backup.py",
+        "database.py",
+        "db_migrations.py",
+        "health.py",
+        "paper_helper.py",
+        "sync_helper.py",
+        "task_manager.py",
+    ):
         assert not (PROJECT_ROOT / module_name).exists()
         assert (PROJECT_ROOT / "mathbank" / module_name).is_file()
 
     for script_name in (
         "search_questions.py",
+        "backup.py",
+        "restore.py",
         "migrate_fillin.py",
         "migrate_choice_parentheses.py",
         "build_release.py",
     ):
         assert not (PROJECT_ROOT / script_name).exists()
         assert (PROJECT_ROOT / "scripts" / script_name).is_file()
+
+
+def test_server_holds_restore_runtime_lock_before_database_initialization():
+    main_source = (PROJECT_ROOT / "main.py").read_text(encoding="utf-8")
+
+    lock_call = main_source.index(
+        "_RUNTIME_LOCK = None if IS_TESTING else acquire_runtime_lock()"
+    )
+    database_init = main_source.index("\ninit_db()", lock_call)
+    assert lock_call < database_init
+    assert "atexit.register(_RUNTIME_LOCK.close)" in main_source[lock_call:database_init]

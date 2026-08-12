@@ -82,11 +82,11 @@
     <header class="glass-panel sticky top-0 z-40 w-full h-16 flex items-center justify-between px-6">
         <div class="flex items-center space-x-3">
             <!-- 1. Absolute Top-Left Anchor: Logo & Title -->
-            <div class="h-10 w-10 rounded-xl overflow-hidden shadow-sm shrink-0 flex items-center justify-center">
+            <div id="appLogoMark" class="h-10 w-10 rounded-xl overflow-hidden shadow-sm shrink-0 flex items-center justify-center">
                 <img src="/static/favicon.png" alt="MathBank Logo" class="w-full h-full object-cover">
             </div>
             <div class="relative" id="workspaceDropdownContainer">
-                <div onclick="toggleWorkspaceDropdown(event)" id="workspaceDropdownBtn" class="group cursor-pointer rounded-xl px-2 py-1 -mx-2 hover:bg-slate-200/50 dark:hover:bg-slate-800/60 active:scale-95 transition-all" title="点击切换工作台">
+                <div onclick="toggleWorkspaceDropdown(event)" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();toggleWorkspaceDropdown(event)}" id="workspaceDropdownBtn" role="button" tabindex="0" aria-label="切换工作台" aria-haspopup="menu" aria-expanded="false" class="group cursor-pointer rounded-xl px-2 py-1 -mx-2 hover:bg-slate-200/50 dark:hover:bg-slate-800/60 active:scale-95 transition-all" title="点击切换工作台">
                     <span class="font-semibold text-lg tracking-tight font-['Outfit'] brand-title block">MathBank</span>
                     <div class="flex items-center space-x-1 -mt-1">
                         <span id="currentWorkspaceName" class="text-sm font-medium text-slate-700 dark:text-slate-200">题库研讨工作台</span>
@@ -94,20 +94,20 @@
                     </div>
                 </div>
                 <!-- Workspace Dropdown Menu -->
-                <div id="workspaceDropdownMenu" class="glass-dropdown absolute left-0 mt-2 w-52 py-1.5 rounded-2xl border border-slate-200/70 bg-white/95 backdrop-blur-xl shadow-xl transition-all duration-200 scale-90 opacity-0 pointer-events-none origin-top-left z-50">
+                <div id="workspaceDropdownMenu" role="menu" class="glass-dropdown absolute left-0 mt-2 w-52 py-1.5 rounded-2xl border border-slate-200/70 bg-white/95 backdrop-blur-xl shadow-xl transition-all duration-200 scale-90 opacity-0 pointer-events-none origin-top-left z-50">
                     <button onclick="selectWorkspace('bank', '题库研讨工作台')" class="glass-dropdown-item w-full px-3.5 py-2.5 text-xs text-left flex items-center justify-between font-medium rounded-xl" id="ws-btn-bank">
                         <span>题库研讨工作台</span>
-                        <i class="fa-solid fa-check text-[10px] text-brand-600 dark:text-brand-400" id="ws-check-bank"></i>
+                        <i class="fa-solid fa-check text-[10px] text-brand-600 dark:text-brand-500" id="ws-check-bank"></i>
                     </button>
                     <button onclick="selectWorkspace('paper', '组卷排版工作台')" class="glass-dropdown-item w-full px-3.5 py-2.5 text-xs text-left flex items-center justify-between rounded-xl" id="ws-btn-paper">
                         <span>组卷排版工作台</span>
-                        <i class="fa-solid fa-check text-[10px] text-brand-600 dark:text-brand-400 hidden" id="ws-check-paper"></i>
+                        <i class="fa-solid fa-check text-[10px] text-brand-600 dark:text-brand-500 hidden" id="ws-check-paper"></i>
                     </button>
                 </div>
             </div>
 
             <!-- 2. Sidebar Toggle Button (Placed right after Title) -->
-            <button onclick="toggleSidebarCollapse()" id="toggleSidebarBtn" class="ml-2 p-2 rounded-xl text-slate-500 hover:text-brand-600 hover:bg-slate-100/60 active:scale-95 transition-all focus:outline-none dark:text-slate-300 dark:hover:bg-slate-800/60 border border-slate-200/50 dark:border-slate-700/50" title="收起左侧题库栏">
+            <button onclick="toggleSidebarCollapse()" id="toggleSidebarBtn" aria-label="收起或展开左侧题库栏" class="ml-2 p-2 rounded-xl text-slate-500 hover:text-brand-600 hover:bg-slate-100/60 active:scale-95 transition-all focus:outline-none dark:text-slate-300 dark:hover:bg-slate-800/60 border border-slate-200/50 dark:border-slate-700/50" title="收起左侧题库栏">
                 <i class="fa-solid fa-angles-left text-xs transition-transform duration-200" id="toggleSidebarIcon"></i>
             </button>
         </div>
@@ -123,61 +123,61 @@
             <div class="flex items-center space-x-2 bg-slate-100/60 p-1.5 rounded-xl border border-slate-200/50 relative dark:bg-slate-800/40 dark:border-slate-700/50">
                 <!-- Dropdown Trigger -->
                 <div class="relative" id="themeDropdownContainer">
-                    <button onclick="toggleThemeDropdown(event)" id="themeDropdownBtn" class="flex items-center space-x-1.5 px-2.5 py-1 rounded-lg text-xs font-semibold text-slate-600 hover:bg-white/60 active:scale-95 transition-all focus:outline-none dark:text-slate-200 dark:hover:bg-slate-700/40" title="切换主题配色">
+                    <button onclick="toggleThemeDropdown(event)" id="themeDropdownBtn" aria-label="切换主题配色" aria-haspopup="menu" aria-expanded="false" class="flex items-center space-x-1.5 px-2.5 py-1 rounded-lg text-xs font-semibold text-slate-600 hover:bg-white/60 active:scale-95 transition-all focus:outline-none dark:text-slate-200 dark:hover:bg-slate-700/40" title="切换主题配色">
                         <span id="currentThemeDot" class="w-3.5 h-3.5 rounded-full bg-[#8b5cf6] border border-white"></span>
                         <span id="currentThemeName">罗兰紫</span>
                         <i class="fa-solid fa-chevron-down text-[9px] text-slate-400 transition-transform duration-200" id="themeDropdownArrow"></i>
                     </button>
                     <!-- Dropdown Menu -->
-                    <div id="themeDropdownMenu" class="glass-dropdown absolute left-0 mt-2.5 w-36 py-1.5 rounded-2xl border border-slate-200/70 bg-white/95 backdrop-blur-xl shadow-xl transition-all duration-200 scale-90 opacity-0 pointer-events-none origin-top-left z-50">
+                    <div id="themeDropdownMenu" role="menu" class="glass-dropdown absolute left-0 mt-2.5 w-36 py-1.5 rounded-2xl border border-slate-200/70 bg-white/95 backdrop-blur-xl shadow-xl transition-all duration-200 scale-90 opacity-0 pointer-events-none origin-top-left z-50">
                         <button onclick="selectTheme('obsidian')" class="glass-dropdown-item w-full px-3.5 py-2 text-xs text-left flex items-center space-x-2 rounded-xl">
                             <span class="w-2.5 h-2.5 rounded-full bg-[#0f172a] shrink-0 border border-slate-400/40"></span>
                             <span>曜石黑</span>
-                            <i class="fa-solid fa-check text-[9px] text-brand-600 dark:text-brand-400 ml-auto hidden" id="check-obsidian"></i>
+                            <i class="fa-solid fa-check text-[9px] text-brand-600 dark:text-brand-500 ml-auto hidden" id="check-obsidian"></i>
                         </button>
                         <button onclick="selectTheme('violet')" class="glass-dropdown-item w-full px-3.5 py-2 text-xs text-left flex items-center space-x-2 rounded-xl">
                             <span class="w-2.5 h-2.5 rounded-full bg-[#8b5cf6] shrink-0"></span>
                             <span>罗兰紫</span>
-                            <i class="fa-solid fa-check text-[9px] text-brand-600 dark:text-brand-400 ml-auto hidden" id="check-violet"></i>
+                            <i class="fa-solid fa-check text-[9px] text-brand-600 dark:text-brand-500 ml-auto hidden" id="check-violet"></i>
                         </button>
                         <button onclick="selectTheme('ocean')" class="glass-dropdown-item w-full px-3.5 py-2 text-xs text-left flex items-center space-x-2 rounded-xl">
                             <span class="w-2.5 h-2.5 rounded-full bg-[#0ea5e9] shrink-0"></span>
                             <span>深海蓝</span>
-                            <i class="fa-solid fa-check text-[9px] text-brand-600 dark:text-brand-400 ml-auto hidden" id="check-ocean"></i>
+                            <i class="fa-solid fa-check text-[9px] text-brand-600 dark:text-brand-500 ml-auto hidden" id="check-ocean"></i>
                         </button>
                         <button onclick="selectTheme('emerald')" class="glass-dropdown-item w-full px-3.5 py-2 text-xs text-left flex items-center space-x-2 rounded-xl">
                             <span class="w-2.5 h-2.5 rounded-full bg-[#10b981] shrink-0"></span>
                             <span>翡翠绿</span>
-                            <i class="fa-solid fa-check text-[9px] text-brand-600 dark:text-brand-400 ml-auto hidden" id="check-emerald"></i>
+                            <i class="fa-solid fa-check text-[9px] text-brand-600 dark:text-brand-500 ml-auto hidden" id="check-emerald"></i>
                         </button>
                         <button onclick="selectTheme('amber')" class="glass-dropdown-item w-full px-3.5 py-2 text-xs text-left flex items-center space-x-2 rounded-xl">
                             <span class="w-2.5 h-2.5 rounded-full bg-[#f59e0b] shrink-0"></span>
                             <span>琥珀橙</span>
-                            <i class="fa-solid fa-check text-[9px] text-brand-600 dark:text-brand-400 ml-auto hidden" id="check-amber"></i>
+                            <i class="fa-solid fa-check text-[9px] text-brand-600 dark:text-brand-500 ml-auto hidden" id="check-amber"></i>
                         </button>
                         <button onclick="selectTheme('crimson')" class="glass-dropdown-item w-full px-3.5 py-2 text-xs text-left flex items-center space-x-2 rounded-xl">
                             <span class="w-2.5 h-2.5 rounded-full bg-[#f43f5e] shrink-0"></span>
                             <span>玫瑰红</span>
-                            <i class="fa-solid fa-check text-[9px] text-brand-600 dark:text-brand-400 ml-auto hidden" id="check-crimson"></i>
+                            <i class="fa-solid fa-check text-[9px] text-brand-600 dark:text-brand-500 ml-auto hidden" id="check-crimson"></i>
                         </button>
                     </div>
                 </div>
                 <div class="h-3.5 w-[1px] bg-slate-300/60 mx-1 dark:bg-slate-600/50"></div>
                 <!-- Dark Mode Toggle -->
-                <button onclick="toggleDarkMode()" id="darkModeBtn" class="p-0.5 text-slate-500 hover:text-brand-600 hover:scale-110 active:scale-95 transition-all focus:outline-none flex items-center justify-center rounded-lg dark:text-slate-300 dark:hover:text-brand-400" title="切换夜间模式">
+                <button onclick="toggleDarkMode()" id="darkModeBtn" aria-label="切换夜间模式" class="p-0.5 text-slate-500 hover:text-brand-600 hover:scale-110 active:scale-95 transition-all focus:outline-none flex items-center justify-center rounded-lg dark:text-slate-300 dark:hover:text-brand-500" title="切换夜间模式">
                     <i class="fa-solid fa-moon text-xs"></i>
                 </button>
             </div>
 
 
             <!-- Statistics Button - Apple Glass Style -->
-            <button onclick="openStatsModal()" class="glass-btn flex items-center space-x-2 px-4 py-2 rounded-xl text-xs font-semibold text-brand-600">
+            <button onclick="openStatsModal()" id="statsOpenBtn" aria-label="打开题库数据统计" class="glass-btn flex items-center space-x-2 px-4 py-2 rounded-xl text-xs font-semibold text-brand-600">
                 <i class="fa-solid fa-chart-pie text-brand-500"></i>
                 <span>数据统计</span>
             </button>
 
             <!-- Settings Button - Apple Glass Style -->
-            <button onclick="openSettingsModal()" class="glass-btn relative flex items-center space-x-2 px-4 py-2 rounded-xl text-xs font-medium text-slate-600">
+            <button onclick="openSettingsModal()" aria-label="打开系统设置" class="glass-btn relative flex items-center space-x-2 px-4 py-2 rounded-xl text-xs font-medium text-slate-600">
                 <i class="fa-solid fa-gear"></i>
                 <span>设置</span>
                 <!-- Update Notification Badge (hidden by default) -->
@@ -188,7 +188,7 @@
             </button>
 
             <!-- Shutdown Button - Apple Glass Danger Style -->
-            <button onclick="confirmShutdown()" class="glass-btn-danger flex items-center space-x-2 px-4 py-2 rounded-xl text-xs font-semibold" title="安全关闭本地题库后端服务">
+            <button onclick="confirmShutdown()" aria-label="安全关闭题库" class="glass-btn-danger flex items-center space-x-2 px-4 py-2 rounded-xl text-xs font-semibold" title="安全关闭本地题库后端服务">
                 <i class="fa-solid fa-power-off"></i>
                 <span>关闭题库</span>
             </button>
@@ -334,7 +334,7 @@
                     <button onclick="clearEditor()" class="text-xs text-slate-400 hover:text-red-500 transition-colors px-2 py-1 rounded-lg hover:bg-red-50">
                         清空草稿
                     </button>
-                    <button onclick="saveQuestion()" class="glass-btn-primary px-5 py-2 rounded-xl font-medium text-sm flex items-center space-x-1.5">
+                    <button id="saveQuestionBtn" onclick="saveQuestion()" class="glass-btn-primary px-5 py-2 rounded-xl font-medium text-sm flex items-center space-x-1.5">
                         <i class="fa-solid fa-floppy-disk"></i>
                         <span>保存</span>
                     </button>
@@ -447,7 +447,7 @@
                             </div>
                             
                             <!-- Content OCR Dropzone -->
-                            <div id="contentOcrDropZone" tabindex="0" class="border-2 border-dashed border-slate-200 hover:border-brand-400 focus:outline-none focus:ring-2 focus:ring-brand-500/20 focus:border-brand-500 bg-white rounded-xl p-5 text-center cursor-pointer transition-all duration-300 relative overflow-hidden flex flex-col items-center justify-center min-h-[120px]">
+                            <div id="contentOcrDropZone" tabindex="0" class="border-2 border-dashed border-slate-200 hover:border-brand-500 focus:outline-none focus:ring-2 focus:ring-brand-500/20 focus:border-brand-500 bg-white rounded-xl p-5 text-center cursor-pointer transition-all duration-300 relative overflow-hidden flex flex-col items-center justify-center min-h-[120px]">
                                 <input type="file" id="contentOcrFileInput" accept="image/*" class="hidden">
                                 <!-- Placeholder view -->
                                 <div id="contentOcrPlaceholder" class="space-y-1.5 flex flex-col items-center">
@@ -467,7 +467,7 @@
                             </div>
 
                             <!-- Content OCR Loading -->
-                            <div id="contentOcrLoadingIndicator" class="hidden glass-card rounded-xl p-4 text-center space-y-2">
+                            <div id="contentOcrLoadingIndicator" role="status" aria-live="polite" class="hidden glass-card rounded-xl p-4 text-center space-y-2">
                                 <i class="fa-solid fa-spinner animate-spin text-brand-500 text-xl"></i>
                                 <p class="text-xs text-slate-500 font-medium">正在解析图片中的复杂公式与混排文字... 请稍候</p>
                             </div>
@@ -485,14 +485,14 @@
                         <div id="contentTabContent-manual" class="space-y-3 hidden">
                             <p class="text-xs text-slate-400"><i class="fa-solid fa-circle-info"></i> 您可以直接在下方的题干编辑框中直接手写 LaTeX/Markdown 混合内容。配图可以直接上传插图进行定位。</p>
                             <div class="flex flex-wrap gap-1.5">
-                                <span class="text-[10px] bg-slate-100 text-slate-650 px-2.5 py-1 rounded-md cursor-pointer hover:bg-slate-200 font-mono" onclick="insertContentHelper('$x^2$')">$x^2$ (行内公式)</span>
-                                <span class="text-[10px] bg-slate-100 text-slate-650 px-2.5 py-1 rounded-md cursor-pointer hover:bg-slate-200 font-mono" onclick="insertContentHelper('\\frac{a}{b}')">$\frac{a}{b}$ (分数)</span>
-                                <span class="text-[10px] bg-slate-100 text-slate-650 px-2.5 py-1 rounded-md cursor-pointer hover:bg-slate-200 font-mono" onclick="insertContentHelper('\\sqrt{x}')">$\sqrt{x}$ (开根)</span>
-                                <span class="text-[10px] bg-slate-100 text-slate-650 px-2.5 py-1 rounded-md cursor-pointer hover:bg-slate-200 font-mono" onclick="insertContentHelper('\\triangle ABC')">$\triangle ABC$ (三角形)</span>
-                                <span class="text-[10px] bg-slate-100 text-slate-650 px-2.5 py-1 rounded-md cursor-pointer hover:bg-slate-200 font-mono" onclick="insertContentHelper('\\angle ABC')">$\angle ABC$ (角)</span>
-                                <span class="text-[10px] bg-slate-100 text-slate-650 px-2.5 py-1 rounded-md cursor-pointer hover:bg-slate-200 font-mono" onclick="insertContentHelper('\\vec{a}')">$\vec{a}$ (向量)</span>
-                                <span class="text-[10px] bg-slate-100 text-slate-650 px-2.5 py-1 rounded-md cursor-pointer hover:bg-slate-200 font-mono" onclick="insertContentHelper('\\fillin')">\fillin (填空)</span>
-                                <span class="text-[10px] bg-slate-100 text-slate-650 px-2.5 py-1 rounded-md cursor-pointer hover:bg-slate-200 font-mono" onclick="insertContentHelper('$\\begin{cases} x, & x \\ge 0 \\\\ -x, & x < 0 \\end{cases}$')">\cases (分段)</span>
+                                <span class="text-[10px] bg-slate-100 text-slate-700 px-2.5 py-1 rounded-md cursor-pointer hover:bg-slate-200 font-mono" onclick="insertContentHelper('$x^2$')">$x^2$ (行内公式)</span>
+                                <span class="text-[10px] bg-slate-100 text-slate-700 px-2.5 py-1 rounded-md cursor-pointer hover:bg-slate-200 font-mono" onclick="insertContentHelper('\\frac{a}{b}')">$\frac{a}{b}$ (分数)</span>
+                                <span class="text-[10px] bg-slate-100 text-slate-700 px-2.5 py-1 rounded-md cursor-pointer hover:bg-slate-200 font-mono" onclick="insertContentHelper('\\sqrt{x}')">$\sqrt{x}$ (开根)</span>
+                                <span class="text-[10px] bg-slate-100 text-slate-700 px-2.5 py-1 rounded-md cursor-pointer hover:bg-slate-200 font-mono" onclick="insertContentHelper('\\triangle ABC')">$\triangle ABC$ (三角形)</span>
+                                <span class="text-[10px] bg-slate-100 text-slate-700 px-2.5 py-1 rounded-md cursor-pointer hover:bg-slate-200 font-mono" onclick="insertContentHelper('\\angle ABC')">$\angle ABC$ (角)</span>
+                                <span class="text-[10px] bg-slate-100 text-slate-700 px-2.5 py-1 rounded-md cursor-pointer hover:bg-slate-200 font-mono" onclick="insertContentHelper('\\vec{a}')">$\vec{a}$ (向量)</span>
+                                <span class="text-[10px] bg-slate-100 text-slate-700 px-2.5 py-1 rounded-md cursor-pointer hover:bg-slate-200 font-mono" onclick="insertContentHelper('\\fillin')">\fillin (填空)</span>
+                                <span class="text-[10px] bg-slate-100 text-slate-700 px-2.5 py-1 rounded-md cursor-pointer hover:bg-slate-200 font-mono" onclick="insertContentHelper('$\\begin{cases} x, & x \\ge 0 \\\\ -x, & x < 0 \\end{cases}$')">\cases (分段)</span>
                             </div>
                         </div>
                     </div>
@@ -519,7 +519,7 @@
                                         <i class="fa-solid fa-image"></i>
                                         <span>题目配图 / 插图</span>
                                     </label>
-                                    <div id="illustrationDropZone" tabindex="0" class="border-2 border-dashed border-slate-200 hover:border-brand-400 focus:outline-none focus:ring-2 focus:ring-brand-500/20 focus:border-brand-500 bg-white rounded-xl p-4 text-center cursor-pointer transition-all duration-300">
+                                    <div id="illustrationDropZone" tabindex="0" class="border-2 border-dashed border-slate-200 hover:border-brand-500 focus:outline-none focus:ring-2 focus:ring-brand-500/20 focus:border-brand-500 bg-white rounded-xl p-4 text-center cursor-pointer transition-all duration-300">
                                         <input type="file" id="illustrationFileInput" accept="image/*" class="hidden">
                                         <i class="fa-solid fa-cloud-arrow-up text-slate-300 text-2xl mb-1"></i>
                                         <p class="text-xs text-slate-500 font-medium">拖拽插图到此，或点击上传 (支持粘贴剪贴板截图)</p>
@@ -538,7 +538,7 @@
                                                 <i class="fa-solid fa-compass-drafting text-brand-500"></i>
                                                 <span>题干几何绘图 (TikZ)</span>
                                             </span>
-                                            <button type="button" onclick="clearContentTikzCode()" class="px-2 py-0.5 rounded bg-red-50 text-red-650 hover:bg-red-100 text-[10px] font-medium transition-all">清空代码</button>
+                                            <button type="button" onclick="clearContentTikzCode()" class="px-2 py-0.5 rounded bg-red-50 text-red-700 hover:bg-red-100 text-[10px] font-medium transition-all">清空代码</button>
                                         </div>
                                         <textarea id="editContentTikzCode" rows="6" placeholder="在此输入题干 \begin{tikzpicture} ... \end{tikzpicture} 代码..."
                                                   class="w-full p-3 rounded-lg font-mono text-xs leading-relaxed resize-y border border-slate-200 focus:border-brand-500 focus:ring-2 focus:ring-brand-100 bg-white transition-all"></textarea>
@@ -562,7 +562,7 @@
                                         </div>
                                         <div class="border border-slate-200 rounded-lg bg-white overflow-hidden p-2 flex items-center justify-center min-h-[140px] relative">
                                             <span id="contentTikzStatusText" class="absolute top-2 right-2 text-[9px] text-slate-400 bg-slate-100 px-1.5 py-0.5 rounded">未编译</span>
-                                            <div id="contentTikzPreviewPlaceholder" class="text-center text-slate-400 text-2xs py-8">
+                                            <div id="contentTikzPreviewPlaceholder" class="text-center text-slate-400 text-[10px] py-8">
                                                 <i class="fa-solid fa-image text-2xl text-slate-200 mb-1"></i>
                                                 <p>编译后在此展示插图预览</p>
                                             </div>
@@ -642,7 +642,7 @@
                             </div>
                             
                             <!-- Loading indicator -->
-                            <div id="aiLoadingIndicator" class="hidden bg-slate-50 border border-slate-200 rounded-xl p-6 text-center space-y-3">
+                            <div id="aiLoadingIndicator" role="status" aria-live="polite" class="hidden bg-slate-50 border border-slate-200 rounded-xl p-6 text-center space-y-3">
                                 <div class="flex items-center justify-center space-x-1">
                                     <div class="h-2.5 w-2.5 rounded-full bg-brand-500 animate-bounce"></div>
                                     <div class="h-2.5 w-2.5 rounded-full bg-indigo-500 animate-bounce [animation-delay:0.2s]"></div>
@@ -679,7 +679,7 @@
                             </div>
                             
                             <!-- OCR Drag Upload Area -->
-                            <div id="ocrDropZone" tabindex="0" class="border-2 border-dashed border-slate-200 hover:border-brand-400 focus:outline-none focus:ring-2 focus:ring-brand-500/20 focus:border-brand-500 bg-white rounded-xl p-5 text-center cursor-pointer transition-all duration-300 relative overflow-hidden flex flex-col items-center justify-center min-h-[120px]">
+                            <div id="ocrDropZone" tabindex="0" class="border-2 border-dashed border-slate-200 hover:border-brand-500 focus:outline-none focus:ring-2 focus:ring-brand-500/20 focus:border-brand-500 bg-white rounded-xl p-5 text-center cursor-pointer transition-all duration-300 relative overflow-hidden flex flex-col items-center justify-center min-h-[120px]">
                                 <input type="file" id="ocrFileInput" accept="image/*" class="hidden">
                                 <!-- Placeholder view -->
                                 <div id="ocrPlaceholder" class="space-y-1.5 flex flex-col items-center">
@@ -699,7 +699,7 @@
                             </div>
 
                             <!-- OCR Loading -->
-                            <div id="ocrLoadingIndicator" class="hidden bg-slate-50 border border-slate-200 rounded-xl p-4 text-center space-y-2">
+                            <div id="ocrLoadingIndicator" role="status" aria-live="polite" class="hidden bg-slate-50 border border-slate-200 rounded-xl p-4 text-center space-y-2">
                                 <i class="fa-solid fa-cog animate-spin text-brand-500 text-xl"></i>
                                 <p class="text-xs text-slate-500">正在与服务器端智能识图引擎通信，解析公式与文本... 请稍候</p>
                             </div>
@@ -723,7 +723,7 @@
                             </p>
                             
                             <!-- Image Answer Drag Upload Area -->
-                            <div id="imageAnswerDropZone" tabindex="0" class="border-2 border-dashed border-slate-200 hover:border-brand-400 focus:outline-none focus:ring-2 focus:ring-brand-500/20 focus:border-brand-500 bg-white rounded-xl p-5 text-center cursor-pointer transition-all duration-300">
+                            <div id="imageAnswerDropZone" tabindex="0" class="border-2 border-dashed border-slate-200 hover:border-brand-500 focus:outline-none focus:ring-2 focus:ring-brand-500/20 focus:border-brand-500 bg-white rounded-xl p-5 text-center cursor-pointer transition-all duration-300">
                                 <input type="file" id="imageAnswerFileInput" accept="image/*" multiple class="hidden">
                                 <i class="fa-solid fa-images text-slate-300 text-3xl mb-1.5 animate-pulse"></i>
                                 <p class="text-xs text-slate-500 font-medium">将答案截图拖拽到此，或点击上传 (支持多选与直接粘贴)</p>
@@ -766,7 +766,7 @@
                                             <i class="fa-solid fa-compass-drafting text-brand-500"></i>
                                             <span>解答几何绘图 (TikZ)</span>
                                         </span>
-                                        <button type="button" onclick="clearAnswerTikzCode()" class="px-2 py-0.5 rounded bg-red-50 text-red-650 hover:bg-red-100 text-[10px] font-medium transition-all">清空代码</button>
+                                        <button type="button" onclick="clearAnswerTikzCode()" class="px-2 py-0.5 rounded bg-red-50 text-red-700 hover:bg-red-100 text-[10px] font-medium transition-all">清空代码</button>
                                     </div>
                                     <textarea id="editAnswerTikzCode" rows="6" placeholder="在此输入解答 \begin{tikzpicture} ... \end{tikzpicture} 代码..."
                                               class="w-full p-3 rounded-lg font-mono text-xs leading-relaxed resize-y border border-slate-200 focus:border-brand-500 focus:ring-2 focus:ring-brand-100 bg-white transition-all"></textarea>
@@ -790,7 +790,7 @@
                                     </div>
                                     <div class="border border-slate-200 rounded-lg bg-white overflow-hidden p-2 flex items-center justify-center min-h-[140px] relative">
                                         <span id="answerTikzStatusText" class="absolute top-2 right-2 text-[9px] text-slate-400 bg-slate-100 px-1.5 py-0.5 rounded">未编译</span>
-                                        <div id="answerTikzPreviewPlaceholder" class="text-center text-slate-400 text-2xs py-8">
+                                        <div id="answerTikzPreviewPlaceholder" class="text-center text-slate-400 text-[10px] py-8">
                                             <i class="fa-solid fa-image text-2xl text-slate-200 mb-1"></i>
                                             <p>编译后在此展示插图预览</p>
                                         </div>
@@ -842,7 +842,7 @@
                                     <select id="editRelatedQuestion" class="flex-1 min-w-0 h-10 px-2.5 rounded-xl text-xs truncate border border-slate-200 focus:border-brand-500 focus:ring-2 focus:ring-brand-100 transition-all">
                                         <option value="">-- 选择要关联的题目 (可选) --</option>
                                     </select>
-                                    <button type="button" onclick="associateRelatedQuestion()" class="h-10 px-3 rounded-xl text-xs flex items-center justify-center space-x-1 shrink-0 bg-brand-50 hover:bg-brand-100 text-brand-700 font-bold border border-brand-200 shadow-2xs hover:shadow-xs transition-all active:scale-95" title="点击确认将选中的题目与当前题目绑定关联">
+                                    <button type="button" onclick="associateRelatedQuestion()" class="h-10 px-3 rounded-xl text-xs flex items-center justify-center space-x-1 shrink-0 bg-brand-50 hover:bg-brand-100 text-brand-700 font-bold border border-brand-200 shadow-sm hover:shadow-sm transition-all active:scale-95" title="点击确认将选中的题目与当前题目绑定关联">
                                         <i class="fa-solid fa-link text-brand-600"></i>
                                         <span>关联</span>
                                     </button>
@@ -917,7 +917,7 @@
                             </div>
 
                             <div class="relative group/copy">
-                                <div class="p-4 rounded-xl bg-slate-50 border border-slate-150 transition-all duration-300 leading-relaxed text-sm preview-box pb-7" id="paperAnalysisContent">
+                                <div class="p-4 rounded-xl bg-slate-50 border border-slate-200 transition-all duration-300 leading-relaxed text-sm preview-box pb-7" id="paperAnalysisContent">
                                     <!-- Injected by JS -->
                                     <p class="text-slate-400 italic">暂无解析内容。</p>
                                 </div>
@@ -973,8 +973,8 @@
 
                 <!-- Part ② & ③ Boundary Collapse Toggle Bar -->
                 <div class="px-3 py-1 bg-slate-100/40 dark:bg-slate-900/60 border-y border-slate-200/50 dark:border-slate-800/80 flex items-center justify-between shrink-0">
-                    <button onclick="togglePaperFilterBar()" id="togglePaperFilterBtn" class="text-2xs font-semibold text-slate-500 hover:text-brand-600 dark:text-slate-400 dark:hover:text-brand-300 flex items-center space-x-1.5 transition-colors">
-                        <i id="paperFilterToggleIcon" class="fa-solid fa-chevron-up text-2xs"></i>
+                    <button onclick="togglePaperFilterBar()" id="togglePaperFilterBtn" class="text-[10px] font-semibold text-slate-500 hover:text-brand-600 dark:text-slate-400 dark:hover:text-brand-200 flex items-center space-x-1.5 transition-colors">
+                        <i id="paperFilterToggleIcon" class="fa-solid fa-chevron-up text-[10px]"></i>
                         <span id="paperFilterToggleTxt">收起组卷配置栏</span>
                     </button>
                 </div>
@@ -995,14 +995,14 @@
     </main>
 
     <!-- AI CLASSIFICATION MODAL - Apple Glass Style -->
-    <div id="aiClassifyModal" class="fixed inset-0 glass-modal-overlay z-50 flex items-center justify-center hidden opacity-0 transition-opacity duration-300">
+    <div id="aiClassifyModal" role="dialog" aria-modal="true" aria-hidden="true" aria-labelledby="aiClassifyModalTitle" class="fixed inset-0 glass-modal-overlay z-50 flex items-center justify-center hidden opacity-0 transition-opacity duration-300">
         <div class="glass-modal rounded-2xl w-full max-w-md p-6 transform scale-95 transition-transform duration-300 space-y-5">
             <div class="flex justify-between items-center border-b border-slate-200/50 pb-3">
-                <h3 class="font-bold text-base text-slate-800 flex items-center space-x-2">
+                <h3 id="aiClassifyModalTitle" class="font-bold text-base text-slate-800 flex items-center space-x-2">
                     <i class="fa-solid fa-wand-magic-sparkles text-brand-600"></i>
                     <span>教材分类智能分析</span>
                 </h3>
-                <button onclick="closeClassifyModal()" class="glass-btn w-9 h-9 flex items-center justify-center rounded-xl text-slate-400 hover:text-slate-600 transition-all">
+                <button type="button" data-modal-close onclick="closeClassifyModal()" aria-label="关闭教材分类分析弹窗" class="glass-btn w-9 h-9 flex items-center justify-center rounded-xl text-slate-400 hover:text-slate-600 transition-all">
                     <i class="fa-solid fa-xmark text-lg"></i>
                 </button>
             </div>
@@ -1013,7 +1013,7 @@
                 </p>
 
                 <!-- Loading State -->
-                <div id="classifyLoading" class="hidden glass-card rounded-xl p-6 text-center space-y-3">
+                <div id="classifyLoading" role="status" aria-live="polite" class="hidden glass-card rounded-xl p-6 text-center space-y-3">
                     <i class="fa-solid fa-spinner animate-spin text-brand-500 text-2xl"></i>
                     <p class="text-xs text-slate-500 font-medium">AI 正在研读题干以自动匹配教材大纲...</p>
                 </div>
@@ -1024,8 +1024,8 @@
                         <div>
                             <span class="text-[10px] uppercase font-bold text-brand-600 tracking-wider flex items-center mb-1.5"><i class="fa-solid fa-robot mr-1.5 animate-bounce"></i>AI 推荐教材定位：</span>
                             <div class="flex items-center space-x-2 font-semibold text-slate-800 text-xs flex-wrap gap-y-1.5">
-                                <span id="recCompulsory" class="bg-brand-100 text-brand-800 px-2.5 py-0.5 rounded-lg text-[10px] font-bold">选择性必修二</span>
-                                <i class="fa-solid fa-chevron-right text-[10px] text-slate-450"></i>
+                                <span id="recCompulsory" class="bg-brand-100 text-brand-700 px-2.5 py-0.5 rounded-lg text-[10px] font-bold">选择性必修二</span>
+                                <i class="fa-solid fa-chevron-right text-[10px] text-slate-500"></i>
                                 <span id="recChapter" class="text-slate-800 font-bold">5. 一元函数的导数及其应用</span>
                             </div>
                         </div>
@@ -1056,14 +1056,14 @@
     </div>
 
     <!-- SETTINGS MODAL (API Configuration) - Apple Glass Style -->
-    <div id="settingsModal" class="fixed inset-0 glass-modal-overlay z-50 flex items-center justify-center hidden opacity-0 transition-opacity duration-300">
+    <div id="settingsModal" role="dialog" aria-modal="true" aria-hidden="true" aria-labelledby="settingsModalTitle" class="fixed inset-0 glass-modal-overlay z-50 flex items-center justify-center hidden opacity-0 transition-opacity duration-300">
         <div class="glass-modal rounded-2xl w-full max-w-5xl p-6 transform scale-95 transition-transform duration-300 flex flex-col max-h-[90vh] overflow-hidden">
             <div class="flex justify-between items-center border-b border-slate-200/50 pb-3 shrink-0">
-                <h3 class="font-bold text-base text-slate-800 flex items-center space-x-2">
+                <h3 id="settingsModalTitle" class="font-bold text-base text-slate-800 flex items-center space-x-2">
                     <i class="fa-solid fa-sliders text-brand-600"></i>
                     <span>外部与本地 API 接口参数设置</span>
                 </h3>
-                <button onclick="closeSettingsModal()" class="glass-btn w-9 h-9 flex items-center justify-center rounded-xl text-slate-400 hover:text-slate-600 transition-all aspect-square">
+                <button type="button" data-modal-close onclick="closeSettingsModal()" aria-label="关闭系统设置" class="glass-btn w-9 h-9 flex items-center justify-center rounded-xl text-slate-400 hover:text-slate-600 transition-all aspect-square">
                     <i class="fa-solid fa-xmark text-lg"></i>
                 </button>
             </div>
@@ -1174,7 +1174,7 @@
 
                             <div class="space-y-3 max-h-[380px] overflow-y-auto pr-1">
                                 <!-- 1. AI 智能解题模型 -->
-                                <div class="p-3 glass-card rounded-xl space-y-1.5 shadow-3xs">
+                                <div class="p-3 glass-card rounded-xl space-y-1.5 shadow-sm">
                                     <label class="block text-[11px] font-bold text-slate-600 dark:text-slate-200">AI 智能解题模型 (PREFER_SOLVE_MODEL)</label>
                                     <div class="flex items-center space-x-2">
                                         <select id="solveModelProvider" onchange="onModelProviderChange('solve')" class="glass-select w-[92px] shrink-0 px-2 py-1.5 rounded-lg text-xs">
@@ -1191,7 +1191,7 @@
                                 </div>
 
                                 <!-- 2. 试卷智能拆解模型 -->
-                                <div class="p-3 glass-card rounded-xl space-y-1.5 shadow-3xs">
+                                <div class="p-3 glass-card rounded-xl space-y-1.5 shadow-sm">
                                     <label class="block text-[11px] font-bold text-slate-600 dark:text-slate-200">试卷智能拆解模型 (PREFER_PARSE_MODEL)</label>
                                     <div class="flex items-center space-x-2">
                                         <select id="parseModelProvider" onchange="onModelProviderChange('parse')" class="glass-select w-[92px] shrink-0 px-2 py-1.5 rounded-lg text-xs">
@@ -1208,7 +1208,7 @@
                                 </div>
 
                                 <!-- 3. 题目智能分类模型 -->
-                                <div class="p-3 glass-card rounded-xl space-y-1.5 shadow-3xs">
+                                <div class="p-3 glass-card rounded-xl space-y-1.5 shadow-sm">
                                     <label class="block text-[11px] font-bold text-slate-600 dark:text-slate-200">题目智能分类模型 (PREFER_CLASSIFY_MODEL)</label>
                                     <div class="flex items-center space-x-2">
                                         <select id="classifyModelProvider" onchange="onModelProviderChange('classify')" class="glass-select w-[92px] shrink-0 px-2 py-1.5 rounded-lg text-xs">
@@ -1225,7 +1225,7 @@
                                 </div>
 
                                 <!-- 4. 默认公式识图模型 -->
-                                <div class="p-3 glass-card rounded-xl space-y-1.5 shadow-3xs">
+                                <div class="p-3 glass-card rounded-xl space-y-1.5 shadow-sm">
                                     <label class="block text-[11px] font-bold text-slate-600 dark:text-slate-200">默认公式识图模型 (DEFAULT_OCR_ENGINE)</label>
                                     <div class="flex items-center space-x-2">
                                         <select id="ocrModelProvider" onchange="onModelProviderChange('ocr')" class="glass-select w-[92px] shrink-0 px-2 py-1.5 rounded-lg text-xs">
@@ -1241,7 +1241,7 @@
                                 </div>
 
                                 <!-- 5. 高级 TikZ 绘图模型 -->
-                                <div class="p-3 glass-card rounded-xl space-y-1.5 shadow-3xs">
+                                <div class="p-3 glass-card rounded-xl space-y-1.5 shadow-sm">
                                     <label class="block text-[11px] font-bold text-slate-600 dark:text-slate-200">高级 TikZ 绘图模型 (PREFER_DRAW_MODEL)</label>
                                     <div class="flex items-center space-x-2">
                                         <select id="drawModelProvider" onchange="onModelProviderChange('draw')" class="glass-select w-[92px] shrink-0 px-2 py-1.5 rounded-lg text-xs">
@@ -1343,7 +1343,7 @@
                                 <p class="text-[11px] text-slate-400" id="aboutUpdateStatusText">点击右侧按钮立即检查 GitHub Release 更新</p>
                             </div>
                             <div class="flex items-center space-x-2 shrink-0">
-                                <button type="button" onclick="checkAppUpdateManually(true)" id="btnCheckUpdateManual" class="px-3 py-1.5 rounded-xl bg-brand-50 hover:bg-brand-100 text-brand-600 dark:bg-brand-500/20 dark:text-brand-300 font-bold text-xs transition-all active:scale-95 flex items-center space-x-1.5">
+                                <button type="button" onclick="checkAppUpdateManually(true)" id="btnCheckUpdateManual" class="px-3 py-1.5 rounded-xl bg-brand-50 hover:bg-brand-100 text-brand-600 dark:bg-brand-500/20 dark:text-brand-200 font-bold text-xs transition-all active:scale-95 flex items-center space-x-1.5">
                                     <i class="fa-solid fa-rotate text-[11px]" id="checkUpdateSpinIcon"></i>
                                     <span>立即检查更新</span>
                                 </button>
@@ -1361,7 +1361,7 @@
                         <!-- Ignored version tip & reset -->
                         <div id="ignoredVersionRow" class="text-[11px] text-slate-400 dark:text-slate-500 flex items-center justify-between pt-2 border-t border-slate-100 dark:border-slate-700/60 hidden">
                             <span id="ignoredVersionText">您已忽略了某个版本的更新提醒。</span>
-                            <button type="button" onclick="clearIgnoredVersion()" class="text-brand-600 dark:text-brand-400 hover:underline font-medium cursor-pointer">恢复该版本提醒</button>
+                            <button type="button" onclick="clearIgnoredVersion()" class="text-brand-600 dark:text-brand-500 hover:underline font-medium cursor-pointer">恢复该版本提醒</button>
                         </div>
                     </div>
 
@@ -1396,7 +1396,7 @@
     </div>
 
     <!-- VERSION UPDATE MODAL - Apple Glass Style -->
-    <div id="updateModal" class="fixed inset-0 glass-modal-overlay z-50 flex items-center justify-center hidden opacity-0 transition-opacity duration-300">
+    <div id="updateModal" role="dialog" aria-modal="true" aria-hidden="true" aria-labelledby="updateModalTitle" class="fixed inset-0 glass-modal-overlay z-50 flex items-center justify-center hidden opacity-0 transition-opacity duration-300">
         <div class="glass-modal rounded-3xl w-full max-w-2xl p-6 sm:p-7 transform scale-95 transition-transform duration-300 flex flex-col max-h-[85vh] overflow-hidden shadow-2xl border border-brand-200/50 dark:border-brand-500/20">
             <!-- Modal Header -->
             <div class="flex justify-between items-start pb-4 border-b border-slate-200/60 dark:border-slate-700/60 shrink-0">
@@ -1407,12 +1407,12 @@
                     <div>
                         <div class="flex items-center space-x-2">
                             <h3 class="font-bold text-lg text-slate-800 dark:text-white" id="updateModalTitle">发现新版本 v2.0.1</h3>
-                            <span class="px-2 py-0.5 rounded-full text-[10px] font-bold bg-brand-50 text-brand-600 dark:bg-brand-500/20 dark:text-brand-300 border border-brand-200 dark:border-brand-500/30" id="updateModalBadge">NEW RELEASE</span>
+                            <span class="px-2 py-0.5 rounded-full text-[10px] font-bold bg-brand-50 text-brand-600 dark:bg-brand-500/20 dark:text-brand-200 border border-brand-200 dark:border-brand-500/30" id="updateModalBadge">NEW RELEASE</span>
                         </div>
                         <p class="text-xs text-slate-500 dark:text-slate-400 mt-0.5" id="updateModalDate">发布于 2026-08-09</p>
                     </div>
                 </div>
-                <button onclick="closeUpdateModal()" class="glass-btn w-9 h-9 flex items-center justify-center rounded-xl text-slate-400 hover:text-slate-600 dark:text-slate-400 dark:hover:text-slate-200 transition-all">
+                <button type="button" data-modal-close onclick="closeUpdateModal()" aria-label="关闭版本更新弹窗" class="glass-btn w-9 h-9 flex items-center justify-center rounded-xl text-slate-400 hover:text-slate-600 dark:text-slate-400 dark:hover:text-slate-200 transition-all">
                     <i class="fa-solid fa-xmark text-base"></i>
                 </button>
             </div>
@@ -1429,12 +1429,19 @@
                     </div>
                 </div>
 
+                <div class="bg-amber-50/80 dark:bg-amber-500/10 border border-amber-200 dark:border-amber-500/20 rounded-xl p-3 flex items-start space-x-2.5">
+                    <i class="fa-solid fa-shield-halved text-amber-500 text-sm mt-0.5"></i>
+                    <div class="text-[11px] leading-relaxed text-amber-800 dark:text-amber-200">
+                        <span class="font-bold">覆盖升级前：</span>先用右上角电源按钮安全关闭题库，确认后台已经停止；解压后只把新版文件夹里的内容合并到原目录，不要删除或用 Finder 整体替换原文件夹。数据库、密钥、备份和上传图片应保留在原目录中。
+                    </div>
+                </div>
+
                 <!-- Platform Download Buttons -->
                 <div class="space-y-2">
                     <span class="text-[11px] font-bold text-slate-500 dark:text-slate-400 block">选择您的系统下载便携升级包：</span>
                     <div class="grid grid-cols-1 sm:grid-cols-2 gap-3" id="updateDownloadButtons">
                         <!-- macOS Download Button -->
-                        <a id="btnDownloadMac" href="#" target="_blank" class="p-3 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 hover:border-brand-500 hover:bg-brand-50/40 dark:hover:bg-slate-700 transition-all flex items-center justify-between group shadow-2xs">
+                        <a id="btnDownloadMac" href="#" target="_blank" class="p-3 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 hover:border-brand-500 hover:bg-brand-50/40 dark:hover:bg-slate-700 transition-all flex items-center justify-between group shadow-sm">
                             <div class="flex items-center space-x-2.5">
                                 <i class="fa-brands fa-apple text-xl text-slate-700 dark:text-slate-200 group-hover:text-brand-600"></i>
                                 <div>
@@ -1446,7 +1453,7 @@
                         </a>
 
                         <!-- Windows Download Button -->
-                        <a id="btnDownloadWin" href="#" target="_blank" class="p-3 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 hover:border-brand-500 hover:bg-brand-50/40 dark:hover:bg-slate-700 transition-all flex items-center justify-between group shadow-2xs">
+                        <a id="btnDownloadWin" href="#" target="_blank" class="p-3 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 hover:border-brand-500 hover:bg-brand-50/40 dark:hover:bg-slate-700 transition-all flex items-center justify-between group shadow-sm">
                             <div class="flex items-center space-x-2.5">
                                 <i class="fa-brands fa-windows text-xl text-blue-500 group-hover:text-brand-600"></i>
                                 <div>
@@ -1463,7 +1470,7 @@
                 <div id="updateGitTip" class="bg-slate-100/80 dark:bg-slate-800/80 border border-slate-200 dark:border-slate-700 rounded-xl p-3 flex items-start space-x-2.5">
                     <i class="fa-brands fa-git-alt text-orange-500 text-sm mt-0.5"></i>
                     <div class="text-[11px] text-slate-600 dark:text-slate-300">
-                        <span class="font-bold">开发者快捷升级：</span>检测到您正使用 Git 源码运行，可直接在终端执行 <code class="bg-white dark:bg-slate-900 px-1.5 py-0.5 rounded border border-slate-300 dark:border-slate-600 font-mono text-brand-600 dark:text-brand-400">git pull</code> 一键热更新。
+                        <span class="font-bold">开发者快捷升级：</span>检测到您正使用 Git 源码运行，可直接在终端执行 <code class="bg-white dark:bg-slate-900 px-1.5 py-0.5 rounded border border-slate-300 dark:border-slate-600 font-mono text-brand-600 dark:text-brand-500">git pull</code> 一键热更新。
                     </div>
                 </div>
             </div>
@@ -1486,15 +1493,15 @@
     </div>
 
     <!-- DB STATISTICS DASHBOARD MODAL - Apple Glass Style -->
-    <div id="statsModal" class="fixed inset-0 glass-modal-overlay z-50 flex items-center justify-center hidden opacity-0 transition-opacity duration-300">
+    <div id="statsModal" role="dialog" aria-modal="true" aria-hidden="true" aria-labelledby="statsModalTitle" class="fixed inset-0 glass-modal-overlay z-50 flex items-center justify-center hidden opacity-0 transition-opacity duration-300">
         <div class="glass-modal rounded-2xl w-full max-w-5xl p-6 transform scale-95 transition-transform duration-300 flex flex-col max-h-[90vh] overflow-hidden">
             <!-- Modal Header -->
             <div class="flex justify-between items-center border-b border-slate-200/50 pb-3 shrink-0">
-                <h3 class="font-bold text-base text-slate-800 flex items-center space-x-2">
+                <h3 id="statsModalTitle" class="font-bold text-base text-slate-800 flex items-center space-x-2">
                     <i class="fa-solid fa-chart-line text-brand-600"></i>
                     <span>题库数据统计</span>
                 </h3>
-                <button onclick="closeStatsModal()" class="glass-btn w-9 h-9 flex items-center justify-center rounded-xl text-slate-400 hover:text-slate-600 transition-all">
+                <button type="button" data-modal-close onclick="closeStatsModal()" aria-label="关闭题库数据统计" class="glass-btn w-9 h-9 flex items-center justify-center rounded-xl text-slate-400 hover:text-slate-600 transition-all">
                     <i class="fa-solid fa-xmark text-lg"></i>
                 </button>
             </div>
@@ -1579,13 +1586,13 @@
                         <!-- Result Display Panel -->
                         <div class="bg-slate-50/50 dark:bg-slate-900/60 border border-slate-100 dark:border-slate-800 rounded-xl p-3.5 flex-1 flex flex-col justify-center items-center text-center space-y-2 min-h-[120px]">
                             <div id="statsQueryResultEmpty" class="space-y-1">
-                                <i class="fa-solid fa-chart-bar text-slate-350 dark:text-slate-600 text-xl"></i>
+                                <i class="fa-solid fa-chart-bar text-slate-400 dark:text-slate-600 text-xl"></i>
                                 <p class="text-[10px] text-slate-500 dark:text-slate-400">选择学段章节查看具体统计数据</p>
                             </div>
                             <div id="statsQueryResultData" class="hidden w-full text-left space-y-2.5">
                                 <div class="flex items-center justify-between border-b border-slate-100 dark:border-slate-800 pb-1.5">
                                     <span class="text-[11px] font-bold text-slate-700 dark:text-slate-200">章节题目总数:</span>
-                                    <span class="text-sm font-black text-brand-650 dark:text-brand-400 font-mono" id="statsQueryCount">0</span>
+                                    <span class="text-sm font-black text-brand-600 dark:text-brand-500 font-mono" id="statsQueryCount">0</span>
                                 </div>
                                 <div class="space-y-1.5">
                                     <span class="text-[10px] font-bold text-slate-400 dark:text-slate-400 uppercase tracking-wider block">所含小节/知识点分布</span>
@@ -1609,13 +1616,13 @@
                             <!-- Year / Month Selectors -->
                             <div class="flex items-center space-x-1.5">
                                 <select id="statsYearSelect" onchange="renderStatsCalendar()" 
-                                        class="px-2 py-1 border border-slate-200 rounded-md text-[11px] font-semibold bg-slate-50 outline-none focus:border-brand-500 text-slate-750">
+                                        class="px-2 py-1 border border-slate-200 rounded-md text-[11px] font-semibold bg-slate-50 outline-none focus:border-brand-500 text-slate-800">
                                     <option value="2025">2025 年</option>
                                     <option value="2026">2026 年</option>
                                     <option value="2027">2027 年</option>
                                 </select>
                                 <select id="statsMonthSelect" onchange="renderStatsCalendar()" 
-                                        class="px-2 py-1 border border-slate-200 rounded-md text-[11px] font-semibold bg-slate-50 outline-none focus:border-brand-500 text-slate-750">
+                                        class="px-2 py-1 border border-slate-200 rounded-md text-[11px] font-semibold bg-slate-50 outline-none focus:border-brand-500 text-slate-800">
                                     <option value="1">1 月</option>
                                     <option value="2">2 月</option>
                                     <option value="3">3 月</option>
@@ -1676,23 +1683,23 @@
     </div>
 
     <!-- LATEX BATCH IMPORT MODAL - Apple Glass Style -->
-    <div id="latexImportModal" class="fixed inset-0 glass-modal-overlay z-50 flex items-center justify-center hidden opacity-0 transition-opacity duration-300">
+    <div id="latexImportModal" role="dialog" aria-modal="true" aria-hidden="true" aria-labelledby="latexImportModalTitle" class="fixed inset-0 glass-modal-overlay z-50 flex items-center justify-center hidden opacity-0 transition-opacity duration-300">
         <div class="glass-modal rounded-2xl w-full max-w-6xl h-[90vh] flex flex-col transform scale-95 transition-transform duration-300 overflow-hidden">
             <!-- Modal Header -->
             <div class="flex justify-between items-center border-b border-slate-200/50 px-6 py-4 shrink-0">
-                <h3 class="font-bold text-lg text-slate-800 flex items-center space-x-2">
+                <h3 id="latexImportModalTitle" class="font-bold text-lg text-slate-800 flex items-center space-x-2">
                     <i class="fa-solid fa-file-import text-brand-600"></i>
                     <span>LaTeX 试卷智能拆解导入与配图自动关联</span>
                 </h3>
-                <button onclick="closeImportModal()" class="glass-btn w-9 h-9 flex items-center justify-center rounded-xl text-slate-400 hover:text-slate-600 transition-all">
+                <button type="button" data-modal-close onclick="closeImportModal()" aria-label="关闭试卷智能拆解弹窗" class="glass-btn w-9 h-9 flex items-center justify-center rounded-xl text-slate-400 hover:text-slate-600 transition-all">
                     <i class="fa-solid fa-xmark text-lg"></i>
                 </button>
             </div>
 
             <!-- Modal Content (Split Pane) -->
-            <div class="flex-1 flex overflow-hidden">
+            <div id="latexImportModalContent" class="flex-1 flex overflow-hidden">
                 <!-- Left Pane: Inputs (LaTeX and Images) -->
-                <div class="w-5/12 border-r border-slate-200 p-6 overflow-y-auto space-y-4 bg-white/50 flex flex-col">
+                <div id="importInputPane" class="w-5/12 border-r border-slate-200 p-6 overflow-y-auto space-y-4 bg-white/50 flex flex-col">
                     <!-- Step 1: Title -->
                     <div class="space-y-1.5 shrink-0">
                         <label class="block text-xs font-bold text-slate-500">第一步：试卷标题（作为题目来源，可空）</label>
@@ -1793,7 +1800,7 @@
                     </div>
 
                     <!-- Loading / Skeleton state -->
-                    <div id="importLoadingState" class="flex-1 flex flex-col items-center justify-center text-center space-y-4 hidden p-12">
+                    <div id="importLoadingState" role="status" aria-live="polite" class="flex-1 flex flex-col items-center justify-center text-center space-y-4 hidden p-12">
                         <div class="h-16 w-16 bg-white border border-brand-200/80 rounded-2xl shadow-sm flex items-center justify-center text-brand-600 text-2xl mb-1">
                             <i class="fa-solid fa-circle-notch fa-spin text-brand-600 text-3xl inline-block"></i>
                         </div>
@@ -1813,7 +1820,7 @@
                         </div>
                         <!-- Cancel action button -->
                         <div class="flex items-center space-x-2 pt-1" id="cancelImportActionContainer">
-                            <button id="btnCancelImport" onclick="cancelCurrentImportTask()" class="px-4 py-1.5 rounded-xl border border-slate-250 hover:border-red-300 bg-white hover:bg-red-50/80 text-slate-600 hover:text-red-600 font-bold text-xs transition-all shadow-2xs active:scale-95 flex items-center space-x-1.5 cursor-pointer" title="点击或按键盘 ESC 键可安全中止当前任务">
+                            <button id="btnCancelImport" onclick="cancelCurrentImportTask()" class="px-4 py-1.5 rounded-xl border border-slate-300 hover:border-red-300 bg-white hover:bg-red-50/80 text-slate-600 hover:text-red-600 font-bold text-xs transition-all shadow-sm active:scale-95 flex items-center space-x-1.5 cursor-pointer" title="点击或按键盘 ESC 键可安全中止当前任务">
                                 <i class="fa-solid fa-ban text-xs text-red-500"></i>
                                 <span>中止拆分 (ESC)</span>
                             </button>
@@ -1830,15 +1837,15 @@
                                     <span class="text-[10px] font-bold px-2 py-0.5 rounded bg-brand-50 text-brand-600 border border-brand-100" id="parsedCountBadge">共 0 题</span>
                                 </div>
                                 <div class="flex items-center space-x-3 border-l pl-3.5 border-slate-200" id="batchSelectActions">
-                                    <label class="flex items-center space-x-1.5 cursor-pointer text-2xs font-semibold text-slate-500 hover:text-brand-600 transition-colors select-none">
+                                    <label class="flex items-center space-x-1.5 cursor-pointer text-[10px] font-semibold text-slate-500 hover:text-brand-600 transition-colors select-none">
                                         <input type="checkbox" id="selectAllCheckbox" class="h-3.5 w-3.5 rounded border-slate-300 text-brand-600 focus:ring-brand-500 transition-colors" checked onchange="toggleSelectAllParsed(this.checked)">
                                         <span>全选</span>
                                     </label>
-                                    <button onclick="invertSelectParsed()" class="text-2xs font-semibold text-slate-500 hover:text-brand-600 transition-colors flex items-center space-x-1 select-none">
+                                    <button onclick="invertSelectParsed()" class="text-[10px] font-semibold text-slate-500 hover:text-brand-600 transition-colors flex items-center space-x-1 select-none">
                                         <i class="fa-solid fa-arrows-rotate text-[9px]"></i>
                                         <span>反选</span>
                                     </button>
-                                    <span class="text-[10px] font-bold text-slate-400 bg-slate-100/80 px-1.5 py-0.5 rounded border border-slate-150" id="selectedCountBadge">已选 0 / 0 题</span>
+                                    <span class="text-[10px] font-bold text-slate-400 bg-slate-100/80 px-1.5 py-0.5 rounded border border-slate-200" id="selectedCountBadge">已选 0 / 0 题</span>
                                 </div>
                             </div>
                             <div class="flex items-center space-x-2.5">
@@ -1868,7 +1875,7 @@
     </div>
 
     <!-- TOAST POPUP (Notification) - Apple Glass Style -->
-    <div id="toast" class="fixed bottom-6 right-6 z-50 transform translate-y-12 opacity-0 transition-all duration-300 pointer-events-none">
+    <div id="toast" role="status" aria-live="polite" aria-atomic="true" class="fixed bottom-6 right-6 z-50 transform translate-y-12 opacity-0 transition-all duration-300 pointer-events-none">
         <div class="glass-modal flex items-center space-x-3 px-5 py-3 rounded-2xl max-w-sm">
             <span id="toastIconContainer" class="h-6 w-6 rounded-full flex items-center justify-center text-xs">
                 <!-- Injected dynamically -->
@@ -1885,26 +1892,26 @@
     <script src="/static/js/paper.js?v=1.0.1"></script>
     
     <!-- PDF PAGE VIEWER & MANUAL CROP LIGHTBOX MODAL - Apple Glass Style -->
-    <div id="pdfCropModal" class="fixed inset-0 glass-modal-overlay z-50 flex items-center justify-center hidden opacity-0 transition-opacity duration-300">
+    <div id="pdfCropModal" role="dialog" aria-modal="true" aria-hidden="true" aria-labelledby="pdfCropModalTitle" class="fixed inset-0 glass-modal-overlay z-50 flex items-center justify-center hidden opacity-0 transition-opacity duration-300">
         <div class="glass-modal rounded-2xl w-full max-w-5xl h-[85vh] flex flex-col transform scale-95 transition-transform duration-300 overflow-hidden">
             <!-- Modal Header -->
             <div class="flex justify-between items-center border-b border-slate-200/50 px-6 py-4 shrink-0">
-                <h3 class="font-bold text-base text-slate-800 flex items-center space-x-2">
+                <h3 id="pdfCropModalTitle" class="font-bold text-base text-slate-800 flex items-center space-x-2">
                     <i class="fa-solid fa-scissors text-brand-600"></i>
                     <span>PDF 试卷页面预览与手动插图裁剪</span>
                 </h3>
                 <div class="flex items-center space-x-3">
                     <span class="text-xs text-slate-400 bg-slate-100 px-2.5 py-1 rounded-lg border border-slate-200" id="pdfCropPageIndicator">第 1 / 1 页</span>
-                    <button onclick="closePdfCropModal()" class="glass-btn w-9 h-9 flex items-center justify-center rounded-xl text-slate-400 hover:text-slate-600 transition-all">
+                    <button type="button" data-modal-close onclick="closePdfCropModal()" aria-label="关闭 PDF 裁剪弹窗" class="glass-btn w-9 h-9 flex items-center justify-center rounded-xl text-slate-400 hover:text-slate-600 transition-all">
                         <i class="fa-solid fa-xmark text-lg"></i>
                     </button>
                 </div>
             </div>
 
             <!-- Modal Content (Split Pane) -->
-            <div class="flex-1 flex overflow-hidden">
+            <div id="pdfCropModalContent" class="flex-1 flex overflow-hidden">
                 <!-- Left Sidebar: Page thumbnails list -->
-                <div class="w-48 border-r border-slate-250/60 p-3 flex flex-col space-y-2 bg-slate-50/50 overflow-y-auto custom-scrollbar" id="pdfPagesThumbnailsContainer">
+                <div class="w-48 border-r border-slate-300/60 p-3 flex flex-col space-y-2 bg-slate-50/50 overflow-y-auto custom-scrollbar" id="pdfPagesThumbnailsContainer">
                     <!-- Page Thumbnails will be dynamically injected here -->
                 </div>
 
@@ -1914,15 +1921,15 @@
                     <div class="flex-1 overflow-auto flex p-6 select-none relative" id="pdfCropCanvasWrapper">
                         <!-- Floating Zoom Controls -->
                         <div class="absolute top-4 right-4 z-10 flex items-center space-x-1.5 bg-slate-950/80 backdrop-blur border border-slate-800 rounded-xl p-1.5 shadow-lg select-none">
-                            <button onclick="zoomPdfCropOut()" class="w-8 h-8 flex items-center justify-center rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 transition-colors">
-                                <i class="fa-solid fa-minus text-2xs"></i>
+                            <button type="button" onclick="zoomPdfCropOut()" aria-label="缩小 PDF 页面" class="w-8 h-8 flex items-center justify-center rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 transition-colors">
+                                <i class="fa-solid fa-minus text-[10px]"></i>
                             </button>
-                            <span id="pdfZoomFactorText" class="text-[10px] font-bold text-slate-350 min-w-[36px] text-center">100%</span>
-                            <button onclick="zoomPdfCropIn()" class="w-8 h-8 flex items-center justify-center rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 transition-colors">
-                                <i class="fa-solid fa-plus text-2xs"></i>
+                            <span id="pdfZoomFactorText" class="text-[10px] font-bold text-slate-400 min-w-[36px] text-center">100%</span>
+                            <button type="button" onclick="zoomPdfCropIn()" aria-label="放大 PDF 页面" class="w-8 h-8 flex items-center justify-center rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 transition-colors">
+                                <i class="fa-solid fa-plus text-[10px]"></i>
                             </button>
-                            <button onclick="resetPdfCropZoom()" class="w-8 h-8 flex items-center justify-center rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 transition-colors" title="重置">
-                                <i class="fa-solid fa-rotate-left text-2xs"></i>
+                            <button type="button" onclick="resetPdfCropZoom()" aria-label="重置 PDF 页面缩放" class="w-8 h-8 flex items-center justify-center rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 transition-colors" title="重置">
+                                <i class="fa-solid fa-rotate-left text-[10px]"></i>
                             </button>
                         </div>
                         <div class="relative inline-block" id="pdfCropImageContainer" style="cursor: crosshair; margin: auto;">
@@ -1938,9 +1945,9 @@
                     </div>
 
                     <!-- Lower action bar -->
-                    <div class="p-4 bg-slate-950 border-t border-slate-800 flex justify-between items-center shrink-0">
-                        <div class="text-2xs text-slate-400 flex items-center space-x-1.5">
-                            <i class="fa-solid fa-circle-info text-brand-400"></i>
+                    <div id="pdfCropActionBar" class="p-4 bg-slate-950 border-t border-slate-800 flex justify-between items-center shrink-0">
+                        <div id="pdfCropHint" class="text-[10px] text-slate-400 flex items-center space-x-1.5">
+                            <i class="fa-solid fa-circle-info text-brand-500"></i>
                             <span>提示：在上方 PDF 页面图上按住鼠标左键并拖拽，即可框选题目中的几何插图区域。</span>
                         </div>
                         <div class="flex items-center space-x-3">
@@ -1959,7 +1966,7 @@
     </div>
 
     <!-- Image Lightbox Overlay -->
-    <div id="imageLightbox" class="fixed inset-0 bg-slate-950/85 backdrop-blur-md z-[100] flex items-center justify-center hidden opacity-0 transition-opacity duration-300 cursor-zoom-out select-none" onclick="closeLightbox()">
+    <div id="imageLightbox" role="dialog" aria-modal="true" aria-hidden="true" aria-label="图片放大预览，按 Esc 关闭" class="fixed inset-0 bg-slate-950/85 backdrop-blur-md z-[100] flex items-center justify-center hidden opacity-0 transition-opacity duration-300 cursor-zoom-out select-none" onclick="closeLightbox()">
         <img id="lightboxImg" src="" alt="Enlarged View" class="max-w-[95vw] max-h-[95vh] rounded-xl shadow-2xl border border-white/10 transition-transform duration-300 transform scale-95 object-contain">
     </div>
 </body>

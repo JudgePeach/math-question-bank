@@ -6,7 +6,7 @@
 ## 2. 核心技术栈
 本项目追求极简配置与极致体验，严格遵循以下技术选型，**不要引入复杂的现代前端构建工具（如 Webpack/Vite/Node.js 生态）**：
 - **后端**：Python + FastAPI。
-- **后端渐进式模块架构**：根目录 `main.py` 继续作为 `uvicorn main:app` 兼容入口；后端领域能力统一集中在 `mathbank/`。`database.py` 提供 SQLite ORM 与 Session，`paper_helper.py` 提供 LaTeX/PDF 编译排版，`sync_helper.py` 提供备份与 AI 题库导出，`paths.py` 统一锚定数据库、静态资源、上传、模板、备份、环境变量和构建路径，`curriculums.py` 加载四套教材 JSON，`prompts.py` 提供 OCR、解题、分类、拆卷、TikZ 与 AI 组卷的纯提示构建器，`ai_providers.py` 统一解析模型供应商，`ai_http.py` 统一负责 AI HTTP 请求，`ai_json.py` 统一解析 AI 结构化输出。运维、迁移、检索与 Release 工具统一位于 `scripts/`，从项目根目录使用 `python3 -m scripts.<模块名>` 运行。严禁重新在根目录新增业务模块或复制供应商判断规则。
+- **后端渐进式模块架构**：根目录 `main.py` 继续作为 `uvicorn main:app` 兼容入口；后端领域能力统一集中在 `mathbank/`。`database.py` 提供 SQLite ORM 与 Session，`db_migrations.py` 提供版本化、备份优先的数据库迁移，`backup.py` 提供带清单校验的完整备份与恢复，`asset_security.py` 统一校验上传内容与本地资产路径，`task_manager.py` 提供有界异步任务、协作取消与临时资源生命周期，`health.py` 提供启动就绪诊断，`paper_helper.py` 提供 LaTeX/PDF 编译排版，`sync_helper.py` 只负责 JSON 同步导出与 AI 题库导出，`paths.py` 统一锚定持久化与捆绑路径。`curriculums.py` 加载四套教材 JSON，`prompts.py` 提供纯提示构建器，`ai_providers.py`、`ai_http.py`、`ai_json.py` 分别统一模型供应商解析、AI HTTP 请求与结构化输出解析。运维、迁移、检索与 Release 工具统一位于 `scripts/`，从项目根目录使用 `python3 -m scripts.<模块名>` 运行。严禁重新在根目录新增业务模块或复制供应商判断规则。
 - **数据库**：SQLite + SQLAlchemy（轻量级，数据存储在本地 `.db` 文件中）。
 - **前端页面**：纯 HTML + 原生 JavaScript。
 - **前端脚本拆分**：前端 JS 采用无编译的“渐进式级联加载”架构，按 `api.js`、`editor.js`、`ocr.js`、`import.js`、`paper.js` 的顺序级联加载；前四个模块负责 API/全局状态、编辑与渲染、OCR 图像交互、导入拆卷，`paper.js` 负责组卷工作台。加载顺序严格依存，不允许产生任何编译及捆绑动作。
@@ -48,6 +48,7 @@
   - 选择题选项统一格式化为 LaTeX `choices` 环境（`\begin{choices}` 和 `\item`），剥离原本的 A., B., C., D. 标号前缀。
   - **选择题 choices 网格对齐**：前端使用 `choices-grid` 容器与首行基线对齐，确保题干右侧括号 `（   ）` 靠右，选项独占下方 A4 栅格，且标号与首行文本基线精准对齐。
   - **选择题题干末尾括号净化**：后端与前端预编译自动物理抹除题干末尾的全角/半角空括号（如 `(\quad)`、`(   )`），防止与 TeX 模板右侧 `\paren` 宏重叠。
+  - **exam-zh `\paren` 预览兼容**：试题教研工作台将文本态 `\paren` 转换为靠右的 HTML 空括号，数学环境保持原样交给 KaTeX；A4 组卷预览仍按题型生成括号，最终 PDF 仍交由 exam-zh 的 `\paren` 宏排版。
   - **填空题 \fillin 宏规范**：下划线统一生成与清洗规范化为 `\fillin` 宏。前端负责数学环境感知与句末标点位置自愈。
   - **HTML 解析器小于号转义**：前端预处理 KaTeX 公式时将数学环境内的 `<` 与 `>` 安全替换为 `\lt ` 与 `\gt `（禁用后行断言），防止浏览器 `innerHTML` 解析时切割 DOM 树。
   - **LaTeX tabular 表格网格渲染**：`\begin{tabular}` 自动解析转换为现代居中、带微边框的响应式 HTML5 表格，保留 LaTeX 原生源码导出。
@@ -61,6 +62,8 @@
   - **编辑会话状态 (`EditorState`)**：`api.js` 的 `EditorState` 是当前题目 ID、序号、草稿 ID 与编辑模式的唯一状态来源，禁止引入平行全局变量。
 - **草稿箱与未保存决策流**：
   - 草稿统一存放在 LocalStorage 键 `mathbank_local_drafts`。离开未保存 Dirty 页面时提供“存入本地库/暂存草稿/离开/返回”决策流，入库后自动从草稿箱移除。
+- **题库列表分页契约**：`GET /api/questions` 不传 `page` 时保留历史数组响应；传入 `page` 后返回 `{items,total,page,page_size,total_pages}`，`page_size` 限制为 1–100，`sort` 仅支持 `asc` / `desc` 语义。侧栏必须使用分页响应，并以 `AbortController` 和请求序号保证最后一次请求胜出。
+- **数据库一致性与迁移**：SQLite 连接必须启用外键、`busy_timeout` 与经验证的 WAL；当前结构版本写入 `PRAGMA user_version`。任何结构迁移必须先生成独立、通过完整性检查且带 SHA-256 的快照，再在单事务中修复并迁移；未来版本数据库必须在任何建表、加列或建索引前拒绝启动。题目及关系写入应以一次数据库事务为成功边界，文件清理和 JSON 同步属于提交后的补偿操作，不得把已提交写入误报为失败。
 
 ### 3.2 解答与解析模块
 - **多途径解析汇总**：解答区包含手动输入、AI 智能生成（关联 OCR 上下文与引导指令）、OCR 识图、教师点评 (`review`) 与自定义标签 (`tags`) 5 个 Tab，统一汇总至编辑框。
@@ -68,8 +71,10 @@
 - **TikZ 几何绘图**：编辑 TikZ 代码可调用 `/api/render_tikz` 生成 PNG 预览；结合修改意见可调用 `/api/correct_tikz` 进行 AI 闭环纠错。
 - **双阶段多模态识图**：单题 OCR 识别到插图时注入 `[ILLUSTRATION_BOX: ...]` 标记，后端自动擦除标记并调用高级绘图模型（`PREFER_DRAW_MODEL`）重绘 TikZ 矢量代码并编译为 PNG 静态图片追加引用。
 
-### 3.3 异步实时备份与 AI 只读题库
-- **JSON 完整备份 (`data_backup/questions_backup.json`)**：后台异步备份全表字段。
+### 3.3 JSON 同步导出、完整备份与 AI 只读题库
+- **JSON 同步导出 (`data_backup/questions_backup.json`)**：后台异步导出题目字段，便于检索与兼容旧流程；它不含数据库约束和完整上传目录，**不是灾难恢复用完整备份**。
+- **可验证完整备份 (`data_backup/snapshots/mathbank-backup-*.zip`)**：通过 SQLite 在线快照保存数据库、数据库引用的 `static/uploads/` 文件及自定义元数据，并在 `manifest.json` 记录逐文件 SHA-256、大小、表计数与结构版本；明确排除 `.env`、本地 Token 和 API 密钥。创建并复验使用 `python3 -m scripts.backup`，仅验证使用 `python3 -m scripts.restore <备份.zip>`。
+- **恢复安全边界**：实际恢复必须完全关闭服务并显式运行 `python3 -m scripts.restore <备份.zip> --apply --yes`。服务在首次访问数据库前持有跨平台运行锁，恢复 API/CLI 必须持有同一把锁；锁被占用时必须停止，不得用 PID 信号探测替代。恢复前先创建已验证安全备份；若当前数据库已损坏或缺失而无法生成标准快照，则保留原数据库、WAL/SHM、上传和元数据的原始灾难恢复包，再原子替换并在失败时回滚。默认不带 `--apply` 只检查，不能修改现有数据。
 - **AI 专属只读题库 (`data_backup/questions_library.md`)**：只输出学段、章节、知识点和题干，过滤答案与点评，清洗 `\item`、`\\` 等排版命令，完全保留 `$` 公式。
 - **终端检索工具 (`scripts/search_questions.py`)**：提供 CLI 工具支持模糊匹配与结构化题目拉取（运行 `python3 -m scripts.search_questions -q <关键词>`）。
 - **填空题下划线迁移工具 (`scripts/migrate_fillin.py`)**：批量规范化旧下划线格式为 `\fillin` 并刷新备份。
@@ -88,8 +93,11 @@
 - **启动净化**：启动 2.5 秒后静默清理 `static/uploads/` 中创建时间超过 1 小时的孤儿图片及 `/tmp/` 临时截图。
 
 ### 3.7 启动就绪与网络容错
-- **启动器自愈**：`启动题库系统.command` 自动校验 Python 依赖完整性，缺失时自动重跑安装。
-- **自适应健康检查**：启动脚本每 0.5 秒探测后台 `/api/questions` 响应（最长 10 秒），接收到 200 后拉起浏览器。
+- **启动器环境与身份自愈**：macOS 与 Windows 启动器要求 Python 3.10+，源码运行时使用项目隔离的 `venv` 并通过 `python -m pip` 补齐锁定依赖；便携 Windows 包优先使用内嵌 Python。生产式双击启动不得携带 `--reload`。
+- **端口与进程所有权**：启动器只能停止同时通过 PID、项目根路径、Python 路径与 `uvicorn main:app` 命令身份校验的本项目旧服务。端口 8000 被陌生进程占用或状态文件身份不明时必须报错退出，严禁按端口无条件 `kill -9` / `taskkill` 或终止父进程。
+- **Release 覆盖升级契约**：启动器在确认受支持的 Python 并建立状态目录后，必须先安全停止已验明身份的旧服务，再进行任何项目依赖导入。根目录存在 `RELEASE-MANIFEST.json` 时，必须运行 `python -B -m scripts.release_overlay --platform macos|windows-x64`，对账当前文件并仅删除旧清单中、新清单已移除的发布管理文件；失败必须拒绝启动。必须保护根目录数据库及 WAL/SHM、`.env`、`data_backup/`、`static/uploads/`、`.system_generated/` 与 `venv/`。无 Release 清单的源码工作区不得触发此对账。便携升级文档必须要求用户先做完整备份、通过网页电源键关闭并确认服务已停，将新 ZIP 解压到临时目录后再复制其“内容”到原目录；macOS Finder 禁止整体替换旧文件夹，Windows 必须替换所有同名文件。
+- **依赖锁变更检测**：源码启动器必须记录锁文件摘要；`requirements.txt` 内容变化时，即使旧环境仍可 import，也要重新按精确版本安装并执行 `pip check`，成功后才更新摘要。
+- **自适应健康检查**：启动脚本每 0.5 秒探测轻量 `/healthz`（最长 10 秒）；该接口同时验证数据库连接、外键/WAL 和必要目录，仅在返回 200 后拉起浏览器。失败时只停止刚启动且身份已验证的项目进程，输出日志并以非零状态退出。
 - **前端静默重试与 UI 兜底**：首屏抓取异常时自动重试（间隔 1.5 秒，上限 3 次），多次失败展现带有 `[重新加载]` 按钮的错误提示面板。分类填充入口设置 DOM 空值防护。
 
 ### 3.8 PDF 试卷多模态拆解与双轨探测
@@ -99,7 +107,8 @@
   - **全图视觉转译 (`force_ocr`)**：绕过文本直提，强制将所有页面渲染为 PyMuPDF 150DPI 图像并调用多模态 VLM 进行全图 OCR 识别与转译，兜底应对极端排版复杂或规则失效的试卷。
   - **逐页可信分流与跨页合并**：按页码提取 Markdown，无需直提的页面单独调用 VLM OCR，页标使用 `<!-- MATHBANK_PDF_PAGE:N -->` 合并且不切断跨页题目。
 - **配图关联**：题目拆解默认不含配图。若原题有插图，由用户点击【手动截图】在 PDF 灯箱中框选，向 `/api/ai/manual-crop-pdf` 发送百分比坐标进行精准裁剪。
-- **任务轮询与 ESC 中断**：前端轮询 `/api/tasks/{task_id}/status`，支持点击【中止拆分】或按 `ESC` 调用 `/api/tasks/{task_id}/cancel` 安全取消任务。
+- **有界任务与协作取消**：PDF/Word 导入共用 `mathbank.task_manager.TaskManager`，默认最多 2 个工作任务与 4 个排队任务，PDF 最多 80 页、OCR 并发最多 4。前端轮询 `/api/tasks/{task_id}/status`，点击【中止拆分】或按 `ESC` 调用取消；工作线程必须在阶段转换和付费 AI 调用前检查取消信号。`completed` / `error` / `cancelled` 是不可覆盖终态，取消端点必须复核最终状态，不能把刚完成任务误报为已取消。
+- **任务资源生命周期**：完成结果保留 1 小时供前端导入；终态过期或因容量淘汰时必须同时删除登记的 PDF 页面、截图等临时资产。手动裁图生成的新资产必须追加到同一任务记录，不得形成长期孤儿文件。
 
 ### 3.9 Word (.docx) 安全保真拆分与公式提取
 - **公式结构化转换**：`mathbank/omml_helper.py` 处理 OMML，`mathbank/mtef_helper.py` 解析 MathType/MTEF。统一经 `normalize_word_formula_latex` 规范化。未知私用字符保留 `[公式结构待核对]`；MTEF 节点拼接自动增加字母边界空格，防止控制词粘连。
@@ -144,14 +153,18 @@
 
 ## 5. 启动诊断与双平台 Release 构建
 - **启动诊断**：服务启动打印 Python 环境、PDF Inspector、PyMuPDF、XeLaTeX、Pandoc 及数据库状态。
-- **打包脚本 (`scripts/build_release.py`)**：构建 Windows (`MathBank-Windows-x64.zip`，内嵌 Python 3.10 + 依赖 + `.bat`) 与 macOS (`MathBank-macOS.zip`，含 `.command`) 便携包。
+- **打包脚本 (`scripts/build_release.py`)**：构建 Windows (`MathBank-Windows-x64.zip`，内嵌 Python 3.10 + 依赖 + `.bat`) 与 macOS (`MathBank-macOS.zip`，含 `.command`) 发布包。Python 嵌入运行时与官方 CPython NuGet 包必须使用默认 TLS、固定可信 SHA-256 和原子下载，缓存每次复验；校验缺失或不匹配必须失败关闭。应用文件采用显式白名单，禁止测试、隐藏、数据库、日志和上传残留。打包前必须解析 Release 关键函数的类型注解，并在可用时执行 Python 3.10 导入检查；构建后执行源码/运行时可行 smoke，写入 `RELEASE-MANIFEST.json`，完成 ZIP CRC 检查并依据包内清单逐项重算文件 SHA-256，最后生成 `.zip.sha256`。任何构建异常必须以非零状态退出，禁止生成或发布启动即失败的静默坏包。
+- **依赖与目标平台**：`requirements.txt` 与 `requirements-dev.txt` 使用精确版本；Windows 交叉构建额外读取 `requirements-windows.txt`，目标平台依赖必须在共享运行时锁或 Windows 锁中显式固定，禁止依赖构建主机的 `sys_platform` marker。构建下载 wheel 必须使用 `sys.executable -m pip`。
 
 ## 6. 界面设计与交互规范
 - **视觉与色彩**：极简教研卡片风格，支持 6 套主题（默认曜石黑 `.theme-obsidian`）。图标采用平面极简设计（Flat Minimalist）。
 - **暗色模式规范**：高通透玻璃底 + 10% 品牌色透光微光与高对比文字；下拉菜单统一使用 `.glass-dropdown`；深色编辑器采用高对比选中样式（`selection:bg-indigo-600`）。
 - **全局悬浮提示 (Global Fast Tooltip)**：`api.js` 事件代理接管带 `title` 或 `data-tooltip` 的元素，移入停顿 500ms 显示提示气泡，移出 0ms 隐藏，自动进行边缘碰撞检测并防重叠。
 - **交互与留白**：按钮与 Tab 具备平滑过渡动画（`duration-300`），参考 Notion 注重留白与呼吸感。
+- **不可信内容渲染**：题干、答案、来源、标签、AI/OCR/导入结果及图片属性都视为不可信输入；写入 `innerHTML` 前必须统一经 `MathBankSafe` 与 DOMPurify 白名单净化。可展示图片仅允许同源 `static/uploads/` 下的被动光栅格式，修改请求的 `X-Local-Token` 只能附加到同源 `/api/` 请求。
+- **可访问性与移动端**：375px 宽度下编辑器、侧栏和弹窗必须可操作；主要触控目标至少 44px。统一弹窗应支持焦点陷阱、`Esc` 关闭、背景不可聚焦和关闭后焦点恢复，加载按钮同步 `disabled` / `aria-busy`，并尊重 `prefers-reduced-motion`。
 
 ## 7. 开发与运行指令
+- **Python 版本**：最低 Python 3.10。
 - **本地启动**：`uvicorn main:app --reload`
-- **单元测试**：运行 `python3 -m pytest tests/`（必须限定在 `tests/` 目录下，防止扫描 `scratch/` 脚本）。
+- **验证**：运行 `python3 -m pytest tests/`（必须限定在 `tests/` 目录下）、`python3 -m pip check`、`for file in static/js/*.js; do node --check "$file"; done`；macOS 启动器另运行 `bash -n 启动题库系统.command`。CI 在 Python 3.10 与当前版本上执行上述检查，并在 macOS/Windows 单独运行 Release 守卫测试。

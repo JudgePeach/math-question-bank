@@ -377,7 +377,7 @@
         });
 
         container.innerHTML = `
-            <div class="space-y-2 bg-white dark:bg-slate-900 border border-slate-200/80 dark:border-slate-800 p-3 rounded-2xl shadow-xs">
+            <div class="space-y-2 bg-white dark:bg-slate-900 border border-slate-200/80 dark:border-slate-800 p-3 rounded-2xl shadow-sm">
                 <!-- Top Row: Paper Metadata -->
                 <div class="grid grid-cols-1 md:grid-cols-3 gap-2">
                     <div>
@@ -458,13 +458,13 @@
                 <!-- Bottom Row: AI Prompt Selection Bar -->
                 <div class="pt-1.5 border-t border-slate-100 dark:border-slate-800/60 flex items-center space-x-2">
                     <div class="relative flex-1">
-                        <i class="fa-solid fa-wand-magic-sparkles text-brand-500 absolute left-2.5 top-1/2 -translate-y-1/2 text-2xs"></i>
+                        <i class="fa-solid fa-wand-magic-sparkles text-brand-500 absolute left-2.5 top-1/2 -translate-y-1/2 text-[10px]"></i>
                         <input type="text" id="paperAiPromptInput" 
-                            class="glass-input w-full pl-7 pr-2.5 py-1 text-2xs rounded-lg border-brand-200/80" 
+                            class="glass-input w-full pl-7 pr-2.5 py-1 text-[10px] rounded-lg border-brand-200/80"
                             placeholder="智能一键抽卷：例如“帮我抽 5 道难度中等的函数选择题”"
                             onkeypress="if(event.key==='Enter') triggerAiPaperSelect()">
                     </div>
-                    <button onclick="triggerAiPaperSelect()" class="glass-btn-primary h-[28px] px-3 rounded-lg text-2xs font-semibold flex items-center space-x-1 shrink-0">
+                    <button onclick="triggerAiPaperSelect()" class="glass-btn-primary h-[28px] px-3 rounded-lg text-[10px] font-semibold flex items-center space-x-1 shrink-0">
                         <span>智能抽取</span>
                     </button>
                 </div>
@@ -658,18 +658,18 @@
             <div class="flex items-center justify-between pb-3 mb-4 border-b border-slate-200/60 dark:border-slate-700/60">
                 <div class="flex items-center space-x-1.5 bg-slate-200/60 p-1 rounded-xl dark:bg-slate-800">
                     <button onclick="switchPaperStreamTab('all')" 
-                        class="px-3 py-1 rounded-lg text-xs font-bold transition-all ${currentTab === 'all' ? 'bg-white text-brand-600 shadow-sm dark:bg-slate-700 dark:text-brand-300' : 'text-slate-500 hover:text-slate-800 dark:text-slate-400'}">
+                        class="px-3 py-1 rounded-lg text-xs font-bold transition-all ${currentTab === 'all' ? 'bg-white text-brand-600 shadow-sm dark:bg-slate-700 dark:text-brand-200' : 'text-slate-500 hover:text-slate-800 dark:text-slate-400'}">
                         全库试题 (${bankQuestions.length})
                     </button>
                     <button onclick="switchPaperStreamTab('selected')" 
-                        class="px-3 py-1 rounded-lg text-xs font-bold transition-all ${currentTab === 'selected' ? 'bg-white text-brand-600 shadow-sm dark:bg-slate-700 dark:text-brand-300' : 'text-slate-500 hover:text-slate-800 dark:text-slate-400'}">
+                        class="px-3 py-1 rounded-lg text-xs font-bold transition-all ${currentTab === 'selected' ? 'bg-white text-brand-600 shadow-sm dark:bg-slate-700 dark:text-brand-200' : 'text-slate-500 hover:text-slate-800 dark:text-slate-400'}">
                         已选试题 (${cart.length})
                     </button>
                 </div>
 
                 ${cart.length > 0 ? `
                     <button onclick="window.clearCart()" class="text-xs font-medium text-slate-400 hover:text-rose-500 transition-colors flex items-center space-x-1">
-                        <i class="fa-solid fa-trash-can text-2xs"></i>
+                        <i class="fa-solid fa-trash-can text-[10px]"></i>
                         <span>清空卷面 (${cart.length})</span>
                     </button>
                 ` : ''}
@@ -701,20 +701,20 @@
             const usageCount = q.usage_count || 0;
 
             const cardBorderClass = inCart 
-                ? 'border-brand-500 ring-2 ring-brand-500/20 bg-brand-50/10 dark:border-brand-500/60 dark:bg-brand-950/20' 
-                : 'border-slate-200/80 hover:border-brand-300/80 bg-white/80 dark:bg-slate-800/80 dark:border-slate-700/70';
+                ? 'border-brand-500 ring-2 ring-brand-500/20 bg-brand-50/10 dark:border-brand-500/60 dark:bg-brand-900/20'
+                : 'border-slate-200/80 hover:border-brand-200/80 bg-white/80 dark:bg-slate-800/80 dark:border-slate-700/70';
 
             html += `
                 <div class="p-5 rounded-2xl border ${cardBorderClass} shadow-sm hover:shadow-md transition-all">
                     <!-- Card Top Controls Bar -->
                     <div class="flex items-center justify-between pb-3 mb-3 border-b border-slate-100 dark:border-slate-700/60">
                         <div class="flex items-center space-x-2 flex-wrap gap-y-1">
-                            <span class="font-bold text-slate-800 dark:text-slate-100 text-sm">#${q.seq_num !== undefined ? q.seq_num : q.id}</span>
-                            <span class="px-2 py-0.5 rounded-lg text-xs font-semibold bg-brand-50 text-brand-600 border border-brand-200/50 dark:bg-brand-900/30 dark:text-brand-300 dark:border-brand-800/50">${qTypeLabel}</span>
+                            <span class="font-bold text-slate-800 dark:text-slate-100 text-sm">#${escapeHtml(q.seq_num !== undefined ? q.seq_num : q.id)}</span>
+                            <span class="px-2 py-0.5 rounded-lg text-xs font-semibold bg-brand-50 text-brand-600 border border-brand-200/50 dark:bg-brand-900/30 dark:text-brand-200 dark:border-brand-900/50">${escapeHtml(qTypeLabel)}</span>
                             ${diffTag}
                             ${q.category_compulsory ? `<span class="px-2 py-0.5 rounded-lg text-xs font-medium bg-slate-100 text-slate-600 dark:bg-slate-700 dark:text-slate-300">${escapeHtml(q.category_compulsory)}</span>` : ''}
                             ${q.category_chapter ? `<span class="px-2 py-0.5 rounded-lg text-xs font-medium bg-slate-100 text-slate-500 dark:bg-slate-700/50 dark:text-slate-400">${escapeHtml(q.category_chapter)}</span>` : ''}
-                            <span class="px-2 py-0.5 rounded-lg text-xs font-medium bg-slate-100 text-slate-500 dark:bg-slate-700/50 dark:text-slate-400" title="引用次数">引用 ${usageCount} 次</span>
+                            <span class="px-2 py-0.5 rounded-lg text-xs font-medium bg-slate-100 text-slate-500 dark:bg-slate-700/50 dark:text-slate-400" title="引用次数">引用 ${escapeHtml(usageCount)} 次</span>
                         </div>
 
                         <div class="flex items-center space-x-2">
@@ -828,13 +828,13 @@
         let aiAnalysisBanner = '';
         if (meta.ai_analysis) {
             aiAnalysisBanner = `
-                <div class="mb-4 p-3.5 rounded-2xl border border-brand-200/80 bg-brand-50/50 backdrop-blur-md shadow-xs dark:bg-brand-950/40 dark:border-brand-800 transition-all">
-                    <div class="flex items-center justify-between mb-1.5 pb-1 border-b border-brand-200/50 dark:border-brand-800/60">
-                        <div class="flex items-center space-x-1.5 text-xs font-bold text-brand-700 dark:text-brand-300">
+                <div class="mb-4 p-3.5 rounded-2xl border border-brand-200/80 bg-brand-50/50 backdrop-blur-md shadow-sm dark:bg-brand-900/40 dark:border-brand-900 transition-all">
+                    <div class="flex items-center justify-between mb-1.5 pb-1 border-b border-brand-200/50 dark:border-brand-900/60">
+                        <div class="flex items-center space-x-1.5 text-xs font-bold text-brand-700 dark:text-brand-200">
                             <i class="fa-solid fa-brain text-brand-500"></i>
                             <span>双向细目表与考点覆盖分析 (${escapeHtml(meta.ai_model_used || '大模型')})</span>
                         </div>
-                        <button onclick="window.clearAiAnalysis()" class="text-2xs text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 px-1.5 py-0.5 rounded-md hover:bg-slate-200/60 font-medium transition-all" title="关闭分析框">
+                        <button onclick="window.clearAiAnalysis()" class="text-[10px] text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 px-1.5 py-0.5 rounded-md hover:bg-slate-200/60 font-medium transition-all" title="关闭分析框">
                             <i class="fa-solid fa-xmark mr-1"></i>关闭分析
                         </button>
                     </div>
@@ -849,11 +849,11 @@
             ${aiAnalysisBanner}
             <!-- Part 1: Top Fixed Control Section (Non-scrolling Studio Panel) -->
             <div class="shrink-0 mb-3">
-                <div class="bg-white dark:bg-slate-900 border border-slate-200/80 dark:border-slate-800 p-3 rounded-2xl flex flex-col space-y-2.5 shadow-xs">
+                <div class="bg-white dark:bg-slate-900 border border-slate-200/80 dark:border-slate-800 p-3 rounded-2xl flex flex-col space-y-2.5 shadow-sm">
                     <!-- Row 1: Header Stats & Solution Space Config -->
                     <div class="flex items-center justify-between flex-wrap gap-2 pb-2 border-b border-slate-100 dark:border-slate-800/60">
                         <div class="flex items-center space-x-3">
-                            <div class="flex items-center space-x-1.5 px-3 py-1 rounded-xl bg-brand-50 text-brand-700 font-bold text-xs border border-brand-200/60 dark:bg-brand-900/40 dark:text-brand-300 dark:border-brand-800">
+                            <div class="flex items-center space-x-1.5 px-3 py-1 rounded-xl bg-brand-50 text-brand-700 font-bold text-xs border border-brand-200/60 dark:bg-brand-900/40 dark:text-brand-200 dark:border-brand-900">
                                 <span>总分: ${totalScore} 分</span>
                                 <span class="text-slate-400 font-normal">|</span>
                                 <span>${totalCount} 题</span>
@@ -874,7 +874,7 @@
                                     <span>留白:</span>
                                 </span>
                                 <select onchange="window.updateGlobalSolutionSpace(this.value)"
-                                    class="px-2 py-1 text-xs rounded-xl border border-brand-200/80 bg-brand-50/60 text-brand-900 font-bold focus:ring-2 focus:ring-brand-500 focus:outline-none dark:bg-brand-950/50 dark:border-brand-800 dark:text-brand-200">
+                                    class="px-2 py-1 text-xs rounded-xl border border-brand-200/80 bg-brand-50/60 text-brand-900 font-bold focus:ring-2 focus:ring-brand-500 focus:outline-none dark:bg-brand-900/50 dark:border-brand-900 dark:text-brand-200">
                                     ${meta.paper_type === 'exam_19' ? `
                                         <option value="0.0" ${(parseFloat(meta.solution_space_default !== undefined ? meta.solution_space_default : '0.0') === 0.0) ? 'selected' : ''}>0 cm (不留白)</option>
                                         <option value="3.0" ${(parseFloat(meta.solution_space_default !== undefined ? meta.solution_space_default : '0.0') === 3.0) ? 'selected' : ''}>3 cm (紧凑留白)</option>
@@ -895,11 +895,11 @@
                                 <span>清空卷面</span>
                             </button>
                         ` : ''}
-                        <button onclick="savePaperToDb()" class="flex-1 py-1.5 justify-center rounded-xl text-xs font-semibold bg-emerald-600 text-white shadow-xs hover:bg-emerald-700 active:scale-95 transition-all flex items-center space-x-1.5 whitespace-nowrap" title="保存当前试卷至本地数据库">
+                        <button onclick="savePaperToDb()" class="flex-1 py-1.5 justify-center rounded-xl text-xs font-semibold bg-emerald-600 text-white shadow-sm hover:bg-emerald-700 active:scale-95 transition-all flex items-center space-x-1.5 whitespace-nowrap" title="保存当前试卷至本地数据库">
                             <i class="fa-solid fa-floppy-disk"></i>
                             <span>保存试卷</span>
                         </button>
-                        <button onclick="openSavedPapersModal()" class="flex-1 py-1.5 justify-center rounded-xl text-xs font-semibold bg-amber-500 text-white shadow-xs hover:bg-amber-600 active:scale-95 transition-all flex items-center space-x-1.5 whitespace-nowrap" title="查阅与管理历史归档试卷">
+                        <button onclick="openSavedPapersModal()" class="flex-1 py-1.5 justify-center rounded-xl text-xs font-semibold bg-amber-500 text-white shadow-sm hover:bg-amber-600 active:scale-95 transition-all flex items-center space-x-1.5 whitespace-nowrap" title="查阅与管理历史归档试卷">
                             <i class="fa-solid fa-folder-open"></i>
                             <span>历史试卷库</span>
                         </button>
@@ -1003,9 +1003,9 @@
                 ` : `
                     <div onclick="updatePaperMeta('show_secret', true)" 
                          title="点击恢复绝密标记"
-                         class="mb-3 border border-dashed border-slate-300 hover:border-brand-400 bg-slate-50/50 hover:bg-brand-50/50 rounded-lg py-0.5 px-2 text-xs text-slate-400 hover:text-brand-600 cursor-pointer transition-all duration-200 group select-none flex items-center space-x-1.5 w-fit">
+                         class="mb-3 border border-dashed border-slate-300 hover:border-brand-500 bg-slate-50/50 hover:bg-brand-50/50 rounded-lg py-0.5 px-2 text-xs text-slate-400 hover:text-brand-600 cursor-pointer transition-all duration-200 group select-none flex items-center space-x-1.5 w-fit">
                         <i class="fa-solid fa-circle-plus text-slate-400 group-hover:text-brand-500 text-xs group-hover:scale-110 transition-transform"></i>
-                        <span class="font-sans font-medium text-2xs">已移除绝密标记 (点击在此恢复)</span>
+                        <span class="font-sans font-medium text-[10px]">已移除绝密标记 (点击在此恢复)</span>
                     </div>
                 `}
             ` : ''}
@@ -1017,7 +1017,7 @@
                     onblur="saveMetaToStorage()"
                     title="点击直接在试卷上修改主标题"
                     placeholder="+ 点击在此直接添加主标题"
-                    class="canvas-meta-title text-2xl font-bold tracking-normal text-slate-900 font-serif mb-1.5 outline-none hover:bg-amber-50/60 focus:bg-white focus:ring-2 focus:ring-brand-300/80 rounded-lg px-3 py-0.5 transition-all cursor-text inline-block min-w-[200px]"
+                    class="canvas-meta-title text-2xl font-bold tracking-normal text-slate-900 font-serif mb-1.5 outline-none hover:bg-amber-50/60 focus:bg-white focus:ring-2 focus:ring-brand-200/80 rounded-lg px-3 py-0.5 transition-all cursor-text inline-block min-w-[200px]"
                     spellcheck="false">${(meta.title && meta.title.trim()) ? escapeHtml(meta.title) : ''}</h1>
                 <div class="text-xl font-bold text-slate-900 font-serif my-2 select-none">数 学</div>
                 <div contenteditable="true"
@@ -1025,7 +1025,7 @@
                      onblur="saveMetaToStorage()"
                      title="点击直接在试卷上修改副标题/备注"
                      placeholder="+ 点击在此直接添加副标题 / 备注"
-                     class="canvas-meta-subtitle text-sm font-bold font-serif text-slate-900 my-1.5 outline-none hover:bg-amber-50/60 focus:bg-white focus:ring-2 focus:ring-brand-300/80 rounded-lg px-3 py-0.5 transition-all cursor-text min-w-[140px] inline-block"
+                     class="canvas-meta-subtitle text-sm font-bold font-serif text-slate-900 my-1.5 outline-none hover:bg-amber-50/60 focus:bg-white focus:ring-2 focus:ring-brand-200/80 rounded-lg px-3 py-0.5 transition-all cursor-text min-w-[140px] inline-block"
                      spellcheck="false">${(meta.subtitle && meta.subtitle.trim()) ? escapeHtml(meta.subtitle) : ''}</div>
             </div>
 
@@ -1053,9 +1053,9 @@
                 ` : `
                     <div onclick="updatePaperMeta('show_notice', true)" 
                          title="点击恢复注意事项"
-                         class="mb-4 my-2 border border-dashed border-slate-300 hover:border-brand-400 bg-slate-50/50 hover:bg-brand-50/50 rounded-xl p-2 text-center text-xs text-slate-400 hover:text-brand-600 cursor-pointer transition-all duration-200 group select-none flex items-center justify-center space-x-1.5">
+                         class="mb-4 my-2 border border-dashed border-slate-300 hover:border-brand-500 bg-slate-50/50 hover:bg-brand-50/50 rounded-xl p-2 text-center text-xs text-slate-400 hover:text-brand-600 cursor-pointer transition-all duration-200 group select-none flex items-center justify-center space-x-1.5">
                         <i class="fa-solid fa-circle-plus text-slate-400 group-hover:text-brand-500 text-sm group-hover:scale-110 transition-transform"></i>
-                        <span class="font-sans font-medium text-2xs">已移除注意事项 (点击在此恢复)</span>
+                        <span class="font-sans font-medium text-[10px]">已移除注意事项 (点击在此恢复)</span>
                     </div>
                 `}
             ` : ''}
@@ -1231,12 +1231,12 @@
                         <div class="solution-space-zone relative ${isZero ? 'py-1 my-1 border-b border-dashed border-slate-200 hover:border-sky-300' : 'mt-2 mb-1 rounded-lg border border-dashed border-sky-300/80 bg-sky-50/20'} group/blank transition-all" style="${minHeightStyle}">
                             ${embeddedImgContainer}
                             <div class="absolute inset-0 flex items-center justify-center pointer-events-none ${isZero ? 'opacity-0 group-hover/blank:opacity-70' : 'opacity-40 group-hover/blank:opacity-80'} transition-opacity">
-                                <span class="text-2xs font-sans text-sky-700 font-medium tracking-wider select-none">
+                                <span class="text-[10px] font-sans text-sky-700 font-medium tracking-wider select-none">
                                     <i class="fa-solid fa-pen-ruler mr-1"></i> 解答题留白区域 (${solSpaceCm.toFixed(1)} cm)
                                 </span>
                             </div>
                             <!-- Inline Controls -->
-                            <div class="absolute right-2 ${isZero ? '-top-1' : 'bottom-2'} opacity-0 group-hover/blank:opacity-100 transition-opacity flex items-center space-x-1 bg-white/95 backdrop-blur-sm px-2 py-0.5 rounded-lg border border-slate-200 shadow-xs text-2xs font-sans select-none z-20">
+                            <div class="absolute right-2 ${isZero ? '-top-1' : 'bottom-2'} opacity-0 group-hover/blank:opacity-100 transition-opacity flex items-center space-x-1 bg-white/95 backdrop-blur-sm px-2 py-0.5 rounded-lg border border-slate-200 shadow-sm text-[10px] font-sans select-none z-20">
                                 <span class="text-slate-400 mr-1 font-medium">留白微调:</span>
                                 <button onclick="event.stopPropagation(); window.updateQuestionSolutionSpace(${q ? q.id : 0}, -1.0)" class="px-1.5 py-0.5 rounded bg-slate-100 text-slate-700 hover:bg-brand-100 hover:text-brand-700 font-bold transition-all" title="减少 1cm 留白">
                                     - 1cm
@@ -1257,7 +1257,7 @@
                 }
 
                 const itemHtml = `
-                    <div class="paper-q-item group relative text-[13px] leading-normal font-serif p-2 rounded-xl border border-transparent hover:border-brand-300 hover:bg-brand-50/30 transition-all duration-200 cursor-grab active:cursor-grabbing mb-2"
+                    <div class="paper-q-item group relative text-[13px] leading-normal font-serif p-2 rounded-xl border border-transparent hover:border-brand-200 hover:bg-brand-50/30 transition-all duration-200 cursor-grab active:cursor-grabbing mb-2"
                         draggable="true"
                         data-qid="${q ? q.id : ''}"
                         data-qtype="${qType}"
@@ -1270,7 +1270,7 @@
                         ondrop="onPaperCanvasDrop(event)">
 
                         <!-- Hover Action Bar: Drag Handle & Quick Move/Remove Buttons -->
-                        <div class="paper-canvas-toolbar absolute right-2 top-2 opacity-0 group-hover:opacity-100 transition-opacity flex items-center space-x-1.5 px-2.5 py-1 rounded-lg text-2xs font-sans select-none z-10">
+                        <div class="paper-canvas-toolbar absolute right-2 top-2 opacity-0 group-hover:opacity-100 transition-opacity flex items-center space-x-1.5 px-2.5 py-1 rounded-lg text-[10px] font-sans select-none z-10">
                             <span class="toolbar-label font-medium mr-0.5"><i class="fa-solid fa-grip-vertical"></i> 按住拖拽排序</span>
                             <button onclick="event.stopPropagation(); window.movePaperQuestionWithinType('${qType}', ${subIdx}, 'up')" ${subIdx === 0 ? 'disabled' : ''} class="toolbar-btn p-0.5 disabled:opacity-30" title="上移">
                                 <i class="fa-solid fa-chevron-up"></i>
@@ -1357,135 +1357,6 @@
         return pagesHtml;
     }
 
-    function generateA4PaperBodyHtml(cart) {
-        if (cart.length === 0) {
-            return `<div class="text-center py-20 text-slate-400 font-sans text-xs">暂无试题数据，请在左侧点击“加入试卷”添加题目</div>`;
-        }
-
-        const cartItemsWithIndex = cart.map((item, idx) => ({ ...item, cartIndex: idx }));
-
-        const typeOrder = ['single_choice', 'multi_choice', 'fill_in_blank', 'detailed_answer'];
-        const grouped = {};
-
-        cartItemsWithIndex.forEach(item => {
-            const q = window.PaperStore.questionsMap[item.id];
-            const qType = q ? q.question_type : 'single_choice';
-            if (!grouped[qType]) grouped[qType] = [];
-            grouped[qType].push(item);
-        });
-
-        let html = '';
-        const secNums = ['一', '二', '三', '四', '五'];
-        let secIdx = 0;
-        let globalQIndex = 1;
-
-        typeOrder.forEach(qType => {
-            const items = grouped[qType];
-            if (!items || items.length === 0) return;
-
-            const secNum = secNums[secIdx] || (secIdx + 1);
-            secIdx++;
-
-            const count = items.length;
-            const secScore = items.reduce((s, it) => s + (parseInt(it.score, 10) || 5), 0);
-            const unitScore = items[0] ? (parseInt(items[0].score, 10) || 5) : 5;
-
-            let secHeaderText = '';
-            if (qType === 'single_choice') {
-                secHeaderText = `${secNum}、选择题：本题共 ${count} 小题，每小题 ${unitScore} 分，共 ${secScore} 分。在每小题给出的四个选项中，只有一项是符合题目要求的。`;
-            } else if (qType === 'multi_choice') {
-                secHeaderText = `${secNum}、多选题：本题共 ${count} 小题，每小题 ${unitScore} 分，共 ${secScore} 分。在每小题给出的四个选项中，有多项符合题目要求。全部选对的得 ${unitScore} 分，部分选对的得部分分，有选错的得 0 分。`;
-            } else if (qType === 'fill_in_blank') {
-                secHeaderText = `${secNum}、填空题：本题共 ${count} 小题，每小题 ${unitScore} 分，共 ${secScore} 分。`;
-            } else {
-                secHeaderText = `${secNum}、解答题：本题共 ${count} 小题，共 ${secScore} 分。解答应写出文字说明、证明过程或演算步骤。`;
-            }
-
-            html += `
-                <div class="paper-sec-block mb-4" data-qtype="${qType}">
-                    <h3 class="font-bold text-[13.5px] font-serif mb-2.5 text-slate-900 leading-snug">
-                        ${secHeaderText}
-                    </h3>
-                    <div class="space-y-2 relative transition-all duration-200">
-            `;
-
-            items.forEach((item, subIdx) => {
-                const q = window.PaperStore.questionsMap[item.id];
-                let contentHtml = q ? formatQuestionContentHtml(q.content, q.id, getQuestionFigAlign(q)) : '';
-
-                let stemLine = '';
-                if (qType === 'single_choice' || qType === 'multi_choice') {
-                    let stemContent = contentHtml;
-                    let choicesGrid = '';
-                    if (contentHtml.includes('choices-grid') || contentHtml.includes('katex-choices-grid') || contentHtml.includes('grid-cols-')) {
-                        const match = contentHtml.match(/([\s\S]*?)(<(?:div|p)[^>]*class="[^"]*(?:choices-grid|katex-choices-grid|grid-cols-[124])"[\s\S]*)/i);
-                        if (match) {
-                            stemContent = match[1];
-                            choicesGrid = match[2];
-                        }
-                    }
-                    if (typeof window.cleanChoiceStemParentheses === 'function') {
-                        stemContent = window.cleanChoiceStemParentheses(stemContent);
-                    } else {
-                        stemContent = stemContent.replace(/(?:[\s\xa0\u3000]*[\(（]\s*\$?\s*(?:\\quad|\\qquad|\\hspace\{.*?\}|[\s\xa0\u3000_])*?\s*\$?\s*[\)）]\s*)+$/, '').replace(/\\paren\b/g, '').trim();
-                    }
-
-                    stemLine = `
-                        <div class="flex justify-between items-baseline mb-1">
-                            <div class="flex-1">${stemContent}</div>
-                            <div class="shrink-0 ml-4 font-serif text-slate-900 font-normal select-none">（ &nbsp; ）</div>
-                        </div>
-                        ${choicesGrid}
-                    `;
-                } else {
-                    stemLine = contentHtml;
-                }
-
-                html += `
-                    <div class="paper-q-item group relative text-[13px] leading-normal font-serif p-2 rounded-xl border border-transparent hover:border-brand-300 hover:bg-brand-50/30 transition-all duration-200 cursor-grab active:cursor-grabbing"
-                        draggable="true"
-                        data-qid="${q ? q.id : ''}"
-                        data-qtype="${qType}"
-                        data-sub-index="${subIdx}"
-                        ondragstart="onPaperCanvasDragStart(event, ${q ? q.id : 0}, ${subIdx}, '${qType}')"
-                        ondragover="onPaperCanvasDragOver(event)"
-                        ondragenter="onPaperCanvasDragEnter(event)"
-                        ondragleave="onPaperCanvasDragLeave(event)"
-                        ondragend="onPaperCanvasDragEnd(event)"
-                        ondrop="onPaperCanvasDrop(event)">
-
-                        <!-- Hover Action Bar: Drag Handle & Quick Move/Remove Buttons -->
-                        <div class="paper-canvas-toolbar absolute right-2 top-2 opacity-0 group-hover:opacity-100 transition-opacity flex items-center space-x-1.5 px-2.5 py-1 rounded-lg text-2xs font-sans select-none z-10">
-                            <span class="toolbar-label font-medium mr-0.5"><i class="fa-solid fa-grip-vertical"></i> 按住拖拽排序</span>
-                            <button onclick="event.stopPropagation(); window.movePaperQuestionWithinType('${qType}', ${subIdx}, 'up')" ${subIdx === 0 ? 'disabled' : ''} class="toolbar-btn p-0.5 disabled:opacity-30" title="上移">
-                                <i class="fa-solid fa-chevron-up"></i>
-                            </button>
-                            <button onclick="event.stopPropagation(); window.movePaperQuestionWithinType('${qType}', ${subIdx}, 'down')" ${subIdx === items.length - 1 ? 'disabled' : ''} class="toolbar-btn p-0.5 disabled:opacity-30" title="下移">
-                                <i class="fa-solid fa-chevron-down"></i>
-                            </button>
-                            <button onclick="event.stopPropagation(); window.removeFromCart(${q ? q.id : 0})" class="toolbar-btn p-0.5 hover:text-rose-500" title="移出试卷">
-                                <i class="fa-solid fa-xmark"></i>
-                            </button>
-                        </div>
-
-                        <div class="flex items-baseline">
-                            <span class="font-bold mr-1 text-slate-900 shrink-0">${globalQIndex}.</span>
-                            <div class="inline flex-1">${stemLine}</div>
-                        </div>
-                    </div>
-                `;
-                globalQIndex++;
-            });
-
-            html += `
-                    </div>
-                </div>
-            `;
-        });
-
-        return html;
-    }
-
     // Reorder Items strictly within the same Question Type section
     function reorderItemsWithinType(cart, qType, fromSubIdx, toSubIdx) {
         const itemsOfType = [];
@@ -1549,7 +1420,7 @@
         // Create or reuse dynamic drop placeholder
         if (!dragPlaceholder) {
             dragPlaceholder = document.createElement('div');
-            dragPlaceholder.className = 'paper-drag-placeholder border-2 border-dashed border-brand-400 bg-brand-50/70 rounded-xl my-2 flex items-center justify-center text-xs font-semibold text-brand-600 shadow-inner transition-all duration-200 select-none';
+            dragPlaceholder.className = 'paper-drag-placeholder border-2 border-dashed border-brand-500 bg-brand-50/70 rounded-xl my-2 flex items-center justify-center text-xs font-semibold text-brand-600 shadow-inner transition-all duration-200 select-none';
             dragPlaceholder.style.height = `${Math.max(48, card.offsetHeight - 8)}px`;
             dragPlaceholder.innerHTML = '<span class="flex items-center space-x-1.5"><i class="fa-solid fa-arrow-down-long text-brand-500 animate-bounce"></i> <span>释放在同题型内插入试题</span></span>';
         }
@@ -1770,12 +1641,15 @@
     function setPdfTabLoadingState(tab, title, iconEmoji, text) {
         if (!tab) return;
         try {
+            const safeTitle = escapeHtml(title);
+            const safeIcon = escapeHtml(iconEmoji);
+            const safeText = escapeHtml(text);
             tab.document.write(`
                 <!DOCTYPE html>
                 <html>
                 <head>
                     <meta charset="utf-8">
-                    <title>${title}</title>
+                    <title>${safeTitle}</title>
                     <style>
                         body {
                             margin: 0;
@@ -1832,9 +1706,9 @@
                 </head>
                 <body>
                     <div class="card">
-                        <div class="icon-box">${iconEmoji}</div>
-                        <h2>${title}</h2>
-                        <p>${text}</p>
+                        <div class="icon-box">${safeIcon}</div>
+                        <h2>${safeTitle}</h2>
+                        <p>${safeText}</p>
                         <div class="status">
                             <div class="spinner"></div>
                             <span>LaTeX 引擎静默编译中...</span>
@@ -2102,13 +1976,26 @@
     };
 
     // ----------------- Saved Papers Archive Library Modal -----------------
+    window.closeSavedPapersModal = function () {
+        const modal = document.getElementById('savedPapersModal');
+        if (!modal) return;
+        window.MathBankModal.close(modal);
+        modal.remove();
+    };
+
     window.openSavedPapersModal = async function () {
         let modal = document.getElementById('savedPapersModal');
-        if (modal) modal.remove();
+        if (modal) {
+            window.MathBankModal.close(modal);
+            modal.remove();
+        }
 
         modal = document.createElement('div');
         modal.id = 'savedPapersModal';
         modal.className = 'fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-md flex items-center justify-center p-4 animate-in fade-in duration-200';
+        modal.setAttribute('role', 'dialog');
+        modal.setAttribute('aria-modal', 'true');
+        modal.setAttribute('aria-labelledby', 'savedPapersModalTitle');
         modal.innerHTML = `
             <div class="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl shadow-2xl w-full max-w-3xl max-h-[85vh] flex flex-col overflow-hidden font-sans">
                 <!-- Header -->
@@ -2118,11 +2005,11 @@
                             <i class="fa-solid fa-folder-open"></i>
                         </div>
                         <div>
-                            <h3 class="font-bold text-slate-800 dark:text-slate-100 text-base">历史试卷归档库</h3>
+                            <h3 id="savedPapersModalTitle" class="font-bold text-slate-800 dark:text-slate-100 text-base">历史试卷归档库</h3>
                             <p class="text-xs text-slate-400">查看、一键载入还原或删除已保存的历史试卷记录</p>
                         </div>
                     </div>
-                    <button onclick="document.getElementById('savedPapersModal').remove()" class="w-8 h-8 rounded-full hover:bg-slate-200/60 dark:hover:bg-slate-700 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 flex items-center justify-center transition-colors">
+                    <button type="button" data-modal-close onclick="closeSavedPapersModal()" aria-label="关闭历史试卷归档库" class="w-8 h-8 rounded-full hover:bg-slate-200/60 dark:hover:bg-slate-700 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 flex items-center justify-center transition-colors">
                         <i class="fa-solid fa-xmark text-sm"></i>
                     </button>
                 </div>
@@ -2138,13 +2025,14 @@
                 <!-- Footer -->
                 <div class="px-6 py-3.5 border-t border-slate-100 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-800/50 flex items-center justify-between text-xs text-slate-400">
                     <span>共保存 <strong id="savedPaperTotalCount" class="text-slate-700 dark:text-slate-200">0</strong> 份历史试卷</span>
-                    <button onclick="document.getElementById('savedPapersModal').remove()" class="px-4 py-1.5 rounded-xl bg-slate-200 text-slate-700 hover:bg-slate-300 font-medium transition-colors dark:bg-slate-800 dark:text-slate-200 dark:hover:bg-slate-700">
+                    <button type="button" onclick="closeSavedPapersModal()" class="px-4 py-1.5 rounded-xl bg-slate-200 text-slate-700 hover:bg-slate-300 font-medium transition-colors dark:bg-slate-800 dark:text-slate-200 dark:hover:bg-slate-700">
                         关闭窗口
                     </button>
                 </div>
             </div>
         `;
         document.body.appendChild(modal);
+        window.MathBankModal.open(modal, { onEscape: window.closeSavedPapersModal });
 
         try {
             const res = await fetch('/api/papers');
@@ -2181,7 +2069,7 @@
                     const dateStr = p.created_at ? new Date(p.created_at).toLocaleString('zh-CN', { year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' }) : '未知时间';
 
                     return `
-                        <div class="bg-slate-50/70 dark:bg-slate-800/40 border border-slate-200/80 dark:border-slate-700/60 rounded-2xl p-4 flex items-center justify-between hover:border-brand-300 dark:hover:border-brand-600 hover:shadow-md transition-all group">
+                        <div class="bg-slate-50/70 dark:bg-slate-800/40 border border-slate-200/80 dark:border-slate-700/60 rounded-2xl p-4 flex items-center justify-between hover:border-brand-200 dark:hover:border-brand-600 hover:shadow-md transition-all group">
                             <div class="flex-1 min-w-0 pr-4">
                                 <div class="flex items-center space-x-2 mb-1">
                                     <span class="inline-flex items-center text-[10px] font-semibold px-2 py-0.5 rounded-full border ${typeInfo.color}">
@@ -2197,11 +2085,11 @@
                                 ${p.subtitle ? `<p class="text-xs text-slate-400 mt-1 truncate italic">备注: ${escapeHtml(p.subtitle)}</p>` : ''}
                             </div>
                             <div class="flex items-center space-x-2 shrink-0">
-                                <button onclick="loadSavedPaper(${p.id})" class="px-3 py-1.5 rounded-xl bg-brand-500 hover:bg-brand-600 active:scale-95 text-white text-xs font-semibold shadow-xs transition-all flex items-center space-x-1" title="载入试卷至工作台">
+                                <button onclick="loadSavedPaper(${p.id})" class="px-3 py-1.5 rounded-xl bg-brand-500 hover:bg-brand-600 active:scale-95 text-white text-xs font-semibold shadow-sm transition-all flex items-center space-x-1" title="载入试卷至工作台">
                                     <i class="fa-solid fa-arrow-right-to-bracket text-[11px]"></i>
                                     <span>载入试卷</span>
                                 </button>
-                                <button onclick="quickExportPaperPdf(${p.id})" class="px-3 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 active:scale-95 text-white text-xs font-semibold shadow-xs transition-all flex items-center space-x-1" title="快速编译 PDF">
+                                <button onclick="quickExportPaperPdf(${p.id})" class="px-3 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 active:scale-95 text-white text-xs font-semibold shadow-sm transition-all flex items-center space-x-1" title="快速编译 PDF">
                                     <i class="fa-solid fa-file-pdf text-[11px]"></i>
                                     <span>PDF</span>
                                 </button>
@@ -2217,7 +2105,7 @@
             console.error(e);
             const container = document.getElementById('savedPapersListContainer');
             if (container) {
-                container.innerHTML = `<div class="text-center py-12 text-rose-500 text-xs">加载历史试卷失败: ${e.message}</div>`;
+                container.innerHTML = `<div class="text-center py-12 text-rose-500 text-xs">加载历史试卷失败: ${escapeHtml(e.message)}</div>`;
             }
         }
     };
@@ -2336,12 +2224,7 @@
 
     // Dynamic Helper utilities
     function escapeHtml(str) {
-        if (!str) return '';
-        return String(str)
-            .replace(/&/g, '&amp;')
-            .replace(/</g, '&lt;')
-            .replace(/>/g, '&gt;')
-            .replace(/"/g, '&quot;');
+        return window.MathBankSafe.escapeText(str);
     }
 
     function getQuestionTypeCn(type) {
@@ -2395,11 +2278,12 @@
             } else if (diff === 'challenge') {
                 colorClass = 'text-red-600 bg-red-50 border border-red-200/60 dark:bg-red-900/30 dark:text-red-300';
             } else {
-                colorClass = 'text-slate-550 bg-slate-100 border border-slate-200/60';
+                colorClass = 'text-slate-600 bg-slate-100 border border-slate-200/60';
             }
         }
 
-        const cleanLabel = label.replace(/[\u2700-\u27BF]|[\uE000-\uF8FF]|\uD83C[\uDC00-\uDFFF]|\uD83D[\uDC00-\uDFFF]|[\u2011-\u26FF]|\uD83E[\uDD00-\uDFFF]/g, '').trim();
+        const cleanLabel = String(label || '').replace(/[\u2700-\u27BF]|[\uE000-\uF8FF]|\uD83C[\uDC00-\uDFFF]|\uD83D[\uDC00-\uDFFF]|[\u2011-\u26FF]|\uD83E[\uDD00-\uDFFF]/g, '').trim();
+        colorClass = window.MathBankSafe.safeClassList(colorClass, 'text-slate-600 bg-slate-100 border border-slate-200/60');
         return `<span class="px-2 py-0.5 rounded-lg text-xs font-semibold ${colorClass}">${escapeHtml(cleanLabel)}</span>`;
     }
 
@@ -2507,9 +2391,24 @@
         }, 50);
     };
 
+    function handleFigureAlignImageEvent(event) {
+        const image = event.target && event.target.closest
+            ? event.target.closest('img[data-figure-align-qid]')
+            : null;
+        if (!image) return;
+        const qid = parseInt(image.dataset.figureAlignQid, 10);
+        if (!qid) return;
+        event.preventDefault();
+        event.stopPropagation();
+        window.showFigureAlignPopover(event, qid);
+    }
+
+    document.addEventListener('click', handleFigureAlignImageEvent);
+    document.addEventListener('contextmenu', handleFigureAlignImageEvent);
+
     function formatQuestionContentHtml(raw, qid = null, figAlign = 'right', embedInSolSpace = false, showControls = true) {
         if (!raw) return embedInSolSpace ? { stemHtml: '', imgHtml: null } : '';
-        let html = raw.trim();
+        let html = String(raw).trim();
         figAlign = figAlign || 'right';
 
         if (typeof window.cleanChoiceStemParentheses === 'function' && (html.includes('choices') || html.match(/^\s*[-*]?\s*[A-D][\.、\s]/m))) {
@@ -2526,15 +2425,16 @@
         const imgSrcList = [];
         const imgMatches = [...html.matchAll(/!\[.*?\]\(([^)]+)\)/g)];
         imgMatches.forEach(m => {
-            if (m[1]) imgSrcList.push(m[1]);
+            const safeSrc = window.MathBankSafe.safeImageUrl(m[1]);
+            if (safeSrc && !imgSrcList.includes(safeSrc)) imgSrcList.push(safeSrc);
         });
-        if (imgSrcList.length > 0) {
-            html = html.replace(/!\[.*?\]\(([^)]+)\)/g, '').trim();
-        }
+        html = html.replace(/!\[.*?\]\(([^)]+)\)/g, '').trim();
         
         // 2. Process LaTeX formulas, \underline, choices environment & LaTeX standard paragraphs via preprocessFormulaForKaTeX
-        if (typeof window.preprocessFormulaForKaTeX === 'function') {
-            html = window.preprocessFormulaForKaTeX(html);
+        if (typeof window.parseMarkdownWithMath === 'function') {
+            html = window.parseMarkdownWithMath(html);
+        } else {
+            html = window.MathBankSafe.sanitizeRichHtml(html);
         }
 
         const stemText = html;
@@ -2549,25 +2449,23 @@
             };
             const currentLabel = alignLabelMap[effectiveAlign] || '下方居中';
             const iconClass = effectiveAlign === 'center' ? 'fa-align-center' : 'fa-align-right';
-            const qidAttr = qid ? qid : 0;
+            const qidAttr = parseInt(qid, 10) || 0;
             const countTag = imgSrcList.length > 1 ? ` (${imgSrcList.length}图)` : '';
 
             const imgClass = showControls 
-                ? `${imgSrcList.length > 1 ? 'max-w-[150px] max-h-[140px]' : 'max-w-[200px] max-h-[170px]'} object-contain rounded-lg border border-slate-200 shadow-xs cursor-pointer hover:ring-2 hover:ring-brand-500 hover:scale-[1.02] transition-all inline-block`
-                : `${imgSrcList.length > 1 ? 'max-w-[150px] max-h-[140px]' : 'max-w-[200px] max-h-[170px]'} object-contain rounded-lg border border-slate-200 shadow-xs inline-block`;
+                ? `${imgSrcList.length > 1 ? 'max-w-[150px] max-h-[140px]' : 'max-w-[200px] max-h-[170px]'} object-contain rounded-lg border border-slate-200 shadow-sm cursor-pointer hover:ring-2 hover:ring-brand-500 hover:scale-[1.02] transition-all inline-block`
+                : `${imgSrcList.length > 1 ? 'max-w-[150px] max-h-[140px]' : 'max-w-[200px] max-h-[170px]'} object-contain rounded-lg border border-slate-200 shadow-sm inline-block`;
 
             const imgsHtml = imgSrcList.map((src, idx) => {
-                const imgEvents = showControls ? `
-                    onclick="event.stopPropagation(); window.showFigureAlignPopover(event, ${qidAttr})"
-                    oncontextmenu="event.preventDefault(); event.stopPropagation(); window.showFigureAlignPopover(event, ${qidAttr})"
-                    title="点击或右击可切换插图排版位置 (图${idx + 1} 当前: ${currentLabel})"
-                ` : '';
-                return `<img src="${src}" class="${imgClass}" ${imgEvents}>`;
+                const controlAttrs = showControls
+                    ? `data-figure-align-qid="${qidAttr}" title="点击或右击可切换插图排版位置 (图${idx + 1} 当前: ${currentLabel})"`
+                    : '';
+                return `<img src="${window.MathBankSafe.escapeAttribute(src)}" alt="题目配图 ${idx + 1}" class="${imgClass}" ${controlAttrs} loading="lazy" decoding="async">`;
             }).join('');
 
             const btnHtml = showControls ? `
                 <div class="mt-1 ${effectiveAlign === 'center' ? 'text-center' : 'text-right'}">
-                    <button onclick="event.stopPropagation(); window.showFigureAlignPopover(event, ${qidAttr})" class="inline-flex items-center text-[10px] font-sans text-brand-700 bg-brand-50 hover:bg-brand-100 border border-brand-200/80 rounded-md px-1.5 py-0.5 transition-colors shadow-2xs">
+                    <button onclick="event.stopPropagation(); window.showFigureAlignPopover(event, ${qidAttr})" class="inline-flex items-center text-[10px] font-sans text-brand-700 bg-brand-50 hover:bg-brand-100 border border-brand-200/80 rounded-md px-1.5 py-0.5 transition-colors shadow-sm">
                         <i class="fa-solid ${iconClass} text-[9px] mr-1 text-brand-500"></i> ${currentLabel}${countTag} <i class="fa-solid fa-chevron-down text-[8px] ml-1 opacity-70"></i>
                     </button>
                 </div>
@@ -2596,15 +2494,13 @@
                 return `<div>${stemText}</div><div class="my-2 text-right">${imgControlHtml}</div>`;
             } else { // default 'right': Give text 70%+ dominant width, constrain figure container to 160px
                 const rightImgsHtml = imgSrcList.map((src, idx) => {
-                    const imgEvents = showControls ? `
-                        onclick="event.stopPropagation(); window.showFigureAlignPopover(event, ${qidAttr})"
-                        oncontextmenu="event.preventDefault(); event.stopPropagation(); window.showFigureAlignPopover(event, ${qidAttr})"
-                        title="点击或右击可切换插图排版位置 (图${idx + 1} 当前: ${currentLabel})"
-                    ` : '';
+                    const controlAttrs = showControls
+                        ? `data-figure-align-qid="${qidAttr}" title="点击或右击可切换插图排版位置 (图${idx + 1} 当前: ${currentLabel})"`
+                        : '';
                     const rightImgClass = showControls
-                        ? `${imgSrcList.length > 1 ? 'max-w-[125px] max-h-[115px]' : 'max-w-[155px] max-h-[135px]'} object-contain rounded-lg border border-slate-200 shadow-xs cursor-pointer hover:ring-2 hover:ring-brand-500 hover:scale-[1.02] transition-all inline-block`
-                        : `${imgSrcList.length > 1 ? 'max-w-[125px] max-h-[115px]' : 'max-w-[155px] max-h-[135px]'} object-contain rounded-lg border border-slate-200 shadow-xs inline-block`;
-                    return `<img src="${src}" class="${rightImgClass}" ${imgEvents}>`;
+                        ? `${imgSrcList.length > 1 ? 'max-w-[125px] max-h-[115px]' : 'max-w-[155px] max-h-[135px]'} object-contain rounded-lg border border-slate-200 shadow-sm cursor-pointer hover:ring-2 hover:ring-brand-500 hover:scale-[1.02] transition-all inline-block`
+                        : `${imgSrcList.length > 1 ? 'max-w-[125px] max-h-[115px]' : 'max-w-[155px] max-h-[135px]'} object-contain rounded-lg border border-slate-200 shadow-sm inline-block`;
+                    return `<img src="${window.MathBankSafe.escapeAttribute(src)}" alt="题目配图 ${idx + 1}" class="${rightImgClass}" ${controlAttrs} loading="lazy" decoding="async">`;
                 }).join('');
 
                 const rightImgControlHtml = `

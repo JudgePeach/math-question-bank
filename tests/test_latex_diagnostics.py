@@ -1,10 +1,18 @@
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
+from io import BytesIO
 import os
+import zipfile
 
 from mathbank.latex_diagnostics import build_local_latex_diagnostic
-from mathbank.paper_helper import build_latex_document, compile_tex_to_pdf
+from mathbank.paper_helper import (
+    build_answer_sheet_latex,
+    build_latex_document,
+    clean_content_for_latex,
+    compile_tex_to_pdf,
+    create_tex_zip_package,
+)
 
 
 def test_local_diagnostic_maps_cancel_command_to_package():
@@ -72,6 +80,61 @@ def test_paper_tex_preloads_common_math_and_table_packages():
     assert r"\providecommand{\bm}[1]{\symbf{#1}}" in tex
     assert "amssymb" not in tex
     assert "mathrsfs" not in tex
+
+
+def test_choice_empty_parentheses_do_not_leave_orphan_display_math():
+    for content in (
+        r"题干 $(\quad)$",
+        r"题干 $（\quad）$",
+        r"题干 $(\qquad)$",
+        r"题干 $(\hspace{2em})$",
+        r"题干 $（____）$",
+        r"题干（$\quad$）",
+        "题干 $",
+    ):
+        cleaned = clean_content_for_latex(content, q_type="single_choice")
+        assert cleaned == r"题干 \paren"
+        assert "$$" not in cleaned
+
+    # A real, paired display formula must not be mistaken for an empty answer
+    # parenthesis and removed.
+    assert clean_content_for_latex(
+        "$$x=1$$", q_type="single_choice"
+    ) == r"$$x=1$$ \paren"
+
+
+def test_tex_zip_image_directory_matches_generated_graphics_path(tmp_path):
+    image_path = tmp_path / "curve.png"
+    image_path.write_bytes(b"test image payload")
+    questions = [{
+        "question": {
+            "id": 81,
+            "question_type": "detailed_answer",
+            "content": "带图题。![](/static/uploads/curve.png)",
+        },
+        "score": 10,
+    }]
+    paper_tex = build_latex_document("图片路径测试", "", "exam", questions)
+    answer_sheet_tex = build_answer_sheet_latex("图片路径测试", "", questions)
+    archive_bytes = create_tex_zip_package(
+        "图片路径测试",
+        paper_tex,
+        "",
+        [str(image_path)],
+        answer_sheet_tex=answer_sheet_tex,
+    )
+
+    assert r"\graphicspath{{images/}{./}}" in paper_tex
+    assert r"\graphicspath{{images/}{./}}" in answer_sheet_tex
+    assert r"\includegraphics[width=5.0cm]{curve.png}" in paper_tex
+    with zipfile.ZipFile(BytesIO(archive_bytes)) as archive:
+        assert "images/curve.png" in archive.namelist()
+        assert r"\graphicspath{{images/}{./}}" in archive.read(
+            "试卷正文.tex"
+        ).decode("utf-8")
+        assert r"\graphicspath{{images/}{./}}" in archive.read(
+            "答题卡.tex"
+        ).decode("utf-8")
 
 
 def test_compile_rejects_error_even_if_xelatex_leaves_a_pdf():

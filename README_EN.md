@@ -80,10 +80,12 @@ flowchart LR
 
 ### 📦 Option 1: Download Portable Package (Recommended for Non-Technical Users)
 
-If you are unfamiliar with command line or Python environments, head directly to the [**Releases Page**](https://github.com/JudgePeach/math-question-bank/releases) to download officially pre-built cross-platform portable packages, extract and run:
+If you are unfamiliar with command line or Python environments, head to the [**Releases Page**](https://github.com/JudgePeach/math-question-bank/releases). Each archive is accompanied by a `.zip.sha256` checksum file; verify it before extraction:
 
-* **Windows Users**: Download `MathBank-Windows-x64.zip`, extract and double-click **`启动题库系统.bat`**
-* **macOS Users**: Download `MathBank-macOS.zip`, extract and double-click **`启动题库系统.command`**
+* **Windows Users**: Download `MathBank-Windows-x64.zip` (it includes Python 3.10), extract and double-click **`启动题库系统.bat`**
+* **macOS Users**: Download `MathBank-macOS.zip`, provide Python 3.10+, and double-click **`启动题库系统.command`**. The first run creates an isolated `venv` and needs network access.
+
+Both launchers stop only a previously recorded process whose project identity is verified. If another program owns port 8000 they exit safely, and they never open a browser after a failed health check.
 
 ---
 
@@ -95,11 +97,11 @@ If you are unfamiliar with command line or Python environments, head directly to
    cd math-question-bank
    ```
 
-2. **Install Dependencies** (Python 3.8+ recommended):
+2. **Install Dependencies** (Python 3.10+ required):
    ```bash
-   pip install -r requirements.txt
+   python -m pip install -r requirements.txt
    ```
-   For development or running tests, use `pip install -r requirements-dev.txt`.
+   For development or tests, use `python -m pip install -r requirements-dev.txt`. Versions are locked; run the tests and `python -m pip check` when upgrading them.
 
 3. **Launch Service**:
    * **Mac Users**: Double-click **`启动题库系统.command`**
@@ -142,17 +144,6 @@ Directly using [DeepSeek Official Open Platform](https://platform.deepseek.com/)
 > The AI intelligent TikZ geometry redrawing and PDF exam compilation/rendering features rely heavily on your **locally installed LaTeX typesetting environment** (such as **MacTeX** on macOS, **TeX Live** or **MiKTeX** on Windows).
 > Make sure `pdflatex` and `xelatex` commands can be invoked from your terminal (i.e. LaTeX toolchain added to system `PATH`). If not installed locally, AI-generated TikZ code and LaTeX source code are still saved and exported intact, but background PDF compilation will be restricted.
 
-> [!NOTE]
-> **Dependency Fix for Users Upgrading Previous Versions (For unrendered TikZ / missing pymupdf error)**
-> 
-> Recent updates introduced `pymupdf` core dependency for PDF-to-image conversion. If you encounter `'pymupdf' not installed` after replacing code, resolve via either method:
-> * **Option A (Recommended, Quick)**: Open terminal in project root and install manually:
->   - macOS: `./venv/bin/pip install pymupdf`
->   - Windows: `venv\Scripts\pip install pymupdf`
-> * **Option B (Re-create virtual environment)**: Delete the **`venv/`** folder in project root and double-click the start script again. The system will detect missing dependencies and automatically reinstall them.
-
----
-
 ## 🔄 Version Upgrade & Data Backup
 
 ### Upgrade Methods
@@ -165,12 +156,19 @@ Directly using [DeepSeek Official Open Platform](https://platform.deepseek.com/)
   *Note: Databases (`*.db`), API keys (`.env`), dimension configurations (`data_backup/`), and illustrations (`static/uploads/`) are Git-ignored. `git pull` will never overwrite local data.*
 
 - **Method B: Portable Package Overwrite Upgrade**
-  Extract the new version zip package and overwrite/merge into existing project folder. *Do not delete original folder directly.*
+  1. Create a verified full backup first (see **Full Backup and Restore** below).
+  2. Use the power button in the top-right of the web page to shut MathBank down safely, and wait until the page confirms that the service has stopped. Never overwrite files while the backend is running.
+  3. Extract the new ZIP into a **separate temporary directory**, not directly into the existing installation.
+  4. **Windows:** open the extracted folder, select all of its *contents*, copy them into the existing installation, and replace every same-named file when prompted.
+  5. **macOS Finder:** press `Command + Shift + .` first so hidden files such as `.env.example` are visible, then copy all *contents* of the extracted folder into the existing installation and merge same-named directories. **Do not choose Replace for the entire project folder**; Finder may remove local files that exist only in the old folder.
+  6. Double-click the new launcher. Before importing application dependencies, it verifies the Release and removes only files managed by the previous Release that no longer exist in the new one. If verification fails, startup stops; extract the ZIP again and repeat the complete content merge.
+
+  Overlay upgrades preserve root databases and their WAL/SHM files, `.env`, `data_backup/`, `static/uploads/`, `.system_generated/`, and `venv/`. Never delete the existing installation and replace it with the new folder. The Windows package includes its Python runtime. On macOS, Python 3.10+ is required; network access is needed only when creating `venv` for the first time or when `requirements.txt` changed/dependencies are missing.
 
 > [!IMPORTANT]
 > **Data Backup Recommendation**
 > 
-> Before upgrading, manually back up the following important files/directories:
+> A verified full backup is the preferred safeguard before an overlay upgrade. For an additional manual copy, preserve these files/directories:
 > - `*.db` (Local Question Database)
 > - `.env` (API Key Config)
 > - `data_backup/` (Custom Dimensions & Curriculum Outlines)
@@ -190,7 +188,22 @@ python3 -m scripts.search_questions -q "导数"
 ### 2. Data Cleaning & Self-Healing Scripts
 - **Fill-in-the-blank Underline Upgrade**: `python3 -m scripts.migrate_fillin` (Standardizes old underlines to `\fillin` macro)
 - **Multiple-Choice Empty Parentheses Cleanup**: `python3 -m scripts.migrate_choice_parentheses` (Cleans trailing empty parentheses in stems to avoid overlap with `\paren`)
-- **Build Cross-Platform Release**: `python3 -m scripts.build_release`
+- **Build Cross-Platform Release**: Confirm the version in `mathbank/__init__.py`, then run `python3 -m scripts.build_release`. The builder verifies pinned SHA-256 values for the official Python/NuGet runtimes, the Release allowlist, runtime layout, and a source smoke check. It emits an in-archive `RELEASE-MANIFEST.json` and an external `.zip.sha256` file.
+
+### 3. Full Backup and Restore
+
+```bash
+# Create a verified backup of the database, uploads, and custom metadata
+python3 -m scripts.backup
+
+# Verify only; this does not modify current data
+python3 -m scripts.restore data_backup/snapshots/mathbank-backup-TIMESTAMP.zip
+
+# Restore for real: completely stop MathBank first
+python3 -m scripts.restore data_backup/snapshots/mathbank-backup-TIMESTAMP.zip --apply --yes
+```
+
+Full backups include a per-file SHA-256 manifest and exclude `.env`, the local token, and API secrets. The server and restore tool share a cross-platform runtime lock, so restore refuses to run until the service is fully stopped. `questions_backup.json` is a compatibility JSON export for search/sync; it is not a disaster-recovery backup.
 
 ---
 
@@ -200,7 +213,9 @@ python3 -m scripts.search_questions -q "导数"
 .
 ├── data_backup/                # Real-time backup & AI read-only library (Git ignored)
 │   ├── archive/                # Historical migrations & database archives
-│   ├── questions_backup.json   # Full database JSON backup
+│   ├── snapshots/              # Verified full-recovery archives
+│   ├── schema_snapshots/       # Standalone pre-migration snapshots and SHA-256
+│   ├── questions_backup.json   # Question JSON sync export (not a full backup)
 │   └── questions_library.md    # AI-exclusive read-only question bank (solutions filtered)
 ├── docs/                       # Project documentation & README preview images
 │   ├── AI_DATABASE_GUIDE.md    # AI question bank search guide
@@ -208,8 +223,13 @@ python3 -m scripts.search_questions -q "导数"
 │   └── images/                 # Product interface preview screenshots
 ├── mathbank/                   # Backend domain package
 │   ├── database.py             # SQLite data models & Session
+│   ├── db_migrations.py        # Versioned, backup-first SQLite migrations
+│   ├── backup.py               # Full backup, verification, restore & rollback
+│   ├── asset_security.py       # Upload validation & local asset boundary
+│   ├── task_manager.py         # Bounded tasks, cancellation & asset lifecycle
+│   ├── health.py               # Startup readiness & database health
 │   ├── paper_helper.py         # LaTeX/PDF compilation, layout & LRU cache
-│   ├── sync_helper.py          # Data backup & AI library sanitizer
+│   ├── sync_helper.py          # JSON sync export & AI library sanitizer
 │   ├── paths.py                # Single source of truth for project paths
 │   ├── curriculums.py          # Preset loader for 4 curriculum outlines
 │   ├── prompts.py              # Prompt builder for OCR/solve/parse/TikZ/paper
@@ -225,6 +245,8 @@ python3 -m scripts.search_questions -q "导数"
 │   └── resources/curriculums/  # Shared JSON outlines for A/B/S/H editions
 ├── scripts/                    # Maintenance, migration, search & release tools
 │   ├── search_questions.py
+│   ├── backup.py
+│   ├── restore.py
 │   ├── migrate_fillin.py
 │   ├── migrate_choice_parentheses.py
 │   └── build_release.py

@@ -1,5 +1,7 @@
 import os
 import json
+from unittest.mock import MagicMock, patch
+
 import pytest
 from main import LOCAL_TOKEN
 from mathbank.database import Question
@@ -27,7 +29,6 @@ def test_api_questions_crud(client):
     assert response.status_code == 200
     assert isinstance(response.json(), list)
     assert len(response.json()) == 0
-
     # 2. Create a new question with valid X-Local-Token
     headers = {"X-Local-Token": LOCAL_TOKEN}
     payload = {
@@ -97,6 +98,33 @@ def test_api_questions_crud(client):
     # 7. Check list is empty again
     response = client.get("/api/questions")
     assert len(response.json()) == 0
+
+
+def test_questions_support_bounded_server_pagination_without_breaking_legacy_array(
+    client, db_session
+):
+    db_session.add_all(
+        [
+            Question(content=f"分页题 {index}", question_type="single_choice")
+            for index in range(25)
+        ]
+    )
+    db_session.commit()
+
+    paged = client.get("/api/questions?page=2&page_size=10&sort=asc")
+    legacy = client.get("/api/questions")
+
+    assert paged.status_code == 200
+    data = paged.json()
+    assert data["total"] == 25
+    assert data["page"] == 2
+    assert data["page_size"] == 10
+    assert data["total_pages"] == 3
+    assert len(data["items"]) == 10
+    assert [item["id"] for item in data["items"]] == list(range(11, 21))
+    assert [item["seq_num"] for item in data["items"]] == list(range(11, 21))
+    assert isinstance(legacy.json(), list)
+    assert len(legacy.json()) == 25
 
 
 def test_api_categories(client):
@@ -245,7 +273,6 @@ def test_pdf_task_and_crop(client):
 
 
 def test_api_ai_solve_with_ocr(client):
-    from unittest.mock import patch, MagicMock
     headers = {"X-Local-Token": LOCAL_TOKEN}
     
     with patch.dict(os.environ, {"DEEPSEEK_API_KEY": "fake_key"}):
@@ -297,29 +324,33 @@ def test_api_ai_solve_with_ocr(client):
     ],
 )
 def test_bailian_solve_uses_model_specific_thinking_policy(
-    client, model, thinking, expected_limit, expected_budget, expected_effort
+    client,
+    model,
+    thinking,
+    expected_limit,
+    expected_budget,
+    expected_effort,
 ):
-    from unittest.mock import MagicMock, patch
-
-    response = MagicMock(status_code=200)
-    response.json.return_value = {
-        "choices": [{"message": {"content": "【参考答案】：2"}}]
+    response_payload = MagicMock(status_code=200)
+    response_payload.json.return_value = {
+        "choices": [{"message": {"content": "【参考答案】2\n【详细解析】略"}}]
     }
-    with patch.dict(os.environ, {"ALI_BAILIAN_API_KEY": "fake-key"}):
-        with patch(
-            "mathbank.ai_http.robust_request_post", return_value=response
-        ) as mock_post:
-            result = client.post(
-                "/api/ai/solve",
-                data={
-                    "content": "求 $1+1$。",
-                    "thinking": thinking,
-                    "model": model,
-                },
-                headers={"X-Local-Token": LOCAL_TOKEN},
-            )
+    with patch.dict(os.environ, {"ALI_BAILIAN_API_KEY": "bailian-key"}), patch(
+        "mathbank.ai_http.robust_request_post", return_value=response_payload
+    ) as mock_post:
+        response = client.post(
+            "/api/ai/solve",
+            data={
+                "content": "求 $1+1$。",
+                "question_type": "detailed_answer",
+                "thinking": thinking,
+                "model": model,
+                "stream": "false",
+            },
+            headers={"X-Local-Token": LOCAL_TOKEN},
+        )
 
-    assert result.status_code == 200
+    assert response.status_code == 200
     sent = mock_post.call_args.kwargs["json"]
     assert sent["enable_thinking"] is (thinking == "enabled")
     assert sent["max_completion_tokens"] == expected_limit
@@ -382,7 +413,7 @@ def test_parse_paper_flows_use_shared_provider_resolution(client):
         return locked_resp
 
     provider_env = {
-        "PREFER_PARSE_MODEL": "BAILIAN/qwen3.7-max",
+        "PREFER_PARSE_MODEL": "BAILIAN/qwen3.7-max:high",
         "ALI_BAILIAN_API_KEY": "fake-bailian-key",
         "ALI_BAILIAN_API_BASE": "https://bailian.example/v1/",
     }
