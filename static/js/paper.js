@@ -35,6 +35,10 @@
         isFilterCollapsed: false,
         bankQuestions: [], // Loaded questions from DB based on filters
         questionsMap: {}, // qid -> Question Object
+        answerCache: Object.create(null), // qid -> full answer_markdown, loaded on demand
+        expandedAnswerIds: new Set(),
+        answerLoadingIds: new Set(),
+        answerErrors: Object.create(null),
         activeWorkspace: 'bank'
     };
 
@@ -85,6 +89,78 @@
         if (q.figure_align && q.figure_align !== 'right') return q.figure_align;
         return defaultAlign;
     }
+
+    function hasCachedPaperAnswer(qid) {
+        return Object.prototype.hasOwnProperty.call(window.PaperStore.answerCache, qid);
+    }
+
+    function seedPaperAnswerCache(q) {
+        if (!q || !q.id || typeof q.answer_markdown !== 'string') return;
+        window.PaperStore.answerCache[q.id] = q.answer_markdown;
+        q.has_answer = Boolean(q.answer_markdown.trim());
+    }
+
+    async function loadPaperQuestionAnswer(qid) {
+        qid = parseInt(qid, 10);
+        if (!qid || window.PaperStore.answerLoadingIds.has(qid)) return;
+
+        const q = window.PaperStore.questionsMap[qid];
+        if (q) seedPaperAnswerCache(q);
+        if (hasCachedPaperAnswer(qid)) {
+            renderPart3QuestionStream();
+            return;
+        }
+
+        window.PaperStore.answerLoadingIds.add(qid);
+        delete window.PaperStore.answerErrors[qid];
+        renderPart3QuestionStream();
+
+        try {
+            const response = await fetch(`/api/questions/${qid}`);
+            if (!response.ok) throw new Error(`HTTP ${response.status}`);
+            const detail = await response.json();
+            const answer = typeof detail.answer_markdown === 'string'
+                ? detail.answer_markdown
+                : '';
+            window.PaperStore.answerCache[qid] = answer;
+            if (q) {
+                q.answer_markdown = answer;
+                q.has_answer = Boolean(answer.trim());
+            }
+        } catch (error) {
+            console.error('Load paper question answer error:', error);
+            window.PaperStore.answerErrors[qid] = '答案加载失败，请重试。';
+        } finally {
+            window.PaperStore.answerLoadingIds.delete(qid);
+            renderPart3QuestionStream();
+        }
+    }
+
+    window.togglePaperQuestionAnswer = function (qid) {
+        qid = parseInt(qid, 10);
+        if (!qid) return;
+        if (window.PaperStore.expandedAnswerIds.has(qid)) {
+            window.PaperStore.expandedAnswerIds.delete(qid);
+            renderPart3QuestionStream();
+            return;
+        }
+
+        window.PaperStore.expandedAnswerIds.add(qid);
+        loadPaperQuestionAnswer(qid);
+    };
+
+    window.retryPaperQuestionAnswer = function (qid) {
+        qid = parseInt(qid, 10);
+        if (!qid) return;
+        delete window.PaperStore.answerErrors[qid];
+        delete window.PaperStore.answerCache[qid];
+        loadPaperQuestionAnswer(qid);
+    };
+
+    window.collapseAllPaperAnswers = function () {
+        window.PaperStore.expandedAnswerIds.clear();
+        renderPart3QuestionStream();
+    };
 
     // Public Cart Helper Functions
     window.isInCart = function (qid) {
@@ -652,10 +728,13 @@
         } else {
             displayList = bankQuestions;
         }
+        const hasVisibleExpandedAnswers = displayList.some(
+            q => q && window.PaperStore.expandedAnswerIds.has(q.id)
+        );
 
         let html = `
             <!-- Part 3 Stream Header Bar -->
-            <div class="flex items-center justify-between pb-3 mb-4 border-b border-slate-200/60 dark:border-slate-700/60">
+            <div class="flex flex-wrap items-center justify-between gap-2 pb-3 mb-4 border-b border-slate-200/60 dark:border-slate-700/60">
                 <div class="flex items-center space-x-1.5 bg-slate-200/60 p-1 rounded-xl dark:bg-slate-800">
                     <button onclick="switchPaperStreamTab('all')" 
                         class="px-3 py-1 rounded-lg text-xs font-bold transition-all ${currentTab === 'all' ? 'bg-white text-brand-600 shadow-sm dark:bg-slate-700 dark:text-brand-200' : 'text-slate-500 hover:text-slate-800 dark:text-slate-400'}">
@@ -667,12 +746,21 @@
                     </button>
                 </div>
 
-                ${cart.length > 0 ? `
-                    <button onclick="window.clearCart()" class="text-xs font-medium text-slate-400 hover:text-rose-500 transition-colors flex items-center space-x-1">
-                        <i class="fa-solid fa-trash-can text-[10px]"></i>
-                        <span>清空卷面 (${cart.length})</span>
-                    </button>
-                ` : ''}
+                <div class="flex flex-wrap items-center justify-end gap-3">
+                    ${hasVisibleExpandedAnswers ? `
+                        <button type="button" onclick="window.collapseAllPaperAnswers()"
+                            class="text-xs font-medium text-slate-500 hover:text-brand-600 transition-colors flex items-center space-x-1">
+                            <i class="fa-solid fa-eye-slash text-[10px]"></i>
+                            <span>收起全部答案</span>
+                        </button>
+                    ` : ''}
+                    ${cart.length > 0 ? `
+                        <button type="button" onclick="window.clearCart()" class="text-xs font-medium text-slate-400 hover:text-rose-500 transition-colors flex items-center space-x-1">
+                            <i class="fa-solid fa-trash-can text-[10px]"></i>
+                            <span>清空卷面 (${cart.length})</span>
+                        </button>
+                    ` : ''}
+                </div>
             </div>
         `;
 
@@ -699,6 +787,42 @@
             const qTypeLabel = getQuestionTypeCn(q.question_type);
             const diffTag = getDifficultyBadge(q.difficulty);
             const usageCount = q.usage_count || 0;
+            seedPaperAnswerCache(q);
+            const answerExpanded = window.PaperStore.expandedAnswerIds.has(q.id);
+            const answerLoading = window.PaperStore.answerLoadingIds.has(q.id);
+            const answerError = window.PaperStore.answerErrors[q.id] || '';
+            const answerCached = hasCachedPaperAnswer(q.id);
+            const answerText = answerCached ? window.PaperStore.answerCache[q.id] : '';
+            const answerAvailabilityKnown = typeof q.has_answer === 'boolean' || answerCached;
+            const hasAnswer = Boolean((answerText || '').trim()) || q.has_answer === true || !answerAvailabilityKnown;
+
+            let answerBodyHtml = '';
+            if (answerExpanded) {
+                if (answerLoading) {
+                    answerBodyHtml = `
+                        <div class="flex items-center justify-center gap-2 py-5 text-xs text-slate-500 dark:text-slate-400" aria-live="polite">
+                            <i class="fa-solid fa-spinner fa-spin text-brand-500"></i>
+                            <span>正在加载答案与解析...</span>
+                        </div>
+                    `;
+                } else if (answerError) {
+                    answerBodyHtml = `
+                        <div class="flex flex-wrap items-center justify-between gap-2 py-3 text-xs text-rose-600 dark:text-rose-300" role="alert">
+                            <span><i class="fa-solid fa-circle-exclamation mr-1"></i>${escapeHtml(answerError)}</span>
+                            <button type="button" onclick="window.retryPaperQuestionAnswer(${q.id})"
+                                class="px-3 py-1.5 rounded-lg border border-rose-200 bg-white hover:bg-rose-50 font-semibold transition-colors dark:bg-slate-800 dark:border-rose-900/60 dark:hover:bg-slate-700">
+                                重试
+                            </button>
+                        </div>
+                    `;
+                } else if ((answerText || '').trim()) {
+                    answerBodyHtml = typeof window.parseMarkdownWithMath === 'function'
+                        ? window.parseMarkdownWithMath(answerText)
+                        : window.MathBankSafe.sanitizeRichHtml(answerText);
+                } else {
+                    answerBodyHtml = '<p class="py-3 text-xs text-slate-400 italic">本题暂无答案与解析。</p>';
+                }
+            }
 
             const cardBorderClass = inCart 
                 ? 'border-brand-500 ring-2 ring-brand-500/20 bg-brand-50/10 dark:border-brand-500/60 dark:bg-brand-900/20'
@@ -707,8 +831,8 @@
             html += `
                 <div class="p-5 rounded-2xl border ${cardBorderClass} shadow-sm hover:shadow-md transition-all">
                     <!-- Card Top Controls Bar -->
-                    <div class="flex items-center justify-between pb-3 mb-3 border-b border-slate-100 dark:border-slate-700/60">
-                        <div class="flex items-center space-x-2 flex-wrap gap-y-1">
+                    <div class="flex flex-col gap-3 pb-3 mb-3 border-b border-slate-100 sm:flex-row sm:items-center sm:justify-between dark:border-slate-700/60">
+                        <div class="flex w-full items-center space-x-2 flex-wrap gap-y-1 sm:w-auto">
                             <span class="font-bold text-slate-800 dark:text-slate-100 text-sm">#${escapeHtml(q.seq_num !== undefined ? q.seq_num : q.id)}</span>
                             <span class="px-2 py-0.5 rounded-lg text-xs font-semibold bg-brand-50 text-brand-600 border border-brand-200/50 dark:bg-brand-900/30 dark:text-brand-200 dark:border-brand-900/50">${escapeHtml(qTypeLabel)}</span>
                             ${diffTag}
@@ -717,7 +841,22 @@
                             <span class="px-2 py-0.5 rounded-lg text-xs font-medium bg-slate-100 text-slate-500 dark:bg-slate-700/50 dark:text-slate-400" title="引用次数">引用 ${escapeHtml(usageCount)} 次</span>
                         </div>
 
-                        <div class="flex items-center space-x-2">
+                        <div class="flex w-full flex-wrap items-center justify-end gap-2 sm:w-auto">
+                            <button type="button"
+                                onclick="window.togglePaperQuestionAnswer(${q.id})"
+                                aria-expanded="${answerExpanded ? 'true' : 'false'}"
+                                ${answerExpanded ? `aria-controls="paper-q-answer-${q.id}"` : ''}
+                                ${(!hasAnswer && !answerExpanded) || answerLoading ? 'disabled' : ''}
+                                title="${hasAnswer || answerExpanded ? (answerExpanded ? '收起本题答案与解析' : '查看本题答案与解析') : '本题暂无答案'}"
+                                class="min-h-[44px] sm:min-h-[32px] px-3 py-1.5 rounded-xl text-xs font-semibold border transition-all flex items-center justify-center space-x-1.5
+                                    ${answerExpanded
+                                        ? 'border-brand-200 bg-brand-50 text-brand-700 hover:bg-brand-100 dark:border-brand-700 dark:bg-brand-900/40 dark:text-brand-200'
+                                        : 'border-slate-200 bg-white/80 text-slate-600 hover:border-brand-200 hover:bg-brand-50 hover:text-brand-700 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-300 dark:hover:border-brand-700'}
+                                    disabled:cursor-not-allowed disabled:opacity-45 disabled:hover:border-slate-200 disabled:hover:bg-white/80 disabled:hover:text-slate-600">
+                                <i class="fa-solid ${answerLoading ? 'fa-spinner fa-spin' : (answerExpanded ? 'fa-eye-slash' : 'fa-eye')} text-[11px]"></i>
+                                <span>${answerLoading ? '加载中' : (answerExpanded ? '收起答案' : (hasAnswer ? '查看答案' : '暂无答案'))}</span>
+                            </button>
+
                             ${inCart ? `
                                 <!-- Score Selector -->
                                 <div class="paper-score-pill flex items-center space-x-1 px-2.5 py-1 rounded-xl">
@@ -761,6 +900,21 @@
                     <div class="question-full-render-box text-sm leading-relaxed text-slate-800 dark:text-slate-100 overflow-x-auto select-text" id="paper-q-render-${q.id}">
                         ${formatQuestionContentHtml(q.content, q.id, getQuestionFigAlign(q), false, false)}
                     </div>
+
+                    ${answerExpanded ? `
+                        <section id="paper-q-answer-${q.id}"
+                            role="region"
+                            aria-label="题目 #${escapeHtml(q.seq_num !== undefined ? q.seq_num : q.id)} 的参考答案与解析"
+                            class="mt-4 pt-4 border-t border-dashed border-brand-200/80 dark:border-brand-900/70">
+                            <div class="mb-2 flex items-center gap-2 text-xs font-bold text-brand-700 dark:text-brand-200">
+                                <i class="fa-solid fa-signature"></i>
+                                <span>参考答案与解析</span>
+                            </div>
+                            <div class="paper-answer-render-box rounded-xl border border-brand-100 bg-brand-50/40 px-4 py-3 text-sm leading-relaxed text-slate-800 overflow-x-auto select-text dark:border-brand-900/60 dark:bg-brand-900/20 dark:text-slate-100">
+                                <div id="paper-q-answer-content-${q.id}">${answerBodyHtml}</div>
+                            </div>
+                        </section>
+                    ` : ''}
                 </div>
             `;
         });
@@ -785,6 +939,21 @@
                     if (typeof window.adaptChoicesGridLayout === 'function') {
                         window.adaptChoicesGridLayout(el);
                     }
+                } catch (e) { }
+            }
+
+            const answerEl = document.getElementById(`paper-q-answer-content-${q.id}`);
+            if (answerEl && !window.PaperStore.answerLoadingIds.has(q.id) && !window.PaperStore.answerErrors[q.id] && typeof renderMathInElement === 'function') {
+                try {
+                    renderMathInElement(answerEl, {
+                        delimiters: [
+                            { left: '$$', right: '$$', display: true },
+                            { left: '$', right: '$', display: false },
+                            { left: '\\(', right: '\\)', display: false },
+                            { left: '\\[', right: '\\]', display: true }
+                        ],
+                        throwOnError: false
+                    });
                 } catch (e) { }
             }
         });

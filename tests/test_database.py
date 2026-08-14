@@ -32,12 +32,14 @@ def test_question_crud_operations(db_session):
     assert d["content"] == q.content
     assert "answer_markdown" in d
     assert d["answer_markdown"] == "$\\{1, 2, 3\\}$"
+    assert d["has_answer"] is True
     assert d["review"] == "这是一道基础的集合并集题目"
     assert d["association_group_id"] == "group_123"
     
     s = q.to_summary_dict()
     assert s["id"] == q.id
     assert "answer_markdown" not in s  # Summary should not leak answers
+    assert s["has_answer"] is True
     
     # 2. Read / Query Question
     retrieved = db_session.query(Question).filter_by(id=q.id).first()

@@ -193,6 +193,23 @@ def test_mobile_layout_touch_targets_and_dialog_panes_have_regression_guards():
     assert "sidebar-pagination-controls" in _read(STATIC_JS_DIR / "editor.js")
 
 
+def test_paper_question_answers_are_collapsible_and_loaded_on_demand():
+    paper_source = _read(STATIC_JS_DIR / "paper.js")
+
+    for marker in (
+        "answerCache: Object.create(null)",
+        "expandedAnswerIds: new Set()",
+        "window.togglePaperQuestionAnswer",
+        "window.collapseAllPaperAnswers",
+        "fetch(`/api/questions/${qid}`)",
+        "window.parseMarkdownWithMath(answerText)",
+        'aria-expanded="${answerExpanded ? \'true\' : \'false\'}"',
+        "参考答案与解析",
+        "收起全部答案",
+    ):
+        assert marker in paper_source
+
+
 def test_reduced_motion_dark_contrast_and_busy_feedback_are_explicit():
     css_source = _read(CSS_PATH)
     index_source = _read(INDEX_PATH)

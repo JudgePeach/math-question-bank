@@ -70,6 +70,8 @@ def test_api_questions_crud(client):
     assert response.status_code == 200
     assert len(response.json()) == 1
     assert response.json()[0]["id"] == question_id
+    assert response.json()[0]["has_answer"] is True
+    assert "answer_markdown" not in response.json()[0]
 
     # Filter with mismatching criteria
     response = client.get("/api/questions?compulsory=必修一&difficulty=hard")
