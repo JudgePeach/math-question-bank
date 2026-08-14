@@ -535,6 +535,9 @@ def test_launchers_require_python_310_and_only_stop_verified_mathbank_processes(
     assert "venv-python-legacy" in mac_launcher
     assert "find_verified_mathbank_owner" in mac_launcher
     assert "is_mathbank_project_root" in mac_launcher
+    assert "process_executable" in mac_launcher
+    assert "expected_python_executable" in mac_launcher
+    assert 'Path(sys.base_prefix) / "Resources" / "Python.app"' in mac_launcher
     assert 'case " $inspected_command "' in mac_launcher
     assert 'rechecked_owner=$(find_verified_mathbank_owner "$verified_owner")' in mac_launcher
     assert "另一份或旧版 MathBank 仍在运行" in mac_launcher

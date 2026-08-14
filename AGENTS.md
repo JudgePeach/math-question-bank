@@ -94,7 +94,7 @@
 
 ### 3.7 启动就绪与网络容错
 - **启动器环境与身份自愈**：macOS 与 Windows 启动器要求 Python 3.10+，源码运行时使用项目隔离的 `venv` 并通过 `python -m pip` 补齐锁定依赖；macOS 必须依次探测可用的 `python3` / 具名 Python 3.10+ 解释器，旧 `venv` 不兼容时先保留临时备份、自动重建，并仅在新服务通过健康检查后清理备份。便携 Windows 包优先使用内嵌 Python。生产式双击启动不得携带 `--reload`。
-- **端口与进程所有权**：启动器可停止两类已验证进程：一是同时通过 PID、当前项目根路径、Python 路径与 `uvicorn main:app` 命令校验的本项目旧服务；二是端口 8000 监听进程或其有限层级祖先进程同时通过 MathBank 项目文件指纹、工作目录与精确 `-m uvicorn main:app` 命令校验的旧目录/旧版本 MathBank。两类进程均只允许 `TERM` 优雅退出并限时等待。端口被真正陌生的进程占用、任一监听 PID 无法完整验明身份或状态文件身份不明时必须报错退出，严禁按端口无条件 `kill -9` / `taskkill` 或终止未经验证的父进程。
+- **端口与进程所有权**：启动器可停止两类已验证进程：一是同时通过 PID、当前项目根路径、Python 基础运行时的真实进程映像与 `uvicorn main:app` 命令校验的本项目旧服务；macOS Framework Python 必须从 `sys.base_prefix` 推导 `Resources/Python.app/.../Python`，不得假设 `ps` 命令行保留 `venv/bin/python` 软链接路径。二是端口 8000 监听进程或其有限层级祖先进程同时通过 MathBank 项目文件指纹、工作目录与精确 `-m uvicorn main:app` 命令校验的旧目录/旧版本 MathBank。两类进程均只允许 `TERM` 优雅退出并限时等待。端口被真正陌生的进程占用、任一监听 PID 无法完整验明身份或状态文件身份不明时必须报错退出，严禁按端口无条件 `kill -9` / `taskkill` 或终止未经验证的父进程。
 - **Release 覆盖升级契约**：启动器建立状态目录后，必须先安全停止已验明身份的当前或旧版 MathBank 服务，再自愈并确认受支持的 Python 环境，最后才能进行任何项目依赖导入。根目录存在 `RELEASE-MANIFEST.json` 时，必须运行 `python -B -m scripts.release_overlay --platform macos|windows-x64`，对账当前文件并仅删除旧清单中、新清单已移除的发布管理文件；失败必须拒绝启动。必须保护根目录数据库及 WAL/SHM、`.env`、`data_backup/`、`static/uploads/`、`.system_generated/` 与 `venv/`。无 Release 清单的源码工作区不得触发此对账。便携升级文档必须要求用户先做完整备份、通过网页电源键关闭并确认服务已停，将新 ZIP 解压到临时目录后再复制其“内容”到原目录；macOS Finder 禁止整体替换旧文件夹，Windows 必须替换所有同名文件。
 - **依赖锁变更检测**：源码启动器必须记录锁文件摘要；`requirements.txt` 内容变化时，即使旧环境仍可 import，也要重新按精确版本安装并执行 `pip check`，成功后才更新摘要。
 - **自适应健康检查**：启动脚本每 0.5 秒探测轻量 `/healthz`（最长 10 秒）；该接口同时验证数据库连接、外键/WAL 和必要目录，仅在返回 200 后拉起浏览器。失败时只停止刚启动且身份已验证的项目进程，输出日志并以非零状态退出。

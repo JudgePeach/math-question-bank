@@ -49,6 +49,24 @@ process_cwd() {
     lsof -a -p "$1" -d cwd -Fn 2>/dev/null | sed -n 's/^n//p' | sed -n '1p'
 }
 
+process_executable() {
+    lsof -a -p "$1" -d txt -Fn 2>/dev/null | sed -n 's/^n//p' | sed -n '1p'
+}
+
+expected_python_executable() {
+    "$PYTHON_BIN" -c '
+import os
+from pathlib import Path
+import sys
+
+framework_executable = (
+    Path(sys.base_prefix) / "Resources" / "Python.app" / "Contents" / "MacOS" / "Python"
+)
+candidate = framework_executable if framework_executable.is_file() else Path(sys._base_executable)
+print(os.path.realpath(candidate))
+' 2>/dev/null
+}
+
 is_mathbank_project_root() {
     candidate_root=$1
     [ -n "$candidate_root" ] || return 1
@@ -138,9 +156,13 @@ is_owned_server() {
 
     server_command=$(ps -p "$server_pid" -o command= 2>/dev/null) || return 1
     case " $server_command " in
-        *" $PYTHON_BIN -m uvicorn main:app "*) ;;
+        *" -m uvicorn main:app "*) ;;
         *) return 1 ;;
     esac
+
+    server_executable=$(process_executable "$server_pid") || return 1
+    expected_executable=$(expected_python_executable) || return 1
+    [ -n "$server_executable" ] && [ "$server_executable" = "$expected_executable" ] || return 1
 
     # lsof is available on supported macOS versions. Confirming cwd protects
     # against PID reuse by another project with a similar command line.
