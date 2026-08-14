@@ -14,6 +14,7 @@ from mathbank.asset_security import (
     AssetSecurityError,
     normalize_upload_asset_reference,
     resolve_upload_asset,
+    write_private_text_atomic,
 )
 from mathbank.database import Question
 from mathbank.paper_helper import compile_tex_to_pdf
@@ -23,6 +24,16 @@ def _png_bytes(size=(8, 8)) -> bytes:
     buffer = io.BytesIO()
     Image.new("RGB", size, "white").save(buffer, format="PNG")
     return buffer.getvalue()
+
+
+def test_private_atomic_write_works_without_unix_fchmod(tmp_path, monkeypatch):
+    monkeypatch.delattr("mathbank.asset_security.os.fchmod", raising=False)
+    target = tmp_path / "private-token"
+
+    write_private_text_atomic(target, "persistent-value")
+
+    assert target.read_text(encoding="utf-8") == "persistent-value"
+    assert not list(tmp_path.glob(".private-token.*"))
 
 
 def test_upload_asset_resolver_accepts_only_contained_regular_files(tmp_path):

@@ -126,6 +126,7 @@ OVERLAY_MANAGED_ROOTS = (
     "static",
     "templates",
 )
+WINDOWS_LAUNCHER_NAME = "启动题库系统.bat"
 
 
 def sha256_file(path):
@@ -347,6 +348,7 @@ def configure_python_path():
         lines = file_handle.read().splitlines()
 
     new_lines = []
+    application_root_added = False
     site_packages_added = False
     for line in lines:
         if line.strip() == "#import site":
@@ -354,9 +356,14 @@ def configure_python_path():
         else:
             new_lines.append(line)
         if line.strip() == ".":
+            # Entries in python310._pth are relative to python/python.exe, not
+            # to the launcher's working directory.  The application modules
+            # (main.py, mathbank/, scripts/) live one directory above it.
+            new_lines.append("..")
+            application_root_added = True
             new_lines.append("site-packages")
             site_packages_added = True
-    if not site_packages_added:
+    if not application_root_added or not site_packages_added:
         raise RuntimeError("embedded Python path file has no application path entry")
     with open(pth_file, "w", encoding="utf-8", newline="\n") as file_handle:
         file_handle.write("\n".join(new_lines) + "\n")
@@ -506,12 +513,48 @@ def copy_app_files(destination, launcher_name):
 
 
 def create_launcher():
-    """Use the reviewed root launcher as the portable Windows launcher."""
-    launcher_source = Path(BASE_DIR, "启动题库系统.bat")
+    """Write the reviewed Windows launcher with cmd.exe-safe CRLF endings."""
+    launcher_source = Path(BASE_DIR, WINDOWS_LAUNCHER_NAME)
     launcher_destination = Path(BUILD_DIR, launcher_source.name)
     if not launcher_source.is_file():
         raise RuntimeError(f"missing Windows launcher: {launcher_source}")
-    shutil.copy2(launcher_source, launcher_destination)
+    try:
+        launcher_text = launcher_source.read_text(encoding="utf-8")
+    except UnicodeDecodeError as exc:
+        raise RuntimeError("Windows launcher must be UTF-8 text") from exc
+    if launcher_text.startswith("\ufeff"):
+        raise RuntimeError("Windows launcher must not contain a UTF-8 BOM")
+    launcher_destination.parent.mkdir(parents=True, exist_ok=True)
+    normalized_text = launcher_text.replace("\r\n", "\n").replace("\r", "\n")
+    launcher_destination.write_bytes(
+        normalized_text.replace("\n", "\r\n").encode("utf-8")
+    )
+    validate_windows_launcher(launcher_destination)
+
+
+def _validate_windows_launcher_bytes(payload, label):
+    """Reject batch launchers that cmd.exe cannot parse consistently."""
+    if not payload:
+        raise RuntimeError(f"{label} is empty")
+    if payload.startswith(b"\xef\xbb\xbf"):
+        raise RuntimeError(f"{label} must not contain a UTF-8 BOM")
+    try:
+        payload.decode("utf-8")
+    except UnicodeDecodeError as exc:
+        raise RuntimeError(f"{label} must be UTF-8 text") from exc
+    remaining = payload.replace(b"\r\n", b"")
+    if b"\r" in remaining or b"\n" in remaining or not payload.endswith(b"\r\n"):
+        raise RuntimeError(f"{label} must use CRLF line endings only")
+
+
+def validate_windows_launcher(path):
+    """Validate the raw bytes of a staged Windows batch launcher."""
+    launcher_path = Path(path)
+    if not launcher_path.is_file():
+        raise RuntimeError(f"Windows launcher is missing: {launcher_path}")
+    _validate_windows_launcher_bytes(
+        launcher_path.read_bytes(), f"Windows launcher {launcher_path.name}"
+    )
 
 
 def _release_files(root):
@@ -658,6 +701,20 @@ def validate_windows_runtime(root):
     missing = [str(path.relative_to(root)) for path in required if not path.exists()]
     if missing:
         raise RuntimeError(f"Windows runtime smoke check is missing: {missing}")
+    path_lines = {
+        line.strip()
+        for line in (root / "python" / "python310._pth").read_text(
+            encoding="utf-8"
+        ).splitlines()
+        if line.strip() and not line.lstrip().startswith("#")
+    }
+    required_path_lines = {".", "..", "site-packages", "import site"}
+    missing_path_lines = sorted(required_path_lines - path_lines)
+    if missing_path_lines:
+        raise RuntimeError(
+            "Windows embedded runtime cannot import the application root; "
+            f"python310._pth is missing: {missing_path_lines}"
+        )
     if os.name == "nt":
         subprocess.check_call(
             [
@@ -766,6 +823,19 @@ def verify_zip_archive(zip_path, required_members):
             unix_mode = launcher_info.external_attr >> 16
             if launcher_info.create_system == 3 and not unix_mode & 0o111:
                 raise RuntimeError("finished macOS launcher is not executable")
+        else:
+            launcher_info = file_infos.get(WINDOWS_LAUNCHER_NAME)
+            if launcher_info is None:
+                raise RuntimeError("finished Windows release has no launcher")
+            if launcher_info.file_size > 1024 * 1024:
+                raise RuntimeError("finished Windows launcher is unexpectedly large")
+            with zip_ref.open(launcher_info, "r") as launcher_stream:
+                launcher_payload = launcher_stream.read(1024 * 1024 + 1)
+            if len(launcher_payload) > 1024 * 1024:
+                raise RuntimeError("finished Windows launcher is unexpectedly large")
+            _validate_windows_launcher_bytes(
+                launcher_payload, "finished Windows launcher"
+            )
 
         entries = manifest.get("files")
         if not isinstance(entries, list) or len(entries) > 100_000:
@@ -853,6 +923,8 @@ def _build_archive(staging_root, archive_stem, platform_name, launcher_name):
     checksum_path.unlink(missing_ok=True)
     try:
         assert_release_tree_clean(staging_root, platform_name)
+        if platform_name == "windows-x64":
+            validate_windows_launcher(Path(staging_root, WINDOWS_LAUNCHER_NAME))
         validate_staged_python_sources(staging_root)
         write_release_manifest(staging_root, platform_name)
         archive_path = Path(shutil.make_archive(archive_stem, "zip", staging_root))
@@ -883,7 +955,7 @@ def zip_release():
         BUILD_DIR,
         os.path.join(DIST_DIR, "MathBank-Windows-x64"),
         "windows-x64",
-        "启动题库系统.bat",
+        WINDOWS_LAUNCHER_NAME,
     )
 
 

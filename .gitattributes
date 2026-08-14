@@ -1,0 +1,2 @@
+# cmd.exe batch files must keep Windows line endings on every build host.
+*.bat text eol=crlf

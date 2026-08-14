@@ -273,7 +273,18 @@ def test_word_export_api_returns_zip_bundle(client):
         assert "接口测试卷" in ans_text
         assert "参考答案与解析" in ans_text
 
-    assert int(response.headers["X-Word-Native-Formulas"]) >= 1
+    # Native OMML requires optional Pandoc.  This API test verifies that every
+    # formula is accounted for regardless of native/fallback/failed outcome;
+    # the focused Pandoc test above verifies native conversion when available.
+    formula_diagnostics = sum(
+        int(response.headers[name])
+        for name in (
+            "X-Word-Native-Formulas",
+            "X-Word-Fallback-Formulas",
+            "X-Word-Failed-Formulas",
+        )
+    )
+    assert formula_diagnostics >= 1
 
 
 def test_word_export_api_supports_single_docx(client):
@@ -420,5 +431,4 @@ def test_create_word_bundle_zip():
         assert archive.namelist() == ["高一数学月考.docx", "高一数学月考_含答案与解析.docx"]
         assert archive.read("高一数学月考.docx") == main_bytes
         assert archive.read("高一数学月考_含答案与解析.docx") == ans_bytes
-
 

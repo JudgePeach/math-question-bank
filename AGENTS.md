@@ -21,8 +21,8 @@
 > 根目录 `AGENTS.md` 是本项目面向 AI 代理与开发者的唯一开发规范来源。进行系统更新、重构、功能新增或回滚（Rollback）时，如变更影响本文记录的技术设计、接口规范、验证方式或发布流程，必须同步更新本文件，确保规范与实际代码实现准确一致；禁止再维护内容重复的平行代理指南。
 
 > [!IMPORTANT]
-> **Release 发布与版本号确认规则**：
-> 全局系统版本号统一定义于 `mathbank/__init__.py` 的 `__version__`。在执行任何 Release 打包（如 `scripts/build_release.py`）或准备打 Tag 发布新版本前，AI 代理必须**主动提醒并询问用户是否需要递增更新版本号**，确保本地版本号、便携包构建产物与 GitHub Release Tag 保持绝对一致。
+> **本地版本号与发布权限边界**：
+> 全局系统版本号统一定义于 `mathbank/__init__.py` 的 `__version__`。AI 代理只按用户要求修改该本地版本号；仅在用户明确要求本地打包时运行 `scripts/build_release.py`，产物只保存在本地。Git Tag、GitHub Release、Release 草稿与附件上传全部由用户自行管理，AI 代理不得创建、移动、删除或推送 Tag，不得创建、编辑、发布或上传 GitHub Release。用户要求“同步到 GitHub”时，默认仅同步当前代码分支，不包含任何 Tag 或 Release 操作。
 
 > [!IMPORTANT]
 > **项目路径单一来源规则**：
@@ -94,6 +94,9 @@
 
 ### 3.7 启动就绪与网络容错
 - **启动器环境与身份自愈**：macOS 包不内置 Python，运行前要求本机已安装 Python 3.10+；macOS 必须依次探测可用的 `python3` / 具名 Python 3.10+ 解释器，使用项目隔离的 `venv` 并通过 `python -m pip` 补齐锁定依赖；旧 `venv` 不兼容时先保留临时备份、自动重建，并仅在新服务通过健康检查后清理备份。Windows 便携包内置完整 Python 运行时，无需本机另行安装 Python。生产式双击启动不得携带 `--reload`。
+- **Windows 批处理换行硬约束**：所有 `.bat` 必须是无 BOM 的 UTF-8，并且每一行只允许使用 CRLF（`\r\n`）。仓库必须用 `.gitattributes` 固定 `*.bat text eol=crlf`；Release 构建器仍须在复制后主动规范化 CRLF，并对暂存文件和最终 ZIP 内原始字节分别复验。禁止只用 `read_text()` 或普通字符串断言代替原始换行检查，因为通用换行转换会掩盖 LF 回归。
+- **跨平台私有文件写入**：`os.fchmod` 等仅 Unix 可用的接口必须通过 `getattr` / 能力探测后调用，并保证任何失败路径都会关闭文件描述符、清理临时文件；不得只捕获 `OSError` 来假设接口在 Windows 上存在。涉及平台专用 API 的代码必须增加“接口缺失”模拟测试。
+- **Windows 日志编码安全**：`main.py` 必须在导入可能输出日志的业务模块前将 stdout/stderr 设为 UTF-8；被导入模块不得在模块顶层打印 Emoji 或其他依赖终端编码的装饰字符，启动与后台日志优先使用 ASCII/GBK 均可表示的文本。必须保留一次 CP936 严格输出环境下的直接导入回归测试，防止重定向日志时触发 `UnicodeEncodeError`。
 - **端口与进程所有权**：启动器可停止两类已验证进程：一是同时通过 PID、当前项目根路径、Python 基础运行时的真实进程映像与 `uvicorn main:app` 命令校验的本项目旧服务；macOS Framework Python 必须从 `sys.base_prefix` 推导 `Resources/Python.app/.../Python`，不得假设 `ps` 命令行保留 `venv/bin/python` 软链接路径。二是端口 8000 监听进程或其有限层级祖先进程同时通过 MathBank 项目文件指纹、工作目录与精确 `-m uvicorn main:app` 命令校验的旧目录/旧版本 MathBank。两类进程均只允许 `TERM` 优雅退出并限时等待。端口被真正陌生的进程占用、任一监听 PID 无法完整验明身份或状态文件身份不明时必须报错退出，严禁按端口无条件 `kill -9` / `taskkill` 或终止未经验证的父进程。
 - **Release 覆盖升级契约**：启动器建立状态目录后，必须先安全停止已验明身份的当前或旧版 MathBank 服务，再自愈并确认受支持的 Python 环境，最后才能进行任何项目依赖导入。根目录存在 `RELEASE-MANIFEST.json` 时，必须运行 `python -B -m scripts.release_overlay --platform macos|windows-x64`，对账当前文件并仅删除旧清单中、新清单已移除的发布管理文件；失败必须拒绝启动。必须保护根目录数据库及 WAL/SHM、`.env`、`data_backup/`、`static/uploads/`、`.system_generated/` 与 `venv/`。无 Release 清单的源码工作区不得触发此对账。便携升级文档必须要求用户先做完整备份、通过网页电源键关闭并确认服务已停，将新 ZIP 解压到临时目录后再复制其“内容”到原目录；macOS Finder 禁止整体替换旧文件夹，Windows 必须替换所有同名文件。
 - **依赖锁变更检测**：源码启动器必须记录锁文件摘要；`requirements.txt` 内容变化时，即使旧环境仍可 import，也要重新按精确版本安装并执行 `pip check`，成功后才更新摘要。
@@ -156,7 +159,7 @@
 
 ## 5. 启动诊断与双平台 Release 构建
 - **启动诊断**：服务启动打印 Python 环境、PDF Inspector、PyMuPDF、XeLaTeX、Pandoc 及数据库状态。
-- **打包脚本 (`scripts/build_release.py`)**：构建 Windows (`MathBank-Windows-x64.zip`，内嵌 Python 3.10 + 依赖 + `.bat`) 与 macOS (`MathBank-macOS.zip`，含 `.command`) 发布包。Python 嵌入运行时与官方 CPython NuGet 包必须使用默认 TLS、固定可信 SHA-256 和原子下载，缓存每次复验；校验缺失或不匹配必须失败关闭。应用文件采用显式白名单，禁止测试、隐藏、数据库、日志和上传残留。打包前必须解析 Release 关键函数的类型注解，并在可用时执行 Python 3.10 导入检查；构建后执行源码/运行时可行 smoke，写入 `RELEASE-MANIFEST.json`，完成 ZIP CRC 检查并依据包内清单逐项重算文件 SHA-256，最后生成 `.zip.sha256`。任何构建异常必须以非零状态退出，禁止生成或发布启动即失败的静默坏包。
+- **打包脚本 (`scripts/build_release.py`)**：构建 Windows (`MathBank-Windows-x64.zip`，内嵌 Python 3.10 + 依赖 + `.bat`) 与 macOS (`MathBank-macOS.zip`，含 `.command`) 发布包。Python 嵌入运行时与官方 CPython NuGet 包必须使用默认 TLS、固定可信 SHA-256 和原子下载，缓存每次复验；校验缺失或不匹配必须失败关闭。Windows 的 `python310._pth` 必须同时显式包含应用根目录 `..`、`site-packages` 与 `import site`，构建守卫必须拒绝无法导入 `main.py` / `mathbank` / `scripts` 的嵌入运行时；Windows 启动器必须由构建器跨平台规范化为无 BOM UTF-8 CRLF，并在暂存目录和 ZIP 内各校验一次，任何纯 LF、混合换行或 BOM 都必须失败关闭。应用文件采用显式白名单，禁止测试、隐藏、数据库、日志和上传残留。打包前必须解析 Release 关键函数的类型注解，并在可用时执行 Python 3.10 导入检查；构建后执行源码/运行时可行 smoke，写入 `RELEASE-MANIFEST.json`，完成 ZIP CRC 检查并依据包内清单逐项重算文件 SHA-256，最后生成 `.zip.sha256`。任何构建异常必须以非零状态退出，禁止生成或发布启动即失败的静默坏包。
 - **依赖运行时净化**：Release 构建仅按 `scripts/build_release.py` 中的显式审查清单移除固定依赖 wheel 携带的非运行时测试/代理文档目录（如 `certifi`、`colorama`、`fastapi`、`greenlet`）；Word 模板所需的 `.rels` 关系元数据必须保留并纳入清单校验。
 - **依赖与目标平台**：`requirements.txt` 与 `requirements-dev.txt` 使用精确版本；Windows 交叉构建额外读取 `requirements-windows.txt`，目标平台依赖必须在共享运行时锁或 Windows 锁中显式固定，禁止依赖构建主机的 `sys_platform` marker。构建下载 wheel 必须使用 `sys.executable -m pip`。
 
@@ -171,4 +174,4 @@
 ## 7. 开发与运行指令
 - **Python 版本**：最低 Python 3.10。
 - **本地启动**：`uvicorn main:app --reload`
-- **验证**：运行 `python3 -m pytest tests/`（必须限定在 `tests/` 目录下）、`python3 -m pip check`、`for file in static/js/*.js; do node --check "$file"; done`；macOS 启动器另运行 `bash -n 启动题库系统.command`。CI 在 Python 3.10 与当前版本上执行上述检查，并在 macOS/Windows 单独运行 Release 守卫测试。
+- **验证**：运行 `python3 -m pytest tests/`（必须限定在 `tests/` 目录下）、`python3 -m pip check`、`for file in static/js/*.js; do node --check "$file"; done`；macOS 启动器另运行 `bash -n 启动题库系统.command`。Windows Release 守卫必须检查 `.bat` 原始字节为纯 CRLF、模拟 `os.fchmod` 缺失并在 CP936 严格输出环境直接导入后台模块；CI 在 Python 3.10 与当前版本上执行上述检查，并在 macOS/Windows 单独运行 Release 守卫测试。Mac 上的交叉构建静态检查不能替代真实 Windows 启动验证。

@@ -259,17 +259,26 @@ def write_private_text_atomic(path: str | os.PathLike, text: str) -> None:
     target.parent.mkdir(parents=True, exist_ok=True)
     fd, temp_name = tempfile.mkstemp(prefix=f".{target.name}.", dir=str(target.parent))
     try:
-        try:
-            os.fchmod(fd, 0o600)
-        except OSError:
-            pass
-        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+        fchmod = getattr(os, "fchmod", None)
+        if fchmod is not None:
+            try:
+                fchmod(fd, 0o600)
+            except (OSError, NotImplementedError):
+                pass
+        handle = os.fdopen(fd, "w", encoding="utf-8")
+        fd = -1
+        with handle:
             handle.write(text)
             handle.flush()
             os.fsync(handle.fileno())
         os.replace(temp_name, target)
         harden_private_path(target)
     finally:
+        if fd >= 0:
+            try:
+                os.close(fd)
+            except OSError:
+                pass
         try:
             if os.path.exists(temp_name):
                 os.remove(temp_name)

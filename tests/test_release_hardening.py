@@ -2,6 +2,8 @@ import hashlib
 import io
 import json
 import shutil
+import subprocess
+import sys
 import zipfile
 from pathlib import Path
 
@@ -171,13 +173,193 @@ def test_windows_runtime_layout_requires_platform_transitive_dependencies(tmp_pa
             path.touch()
         else:
             path.mkdir()
+    (tmp_path / "python" / "python310._pth").write_text(
+        "python310.zip\n.\n..\nsite-packages\nimport site\n",
+        encoding="utf-8",
+    )
 
     with pytest.raises(RuntimeError) as exc_info:
         build_release.validate_windows_runtime(tmp_path)
 
     message = str(exc_info.value)
-    assert "python/site-packages/greenlet" in message
-    assert "python/site-packages/colorama" in message
+    assert "greenlet" in message
+    assert "colorama" in message
+
+
+def test_embedded_python_path_includes_application_root(tmp_path, monkeypatch):
+    runtime = tmp_path / "python"
+    runtime.mkdir()
+    path_file = runtime / "python310._pth"
+    path_file.write_text(
+        "python310.zip\n.\n\n#import site\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(build_release, "PYTHON_DIR", str(runtime))
+
+    build_release.configure_python_path()
+
+    assert path_file.read_text(encoding="utf-8").splitlines() == [
+        "python310.zip",
+        ".",
+        "..",
+        "site-packages",
+        "",
+        "import site",
+    ]
+
+
+def test_windows_runtime_rejects_missing_application_root(tmp_path):
+    required_paths = (
+        "python/python.exe",
+        "python/_sqlite3.pyd",
+        "python/sqlite3.dll",
+        "python/site-packages/fastapi",
+        "python/site-packages/uvicorn",
+        "python/site-packages/sqlalchemy",
+        "python/site-packages/greenlet",
+        "python/site-packages/colorama",
+    )
+    for relative_path in required_paths:
+        path = tmp_path / relative_path
+        path.parent.mkdir(parents=True, exist_ok=True)
+        if path.suffix:
+            path.touch()
+        else:
+            path.mkdir()
+    (tmp_path / "python" / "python310._pth").write_text(
+        "python310.zip\n.\nsite-packages\nimport site\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(RuntimeError, match="cannot import the application root"):
+        build_release.validate_windows_runtime(tmp_path)
+
+
+def test_windows_launcher_builder_forces_crlf_on_every_host(tmp_path, monkeypatch):
+    source_root = tmp_path / "source"
+    build_root = tmp_path / "build"
+    source_root.mkdir()
+    source_launcher = source_root / build_release.WINDOWS_LAUNCHER_NAME
+    source_launcher.write_bytes(b"@echo off\nset value=1\nexit /b 0\n")
+    monkeypatch.setattr(build_release, "BASE_DIR", str(source_root))
+    monkeypatch.setattr(build_release, "BUILD_DIR", str(build_root))
+
+    build_release.create_launcher()
+
+    built_launcher = build_root / build_release.WINDOWS_LAUNCHER_NAME
+    payload = built_launcher.read_bytes()
+    assert payload == b"@echo off\r\nset value=1\r\nexit /b 0\r\n"
+    build_release.validate_windows_launcher(built_launcher)
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        b"@echo off\nexit /b 0\n",
+        b"@echo off\r\nexit /b 0\n",
+        b"\xef\xbb\xbf@echo off\r\nexit /b 0\r\n",
+    ],
+)
+def test_windows_launcher_guard_rejects_lf_mixed_and_bom(tmp_path, payload):
+    launcher = tmp_path / build_release.WINDOWS_LAUNCHER_NAME
+    launcher.write_bytes(payload)
+    with pytest.raises(RuntimeError):
+        build_release.validate_windows_launcher(launcher)
+
+
+def test_windows_launcher_source_is_crlf_and_gitattributes_preserves_it():
+    attributes = (PROJECT_ROOT / ".gitattributes").read_text(encoding="utf-8")
+    assert "*.bat text eol=crlf" in attributes.splitlines()
+    build_release.validate_windows_launcher(
+        PROJECT_ROOT / build_release.WINDOWS_LAUNCHER_NAME
+    )
+
+
+def test_paper_helper_direct_import_is_safe_with_legacy_windows_stdio():
+    # Release-guard CI deliberately installs only pytest, so stub the imported
+    # application dependencies and isolate this check to module-level output.
+    code = """
+import sys
+import types
+from pathlib import Path
+
+import mathbank
+
+sys.stdout.reconfigure(encoding="cp936", errors="strict")
+sys.stderr.reconfigure(encoding="cp936", errors="strict")
+
+dummy = type("Dummy", (), {})
+orm = types.ModuleType("sqlalchemy.orm")
+orm.Session = dummy
+sqlalchemy = types.ModuleType("sqlalchemy")
+sqlalchemy.orm = orm
+sys.modules["sqlalchemy"] = sqlalchemy
+sys.modules["sqlalchemy.orm"] = orm
+
+database = types.ModuleType("mathbank.database")
+for name in ("Question", "Paper", "PaperQuestion", "QuestionCurriculum"):
+    setattr(database, name, dummy)
+sys.modules["mathbank.database"] = database
+
+paths = types.ModuleType("mathbank.paths")
+paths.TEMPLATES_DIR = Path(".")
+sys.modules["mathbank.paths"] = paths
+
+diagnostics = types.ModuleType("mathbank.latex_diagnostics")
+diagnostics.build_local_latex_diagnostic = lambda *_args, **_kwargs: {}
+sys.modules["mathbank.latex_diagnostics"] = diagnostics
+
+security = types.ModuleType("mathbank.asset_security")
+security.AssetSecurityError = RuntimeError
+security.resolve_upload_asset = lambda *_args, **_kwargs: None
+sys.modules["mathbank.asset_security"] = security
+
+import mathbank.paper_helper
+"""
+    result = subprocess.run(
+        [sys.executable, "-c", code],
+        cwd=PROJECT_ROOT,
+        capture_output=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr.decode("cp936", errors="replace")
+    assert result.stdout == b""
+
+
+def _make_minimal_windows_tree(root):
+    for relative_path in (
+        "main.py",
+        "requirements.txt",
+        "覆盖升级说明.txt",
+        "mathbank/__init__.py",
+        "scripts/release_overlay.py",
+        "static/index.html",
+        "static/uploads/.gitkeep",
+        "python/python.exe",
+        "python/_sqlite3.pyd",
+    ):
+        path = root / relative_path
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(b"pass\n")
+    (root / build_release.WINDOWS_LAUNCHER_NAME).write_bytes(
+        b"@echo off\r\nexit /b 0\r\n"
+    )
+
+
+def test_finished_windows_archive_revalidates_crlf_launcher(tmp_path):
+    staging = tmp_path / "staging"
+    _make_minimal_windows_tree(staging)
+
+    archive_path = build_release._build_archive(
+        staging,
+        str(tmp_path / "MathBank-Windows-x64"),
+        "windows-x64",
+        build_release.WINDOWS_LAUNCHER_NAME,
+    )
+
+    with zipfile.ZipFile(archive_path, "r") as archive:
+        payload = archive.read(build_release.WINDOWS_LAUNCHER_NAME)
+    assert payload == b"@echo off\r\nexit /b 0\r\n"
 
 
 def _make_minimal_macos_tree(root):
@@ -466,8 +648,8 @@ def test_finished_archive_rejects_crc_valid_member_tampering(tmp_path):
         for info in source.infolist():
             payload = source.read(info.filename)
             if info.filename == "main.py":
-                assert len(payload) == 5
-                payload = b"evil\n"
+                assert payload
+                payload = b"x" * len(payload)
             target.writestr(info, payload)
 
     # Rewriting updates the CRC, so only the embedded SHA-256 manifest can
