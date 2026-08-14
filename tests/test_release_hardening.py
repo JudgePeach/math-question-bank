@@ -520,7 +520,7 @@ def test_static_release_allowlist_excludes_uploads_and_test_assets():
     assert build_release._release_path_violation("data_backup/custom_metadata.json")
 
 
-def test_launchers_require_python_310_and_only_stop_owned_pid():
+def test_launchers_require_python_310_and_only_stop_verified_mathbank_processes():
     mac_launcher = (PROJECT_ROOT / "启动题库系统.command").read_text(encoding="utf-8")
     windows_launcher = (PROJECT_ROOT / "启动题库系统.bat").read_text(
         encoding="utf-8"
@@ -530,6 +530,15 @@ def test_launchers_require_python_310_and_only_stop_owned_pid():
     assert "kill -9" not in mac_launcher
     assert "server.identity" in mac_launcher
     assert "is_owned_server" in mac_launcher
+    assert "find_supported_python" in mac_launcher
+    assert "python3.14 python3.13 python3.12 python3.11 python3.10" in mac_launcher
+    assert "venv-python-legacy" in mac_launcher
+    assert "find_verified_mathbank_owner" in mac_launcher
+    assert "is_mathbank_project_root" in mac_launcher
+    assert 'case " $inspected_command "' in mac_launcher
+    assert 'rechecked_owner=$(find_verified_mathbank_owner "$verified_owner")' in mac_launcher
+    assert "另一份或旧版 MathBank 仍在运行" in mac_launcher
+    assert "无法确认身份的进程" in mac_launcher
     assert "sys.version_info >= (3, 10)" in mac_launcher
     assert "浏览器不会打开" in mac_launcher
     assert "requirements.sha256" in mac_launcher
@@ -543,6 +552,10 @@ def test_launchers_require_python_310_and_only_stop_owned_pid():
     assert "timeout=2" not in mac_launcher
     assert "-B -m scripts.release_overlay --platform macos" in mac_launcher
     assert mac_launcher.index("stop_previous_owned_server ||") < mac_launcher.index(
+        "stop_verified_legacy_mathbank_listeners\n"
+    ) < mac_launcher.index(
+        "LEGACY_VENV_BACKUP=\"\""
+    ) < mac_launcher.index(
         "-B -m scripts.release_overlay --platform macos"
     ) < mac_launcher.index("正在检查运行环境依赖是否完整")
 
