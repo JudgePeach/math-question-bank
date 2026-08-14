@@ -181,7 +181,7 @@ def test_windows_runtime_layout_requires_platform_transitive_dependencies(tmp_pa
     with pytest.raises(RuntimeError) as exc_info:
         build_release.validate_windows_runtime(tmp_path)
 
-    message = str(exc_info.value)
+    message = str(exc_info.value).replace("\\", "/")
     assert "python/site-packages/greenlet" in message
     assert "python/site-packages/colorama" in message
 
@@ -648,8 +648,8 @@ def test_finished_archive_rejects_crc_valid_member_tampering(tmp_path):
         for info in source.infolist():
             payload = source.read(info.filename)
             if info.filename == "main.py":
-                assert len(payload) == 5
-                payload = b"evil\n"
+                assert payload
+                payload = b"x" * len(payload)
             target.writestr(info, payload)
 
     # Rewriting updates the CRC, so only the embedded SHA-256 manifest can
