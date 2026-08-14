@@ -5,6 +5,7 @@ import pytest
 
 from mathbank.ai_json import parse_ai_json
 from mathbank.prompts import (
+    build_classification_system_prompt,
     build_import_parse_system_prompt,
     build_pdf_parse_system_prompt,
 )
@@ -83,3 +84,22 @@ def test_paper_prompts_require_valid_json_escaping():
         assert "JSON 转义序列 `\\n`" in prompt
         assert "LaTeX 命令的反斜杠必须按 JSON 规范转义为双反斜杠" in prompt
         assert "字符串内部换行直接输出真实回车" not in prompt
+
+
+def test_classification_prompts_prefer_later_curriculum_module():
+    curriculum = {
+        "必修一": {"5. 三角函数": []},
+        "必修二": {"6. 平面向量及其应用": []},
+    }
+    prompts = (
+        build_classification_system_prompt(curriculum),
+        build_pdf_parse_system_prompt(curriculum, False),
+        build_import_parse_system_prompt(curriculum),
+    )
+
+    for prompt in prompts:
+        assert "选择位置最靠后的模块作为最终分类" in prompt
+        assert "先比较学段从上到下的顺序" in prompt
+        assert "若属于同一学段，再比较章节从前到后的顺序" in prompt
+        assert "必修二的“平面向量及其应用”" in prompt
+        assert "仅作为背景条件被提及" in prompt
