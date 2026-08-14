@@ -2,6 +2,8 @@ import hashlib
 import io
 import json
 import shutil
+import subprocess
+import sys
 import zipfile
 from pathlib import Path
 
@@ -231,6 +233,99 @@ def test_windows_runtime_rejects_missing_application_root(tmp_path):
 
     with pytest.raises(RuntimeError, match="cannot import the application root"):
         build_release.validate_windows_runtime(tmp_path)
+
+
+def test_windows_launcher_builder_forces_crlf_on_every_host(tmp_path, monkeypatch):
+    source_root = tmp_path / "source"
+    build_root = tmp_path / "build"
+    source_root.mkdir()
+    source_launcher = source_root / build_release.WINDOWS_LAUNCHER_NAME
+    source_launcher.write_bytes(b"@echo off\nset value=1\nexit /b 0\n")
+    monkeypatch.setattr(build_release, "BASE_DIR", str(source_root))
+    monkeypatch.setattr(build_release, "BUILD_DIR", str(build_root))
+
+    build_release.create_launcher()
+
+    built_launcher = build_root / build_release.WINDOWS_LAUNCHER_NAME
+    payload = built_launcher.read_bytes()
+    assert payload == b"@echo off\r\nset value=1\r\nexit /b 0\r\n"
+    build_release.validate_windows_launcher(built_launcher)
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        b"@echo off\nexit /b 0\n",
+        b"@echo off\r\nexit /b 0\n",
+        b"\xef\xbb\xbf@echo off\r\nexit /b 0\r\n",
+    ],
+)
+def test_windows_launcher_guard_rejects_lf_mixed_and_bom(tmp_path, payload):
+    launcher = tmp_path / build_release.WINDOWS_LAUNCHER_NAME
+    launcher.write_bytes(payload)
+    with pytest.raises(RuntimeError):
+        build_release.validate_windows_launcher(launcher)
+
+
+def test_windows_launcher_source_is_crlf_and_gitattributes_preserves_it():
+    attributes = (PROJECT_ROOT / ".gitattributes").read_text(encoding="utf-8")
+    assert "*.bat text eol=crlf" in attributes.splitlines()
+    build_release.validate_windows_launcher(
+        PROJECT_ROOT / build_release.WINDOWS_LAUNCHER_NAME
+    )
+
+
+def test_paper_helper_direct_import_is_safe_with_legacy_windows_stdio():
+    code = (
+        "import sys; "
+        "sys.stdout.reconfigure(encoding='cp936', errors='strict'); "
+        "sys.stderr.reconfigure(encoding='cp936', errors='strict'); "
+        "import mathbank.paper_helper"
+    )
+    result = subprocess.run(
+        [sys.executable, "-c", code],
+        cwd=PROJECT_ROOT,
+        capture_output=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr.decode("cp936", errors="replace")
+    assert result.stdout == b""
+
+
+def _make_minimal_windows_tree(root):
+    for relative_path in (
+        "main.py",
+        "requirements.txt",
+        "覆盖升级说明.txt",
+        "mathbank/__init__.py",
+        "scripts/release_overlay.py",
+        "static/index.html",
+        "static/uploads/.gitkeep",
+        "python/python.exe",
+        "python/_sqlite3.pyd",
+    ):
+        path = root / relative_path
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(b"pass\n")
+    (root / build_release.WINDOWS_LAUNCHER_NAME).write_bytes(
+        b"@echo off\r\nexit /b 0\r\n"
+    )
+
+
+def test_finished_windows_archive_revalidates_crlf_launcher(tmp_path):
+    staging = tmp_path / "staging"
+    _make_minimal_windows_tree(staging)
+
+    archive_path = build_release._build_archive(
+        staging,
+        str(tmp_path / "MathBank-Windows-x64"),
+        "windows-x64",
+        build_release.WINDOWS_LAUNCHER_NAME,
+    )
+
+    with zipfile.ZipFile(archive_path, "r") as archive:
+        payload = archive.read(build_release.WINDOWS_LAUNCHER_NAME)
+    assert payload == b"@echo off\r\nexit /b 0\r\n"
 
 
 def _make_minimal_macos_tree(root):

@@ -603,11 +603,11 @@ def compile_tex_to_pdf(tex_content: str, image_paths: list = None) -> tuple:
             result = _PDF_CACHE.pop(cache_key)
             _PDF_CACHE[cache_key] = result
             if result[0] is not None:
-                print(f"[PDF_CACHE_HIT] 🚀 Reusing cached PDF! Key: {cache_key[:10]}... (Total Cached: {len(_PDF_CACHE)})", flush=True)
+                print(f"[PDF_CACHE_HIT] Reusing cached PDF. Key: {cache_key[:10]}... (Total Cached: {len(_PDF_CACHE)})", flush=True)
                 return result
 
     # 3. Cache Miss: Perform xelatex compilation
-    print(f"[PDF_CACHE_MISS] ⚡ Compiling TeX via xelatex... Key: {cache_key[:10]}...", flush=True)
+    print(f"[PDF_CACHE_MISS] Compiling TeX via xelatex. Key: {cache_key[:10]}...", flush=True)
     with tempfile.TemporaryDirectory() as temp_dir:
         tex_path = os.path.join(temp_dir, "paper.tex")
         # Copy images into temp_dir
@@ -738,10 +738,7 @@ def clear_pdf_cache():
     """Clear all entries in PDF compilation LRU cache."""
     with _PDF_CACHE_LOCK:
         _PDF_CACHE.clear()
-        print("[PDF_CACHE] 🧹 PDF LRU Memory Cache Cleared Successfully!", flush=True)
-
-# 清空历史旧 PDF 缓存，确保最新段落与排版算法秒级生效
-clear_pdf_cache()
+        print("[PDF_CACHE] PDF LRU memory cache cleared.", flush=True)
 
 def build_answer_sheet_latex(title: str, subtitle: str, questions_data: list) -> str:
     """
