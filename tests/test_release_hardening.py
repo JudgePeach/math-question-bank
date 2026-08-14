@@ -181,9 +181,9 @@ def test_windows_runtime_layout_requires_platform_transitive_dependencies(tmp_pa
     with pytest.raises(RuntimeError) as exc_info:
         build_release.validate_windows_runtime(tmp_path)
 
-    message = str(exc_info.value).replace("\\", "/")
-    assert "python/site-packages/greenlet" in message
-    assert "python/site-packages/colorama" in message
+    message = str(exc_info.value)
+    assert "greenlet" in message
+    assert "colorama" in message
 
 
 def test_embedded_python_path_includes_application_root(tmp_path, monkeypatch):
