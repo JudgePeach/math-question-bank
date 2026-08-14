@@ -239,7 +239,9 @@ def build_latex_document(
     # Exported source packages keep figures in images/.  The ./ fallback keeps
     # the same source compatible with the in-app compiler's temporary layout.
     lines.append(r"\graphicspath{{images/}{./}}")
-    lines.append(r"\usepackage{adjustbox}")
+    # clean_content_for_latex emits the adjustbox-provided `max width` key for
+    # Markdown images.  `export` makes that key available to \includegraphics.
+    lines.append(r"\usepackage[export]{adjustbox}")
     lines.append(r"\examsetup{")
     lines.append(r"  page/size=a4paper,")
     lines.append(r"  paren/show-paren=true,")
@@ -759,6 +761,7 @@ def build_answer_sheet_latex(title: str, subtitle: str, questions_data: list) ->
         content = r"""
 \documentclass[UTF8, fontset=fandol, 11pt, oneside]{ctexart}
 \usepackage{amsmath, amsthm, amssymb, graphicx}
+\usepackage[export]{adjustbox}
 \usepackage[bookmarks=true, colorlinks, citecolor=blue, linkcolor=black]{hyperref}
 \usepackage[a3paper, landscape,left=0.7cm, right=0.7cm, top=0.6cm, bottom=0.6cm]{geometry}
 \usepackage{diagbox, tikz, fancyhdr, makecell, caption, float, eso-pic}
@@ -927,6 +930,35 @@ def build_answer_sheet_latex(title: str, subtitle: str, questions_data: list) ->
         content = content.replace(
             r"\begin{document}",
             "\\graphicspath{{images/}{./}}\n\\begin{document}",
+            1,
+        )
+
+    # `max width` is an adjustbox key, not a native graphicx key.  Normalize a
+    # file-backed template that loads adjustbox without options, or inject the
+    # correct package declaration when the template does not load it at all.
+    adjustbox_package = re.compile(
+        r"\\usepackage(?:\[([^\]]*)\])?\{adjustbox\}"
+    )
+    adjustbox_match = adjustbox_package.search(content)
+    if adjustbox_match:
+        package_options = [
+            option.strip()
+            for option in (adjustbox_match.group(1) or "").split(",")
+            if option.strip()
+        ]
+        if "export" not in package_options:
+            package_options.append("export")
+            content = adjustbox_package.sub(
+                lambda _match: (
+                    f"\\usepackage[{','.join(package_options)}]{{adjustbox}}"
+                ),
+                content,
+                count=1,
+            )
+    else:
+        content = content.replace(
+            r"\begin{document}",
+            "\\usepackage[export]{adjustbox}\n\\begin{document}",
             1,
         )
 

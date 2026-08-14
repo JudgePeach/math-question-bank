@@ -123,6 +123,7 @@
 ### 3.11 高考级 LaTeX/PDF 编译引擎
 - **试卷模板与排版**：
   - 提供 `exam`（常规）、`quiz`（小练）、`exam_19`（高考 19 题跳跃）三套模板。插图自动映射 `wrapfigure` (右侧)、`figure` (居中)、`adjustbox` (右下)。
+  - 题干、参考答案与答题卡只要生成含 `max width` 的 `\includegraphics`，导言区必须使用 `\usepackage[export]{adjustbox}`，保证自适应图片参数可由 `graphicx` 识别。
   - 导言区注入 `\raggedbottom` 防止大题标题下方拉伸。
 - **模板内置与编译缓存**：
   - `templates/exam-zh/` 全量内置 `exam-zh.cls` 及其依赖宏包，保障离线免配置编译。

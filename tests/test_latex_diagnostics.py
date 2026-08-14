@@ -82,6 +82,28 @@ def test_paper_tex_preloads_common_math_and_table_packages():
     assert "mathrsfs" not in tex
 
 
+def test_answer_images_export_adjustbox_max_width_key():
+    questions = [{
+        "question": {
+            "id": 82,
+            "question_type": "detailed_answer",
+            "content": "带图题。![](/static/uploads/question.png)",
+            "answer_markdown": "解析图。![](/static/uploads/answer.png)",
+        },
+        "score": 10,
+    }]
+
+    answer_tex = build_latex_document(
+        "答案图片测试", "", "exam", questions, include_answers=True
+    )
+    answer_sheet_tex = build_answer_sheet_latex("答题卡图片测试", "", questions)
+
+    assert r"\usepackage[export]{adjustbox}" in answer_tex
+    assert r"\includegraphics[max width=0.85\linewidth]{answer.png}" in answer_tex
+    assert r"\usepackage[export]{adjustbox}" in answer_sheet_tex
+    assert r"\includegraphics[max width=3.4cm]{question.png}" in answer_sheet_tex
+
+
 def test_choice_empty_parentheses_do_not_leave_orphan_display_math():
     for content in (
         r"题干 $(\quad)$",
