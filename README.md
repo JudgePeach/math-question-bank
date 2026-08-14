@@ -6,7 +6,7 @@
 
 **MathBank** 是一个专为中学数学教师打造的、完全运行在您自己电脑上的轻量级半自动化数学题库与组卷排版工作台。
 
-无需复杂的安装与前端编译，开箱即用。支持数学公式与几何图形秒级预览，深度集成一键组卷、A4 仿真画布排版、高考级 PDF 试卷导出、DeepSeek AI 解题以及一键 OCR 题目识别。
+无需复杂的前端编译即可运行：Windows 便携包内置 Python，解压后即可启动；macOS 便携包不内置 Python，运行前请确认本机已安装 Python 3.10 或更高版本，启动器会自动检测并创建或修复项目隔离的 `venv`。支持数学公式与几何图形秒级预览，深度集成一键组卷、A4 仿真画布排版、高考级 PDF 试卷导出、DeepSeek AI 解题以及一键 OCR 题目识别。
 
 ![MathBank 题库研讨工作台](docs/images/screenshot1.png)
 
@@ -82,8 +82,8 @@ flowchart LR
 
 如果您不熟悉命令行或 Python 环境，可以直接前往 [**Releases 页面**](https://github.com/JudgePeach/math-question-bank/releases) 下载官方构建包。发布页同时提供 `.zip.sha256` 校验文件，建议核对后再解压：
 
-* **Windows 用户**：下载 `MathBank-Windows-x64.zip`（内含 Python 3.10 运行时），解压后双击运行 **`启动题库系统.bat`**
-* **macOS 用户**：下载 `MathBank-macOS.zip`，准备 Python 3.10+；首次运行需要联网创建隔离的 `venv`，然后双击 **`启动题库系统.command`**
+* **Windows 用户**：下载 `MathBank-Windows-x64.zip`（内含完整 Python 3.10 运行时，无需另行安装 Python），解压后双击运行 **`启动题库系统.bat`**
+* **macOS 用户**：下载 `MathBank-macOS.zip`。**macOS 包不内置 Python，运行前请确认本机已安装 Python 3.10 或更高版本**。启动器会自动检测可用 Python，并自动创建或修复项目隔离的 `venv`；如未检测到合格版本，将提示安装并停止启动。首次创建或修复环境时需要联网，然后双击 **`启动题库系统.command`**
 
 两个启动器只会停止由当前项目记录且身份校验通过的旧服务；若端口 8000 被其他程序占用，会安全退出。服务健康检查失败时不会打开浏览器。
 
@@ -163,7 +163,7 @@ flowchart LR
   5. **macOS Finder**：先按 `Command + Shift + .` 显示 `.env.example` 等隐藏文件，再复制新版文件夹里的全部“内容”到原目录并合并同名目录；**不要选择“替换整个文件夹”**，否则 Finder 可能先删除原目录中的本地数据。
   6. 双击新版启动器。启动器会在导入项目依赖前校验 Release 文件，并仅清理“上一版发布包管理且新版已删除”的旧文件；校验失败时会拒绝启动，请重新完整合并覆盖。
 
-  覆盖升级会保留根目录数据库及 WAL/SHM、`.env`、`data_backup/`、`static/uploads/`、`.system_generated/` 和 `venv/`。请勿删除原项目目录再换成新目录。Windows 便携包含完整 Python 运行时；macOS 依赖本机 Python 3.10+，仅在首次建立 `venv` 或 `requirements.txt` 变化/依赖缺失时需要联网安装。
+  覆盖升级会保留根目录数据库及 WAL/SHM、`.env`、`data_backup/`、`static/uploads/`、`.system_generated/` 和 `venv/`。请勿删除原项目目录再换成新目录。Windows 便携包内置完整 Python 运行时，无需另行安装 Python；macOS 包不内置 Python，运行前请确认本机已安装 Python 3.10 或更高版本。macOS 启动器会自动创建或修复 `venv`，仅在首次建立环境或 `requirements.txt` 变化/依赖缺失时需要联网安装。
 
 > [!IMPORTANT]
 > **数据备份建议**

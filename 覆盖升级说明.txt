@@ -16,4 +16,4 @@ MathBank 便携包覆盖升级
 - .system_generated/
 - venv/
 
-Windows 便携包自带 Python。macOS 需要本机 Python 3.10+，首次创建 venv 或依赖变化时需要联网。
+Windows 便携包内置完整 Python 运行时，无需另行安装 Python。macOS 包不内置 Python，运行前请确认本机已安装 Python 3.10 或更高版本；启动器会自动检测可用 Python 并创建或修复 venv，如未检测到合格版本则提示安装并停止启动。首次创建 venv 或修复环境/依赖变化时需要联网。
