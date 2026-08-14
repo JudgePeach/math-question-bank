@@ -347,6 +347,7 @@ def configure_python_path():
         lines = file_handle.read().splitlines()
 
     new_lines = []
+    application_root_added = False
     site_packages_added = False
     for line in lines:
         if line.strip() == "#import site":
@@ -354,9 +355,14 @@ def configure_python_path():
         else:
             new_lines.append(line)
         if line.strip() == ".":
+            # Entries in python310._pth are relative to python/python.exe, not
+            # to the launcher's working directory.  The application modules
+            # (main.py, mathbank/, scripts/) live one directory above it.
+            new_lines.append("..")
+            application_root_added = True
             new_lines.append("site-packages")
             site_packages_added = True
-    if not site_packages_added:
+    if not application_root_added or not site_packages_added:
         raise RuntimeError("embedded Python path file has no application path entry")
     with open(pth_file, "w", encoding="utf-8", newline="\n") as file_handle:
         file_handle.write("\n".join(new_lines) + "\n")
@@ -658,6 +664,20 @@ def validate_windows_runtime(root):
     missing = [str(path.relative_to(root)) for path in required if not path.exists()]
     if missing:
         raise RuntimeError(f"Windows runtime smoke check is missing: {missing}")
+    path_lines = {
+        line.strip()
+        for line in (root / "python" / "python310._pth").read_text(
+            encoding="utf-8"
+        ).splitlines()
+        if line.strip() and not line.lstrip().startswith("#")
+    }
+    required_path_lines = {".", "..", "site-packages", "import site"}
+    missing_path_lines = sorted(required_path_lines - path_lines)
+    if missing_path_lines:
+        raise RuntimeError(
+            "Windows embedded runtime cannot import the application root; "
+            f"python310._pth is missing: {missing_path_lines}"
+        )
     if os.name == "nt":
         subprocess.check_call(
             [

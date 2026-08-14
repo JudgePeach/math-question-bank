@@ -171,6 +171,10 @@ def test_windows_runtime_layout_requires_platform_transitive_dependencies(tmp_pa
             path.touch()
         else:
             path.mkdir()
+    (tmp_path / "python" / "python310._pth").write_text(
+        "python310.zip\n.\n..\nsite-packages\nimport site\n",
+        encoding="utf-8",
+    )
 
     with pytest.raises(RuntimeError) as exc_info:
         build_release.validate_windows_runtime(tmp_path)
@@ -178,6 +182,55 @@ def test_windows_runtime_layout_requires_platform_transitive_dependencies(tmp_pa
     message = str(exc_info.value)
     assert "python/site-packages/greenlet" in message
     assert "python/site-packages/colorama" in message
+
+
+def test_embedded_python_path_includes_application_root(tmp_path, monkeypatch):
+    runtime = tmp_path / "python"
+    runtime.mkdir()
+    path_file = runtime / "python310._pth"
+    path_file.write_text(
+        "python310.zip\n.\n\n#import site\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(build_release, "PYTHON_DIR", str(runtime))
+
+    build_release.configure_python_path()
+
+    assert path_file.read_text(encoding="utf-8").splitlines() == [
+        "python310.zip",
+        ".",
+        "..",
+        "site-packages",
+        "",
+        "import site",
+    ]
+
+
+def test_windows_runtime_rejects_missing_application_root(tmp_path):
+    required_paths = (
+        "python/python.exe",
+        "python/_sqlite3.pyd",
+        "python/sqlite3.dll",
+        "python/site-packages/fastapi",
+        "python/site-packages/uvicorn",
+        "python/site-packages/sqlalchemy",
+        "python/site-packages/greenlet",
+        "python/site-packages/colorama",
+    )
+    for relative_path in required_paths:
+        path = tmp_path / relative_path
+        path.parent.mkdir(parents=True, exist_ok=True)
+        if path.suffix:
+            path.touch()
+        else:
+            path.mkdir()
+    (tmp_path / "python" / "python310._pth").write_text(
+        "python310.zip\n.\nsite-packages\nimport site\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(RuntimeError, match="cannot import the application root"):
+        build_release.validate_windows_runtime(tmp_path)
 
 
 def _make_minimal_macos_tree(root):
