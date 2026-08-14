@@ -21,8 +21,8 @@
 > 根目录 `AGENTS.md` 是本项目面向 AI 代理与开发者的唯一开发规范来源。进行系统更新、重构、功能新增或回滚（Rollback）时，如变更影响本文记录的技术设计、接口规范、验证方式或发布流程，必须同步更新本文件，确保规范与实际代码实现准确一致；禁止再维护内容重复的平行代理指南。
 
 > [!IMPORTANT]
-> **Release 发布与版本号确认规则**：
-> 全局系统版本号统一定义于 `mathbank/__init__.py` 的 `__version__`。在执行任何 Release 打包（如 `scripts/build_release.py`）或准备打 Tag 发布新版本前，AI 代理必须**主动提醒并询问用户是否需要递增更新版本号**，确保本地版本号、便携包构建产物与 GitHub Release Tag 保持绝对一致。
+> **本地版本号与发布权限边界**：
+> 全局系统版本号统一定义于 `mathbank/__init__.py` 的 `__version__`。AI 代理只按用户要求修改该本地版本号；仅在用户明确要求本地打包时运行 `scripts/build_release.py`，产物只保存在本地。Git Tag、GitHub Release、Release 草稿与附件上传全部由用户自行管理，AI 代理不得创建、移动、删除或推送 Tag，不得创建、编辑、发布或上传 GitHub Release。用户要求“同步到 GitHub”时，默认仅同步当前代码分支，不包含任何 Tag 或 Release 操作。
 
 > [!IMPORTANT]
 > **项目路径单一来源规则**：
