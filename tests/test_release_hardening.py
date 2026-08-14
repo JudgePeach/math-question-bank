@@ -276,12 +276,46 @@ def test_windows_launcher_source_is_crlf_and_gitattributes_preserves_it():
 
 
 def test_paper_helper_direct_import_is_safe_with_legacy_windows_stdio():
-    code = (
-        "import sys; "
-        "sys.stdout.reconfigure(encoding='cp936', errors='strict'); "
-        "sys.stderr.reconfigure(encoding='cp936', errors='strict'); "
-        "import mathbank.paper_helper"
-    )
+    # Release-guard CI deliberately installs only pytest, so stub the imported
+    # application dependencies and isolate this check to module-level output.
+    code = """
+import sys
+import types
+from pathlib import Path
+
+import mathbank
+
+sys.stdout.reconfigure(encoding="cp936", errors="strict")
+sys.stderr.reconfigure(encoding="cp936", errors="strict")
+
+dummy = type("Dummy", (), {})
+orm = types.ModuleType("sqlalchemy.orm")
+orm.Session = dummy
+sqlalchemy = types.ModuleType("sqlalchemy")
+sqlalchemy.orm = orm
+sys.modules["sqlalchemy"] = sqlalchemy
+sys.modules["sqlalchemy.orm"] = orm
+
+database = types.ModuleType("mathbank.database")
+for name in ("Question", "Paper", "PaperQuestion", "QuestionCurriculum"):
+    setattr(database, name, dummy)
+sys.modules["mathbank.database"] = database
+
+paths = types.ModuleType("mathbank.paths")
+paths.TEMPLATES_DIR = Path(".")
+sys.modules["mathbank.paths"] = paths
+
+diagnostics = types.ModuleType("mathbank.latex_diagnostics")
+diagnostics.build_local_latex_diagnostic = lambda *_args, **_kwargs: {}
+sys.modules["mathbank.latex_diagnostics"] = diagnostics
+
+security = types.ModuleType("mathbank.asset_security")
+security.AssetSecurityError = RuntimeError
+security.resolve_upload_asset = lambda *_args, **_kwargs: None
+sys.modules["mathbank.asset_security"] = security
+
+import mathbank.paper_helper
+"""
     result = subprocess.run(
         [sys.executable, "-c", code],
         cwd=PROJECT_ROOT,

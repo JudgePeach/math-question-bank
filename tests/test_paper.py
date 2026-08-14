@@ -222,7 +222,15 @@ def test_exam_19_and_answer_sheet_generation(client):
         "target": "sheet",
         "questions": []
     }
-    sheet_pdf_res = client.post("/api/paper/export/pdf", json=pdf_sheet_payload, headers=headers)
+    # The endpoint contract should not depend on XeLaTeX being installed on
+    # the CI runner; compilation behavior has separate focused tests.
+    with patch(
+        "main.compile_tex_to_pdf",
+        return_value=(b"%PDF-1.7\n% deterministic test payload", ""),
+    ):
+        sheet_pdf_res = client.post(
+            "/api/paper/export/pdf", json=pdf_sheet_payload, headers=headers
+        )
     assert sheet_pdf_res.status_code == 200
     assert sheet_pdf_res.headers.get("content-type") == "application/pdf"
 
