@@ -518,6 +518,14 @@ html {
     border-radius: var(--apple-radius-sm);
 }
 
+/* Programmatic dialog context focus is announced to assistive technology but
+   is not an actionable control, so it should not look selected. */
+[data-modal-initial-focus="true"]:focus,
+[data-modal-initial-focus="true"]:focus-visible {
+    outline: none !important;
+    box-shadow: none !important;
+}
+
 /* Glassmorphism Classes - Enhanced Apple Style */
 .glass-panel {
     background: var(--apple-glass-bg);
@@ -1399,6 +1407,77 @@ button, a, input, select, textarea {
 .dark .glass-btn:hover .text-slate-500,
 .dark .glass-btn:hover i.text-slate-500 {
     color: #ffffff !important;
+}
+
+/* Question type confirmation: selected state must remain unmistakable on hover. */
+.question-type-choice-button {
+    position: relative;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.45rem;
+    width: 100%;
+    background: #ffffff;
+    border: 2px solid #cbd5e1;
+    color: #334155;
+    box-shadow: 0 1px 3px rgba(15, 23, 42, 0.06);
+    cursor: pointer;
+    transition: background-color 200ms ease, border-color 200ms ease,
+        color 200ms ease, box-shadow 200ms ease;
+}
+
+.question-type-choice-button:hover {
+    background: rgba(var(--brand-50-rgb), 0.92);
+    border-color: rgba(var(--brand-500-rgb), 0.72);
+    color: #0f172a;
+    box-shadow: 0 2px 7px rgba(var(--brand-rgb), 0.12);
+}
+
+.question-type-choice-check {
+    position: absolute;
+    left: 1rem;
+    opacity: 0;
+    width: 1rem;
+    transform: scale(0.75);
+    transition: opacity 180ms ease, transform 180ms ease;
+}
+
+.question-type-choice-button[aria-checked="true"],
+.question-type-choice-button[aria-checked="true"]:hover,
+.question-type-choice-button[aria-checked="true"]:active {
+    background: rgb(var(--brand-700-rgb));
+    border-color: rgb(var(--brand-700-rgb));
+    color: #ffffff;
+    box-shadow: 0 0 0 3px rgba(var(--brand-500-rgb), 0.22),
+        0 4px 12px rgba(var(--brand-rgb), 0.2);
+    transform: none;
+}
+
+.question-type-choice-button[aria-checked="true"] .question-type-choice-check {
+    opacity: 1;
+    transform: scale(1);
+}
+
+.dark .question-type-choice-button {
+    background: rgba(255, 255, 255, 0.08);
+    border-color: rgba(255, 255, 255, 0.18);
+    color: #e2e8f0;
+}
+
+.dark .question-type-choice-button:hover {
+    background: rgba(255, 255, 255, 0.14);
+    border-color: rgba(255, 255, 255, 0.32);
+    color: #ffffff;
+}
+
+.dark .question-type-choice-button[aria-checked="true"],
+.dark .question-type-choice-button[aria-checked="true"]:hover,
+.dark .question-type-choice-button[aria-checked="true"]:active {
+    background: rgba(var(--brand-500-rgb), 0.34);
+    border-color: rgb(var(--brand-500-rgb));
+    color: #ffffff;
+    box-shadow: 0 0 0 3px rgba(var(--brand-500-rgb), 0.24),
+        0 4px 12px rgba(0, 0, 0, 0.32);
 }
 
 /* ===== Phase 2: Responsive usability and accessibility hardening ===== */

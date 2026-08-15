@@ -47,10 +47,12 @@ def build_classification_system_prompt(curriculum: dict) -> str:
         "1. 仔细阅读并推导题目考点。\n"
         "2. 必须在上面的可选教材范围中为本题挑选最合适的一个【学段】（例如：必修一）和一个【所属章节】（例如：5. 三角函数，必须是可选章节中的精确字符串）。\n"
         f"3. {CLASSIFICATION_PRIORITY_RULE}\n"
-        "4. 你的输出必须是一个合法的 JSON 字符串，包含且仅包含以下两个 key，不要有任何多余的 Markdown 标记、代码块或解释文字：\n"
+        "4. 只判定粗粒度题型 `question_form`：填空题为 `fill_in_blank`，解答题为 `detailed_answer`，任何选择题一律为 `choice`，无法可靠判断时为 `unknown`。严禁输出或猜测 `single_choice`、`multi_choice`、单选题、多选题。题干出现 `\\fillin` 时应判为填空题，出现 `\\begin{choices}` 时应判为选择题。\n"
+        "5. 你的输出必须是一个合法的 JSON 字符串，包含且仅包含以下三个 key，不要有任何多余的 Markdown 标记、代码块或解释文字：\n"
         "{\n"
         '  "compulsory": "学段名称",\n'
-        '  "chapter": "具体章节名称"\n'
+        '  "chapter": "具体章节名称",\n'
+        '  "question_form": "choice / fill_in_blank / detailed_answer / unknown"\n'
         "}\n"
         "不要包含 ```json ``` 标记，只输出最干净的 JSON。"
     )

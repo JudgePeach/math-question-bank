@@ -82,6 +82,10 @@ from mathbank.prompts import (
     build_tikz_correction_prompt,
     build_tikz_draw_prompt,
 )
+from mathbank.question_types import (
+    detect_structured_question_form,
+    normalize_ai_question_form,
+)
 import shutil
 from mathbank.pdf_inspector_helper import (
     is_pdf_inspector_available,
@@ -3020,20 +3024,11 @@ def ai_classify(content: str = Form(...)):
         result = json.loads(ai_message)
         compulsory = result.get("compulsory", "")
         chapter = result.get("chapter", "")
-        qtype = result.get("question_type", "")
-        
-        # Map common Chinese/English variations of question type
-        qtype_mapping = {
-            "single_choice": "single_choice",
-            "multi_choice": "multi_choice",
-            "fill_in_blank": "fill_in_blank",
-            "detailed_answer": "detailed_answer",
-            "单选题": "single_choice",
-            "多选题": "multi_choice",
-            "填空题": "fill_in_blank",
-            "解答题": "detailed_answer"
-        }
-        resolved_qtype = qtype_mapping.get(qtype, "detailed_answer")
+        structured_question_form = detect_structured_question_form(content)
+        question_form = structured_question_form or normalize_ai_question_form(
+            result.get("question_form")
+        )
+        question_form_source = "structure" if structured_question_form else "ai"
         
         # Verification: make sure returned values exist in get_current_curriculum()
         curr = get_current_curriculum()
@@ -3042,7 +3037,8 @@ def ai_classify(content: str = Form(...)):
                 "status": "success",
                 "compulsory": compulsory,
                 "chapter": chapter,
-                "question_type": resolved_qtype
+                "question_form": question_form,
+                "question_form_source": question_form_source,
             }
         else:
             # Fallback dynamically to the first available category book/chapter
@@ -3052,7 +3048,8 @@ def ai_classify(content: str = Form(...)):
                 "status": "success",
                 "compulsory": first_comp,
                 "chapter": first_chap,
-                "question_type": resolved_qtype,
+                "question_form": question_form,
+                "question_form_source": question_form_source,
                 "is_fallback": True,
                 "raw_recommendation": f"{compulsory} -> {chapter}"
             }

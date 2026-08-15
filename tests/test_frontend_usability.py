@@ -139,6 +139,32 @@ def test_static_dialogs_expose_modal_semantics_and_accessible_names():
         assert elements[button_id]["aria-label"]
 
 
+def test_ai_classification_requires_manual_single_or_multi_choice_confirmation():
+    index_source = _read(INDEX_PATH)
+    import_source = _read(STATIC_JS_DIR / "import.js")
+    css_source = _read(CSS_PATH)
+
+    assert "temporaryClassifyData.question_type" not in import_source
+    assert "qtypeLabels[data.question_type]" not in import_source
+    assert "temporaryClassifyData.question_form === 'choice'" in import_source
+    assert "!temporaryClassifyQuestionType" in import_source
+    assert "请先确认此题是单选题还是多选题" in import_source
+    assert "qtypeSelect.value = temporaryClassifyQuestionType" in import_source
+    assert "window.selectClassifiedChoiceType = selectClassifiedChoiceType" in import_source
+    assert 'id="recQType"' not in index_source
+    assert 'id="choiceTypeConfirm"' in index_source
+    assert 'id="classifySingleChoiceBtn"' in index_source
+    assert 'id="classifyMultiChoiceBtn"' in index_source
+    assert 'role="radiogroup"' in index_source
+    assert index_source.count("question-type-choice-check") == 2
+    assert "已识别为选择题，请手动确认" in index_source
+    assert "确认分类并保存题目" in index_source
+    assert '.question-type-choice-button[aria-checked="true"]:hover' in css_source
+    assert 'color: #ffffff;' in css_source
+    assert '.question-type-choice-button[aria-checked="true"] .question-type-choice-check' in css_source
+    assert "button.classList.toggle('bg-brand-50'" not in import_source
+
+
 def test_modal_manager_traps_focus_handles_escape_and_restores_focus():
     api_source = _read(STATIC_JS_DIR / "api.js")
     editor_source = _read(STATIC_JS_DIR / "editor.js")
@@ -149,14 +175,24 @@ def test_modal_manager_traps_focus_handles_escape_and_restores_focus():
     for marker in (
         "window.MathBankModal = MathBankModal",
         "const focusableSelector",
+        "function resolveInitialFocusTarget(dialog, options = {})",
+        "dialog.querySelector('[autofocus]')",
+        "const labelledBy = dialog.getAttribute('aria-labelledby')",
+        "document.getElementById(labelledBy)",
+        "data-modal-initial-focus",
+        "focusDialogContext(dialog, options)",
         "previousFocus: document.activeElement",
         "event.key === 'Escape'",
         "event.key !== 'Tab'",
         "if (!entry.dialog.contains(document.activeElement))",
+        "!focusable.includes(document.activeElement)",
         "element.inert = isIsolated",
         "restoreTarget.focus({ preventScroll: true })",
     ):
         assert marker in api_source
+
+    assert "dialog.querySelector('[autofocus], [data-modal-close]')" not in api_source
+    assert "|| getFocusable(dialog)[0]" not in api_source
 
     assert api_source.count("window.MathBankModal.open") >= 2
     assert editor_source.count("window.MathBankModal.open") >= 3
@@ -227,6 +263,7 @@ def test_reduced_motion_dark_contrast_and_busy_feedback_are_explicit():
     assert 'button[aria-busy="true"]' in css_source
     assert 'button[aria-disabled="true"]' in css_source
     assert '#questionsList[aria-busy="true"]' in css_source
+    assert '[data-modal-initial-focus="true"]:focus-visible' in css_source
 
     assert "new MutationObserver" in api_source
     assert "button.setAttribute('aria-busy', 'true')" in api_source

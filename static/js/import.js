@@ -868,6 +868,38 @@
 
         // AI classification modal handlers
         let temporaryClassifyData = null;
+        let temporaryClassifyQuestionType = null;
+
+        function setClassifyApplyEnabled(enabled) {
+            const applyBtn = document.getElementById('classifyApplyButton');
+            if (!applyBtn) return;
+            applyBtn.disabled = !enabled;
+            applyBtn.setAttribute('aria-disabled', enabled ? 'false' : 'true');
+        }
+
+        function resetClassifiedChoiceType() {
+            temporaryClassifyQuestionType = null;
+            ['classifySingleChoiceBtn', 'classifyMultiChoiceBtn'].forEach(id => {
+                const button = document.getElementById(id);
+                if (!button) return;
+                button.setAttribute('aria-checked', 'false');
+            });
+        }
+
+        function selectClassifiedChoiceType(questionType) {
+            if (questionType !== 'single_choice' && questionType !== 'multi_choice') return;
+            temporaryClassifyQuestionType = questionType;
+            const selectedId = questionType === 'single_choice'
+                ? 'classifySingleChoiceBtn'
+                : 'classifyMultiChoiceBtn';
+            ['classifySingleChoiceBtn', 'classifyMultiChoiceBtn'].forEach(id => {
+                const button = document.getElementById(id);
+                if (!button) return;
+                const selected = id === selectedId;
+                button.setAttribute('aria-checked', selected ? 'true' : 'false');
+            });
+            setClassifyApplyEnabled(true);
+        }
 
         function openClassifyModal() {
             const modal = document.getElementById('aiClassifyModal');
@@ -879,7 +911,11 @@
             document.getElementById('classifyResult').classList.add('hidden');
             document.getElementById('classifyAIButton').classList.remove('hidden');
             document.getElementById('classifyApplyButton').classList.add('hidden');
+            document.getElementById('choiceTypeConfirm').classList.add('hidden');
+            document.getElementById('unknownQuestionFormNotice').classList.add('hidden');
             temporaryClassifyData = null;
+            resetClassifiedChoiceType();
+            setClassifyApplyEnabled(true);
             
             setTimeout(() => {
                 modal.classList.remove('opacity-0');
@@ -925,21 +961,34 @@
                     temporaryClassifyData = data;
                     document.getElementById('recCompulsory').textContent = data.compulsory;
                     document.getElementById('recChapter').textContent = data.chapter;
-                    
-                    const qtypeLabels = {
-                        'single_choice': '单选题',
-                        'multi_choice': '多选题',
+                    const formLabels = {
+                        'choice': '选择题',
                         'fill_in_blank': '填空题',
-                        'detailed_answer': '解答题'
+                        'detailed_answer': '解答题',
+                        'unknown': '待手动确认'
                     };
-                    const label = qtypeLabels[data.question_type] || '未知题型';
-                    document.getElementById('recQType').textContent = label;
-                    
-                    const reminder = document.getElementById('recQTypeReminder');
-                    if (data.question_type === 'single_choice' || data.question_type === 'multi_choice') {
-                        reminder.classList.remove('hidden');
+                    const questionForm = formLabels[data.question_form] ? data.question_form : 'unknown';
+                    document.getElementById('recQuestionForm').textContent = formLabels[questionForm];
+                    document.getElementById('recQuestionFormSource').textContent = data.question_form_source === 'structure'
+                        ? '结构规则识别'
+                        : 'AI 建议';
+
+                    const choiceConfirm = document.getElementById('choiceTypeConfirm');
+                    const unknownNotice = document.getElementById('unknownQuestionFormNotice');
+                    choiceConfirm.classList.toggle('hidden', questionForm !== 'choice');
+                    unknownNotice.classList.toggle('hidden', questionForm !== 'unknown');
+                    resetClassifiedChoiceType();
+
+                    if (questionForm === 'fill_in_blank') {
+                        temporaryClassifyQuestionType = 'fill_in_blank';
+                        setClassifyApplyEnabled(true);
+                    } else if (questionForm === 'detailed_answer') {
+                        temporaryClassifyQuestionType = 'detailed_answer';
+                        setClassifyApplyEnabled(true);
+                    } else if (questionForm === 'choice') {
+                        setClassifyApplyEnabled(false);
                     } else {
-                        reminder.classList.add('hidden');
+                        setClassifyApplyEnabled(true);
                     }
                     
                     resultBox.classList.remove('hidden');
@@ -958,6 +1007,10 @@
 
         function applyClassifyRecommendation() {
             if (!temporaryClassifyData) return;
+            if (temporaryClassifyData.question_form === 'choice' && !temporaryClassifyQuestionType) {
+                showToast('请先确认此题是单选题还是多选题！', 'error');
+                return;
+            }
             
             const compSelect = document.getElementById('editCompulsory');
             const chapSelect = document.getElementById('editChapter');
@@ -966,14 +1019,6 @@
             
             const comp = temporaryClassifyData.compulsory;
             const chap = temporaryClassifyData.chapter;
-            
-            // Apply question type
-            if (temporaryClassifyData.question_type && qtypeSelect) {
-                qtypeSelect.value = temporaryClassifyData.question_type;
-                if (typeof qtypeSelect.onchange === 'function') {
-                    qtypeSelect.onchange();
-                }
-            }
             
             // Ensure nodes exist in local dictionary structure
             if (!categoryTree[comp]) {
@@ -990,15 +1035,22 @@
             chapSelect.value = chap;
             chapSelect.onchange();
             knowSelect.value = chap; // Default empty third level (小节) to chapter name
+
+            if (temporaryClassifyQuestionType && qtypeSelect) {
+                qtypeSelect.value = temporaryClassifyQuestionType;
+                qtypeSelect.dispatchEvent(new Event('change', { bubbles: true }));
+            }
             
             closeClassifyModal();
-            showToast('AI 推荐章节及题型已采纳！');
+            showToast('教材章节及题型已确认！');
             
             // Save question now with skipCheck = true
             setTimeout(() => {
                 saveQuestion(true);
             }, 250);
         }
+
+        window.selectClassifiedChoiceType = selectClassifiedChoiceType;
 
         // Delete Question
         function deleteQuestion(id) {

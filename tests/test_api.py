@@ -1,5 +1,6 @@
 import os
 import json
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -134,6 +135,62 @@ def test_api_categories(client):
     response = client.get("/api/categories")
     assert response.status_code == 200
     assert isinstance(response.json(), dict)
+
+
+def test_ai_classify_returns_coarse_form_without_question_type():
+    provider = SimpleNamespace(
+        api_key="test-key",
+        api_base="https://example.invalid/v1",
+        model_name="test-model",
+        credential_label="test-provider",
+        reasoning_effort=None,
+        provider_code="test",
+    )
+    response = MagicMock()
+    response.json.return_value = {
+        "choices": [
+            {
+                "message": {
+                    "content": json.dumps(
+                        {
+                            "compulsory": "必修一",
+                            "chapter": "1. 集合",
+                            "question_form": "single_choice",
+                        },
+                        ensure_ascii=False,
+                    )
+                }
+            }
+        ]
+    }
+
+    with patch("main.resolve_text_provider", return_value=provider), patch(
+        "main.post_chat_completion", return_value=response
+    ), patch(
+        "main.get_current_curriculum", return_value={"必修一": {"1. 集合": []}}
+    ):
+        from main import ai_classify
+
+        ai_result = ai_classify("设集合 $A=\\{1,2\\}$，判断下列说法。")
+        fillin_result = ai_classify("实数 $a$ 的取值范围为\\fillin")
+        choices_result = ai_classify(
+            "下列结论正确的是\\begin{choices}\\item A\\item B\\end{choices}"
+        )
+
+    assert ai_result == {
+        "status": "success",
+        "compulsory": "必修一",
+        "chapter": "1. 集合",
+        "question_form": "choice",
+        "question_form_source": "ai",
+    }
+    assert fillin_result["question_form"] == "fill_in_blank"
+    assert fillin_result["question_form_source"] == "structure"
+    assert choices_result["question_form"] == "choice"
+    assert choices_result["question_form_source"] == "structure"
+    assert "question_type" not in ai_result
+    assert "question_type" not in fillin_result
+    assert "question_type" not in choices_result
 
 
 def test_api_stats(client):

@@ -103,3 +103,15 @@ def test_classification_prompts_prefer_later_curriculum_module():
         assert "若属于同一学段，再比较章节从前到后的顺序" in prompt
         assert "必修二的“平面向量及其应用”" in prompt
         assert "仅作为背景条件被提及" in prompt
+
+
+def test_single_question_classification_prompt_requests_only_coarse_question_form():
+    prompt = build_classification_system_prompt({"必修一": {"1. 集合": []}})
+
+    assert '"compulsory"' in prompt
+    assert '"chapter"' in prompt
+    assert '"question_form"' in prompt
+    assert "question_type" not in prompt
+    assert "包含且仅包含以下三个 key" in prompt
+    assert "任何选择题一律为 `choice`" in prompt
+    assert "严禁输出或猜测 `single_choice`、`multi_choice`" in prompt

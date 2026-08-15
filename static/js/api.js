@@ -170,6 +170,43 @@
                 });
             }
 
+            function resolveInitialFocusTarget(dialog, options = {}) {
+                const requested = options.initialFocus;
+                if (requested instanceof Element && dialog.contains(requested)) {
+                    return requested;
+                }
+                if (typeof requested === 'string') {
+                    const matched = dialog.querySelector(requested);
+                    if (matched) return matched;
+                }
+
+                const explicitAutofocus = dialog.querySelector('[autofocus]');
+                if (explicitAutofocus) return explicitAutofocus;
+
+                const labelledBy = dialog.getAttribute('aria-labelledby');
+                if (labelledBy) {
+                    const title = document.getElementById(labelledBy);
+                    if (title && dialog.contains(title)) return title;
+                }
+
+                return dialog.querySelector('[data-modal-surface], .glass-modal') || dialog;
+            }
+
+            function focusDialogContext(dialog, options = {}) {
+                dialog.querySelectorAll('[data-modal-initial-focus="true"]').forEach((element) => {
+                    element.removeAttribute('data-modal-initial-focus');
+                });
+                const target = resolveInitialFocusTarget(dialog, options);
+                const isInteractiveTarget = target.matches(focusableSelector);
+                if (!target.hasAttribute('tabindex') && !isInteractiveTarget) {
+                    target.setAttribute('tabindex', '-1');
+                }
+                if (!isInteractiveTarget) {
+                    target.setAttribute('data-modal-initial-focus', 'true');
+                }
+                target.focus({ preventScroll: true });
+            }
+
             function open(dialog, options = {}) {
                 if (!dialog) return;
                 const existingIndex = dialogStack.findIndex((entry) => entry.dialog === dialog);
@@ -189,14 +226,7 @@
                 isolateBackground(true);
 
                 requestAnimationFrame(() => {
-                    const target = dialog.querySelector('[autofocus], [data-modal-close]')
-                        || getFocusable(dialog)[0]
-                        || dialog.querySelector('.glass-modal')
-                        || dialog;
-                    if (!target.hasAttribute('tabindex') && !target.matches(focusableSelector)) {
-                        target.setAttribute('tabindex', '-1');
-                    }
-                    target.focus({ preventScroll: true });
+                    focusDialogContext(dialog, options);
                 });
             }
 
@@ -222,8 +252,7 @@
                     if (restoreTarget && restoreTarget.isConnected && typeof restoreTarget.focus === 'function') {
                         restoreTarget.focus({ preventScroll: true });
                     } else if (currentEntry) {
-                        const fallback = getFocusable(currentEntry.dialog)[0] || currentEntry.dialog;
-                        fallback.focus({ preventScroll: true });
+                        focusDialogContext(currentEntry.dialog);
                     }
                 });
             }
@@ -254,6 +283,9 @@
                 const first = focusable[0];
                 const last = focusable[focusable.length - 1];
                 if (!entry.dialog.contains(document.activeElement)) {
+                    event.preventDefault();
+                    (event.shiftKey ? last : first).focus();
+                } else if (!focusable.includes(document.activeElement)) {
                     event.preventDefault();
                     (event.shiftKey ? last : first).focus();
                 } else if (event.shiftKey && document.activeElement === first) {

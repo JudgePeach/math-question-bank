@@ -1009,17 +1009,17 @@
 
             <div class="space-y-4">
                 <p class="text-xs text-slate-500 leading-relaxed">
-                    您当前未选择 <strong>学段</strong> 或 <strong>所属章节</strong>。系统将根据您当前配置的教材大纲，开启 AI 智能进行章节分类匹配。
+                    您当前未选择 <strong>学段</strong> 或 <strong>所属章节</strong>。系统将结合题干结构规则与 AI 完成教材定位和粗粒度题型识别；选择题仍需您手动确认单选或多选。
                 </p>
 
                 <!-- Loading State -->
                 <div id="classifyLoading" role="status" aria-live="polite" class="hidden glass-card rounded-xl p-6 text-center space-y-3">
                     <i class="fa-solid fa-spinner animate-spin text-brand-500 text-2xl"></i>
-                    <p class="text-xs text-slate-500 font-medium">AI 正在研读题干以自动匹配教材大纲...</p>
+                    <p class="text-xs text-slate-500 font-medium">正在分析题干结构、题型与教材定位...</p>
                 </div>
 
                 <!-- Recommendation Result -->
-                <div id="classifyResult" class="hidden space-y-3">
+                <div id="classifyResult" aria-live="polite" class="hidden space-y-3">
                     <div class="p-4 rounded-xl bg-brand-50 border border-brand-100 space-y-3">
                         <div>
                             <span class="text-[10px] uppercase font-bold text-brand-600 tracking-wider flex items-center mb-1.5"><i class="fa-solid fa-robot mr-1.5 animate-bounce"></i>AI 推荐教材定位：</span>
@@ -1029,14 +1029,26 @@
                                 <span id="recChapter" class="text-slate-800 font-bold">5. 一元函数的导数及其应用</span>
                             </div>
                         </div>
-                        <div class="border-t border-brand-100/60 pt-2 space-y-1.5">
-                            <span class="text-[10px] uppercase font-bold text-brand-600 tracking-wider flex items-center"><i class="fa-solid fa-tags mr-1.5 text-indigo-500"></i>AI 判定题型：</span>
-                            <div class="flex items-center space-x-2 text-xs font-semibold text-slate-800">
-                                <span id="recQType" class="bg-indigo-100 text-indigo-800 px-2.5 py-0.5 rounded-lg text-[10px] font-bold">单选题</span>
+                        <div class="border-t border-brand-100/60 pt-3 space-y-2">
+                            <div class="flex items-center justify-between gap-2">
+                                <span class="text-[10px] uppercase font-bold text-brand-600 tracking-wider flex items-center"><i class="fa-solid fa-tags mr-1.5 text-indigo-500"></i>题型识别：</span>
+                                <span id="recQuestionFormSource" class="text-[10px] text-slate-500 font-medium">AI 建议</span>
                             </div>
-                            <p id="recQTypeReminder" class="text-[11px] text-amber-600 font-medium hidden">
-                                <i class="fa-solid fa-circle-info mr-1"></i>温馨提示：AI 识别此题为选择题，请核对为单选还是多选。
-                            </p>
+                            <span id="recQuestionForm" class="inline-flex bg-indigo-100 text-indigo-800 px-2.5 py-1 rounded-lg text-[11px] font-bold">待识别</span>
+                            <div id="choiceTypeConfirm" class="hidden space-y-2" role="radiogroup" aria-label="确认选择题类型">
+                                <p class="text-[11px] text-amber-700 font-medium"><i class="fa-solid fa-circle-info mr-1"></i>已识别为选择题，请手动确认是单选题还是多选题。</p>
+                                <div class="grid grid-cols-2 gap-2">
+                                    <button type="button" id="classifySingleChoiceBtn" role="radio" aria-checked="false" onclick="selectClassifiedChoiceType('single_choice')" class="question-type-choice-button min-h-[44px] px-3 py-2 rounded-xl text-xs font-semibold">
+                                        <i class="fa-solid fa-circle-check question-type-choice-check" aria-hidden="true"></i>
+                                        <span>单选题</span>
+                                    </button>
+                                    <button type="button" id="classifyMultiChoiceBtn" role="radio" aria-checked="false" onclick="selectClassifiedChoiceType('multi_choice')" class="question-type-choice-button min-h-[44px] px-3 py-2 rounded-xl text-xs font-semibold">
+                                        <i class="fa-solid fa-circle-check question-type-choice-check" aria-hidden="true"></i>
+                                        <span>多选题</span>
+                                    </button>
+                                </div>
+                            </div>
+                            <p id="unknownQuestionFormNotice" class="hidden text-[11px] text-slate-500 font-medium">无法可靠判断题型，将保留当前手动选择。</p>
                         </div>
                     </div>
                 </div>
@@ -1049,7 +1061,7 @@
                     <span>一键 AI 分析</span>
                 </button>
                 <button type="button" id="classifyApplyButton" onclick="applyClassifyRecommendation()" class="hidden glass-btn-primary px-5 py-2 rounded-xl font-medium text-xs">
-                    采纳并保存题目
+                    确认分类并保存题目
                 </button>
             </div>
         </div>
