@@ -240,7 +240,7 @@ echo "正在检查运行环境依赖是否完整..."
 NEEDS_DEPENDENCY_INSTALL=0
 [ "$INSTALLED_HASH" = "$REQUIREMENTS_HASH" ] || NEEDS_DEPENDENCY_INSTALL=1
 if ! "$PYTHON_BIN" -c \
-    "import fastapi, uvicorn, sqlalchemy, greenlet, colorama, multipart, dotenv, requests, PIL, fitz, docx, lxml, defusedxml, olefile, exceptiongroup, sniffio; import pdf_inspector" \
+    "import fastapi, uvicorn, sqlalchemy, greenlet, colorama, multipart, dotenv, requests, PIL, docx, lxml, defusedxml, olefile, exceptiongroup, sniffio; import pymupdf as fitz; import pdf_inspector" \
     >/dev/null 2>&1; then
     NEEDS_DEPENDENCY_INSTALL=1
 fi
@@ -266,9 +266,9 @@ if [ -n "$PORT_PIDS" ]; then
     fail "端口 8000 在启动前再次被占用 (PID: $(echo "$PORT_PIDS" | tr '\n' ' '))；请重试。"
 fi
 
-rm -f "$LOG_FILE"
+rm -f "$LOG_FILE" "$DIR/.system_generated/probe.log"
 echo "正在启动服务: http://127.0.0.1:8000"
-nohup "$PYTHON_BIN" -m uvicorn main:app --host 127.0.0.1 --port 8000 \
+nohup "$PYTHON_BIN" -u -m uvicorn main:app --host 127.0.0.1 --port 8000 \
     >"$LOG_FILE" 2>&1 &
 SERVER_PID=$!
 printf '%s\n' "$SERVER_PID" >"$PID_FILE"
@@ -277,32 +277,51 @@ disown "$SERVER_PID" 2>/dev/null || true
 
 echo "正在探测后台服务启动状态，等待就绪..."
 SERVICE_READY=0
-if "$PYTHON_BIN" - "$SERVER_PID" >/dev/null 2>&1 <<'PY'
+if "$PYTHON_BIN" - "$SERVER_PID" "$DIR/.system_generated/probe.log" >/dev/null 2>&1 <<'PY'
 import os
 import sys
+from pathlib import Path
 import time
+import urllib.error
 import urllib.request
 
 server_pid = int(sys.argv[1])
-deadline = time.monotonic() + 10.0
+probe_log_path = Path(sys.argv[2])
+deadline = time.monotonic() + 60.0
+opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+last_probe = "服务尚未响应"
 while time.monotonic() < deadline:
     remaining = deadline - time.monotonic()
     try:
-        with urllib.request.urlopen(
+        with opener.open(
             "http://127.0.0.1:8000/healthz",
-            timeout=max(0.05, min(0.4, remaining)),
+            timeout=max(0.05, min(2.0, remaining)),
         ) as response:
             if response.status == 200:
                 raise SystemExit(0)
-    except Exception:
-        pass
+            body = response.read().decode("utf-8", errors="replace")
+            last_probe = f"HTTP {response.status} - {body}"
+    except urllib.error.HTTPError as exc:
+        body = exc.read().decode("utf-8", errors="replace")
+        last_probe = f"HTTP {exc.code} ({exc.reason}): {body}"
+    except Exception as exc:
+        last_probe = f"{type(exc).__name__}: {exc}"
     try:
         os.kill(server_pid, 0)
     except OSError:
+        last_probe = f"进程已提前退出 [PID: {server_pid}] - {last_probe}"
+        try:
+            probe_log_path.write_text(last_probe, encoding="utf-8")
+        except OSError:
+            pass
         break
     remaining = deadline - time.monotonic()
     if remaining > 0:
         time.sleep(min(0.5, remaining))
+try:
+    probe_log_path.write_text(f"探测超时 (已等待 60 秒): {last_probe}", encoding="utf-8")
+except OSError:
+    pass
 raise SystemExit(1)
 PY
 then
@@ -314,10 +333,16 @@ if [ "$SERVICE_READY" -ne 1 ]; then
         kill -TERM "$SERVER_PID" 2>/dev/null || true
     fi
     rm -f "$PID_FILE" "$IDENTITY_FILE"
+    echo "============================================"
     echo "❌ 服务未能通过健康检查，浏览器不会打开。"
-    echo "---------------- 最近日志 ----------------"
+    if [ -f "$DIR/.system_generated/probe.log" ]; then
+        echo "---------------- 探针诊断信息 ----------------"
+        cat "$DIR/.system_generated/probe.log"
+        echo ""
+    fi
+    echo "---------------- 最近服务日志 ----------------"
     tail -n 80 "$LOG_FILE" 2>/dev/null || echo "未找到服务日志。"
-    echo "--------------------------------------------"
+    echo "============================================"
     pause_if_interactive
     exit 1
 fi

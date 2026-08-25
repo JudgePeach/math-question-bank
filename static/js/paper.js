@@ -1338,7 +1338,14 @@
                     }
                 }
 
-                let contentRes = q ? formatQuestionContentHtml(rawContent, q.id, figAlign, isSolSpaceEmbedded) : '';
+                const isChoiceQuestion = qType === 'single_choice' || qType === 'multi_choice';
+                const choiceContentParts = isChoiceQuestion
+                    ? splitChoiceContentForPaperPreview(rawContent)
+                    : { stemRaw: rawContent, choicesRaw: '' };
+                let contentRes = q ? formatQuestionContentHtml(choiceContentParts.stemRaw, q.id, figAlign, isSolSpaceEmbedded) : '';
+                const separatedChoicesHtml = q && choiceContentParts.choicesRaw
+                    ? formatQuestionContentHtml(choiceContentParts.choicesRaw, q.id, figAlign, false, false)
+                    : '';
                 let contentHtml = '';
                 let embeddedImgHtml = '';
 
@@ -1350,10 +1357,10 @@
                 }
 
                 let stemLine = '';
-                if (qType === 'single_choice' || qType === 'multi_choice') {
+                if (isChoiceQuestion) {
                     let stemContent = contentHtml;
-                    let choicesGrid = '';
-                    if (contentHtml.includes('choices-grid') || contentHtml.includes('katex-choices-grid') || contentHtml.includes('grid-cols-')) {
+                    let choicesGrid = separatedChoicesHtml;
+                    if (!choicesGrid && (contentHtml.includes('choices-grid') || contentHtml.includes('katex-choices-grid') || contentHtml.includes('grid-cols-'))) {
                         const match = contentHtml.match(/([\s\S]*?)(<(?:div|p)[^>]*class="[^"]*(?:choices-grid|katex-choices-grid|grid-cols-[124])"[\s\S]*)/i);
                         if (match) {
                             stemContent = match[1];
@@ -1367,11 +1374,11 @@
                     }
 
                     stemLine = `
-                        <div class="flex justify-between items-baseline mb-1">
+                        <div class="paper-choice-stem-row flex justify-between items-baseline mb-1">
                             <div class="flex-1">${stemContent}</div>
                             <div class="shrink-0 ml-4 font-serif text-slate-900 font-normal select-none">（ &nbsp; ）</div>
                         </div>
-                        ${choicesGrid}
+                        <div class="paper-choice-options-row">${choicesGrid}</div>
                     `;
                 } else {
                     stemLine = contentHtml;
@@ -2574,6 +2581,27 @@
 
     document.addEventListener('click', handleFigureAlignImageEvent);
     document.addEventListener('contextmenu', handleFigureAlignImageEvent);
+
+    function splitChoiceContentForPaperPreview(raw) {
+        const source = String(raw || '');
+        const beginMarker = '\\begin{choices}';
+        const endMarker = '\\end{choices}';
+        const beginIndex = source.indexOf(beginMarker);
+        if (beginIndex < 0) {
+            return { stemRaw: source, choicesRaw: '' };
+        }
+
+        const endIndex = source.indexOf(endMarker, beginIndex + beginMarker.length);
+        if (endIndex < 0) {
+            return { stemRaw: source, choicesRaw: '' };
+        }
+
+        const choicesEnd = endIndex + endMarker.length;
+        return {
+            stemRaw: `${source.slice(0, beginIndex)}\n${source.slice(choicesEnd)}`.trim(),
+            choicesRaw: source.slice(beginIndex, choicesEnd).trim()
+        };
+    }
 
     function formatQuestionContentHtml(raw, qid = null, figAlign = 'right', embedInSolSpace = false, showControls = true) {
         if (!raw) return embedInSolSpace ? { stemHtml: '', imgHtml: null } : '';

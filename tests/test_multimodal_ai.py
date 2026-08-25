@@ -1,12 +1,18 @@
+import io
 import os
+from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import pytest
 import requests
+from PIL import Image
 
 from main import (
+    LOCAL_TOKEN,
     correct_tikz_endpoint,
     draw_tikz_via_high_model,
+    extract_tikz_source,
     ocr_pdf_page_image,
     ocr_via_provider,
 )
@@ -168,6 +174,203 @@ def test_draw_request_injects_configured_reasoning_effort(tmp_path):
     assert payload["model"] == "gpt-5.6-luna"
     assert payload["reasoning_effort"] == "high"
     assert payload["enable_thinking"] is True
+
+
+def test_draw_request_supports_text_only_workbench_input():
+    response = MagicMock(status_code=200)
+    response.json.return_value = {
+        "choices": [{"message": {"content": "\\begin{tikzpicture}\\end{tikzpicture}"}}]
+    }
+
+    with patch.dict(os.environ, {"SILICONFLOW_API_KEY": "sf-key"}):
+        with patch(
+            "mathbank.ai_http.robust_request_post", return_value=response
+        ) as mock_post:
+            result = draw_tikz_via_high_model(
+                None,
+                "SILICONFLOW/Qwen/Qwen3-VL-32B-Instruct",
+                latex_content="△ABC 中 AB=AC",
+                instruction="标出中线 AD",
+            )
+
+    assert result.startswith("\\begin{tikzpicture}")
+    payload = mock_post.call_args.kwargs["json"]
+    assert isinstance(payload["messages"][0]["content"], str)
+    assert "标出中线 AD" in payload["messages"][0]["content"]
+    assert "△ABC 中 AB=AC" in payload["messages"][0]["content"]
+
+
+def test_shared_tikz_parser_wraps_fenced_body_and_rejects_plain_prose():
+    source = extract_tikz_source("```latex\n\\draw (0,0)--(1,1);\n```")
+    assert source.startswith("\\begin{tikzpicture}")
+    assert source.endswith("\\end{tikzpicture}")
+
+    with pytest.raises(RuntimeError, match="完整的 tikzpicture"):
+        extract_tikz_source("绘图已经完成，请查收。")
+
+
+def _png_bytes():
+    output = io.BytesIO()
+    Image.new("RGB", (12, 8), "white").save(output, format="PNG")
+    return output.getvalue()
+
+
+def test_workbench_draw_route_accepts_text_without_reference(client):
+    generated = "\\begin{tikzpicture}\\draw (0,0)--(1,1);\\end{tikzpicture}"
+    with patch("main.draw_tikz_via_high_model", return_value=generated) as mock_draw:
+        response = client.post(
+            "/api/ai/draw_tikz",
+            data={"instruction": "画一条线段", "context": "题干", "existing_tikz": ""},
+            headers={"X-Local-Token": LOCAL_TOKEN},
+        )
+
+    assert response.status_code == 200
+    assert response.json()["tikz_code"] == generated
+    assert response.json()["used_reference_image"] is False
+    assert mock_draw.call_args.args[0] is None
+    assert mock_draw.call_args.kwargs["instruction"] == "画一条线段"
+
+
+def test_workbench_draw_route_persists_one_normalized_reference_after_success(client):
+    generated = "\\begin{tikzpicture}\\draw (0,0) circle (1);\\end{tikzpicture}"
+    observed_path = None
+
+    def draw(reference_path, *_args, **_kwargs):
+        nonlocal observed_path
+        observed_path = reference_path
+        assert os.path.isfile(reference_path)
+        assert os.path.basename(reference_path).startswith("tikz_reference_")
+        return generated
+
+    persisted_path = None
+    try:
+        with patch("main.draw_tikz_via_high_model", side_effect=draw):
+            response = client.post(
+                "/api/ai/draw_tikz",
+                data={"instruction": "按原图重绘"},
+                files={"reference_image": ("reference.png", _png_bytes(), "image/png")},
+                headers={"X-Local-Token": LOCAL_TOKEN},
+            )
+
+        assert response.status_code == 200
+        assert response.json()["used_reference_image"] is True
+        assert observed_path
+        assert not os.path.exists(observed_path)
+        persisted_url = response.json()["reference_image_path"]
+        assert persisted_url.startswith("/static/test_uploads/tikz_reference_")
+        persisted_path = Path("main.py").resolve().parent / persisted_url.lstrip("/")
+        assert persisted_path.is_file()
+    finally:
+        if persisted_path is not None:
+            persisted_path.unlink(missing_ok=True)
+
+
+def test_workbench_draw_route_reuses_stored_ocr_reference_image(client):
+    generated = "\\begin{tikzpicture}\\draw (0,0) circle (1);\\end{tikzpicture}"
+    upload = client.post(
+        "/api/upload",
+        files={"file": ("ocr-original.png", _png_bytes(), "image/png")},
+        headers={"X-Local-Token": LOCAL_TOKEN},
+    )
+    assert upload.status_code == 200
+    reference_url = upload.json()["file_path"]
+    observed_path = None
+
+    def draw(reference_path, *_args, **_kwargs):
+        nonlocal observed_path
+        observed_path = Path(reference_path)
+        assert observed_path.is_file()
+        return generated
+
+    try:
+        with patch("main.draw_tikz_via_high_model", side_effect=draw):
+            response = client.post(
+                "/api/ai/draw_tikz",
+                data={
+                    "instruction": "根据 OCR 原题图修改",
+                    "reference_image_path": reference_url,
+                },
+                headers={"X-Local-Token": LOCAL_TOKEN},
+            )
+
+        assert response.status_code == 200
+        assert response.json()["used_reference_image"] is True
+        assert response.json()["reference_image_path"] == reference_url
+        assert observed_path is not None
+        assert observed_path.is_file()
+    finally:
+        if observed_path is not None:
+            observed_path.unlink(missing_ok=True)
+
+
+def test_workbench_draw_route_rejects_empty_input(client):
+    response = client.post(
+        "/api/ai/draw_tikz",
+        data={"instruction": "", "context": ""},
+        headers={"X-Local-Token": LOCAL_TOKEN},
+    )
+
+    assert response.status_code == 400
+    assert "绘图要求" in response.json()["detail"]
+
+
+def test_failed_workbench_draw_does_not_leave_reference_file(client):
+    upload_root = Path("static/test_uploads").resolve()
+    before = set(upload_root.glob("tikz_reference_*"))
+    with patch("main.draw_tikz_via_high_model", side_effect=RuntimeError("failed")):
+        response = client.post(
+            "/api/ai/draw_tikz",
+            data={"instruction": "按图重绘"},
+            files={"reference_image": ("reference.png", _png_bytes(), "image/png")},
+            headers={"X-Local-Token": LOCAL_TOKEN},
+        )
+
+    assert response.status_code == 400
+    assert set(upload_root.glob("tikz_reference_*")) == before
+
+
+def test_question_ocr_still_auto_draws_tikz_and_returns_original_reference(client):
+    generated = "\\begin{tikzpicture}\\draw (0,0)--(1,0);\\end{tikzpicture}"
+    rendered_url = "/static/test_uploads/tikz_auto_test.png"
+    observed_original = None
+    provider = SimpleNamespace(
+        api_key="ocr-key",
+        provider_label="Test OCR",
+        model_name="test-vision",
+        credential_label="TEST_KEY",
+    )
+
+    def draw(original_path, *_args, **_kwargs):
+        nonlocal observed_original
+        observed_original = Path(original_path)
+        assert observed_original.is_file()
+        return generated
+
+    try:
+        with patch("main.resolve_ocr_provider", return_value=provider), patch(
+            "main.ocr_via_provider",
+            return_value="已知三角形 ABC\n[ILLUSTRATION_BOX: 10, 20, 90, 80]",
+        ), patch("main.draw_tikz_via_high_model", side_effect=draw), patch(
+            "main.compile_tikz_to_png", return_value=rendered_url
+        ):
+            response = client.post(
+                "/api/ocr",
+                data={"engine": "siliconflow", "skip_tikz": "false"},
+                files={"file": ("question.png", _png_bytes(), "image/png")},
+                headers={"X-Local-Token": LOCAL_TOKEN},
+            )
+
+        assert response.status_code == 200
+        payload = response.json()
+        assert payload["tikz_code"] == generated
+        assert payload["tikz_image_path"] == rendered_url
+        assert payload["image_path"].startswith("/static/test_uploads/ocr_original_")
+        assert "ILLUSTRATION_BOX" not in payload["latex"]
+        assert rendered_url in payload["latex"]
+        assert observed_original is not None
+    finally:
+        if observed_original is not None:
+            observed_original.unlink(missing_ok=True)
 
 
 def test_pdf_ocr_uses_claude_provider_when_selected():

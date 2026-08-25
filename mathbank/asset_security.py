@@ -10,6 +10,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import io
+import json
 import os
 from pathlib import Path, PurePosixPath
 import re
@@ -28,6 +29,7 @@ MAX_NORMALIZED_IMAGE_BYTES = 20 * 1024 * 1024
 SAFE_IMAGE_EXTENSIONS = frozenset({".png", ".jpg", ".jpeg", ".gif", ".webp"})
 _SAFE_ASSET_COMPONENT = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]*$")
 _URI_SCHEME = re.compile(r"^[A-Za-z][A-Za-z0-9+.-]*:")
+_TIKZ_ASSET_ID = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
 
 
 class AssetSecurityError(ValueError):
@@ -170,6 +172,145 @@ def normalize_upload_asset_references(
             seen.add(value)
             normalized.append(value)
     return normalized
+
+
+def normalize_optional_upload_asset_reference(
+    reference: str,
+    *,
+    allowed_image_paths: Iterable[str],
+    uploads_dir: str | os.PathLike,
+    url_prefix: str,
+) -> str:
+    """Validate an optional hidden asset and require lifecycle registration."""
+
+    value = str(reference or "").strip()
+    if not value:
+        return ""
+    normalized = normalize_upload_asset_reference(
+        value,
+        uploads_dir=uploads_dir,
+        url_prefix=url_prefix,
+    )
+    if normalized not in set(allowed_image_paths):
+        raise AssetSecurityError("参考图路径必须同时存在于题目 image_paths 中。")
+    return normalized
+
+
+def _normalize_tikz_assets(
+    raw_assets,
+    *,
+    allowed_image_paths: Iterable[str],
+    uploads_dir: str | os.PathLike,
+    url_prefix: str,
+    field_name: str,
+    location_label: str,
+    max_items: int = 20,
+) -> list[dict[str, str]]:
+    """Validate editable TikZ sources associated with rendered images."""
+
+    if isinstance(raw_assets, str):
+        try:
+            raw_assets = json.loads(raw_assets or "[]")
+        except json.JSONDecodeError as exc:
+            raise AssetSecurityError(f"{field_name} 必须是有效的 JSON 数组。") from exc
+    if not isinstance(raw_assets, list):
+        raise AssetSecurityError(f"{field_name} 必须是数组。")
+    if len(raw_assets) > max_items:
+        raise AssetSecurityError(
+            f"单题{location_label} TikZ 插图不能超过 {max_items} 幅。"
+        )
+
+    allowed = set(allowed_image_paths)
+    normalized_assets: list[dict[str, str]] = []
+    seen_ids: set[str] = set()
+    for index, asset in enumerate(raw_assets, start=1):
+        if not isinstance(asset, dict):
+            raise AssetSecurityError(f"第 {index} 个 TikZ 插图记录不是对象。")
+        asset_id = str(asset.get("id") or "").strip()
+        if not _TIKZ_ASSET_ID.fullmatch(asset_id) or asset_id in seen_ids:
+            raise AssetSecurityError(f"第 {index} 个 TikZ 插图 ID 无效或重复。")
+        seen_ids.add(asset_id)
+
+        image_path = normalize_upload_asset_reference(
+            str(asset.get("image_path") or ""),
+            uploads_dir=uploads_dir,
+            url_prefix=url_prefix,
+        )
+        if image_path not in allowed:
+            raise AssetSecurityError("TikZ 插图路径必须同时存在于题目 image_paths 中。")
+
+        tikz_code = str(asset.get("tikz_code") or "").strip()
+        instruction = str(asset.get("instruction") or "").strip()
+        if not tikz_code or len(tikz_code) > 200000:
+            raise AssetSecurityError("TikZ 插图源码为空或超过 200000 个字符。")
+        if not re.search(r"\\begin\s*\{\s*tikzpicture\s*\}", tikz_code) or not re.search(
+            r"\\end\s*\{\s*tikzpicture\s*\}", tikz_code
+        ):
+            raise AssetSecurityError("TikZ 插图源码必须包含完整的 tikzpicture 环境。")
+        if len(instruction) > 4000:
+            raise AssetSecurityError("TikZ 绘图要求不能超过 4000 个字符。")
+        reference_image_path = str(asset.get("reference_image_path") or "").strip()
+        normalized_asset = {
+            "id": asset_id,
+            "image_path": image_path,
+            "tikz_code": tikz_code,
+            "instruction": instruction,
+        }
+        if reference_image_path:
+            reference_image_path = normalize_upload_asset_reference(
+                reference_image_path,
+                uploads_dir=uploads_dir,
+                url_prefix=url_prefix,
+            )
+            if reference_image_path not in allowed:
+                raise AssetSecurityError(
+                    "TikZ 参考图路径必须同时存在于题目 image_paths 中。"
+                )
+            normalized_asset["reference_image_path"] = reference_image_path
+        normalized_assets.append(normalized_asset)
+    return normalized_assets
+
+
+def normalize_content_tikz_assets(
+    raw_assets,
+    *,
+    allowed_image_paths: Iterable[str],
+    uploads_dir: str | os.PathLike,
+    url_prefix: str,
+    max_items: int = 20,
+) -> list[dict[str, str]]:
+    """Validate the editable TikZ sources associated with question content."""
+
+    return _normalize_tikz_assets(
+        raw_assets,
+        allowed_image_paths=allowed_image_paths,
+        uploads_dir=uploads_dir,
+        url_prefix=url_prefix,
+        field_name="content_tikz_assets",
+        location_label="题干",
+        max_items=max_items,
+    )
+
+
+def normalize_answer_tikz_assets(
+    raw_assets,
+    *,
+    allowed_image_paths: Iterable[str],
+    uploads_dir: str | os.PathLike,
+    url_prefix: str,
+    max_items: int = 20,
+) -> list[dict[str, str]]:
+    """Validate the editable TikZ sources associated with answer images."""
+
+    return _normalize_tikz_assets(
+        raw_assets,
+        allowed_image_paths=allowed_image_paths,
+        uploads_dir=uploads_dir,
+        url_prefix=url_prefix,
+        field_name="answer_tikz_assets",
+        location_label="解答",
+        max_items=max_items,
+    )
 
 
 def read_stream_limited(stream, max_bytes: int, *, chunk_size: int = 1024 * 1024) -> bytes:

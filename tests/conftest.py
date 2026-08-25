@@ -17,6 +17,13 @@ TestSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=test_eng
 database.engine = test_engine
 database.SessionLocal = TestSessionLocal
 
+
+@pytest.fixture(scope="session", autouse=True)
+def dispose_test_engine_after_session():
+    yield
+    test_engine.dispose()
+
+
 # Patch sync_helper output paths globally during testing to avoid overwriting or clearing real data_backup files
 from mathbank import sync_helper
 import tempfile

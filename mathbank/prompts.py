@@ -256,31 +256,52 @@ def build_latex_error_explanation_prompts(diagnostic: dict) -> tuple[str, str]:
     return system_prompt, user_prompt
 
 
-def build_tikz_draw_prompt(latex_content: str = "", multimodal: bool = True) -> str:
-    """Build the prompt used to reconstruct a question illustration as TikZ."""
+def build_tikz_draw_prompt(
+    latex_content: str = "",
+    multimodal: bool = True,
+    *,
+    instruction: str = "",
+    existing_tikz: str = "",
+) -> str:
+    """Build the prompt used by OCR reconstruction and the manual workbench."""
 
-    stem = latex_content or "暂无题干"
-    if multimodal:
-        return (
-            "你是一个 LaTeX/TikZ 几何绘图专家。下面第一张图是从试卷题目中分割裁剪出来的几何插图局部。\n"
-            "另外，这道数学几何题目的完整题干文本如下，请务必作为绘图逻辑参考：\n"
-            f"```latex\n{stem}\n```\n"
-            "请使用标准的 LaTeX TikZ 几何绘图语言，将这幅几何图形高精度重新绘制一遍。\n"
-            "【绘图重要规范与自愈提示】：\n"
-            "1. 你的回答必须以 ```latex ... ``` 代码块包裹修正后的完整 TikZ 代码（只输出 \\begin{tikzpicture} 和 \\end{tikzpicture} 之间的部分）。请确保不输出任何与代码无关的闲聊、问候或说明文字。\n"
-            "2. 结合题干文本（如提及线线垂直、线面平行以及几何点的真实名称）来理解和校正剪切图中可能缺失、磨损或由于裁剪漏掉的字母。例如，如果题干提到 PA 垂直于面 ABC，但插图顶部顶点上面没有字母，请根据题意在顶部顶点标注为 'P'（绝对不要随意编造非题干中提及的字母，如 D 等）。\n"
-            "3. 仔细识别并使用 `\\node` 或 `label` 标在对应的物理位置。重要被遮挡线条请使用 `dashed` 虚线绘制。不要在大片空白处留多余线头。"
-        )
-
-    return (
-        "你是一个 LaTeX/TikZ 几何绘图专家。已知有一道数学几何题目，其文字描述和公式如下：\n"
-        f"```latex\n{stem}\n```\n"
-        "请仔细分析该题目中各几何元素之间的逻辑关系（如线面垂直、平行、坐标位置、夹角等），"
-        "编写出一段最精确、美观的 LaTeX TikZ 代码来绘制这道题目的示意插图。\n"
-        "【绘图重要规范】：\n"
-        "1. 你的回答必须以 ```latex ... ``` 代码块包裹修正后的完整 TikZ 代码（只输出 \\begin{tikzpicture} 和 \\end{tikzpicture} 之间的部分）。请确保不输出任何与代码无关的闲聊或说明文字。\n"
-        "2. 绘图比例和字母标注位置要协调美观，重要被遮挡线条请使用 `dashed` 虚线绘制。"
+    stem = (latex_content or "").strip() or "暂无题干或解答上下文"
+    guidance = (instruction or "").strip()
+    current_code = (existing_tikz or "").strip()
+    source_description = (
+        "用户同时提供了一张参考图。请以参考图的拓扑关系、点线位置、"
+        "字母标注和实虚线为主要视觉依据，文字要求优先用于澄清或修改局部细节。"
+        if multimodal
+        else "本次没有参考图，请依据用户要求与数学上下文建立合理、简洁的示意图。"
     )
+    prompt = (
+        "你是一个 LaTeX/TikZ 数学绘图专家。\n"
+        f"{source_description}\n"
+        "【数学上下文】\n"
+        f"```latex\n{stem}\n```\n"
+    )
+    if guidance:
+        prompt += f"【用户绘图或修改要求】\n{guidance}\n"
+    if current_code:
+        prompt += (
+            "【当前 TikZ 源码】\n"
+            f"```latex\n{current_code}\n```\n"
+            "请在当前源码基础上完成修改，保留未被新要求否定的正确结构。\n"
+        )
+    prompt += (
+        "【输出与绘图规范】\n"
+        "1. 只输出一个 ```latex ... ``` 代码块，其中必须是完整的 "
+        "\\begin{tikzpicture}...\\end{tikzpicture}；不得输出闲聊或解释。\n"
+        "2. 优先保证数学拓扑正确：点的连接、交点、平行、垂直、角标记、"
+        "箭头、实虚线和坐标方向不得凭空改变。\n"
+        "3. 点名和符号必须优先使用参考图、用户要求或题干中已出现的名称，"
+        "不得无据增加字母。\n"
+        "4. 绘图比例、留白与标注位置应适合试卷黑白打印；遮挡线使用 dashed，"
+        "避免装饰性背景、大面积填色和不必要的线头。\n"
+        "5. 仅使用常规 TikZ/PGFPlots 与系统已支持的库，不得读写外部文件、"
+        "调用 shell 或依赖网络资源。"
+    )
+    return prompt
 
 
 def build_tikz_correction_prompt(

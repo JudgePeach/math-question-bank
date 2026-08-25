@@ -1,3 +1,6 @@
+import ast
+import asyncio
+
 from mathbank.curriculums import get_curriculum_preset, load_curriculum
 from mathbank.paths import (
     CURRICULUMS_DIR,
@@ -10,6 +13,25 @@ from mathbank.prompts import build_ai_solve_prompts
 
 
 STATIC_JS_DIR = PROJECT_ROOT / "static" / "js"
+
+
+def test_python_sources_do_not_use_deprecated_fitz_import():
+    source_paths = [PROJECT_ROOT / "main.py"]
+    for directory_name in ("mathbank", "scripts", "tests"):
+        source_paths.extend((PROJECT_ROOT / directory_name).rglob("*.py"))
+
+    violations = []
+    for source_path in source_paths:
+        tree = ast.parse(source_path.read_text(encoding="utf-8"), filename=str(source_path))
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Import) and any(
+                alias.name == "fitz" for alias in node.names
+            ):
+                violations.append(f"{source_path.relative_to(PROJECT_ROOT)}:{node.lineno}")
+            elif isinstance(node, ast.ImportFrom) and node.module == "fitz":
+                violations.append(f"{source_path.relative_to(PROJECT_ROOT)}:{node.lineno}")
+
+    assert violations == []
 
 
 def test_shared_paths_are_absolute_and_project_anchored():
@@ -173,3 +195,106 @@ def test_server_holds_restore_runtime_lock_before_database_initialization():
     database_init = main_source.index("\ninit_db()", lock_call)
     assert lock_call < database_init
     assert "atexit.register(_RUNTIME_LOCK.close)" in main_source[lock_call:database_init]
+
+
+def test_lifespan_owns_post_startup_maintenance(monkeypatch):
+    import main
+
+    calls = []
+
+    class FakeTasks:
+        def start_maintenance(self, *, interval_seconds):
+            calls.append(("task_maintenance", interval_seconds))
+
+        def shutdown(self, *, wait):
+            calls.append(("task_shutdown", wait))
+
+    class FakeThread:
+        def __init__(self, *, target, name, daemon):
+            calls.append(("thread_created", target.__name__, name, daemon))
+
+        def start(self):
+            calls.append(("thread_started",))
+
+    monkeypatch.setattr(main, "IS_TESTING", False)
+    monkeypatch.setattr(main, "DOCUMENT_TASKS", FakeTasks())
+    monkeypatch.setattr(main.threading, "Thread", FakeThread)
+
+    async def exercise_lifespan():
+        async with main.app_lifespan(main.app):
+            calls.append(("app_ready",))
+
+    asyncio.run(exercise_lifespan())
+
+    assert calls == [
+        ("task_maintenance", 60.0),
+        (
+            "thread_created",
+            "start_startup_cleanup",
+            "mathbank-post-startup-maintenance",
+            True,
+        ),
+        ("thread_started",),
+        ("app_ready",),
+        ("task_shutdown", False),
+    ]
+
+
+def test_post_startup_maintenance_backs_up_before_mutating(monkeypatch):
+    import main
+
+    calls = []
+    monkeypatch.setattr(main.time, "sleep", lambda _seconds: calls.append("sleep"))
+    monkeypatch.setattr(
+        main, "create_full_backup_if_due", lambda: calls.append("backup")
+    )
+    monkeypatch.setattr(
+        main, "heal_database_curriculum_names", lambda: calls.append("heal")
+    )
+    monkeypatch.setattr(main, "clean_orphaned_images", lambda: calls.append("clean"))
+    monkeypatch.setattr(
+        main, "recalibrate_usage_counts", lambda: calls.append("recalibrate")
+    )
+    monkeypatch.setattr(
+        main, "print_optional_tool_diagnostics", lambda: calls.append("tools")
+    )
+
+    main.start_startup_cleanup()
+
+    assert calls == ["sleep", "backup", "heal", "clean", "recalibrate", "tools"]
+
+
+def test_post_startup_maintenance_stops_mutation_when_backup_fails(monkeypatch):
+    import main
+
+    calls = []
+    monkeypatch.setattr(main.time, "sleep", lambda _seconds: calls.append("sleep"))
+
+    def fail_backup():
+        calls.append("backup")
+        raise OSError("backup unavailable")
+
+    monkeypatch.setattr(main, "create_full_backup_if_due", fail_backup)
+    monkeypatch.setattr(
+        main, "heal_database_curriculum_names", lambda: calls.append("heal")
+    )
+    monkeypatch.setattr(main, "clean_orphaned_images", lambda: calls.append("clean"))
+    monkeypatch.setattr(
+        main, "recalibrate_usage_counts", lambda: calls.append("recalibrate")
+    )
+    monkeypatch.setattr(
+        main, "print_optional_tool_diagnostics", lambda: calls.append("tools")
+    )
+
+    main.start_startup_cleanup()
+
+    assert calls == ["sleep", "backup", "tools"]
+
+
+def test_metadata_load_does_not_run_full_database_heal_before_ready():
+    main_source = (PROJECT_ROOT / "main.py").read_text(encoding="utf-8")
+    metadata_start = main_source.index("def load_or_init_metadata()")
+    metadata_end = main_source.index("def get_active_version_code()", metadata_start)
+    assert "heal_database_curriculum_names()" not in main_source[
+        metadata_start:metadata_end
+    ]

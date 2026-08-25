@@ -18,7 +18,7 @@ from sqlalchemy.engine import Engine
 from mathbank.paths import SCHEMA_SNAPSHOT_DIR
 
 
-LATEST_SCHEMA_VERSION = 2
+LATEST_SCHEMA_VERSION = 5
 REQUIRED_TABLES = {"questions", "question_curriculums", "papers", "paper_questions"}
 
 
@@ -85,6 +85,31 @@ def create_pre_migration_backup(
     checksum_path.write_text(f"{_sha256(backup_path)}  {backup_path.name}\n", encoding="utf-8")
     checksum_path.chmod(0o600)
     return backup_path
+
+
+def _ensure_tikz_asset_columns(connection) -> dict[str, int]:
+    """Add editable TikZ asset columns when an older table lacks them."""
+
+    columns = {
+        row[1]
+        for row in connection.exec_driver_sql(
+            'PRAGMA table_info("questions")'
+        ).fetchall()
+    }
+    additions = {
+        "answer_tikz_assets": "TEXT DEFAULT '[]'",
+        "tikz_reference_image_path": "TEXT DEFAULT ''",
+        "content_tikz_assets": "TEXT DEFAULT '[]'",
+    }
+    stats: dict[str, int] = {}
+    for column, definition in additions.items():
+        added = column not in columns
+        if added:
+            connection.exec_driver_sql(
+                f"ALTER TABLE questions ADD COLUMN {column} {definition}"
+            )
+        stats[f"added_{column}"] = int(added)
+    return stats
 
 
 def _rebuild_relationship_tables(engine: Engine) -> dict[str, int]:
@@ -220,12 +245,15 @@ def _rebuild_relationship_tables(engine: Engine) -> dict[str, int]:
             if violations:
                 raise RuntimeError(f"迁移后仍存在外键异常: {violations[:5]}")
 
+            tikz_column_stats = _ensure_tikz_asset_columns(connection)
+
             connection.exec_driver_sql(f"PRAGMA user_version={LATEST_SCHEMA_VERSION}")
             connection.exec_driver_sql("COMMIT")
             transaction_started = False
             stats = {
                 "removed_question_curriculums": before_curriculums - remaining_curriculums,
                 "removed_paper_questions": before_paper_questions - remaining_paper_questions,
+                **tikz_column_stats,
             }
         except Exception:
             if transaction_started:
@@ -237,6 +265,25 @@ def _rebuild_relationship_tables(engine: Engine) -> dict[str, int]:
             if enabled != 1:
                 raise RuntimeError("迁移连接未能恢复 SQLite 外键检查")
     return stats
+
+
+def _add_tikz_asset_columns(engine: Engine) -> dict[str, int]:
+    """Upgrade older question tables with the editable TikZ asset fields."""
+
+    with engine.connect().execution_options(isolation_level="AUTOCOMMIT") as connection:
+        transaction_started = False
+        try:
+            connection.exec_driver_sql("BEGIN IMMEDIATE")
+            transaction_started = True
+            stats = _ensure_tikz_asset_columns(connection)
+            connection.exec_driver_sql(f"PRAGMA user_version={LATEST_SCHEMA_VERSION}")
+            connection.exec_driver_sql("COMMIT")
+            transaction_started = False
+            return stats
+        except Exception:
+            if transaction_started:
+                connection.exec_driver_sql("ROLLBACK")
+            raise
 
 
 def migrate_database(
@@ -268,7 +315,10 @@ def migrate_database(
     backup = pre_migration_backup or create_pre_migration_backup(
         engine, from_version=current, to_version=LATEST_SCHEMA_VERSION
     )
-    stats = _rebuild_relationship_tables(engine)
+    if current < 2:
+        stats = _rebuild_relationship_tables(engine)
+    else:
+        stats = _add_tikz_asset_columns(engine)
     return {
         "from_version": current,
         "to_version": LATEST_SCHEMA_VERSION,

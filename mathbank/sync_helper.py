@@ -261,16 +261,27 @@ def generate_markdown_library(questions, filepath: str):
                             f.write(f"{cleaned_content}\n\n")
                             
                             # 插图
-                            img_paths = q.image_paths
+                            img_paths = q.display_image_paths
                             if img_paths:
                                 f.write("**【题目插图】**\n\n")
                                 for img in img_paths:
                                     rel_img = f"../{img.lstrip('/')}"
                                     f.write(f"![题库插图]({rel_img})\n\n")
                                     
-                            # TikZ 绘图源代码备份
-                            if getattr(q, "tikz_code", None) and q.tikz_code.strip():
-                                f.write("**【TikZ 几何绘图源码】**\n\n")
-                                f.write(f"```latex\n{q.tikz_code.strip()}\n```\n\n")
+                            # TikZ 绘图源代码备份（v5 多图，兼容旧单图字段）
+                            tikz_codes = [
+                                str(asset.get("tikz_code") or "").strip()
+                                for asset in q.content_tikz_assets
+                                if isinstance(asset, dict)
+                                and str(asset.get("tikz_code") or "").strip()
+                            ]
+                            if not tikz_codes and getattr(q, "tikz_code", None):
+                                legacy_tikz = q.tikz_code.strip()
+                                if legacy_tikz:
+                                    tikz_codes = [legacy_tikz]
+                            for index, tikz_code in enumerate(tikz_codes, start=1):
+                                title_suffix = f" {index}" if len(tikz_codes) > 1 else ""
+                                f.write(f"**【TikZ 几何绘图源码{title_suffix}】**\n\n")
+                                f.write(f"```latex\n{tikz_code}\n```\n\n")
                                     
                             f.write("---\n\n")

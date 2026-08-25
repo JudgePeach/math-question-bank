@@ -278,3 +278,75 @@ def test_solution_space_latex_generation():
     # 3. exam_19 paper mode with 0.0cm solution space -> should not inject \vspace
     tex_19_zero = build_latex_document("高考模拟", "试卷", "exam_19", questions_data_zero, include_answers=False)
     assert r"\vspace*" not in tex_19_zero
+
+
+def test_latex_export_renders_every_editable_content_tikz_asset_once():
+    from mathbank.paper_helper import build_latex_document
+
+    first_code = r"\begin{tikzpicture}\draw (0,0)--(1,0);\end{tikzpicture}"
+    second_code = r"\begin{tikzpicture}\draw (0,0) circle (1);\end{tikzpicture}"
+    questions = [{
+        "question": {
+            "id": 100,
+            "question_type": "detailed_answer",
+            "content": (
+                "多图测试\n\n![第一图](/static/uploads/tikz_first.png)"
+                "\n\n![第二图](/static/uploads/tikz_second.png)"
+                "\n\n![普通图](/static/uploads/photo.png)"
+            ),
+            "content_tikz_assets": [
+                {
+                    "id": "content_first",
+                    "image_path": "/static/uploads/tikz_first.png",
+                    "tikz_code": first_code,
+                },
+                {
+                    "id": "content_second",
+                    "image_path": "/static/uploads/tikz_second.png",
+                    "tikz_code": second_code,
+                },
+            ],
+            "tikz_code": first_code,
+            "figure_align": "center",
+        },
+        "score": 12,
+    }]
+
+    tex = build_latex_document("多图测试", "", "exam", questions)
+
+    assert tex.count(first_code) == 1
+    assert tex.count(second_code) == 1
+    assert "tikz_first.png" not in tex
+    assert "tikz_second.png" not in tex
+    assert r"\includegraphics[width=3.8cm]{photo.png}" in tex
+
+
+def test_right_figure_choice_stem_has_no_extra_first_line_indent():
+    from mathbank.paper_helper import build_latex_document
+
+    questions = [{
+        "question": {
+            "id": 101,
+            "question_type": "single_choice",
+            "content": (
+                "已知函数 $f(x)=x$，则 $f(1)=$\n"
+                "\\begin{choices}\n"
+                "\\item $0$\n"
+                "\\item $1$\n"
+                "\\item $2$\n"
+                "\\item $3$\n"
+                "\\end{choices}\n\n"
+                "![](/static/uploads/graph.png)"
+            ),
+            "figure_align": "right",
+        },
+        "score": 5,
+    }]
+
+    tex = build_latex_document("右图选择题", "", "exam", questions)
+
+    left_column = tex.index(r"\begin{minipage}[t]{\dimexpr\linewidth-5.8cm\relax}")
+    first_stem = tex.index(r"\noindent 已知函数", left_column)
+    right_column_end = tex.index(r"\end{minipage}", tex.index(r"\hfill", first_stem))
+    choices = tex.index(r"\begin{choices}", first_stem)
+    assert left_column < first_stem < right_column_end < choices

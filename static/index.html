@@ -504,7 +504,13 @@
                                 <span class="bg-brand-50 text-brand-700 border border-brand-200 rounded-md px-2 py-0.5 text-[11px] font-medium">终审题干</span>
                                 <span>题干编辑框 (核准录入)</span>
                             </label>
-                            <span class="text-[10px] text-amber-500 bg-amber-50 px-2.5 py-0.5 rounded-md font-medium"><i class="fa-solid fa-triangle-exclamation mr-1"></i>修改或识别后，右侧试卷将即时渲染排版</span>
+                            <div class="flex items-center gap-2">
+                                <span class="hidden text-[10px] text-amber-600 bg-amber-50 px-2.5 py-1 rounded-md font-medium lg:inline-flex"><i class="fa-solid fa-triangle-exclamation mr-1"></i>修改或识别后，右侧试卷将即时渲染排版</span>
+                                <button type="button" id="openContentTikzWorkbenchBtn" onclick="openContentTikzWorkbench()" class="answer-tikz-entry inline-flex min-h-[44px] cursor-pointer items-center justify-center gap-1.5 rounded-xl border border-indigo-200 bg-indigo-50 px-3 py-2 text-xs font-bold text-indigo-700 shadow-sm transition-colors duration-200 hover:border-indigo-300 hover:bg-indigo-100 focus:outline-none focus:ring-2 focus:ring-indigo-500/30" data-tooltip="新增一幅题干 TikZ 绘图，不会覆盖已有绘图">
+                                    <i class="fa-solid fa-compass-drafting" aria-hidden="true"></i>
+                                    <span>新增绘图</span>
+                                </button>
+                            </div>
                         </div>
 
                         <div class="grid grid-cols-1 md:grid-cols-2 gap-4 items-stretch">
@@ -512,6 +518,14 @@
                             <div class="space-y-3 flex flex-col">
                                 <textarea id="editContent" rows="8" placeholder="在此输入题干内容...&#10;行内公式使用 $...$，行间公式使用 $$...$$&#10;例如：已知集合 $A = \{x | x^2 - 3x + 2 = 0\}$..."
                                           class="glass-input w-full p-4 rounded-xl outline-none focus:border-brand-500 focus:ring-1 focus:ring-brand-500 font-mono text-sm leading-relaxed resize-y flex-1 min-h-[200px]"></textarea>
+
+                                <div id="contentTikzAssetsPanel" class="hidden rounded-xl border border-indigo-100 bg-indigo-50/45 p-3">
+                                    <div class="mb-2 flex items-center justify-between gap-3">
+                                        <span class="flex items-center gap-1.5 text-[11px] font-bold text-slate-600"><i class="fa-solid fa-layer-group text-indigo-500" aria-hidden="true"></i><span>已插入的可编辑绘图</span></span>
+                                        <span id="contentTikzAssetsCount" class="rounded-md bg-white px-2 py-0.5 text-[10px] font-semibold text-indigo-600 shadow-sm">0 幅</span>
+                                    </div>
+                                    <div id="contentTikzAssetsList" class="flex flex-wrap gap-2" aria-live="polite"></div>
+                                </div>
 
                                 <!-- Illustration Drag Zone -->
                                 <div class="space-y-2">
@@ -529,45 +543,6 @@
                                     <!-- Thumbnails list -->
                                     <div id="illustrationsList" class="flex flex-wrap gap-2 pt-1">
                                         <!-- Dynamic injected uploaded illustration badges -->
-                                    </div>
-                                    
-                                    <!-- Content TikZ Geometry Panel -->
-                                    <div id="contentTikzContainer" class="hidden border border-slate-100 bg-slate-50/50 rounded-xl p-3.5 space-y-3 mt-3">
-                                        <div class="flex justify-between items-center pb-1">
-                                            <span class="text-xs font-bold text-slate-600 flex items-center space-x-1">
-                                                <i class="fa-solid fa-compass-drafting text-brand-500"></i>
-                                                <span>题干几何绘图 (TikZ)</span>
-                                            </span>
-                                            <button type="button" onclick="clearContentTikzCode()" class="px-2 py-0.5 rounded bg-red-50 text-red-700 hover:bg-red-100 text-[10px] font-medium transition-all">清空代码</button>
-                                        </div>
-                                        <textarea id="editContentTikzCode" rows="6" placeholder="在此输入题干 \begin{tikzpicture} ... \end{tikzpicture} 代码..."
-                                                  class="w-full p-3 rounded-lg font-mono text-xs leading-relaxed resize-y border border-slate-200 focus:border-brand-500 focus:ring-2 focus:ring-brand-100 bg-white transition-all"></textarea>
-                                        <div class="flex items-center space-x-2">
-                                            <input type="text" id="contentTikzUserPrompt" placeholder="输入人工指导意见，如：'把点 C 移到右侧' (选填)..."
-                                                   class="flex-1 px-3 py-1.5 rounded-lg border border-slate-200 text-[11px] focus:border-brand-500 focus:ring-1 focus:ring-brand-500 bg-white/85 transition-all">
-                                        </div>
-                                        <div class="flex space-x-2">
-                                            <button type="button" id="btnRenderContentTikz" onclick="renderContentTikzToImage()" class="flex-1 py-1.5 rounded-lg text-xs bg-indigo-600 hover:bg-indigo-700 text-white font-bold transition-all flex justify-center items-center space-x-1 shadow-sm active:scale-[0.98]">
-                                                <i class="fa-solid fa-circle-play"></i>
-                                                <span>编译并插入题干</span>
-                                            </button>
-                                            <button type="button" id="btnDrawContentTikzFromImage" onclick="drawContentTikzFromImageWithAI()" class="py-1.5 px-3 rounded-lg text-xs bg-teal-50 text-teal-700 font-bold hover:bg-teal-100 border border-teal-200 active:scale-[0.98] transition-all flex items-center space-x-1">
-                                                <i class="fa-solid fa-circle-nodes"></i>
-                                                <span>AI 识图绘图</span>
-                                            </button>
-                                            <button type="button" id="btnCorrectContentTikz" onclick="correctContentTikzWithAI()" class="py-1.5 px-3 rounded-lg text-xs bg-amber-50 text-amber-700 font-bold hover:bg-amber-100 border border-amber-200 active:scale-[0.98] transition-all flex items-center space-x-1">
-                                                <i class="fa-solid fa-wand-magic-sparkles animate-pulse"></i>
-                                                <span>AI 纠错</span>
-                                            </button>
-                                        </div>
-                                        <div class="border border-slate-200 rounded-lg bg-white overflow-hidden p-2 flex items-center justify-center min-h-[140px] relative">
-                                            <span id="contentTikzStatusText" class="absolute top-2 right-2 text-[9px] text-slate-400 bg-slate-100 px-1.5 py-0.5 rounded">未编译</span>
-                                            <div id="contentTikzPreviewPlaceholder" class="text-center text-slate-400 text-[10px] py-8">
-                                                <i class="fa-solid fa-image text-2xl text-slate-200 mb-1"></i>
-                                                <p>编译后在此展示插图预览</p>
-                                            </div>
-                                            <img id="contentTikzPreviewImage" class="max-h-[160px] max-w-full hidden object-contain rounded" src="" alt="Content TikZ Preview">
-                                        </div>
                                     </div>
                                 </div>
                             </div>
@@ -750,7 +725,13 @@
                                 <span class="bg-brand-50 text-brand-700 border border-brand-200 rounded-md px-2 py-0.5 text-[11px] mr-1.5 font-medium">最终结果</span>
                                 <span>终审编辑框 (入库前核准)</span>
                             </label>
-                            <span class="text-[10px] text-amber-500 bg-amber-50 px-2.5 py-0.5 rounded-md font-medium"><i class="fa-solid fa-triangle-exclamation mr-1"></i>以上三种来源均可汇总并在此核改</span>
+                            <div class="flex items-center gap-2">
+                                <span class="hidden lg:inline-flex text-[10px] text-amber-600 bg-amber-50 px-2.5 py-1 rounded-md font-medium"><i class="fa-solid fa-triangle-exclamation mr-1"></i>以上三种来源均可汇总并在此核改</span>
+                                <button type="button" id="openAnswerTikzWorkbenchBtn" onclick="openAnswerTikzWorkbench()" class="answer-tikz-entry inline-flex min-h-[44px] items-center justify-center gap-1.5 rounded-xl border border-indigo-200 bg-indigo-50 px-3 py-2 text-xs font-bold text-indigo-700 shadow-sm transition-colors duration-200 hover:border-indigo-300 hover:bg-indigo-100 focus:outline-none focus:ring-2 focus:ring-indigo-500/30 cursor-pointer" data-tooltip="新增一幅解答 TikZ 绘图，不会覆盖已有绘图">
+                                    <i class="fa-solid fa-compass-drafting" aria-hidden="true"></i>
+                                    <span>新增绘图</span>
+                                </button>
+                            </div>
                         </div>
 
                         <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -758,44 +739,16 @@
                             <div class="flex flex-col">
                                 <textarea id="editAnswerMarkdown" rows="10" placeholder="在此处精细排版或合并您的答案与详细解析过程... 支持 MathJax / KaTeX 公式、TikZ 绘图块、Markdown 段落..."
                                           class="w-full p-4 rounded-xl font-mono text-sm leading-relaxed resize-y border border-slate-200 focus:border-brand-500 focus:ring-2 focus:ring-brand-100 transition-all flex-1 min-h-[200px]"></textarea>
-                                
-                                <!-- Answer TikZ Geometry Panel -->
-                                <div id="answerTikzContainer" class="hidden border border-slate-100 bg-slate-50/50 rounded-xl p-3.5 space-y-3 mt-3">
-                                    <div class="flex justify-between items-center pb-1">
-                                        <span class="text-xs font-bold text-slate-600 flex items-center space-x-1">
-                                            <i class="fa-solid fa-compass-drafting text-brand-500"></i>
-                                            <span>解答几何绘图 (TikZ)</span>
+
+                                <div id="answerTikzAssetsPanel" class="hidden mt-3 rounded-xl border border-indigo-100 bg-indigo-50/45 p-3">
+                                    <div class="mb-2 flex items-center justify-between gap-3">
+                                        <span class="flex items-center gap-1.5 text-[11px] font-bold text-slate-600">
+                                            <i class="fa-solid fa-layer-group text-indigo-500" aria-hidden="true"></i>
+                                            <span>已插入的可编辑绘图</span>
                                         </span>
-                                        <button type="button" onclick="clearAnswerTikzCode()" class="px-2 py-0.5 rounded bg-red-50 text-red-700 hover:bg-red-100 text-[10px] font-medium transition-all">清空代码</button>
+                                        <span id="answerTikzAssetsCount" class="rounded-md bg-white px-2 py-0.5 text-[10px] font-semibold text-indigo-600 shadow-sm">0 幅</span>
                                     </div>
-                                    <textarea id="editAnswerTikzCode" rows="6" placeholder="在此输入解答 \begin{tikzpicture} ... \end{tikzpicture} 代码..."
-                                              class="w-full p-3 rounded-lg font-mono text-xs leading-relaxed resize-y border border-slate-200 focus:border-brand-500 focus:ring-2 focus:ring-brand-100 bg-white transition-all"></textarea>
-                                    <div class="flex items-center space-x-2">
-                                        <input type="text" id="answerTikzUserPrompt" placeholder="输入人工指导意见，如：'把点 C 移到右侧' (选填)..."
-                                               class="flex-1 px-3 py-1.5 rounded-lg border border-slate-200 text-[11px] focus:border-brand-500 focus:ring-1 focus:ring-brand-500 bg-white/85 transition-all">
-                                    </div>
-                                    <div class="flex space-x-2">
-                                        <button type="button" id="btnRenderAnswerTikz" onclick="renderAnswerTikzToImage()" class="flex-1 py-1.5 rounded-lg text-xs bg-indigo-600 hover:bg-indigo-700 text-white font-bold transition-all flex justify-center items-center space-x-1 shadow-sm active:scale-[0.98]">
-                                            <i class="fa-solid fa-play"></i>
-                                            <span>编译并插入解答</span>
-                                        </button>
-                                        <button type="button" id="btnDrawAnswerTikzFromImage" onclick="drawAnswerTikzFromImageWithAI()" class="py-1.5 px-3 rounded-lg text-xs bg-teal-50 text-teal-700 font-bold hover:bg-teal-100 border border-teal-200 active:scale-[0.98] transition-all flex items-center space-x-1">
-                                            <i class="fa-solid fa-circle-nodes"></i>
-                                            <span>AI 识图绘图</span>
-                                        </button>
-                                        <button type="button" id="btnCorrectAnswerTikz" onclick="correctAnswerTikzWithAI()" class="py-1.5 px-3 rounded-lg text-xs bg-amber-50 text-amber-700 font-bold hover:bg-amber-100 border border-amber-200 active:scale-[0.98] transition-all flex items-center space-x-1">
-                                            <i class="fa-solid fa-wand-magic-sparkles animate-pulse"></i>
-                                            <span>AI 纠错</span>
-                                        </button>
-                                    </div>
-                                    <div class="border border-slate-200 rounded-lg bg-white overflow-hidden p-2 flex items-center justify-center min-h-[140px] relative">
-                                        <span id="answerTikzStatusText" class="absolute top-2 right-2 text-[9px] text-slate-400 bg-slate-100 px-1.5 py-0.5 rounded">未编译</span>
-                                        <div id="answerTikzPreviewPlaceholder" class="text-center text-slate-400 text-[10px] py-8">
-                                            <i class="fa-solid fa-image text-2xl text-slate-200 mb-1"></i>
-                                            <p>编译后在此展示插图预览</p>
-                                        </div>
-                                        <img id="answerTikzPreviewImage" class="max-h-[160px] max-w-full hidden object-contain rounded" src="" alt="Answer TikZ Preview">
-                                    </div>
+                                    <div id="answerTikzAssetsList" class="flex flex-wrap gap-2" aria-live="polite"></div>
                                 </div>
                             </div>
                             
@@ -1902,6 +1855,79 @@
     <script src="/static/js/ocr.js?v=1.0.1"></script>
     <script src="/static/js/import.js?v=1.0.1"></script>
     <script src="/static/js/paper.js?v=1.0.1"></script>
+
+    <!-- On-demand multimodal TikZ workbench -->
+    <div id="answerTikzWorkbenchModal" role="dialog" aria-modal="true" aria-hidden="true" aria-labelledby="answerTikzWorkbenchTitle" class="fixed inset-0 z-[80] hidden items-center justify-center bg-slate-950/65 p-2 opacity-0 backdrop-blur-sm transition-opacity duration-200 sm:p-4">
+        <div data-modal-surface class="tikz-workbench-modal glass-modal flex w-full max-w-6xl scale-95 flex-col overflow-hidden rounded-2xl border border-white/40 shadow-2xl transition-transform duration-200">
+            <div class="flex shrink-0 items-center justify-between gap-4 border-b border-slate-200/70 bg-white/85 px-4 py-3.5 backdrop-blur-xl sm:px-6">
+                <div class="min-w-0">
+                    <h3 id="answerTikzWorkbenchTitle" class="flex items-center gap-2 text-sm font-bold text-slate-800 sm:text-base">
+                        <span class="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-indigo-50 text-indigo-600"><i class="fa-solid fa-compass-drafting" aria-hidden="true"></i></span>
+                        <span id="answerTikzWorkbenchHeading">新增 TikZ 绘图</span>
+                        <span id="tikzWorkbenchTargetBadge" class="rounded-lg border border-indigo-200 bg-indigo-50 px-2 py-1 text-[10px] font-bold text-indigo-700">新增到解答</span>
+                    </h3>
+                    <p id="tikzWorkbenchDescription" class="mt-1 hidden pl-11 text-[11px] text-slate-500 sm:block">文字和参考图可单独使用，也可组合生成或修改。</p>
+                </div>
+                <button type="button" data-modal-close onclick="closeTikzWorkbench()" aria-label="关闭 TikZ 绘图工作台" class="flex h-11 w-11 shrink-0 cursor-pointer items-center justify-center rounded-xl text-slate-500 transition-colors hover:bg-slate-100 hover:text-slate-700 focus:outline-none focus:ring-2 focus:ring-indigo-500/30">
+                    <i class="fa-solid fa-xmark text-lg" aria-hidden="true"></i>
+                </button>
+            </div>
+
+            <div class="tikz-workbench-content grid min-h-0 flex-1 grid-cols-1 overflow-y-auto bg-slate-50/80 lg:grid-cols-[minmax(0,0.9fr)_minmax(0,1.1fr)] lg:overflow-hidden">
+                <section class="space-y-4 border-b border-slate-200/70 p-4 sm:p-5 lg:overflow-y-auto lg:border-b-0 lg:border-r">
+                    <div>
+                        <label for="answerTikzInstruction" class="mb-1.5 flex items-center justify-between gap-2 text-xs font-bold text-slate-700"><span>绘图要求或修改意见</span><span class="font-normal text-slate-400">可选</span></label>
+                        <textarea id="answerTikzInstruction" rows="5" maxlength="4000" placeholder="例如：绘制△ABC，AB=AC，标出中线 AD。如有参考图，可输入“保持原图结构，把辅助线改为虚线”。" class="w-full resize-y rounded-xl border border-slate-200 bg-white p-3 text-sm leading-6 text-slate-800 outline-none transition-colors focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/15"></textarea>
+                    </div>
+
+                    <label class="flex min-h-[44px] cursor-pointer items-center justify-between gap-3 rounded-xl border border-slate-200 bg-white px-3 py-2.5">
+                        <span class="min-w-0"><span class="block text-xs font-bold text-slate-700">参考当前题目上下文</span><span id="tikzWorkbenchContextHint" class="mt-0.5 block text-[10px] leading-4 text-slate-500">向 AI 提供题干与已输入解答，用于校正点名和几何关系。</span></span>
+                        <input type="checkbox" id="answerTikzUseContext" checked class="h-5 w-5 shrink-0 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500/30">
+                    </label>
+
+                    <div>
+                        <div class="mb-1.5 flex items-center justify-between gap-2"><label for="answerTikzReferenceInput" class="text-xs font-bold text-slate-700">参考图片</label><span class="text-[10px] text-slate-400">可选 · 最大 10MB</span></div>
+                        <input type="file" id="answerTikzReferenceInput" accept="image/png,image/jpeg,image/webp,image/gif" class="hidden">
+                        <div id="answerTikzReferenceDropZone" role="button" tabindex="0" aria-label="上传或粘贴 TikZ 参考图" class="group flex min-h-[170px] cursor-pointer items-center justify-center overflow-hidden rounded-2xl border-2 border-dashed border-slate-300 bg-white p-4 text-center outline-none transition-colors hover:border-indigo-400 hover:bg-indigo-50/35 focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/20">
+                            <div id="answerTikzReferencePlaceholder" class="space-y-2">
+                                <span class="mx-auto flex h-11 w-11 items-center justify-center rounded-2xl bg-slate-100 text-slate-400 transition-colors group-hover:bg-indigo-100 group-hover:text-indigo-600"><i class="fa-solid fa-image" aria-hidden="true"></i></span>
+                                <p class="text-xs font-semibold text-slate-600">拖入、粘贴或点击选择参考图</p>
+                                <p id="tikzWorkbenchReferenceHint" class="text-[10px] leading-4 text-slate-400">建议只截取几何插图区域，AI 将参考其拓扑、标注与实虚线。</p>
+                            </div>
+                            <div id="answerTikzReferencePreviewWrap" class="relative hidden h-full w-full items-center justify-center">
+                                <img id="answerTikzReferencePreview" src="" alt="TikZ 绘图参考图预览" class="max-h-[220px] max-w-full rounded-xl object-contain shadow-sm">
+                                <button type="button" id="removeAnswerTikzReferenceBtn" aria-label="移除参考图" class="absolute right-1 top-1 flex h-11 w-11 cursor-pointer items-center justify-center rounded-xl border border-slate-200 bg-white/95 text-slate-500 shadow-md transition-colors hover:bg-red-50 hover:text-red-600 focus:outline-none focus:ring-2 focus:ring-red-500/25"><i class="fa-solid fa-trash-can" aria-hidden="true"></i></button>
+                            </div>
+                        </div>
+                    </div>
+
+                    <button type="button" id="generateAnswerTikzBtn" onclick="generateTikzWithAI()" class="flex min-h-[46px] w-full cursor-pointer items-center justify-center gap-2 rounded-xl bg-indigo-600 px-4 py-2.5 text-xs font-bold text-white shadow-sm transition-colors hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-indigo-500/35 disabled:cursor-not-allowed disabled:opacity-60">
+                        <i class="fa-solid fa-wand-magic-sparkles" aria-hidden="true"></i><span id="generateAnswerTikzBtnLabel">AI 生成 / 参考重绘</span>
+                    </button>
+                </section>
+
+                <section class="flex min-h-[520px] flex-col p-4 sm:p-5 lg:min-h-0 lg:overflow-y-auto">
+                    <div class="mb-2 flex items-center justify-between gap-3"><h4 class="text-xs font-bold text-slate-700">编译预览</h4><span id="answerTikzWorkbenchStatus" role="status" aria-live="polite" class="rounded-md bg-slate-100 px-2 py-1 text-[10px] font-semibold text-slate-500">等待输入</span></div>
+                    <div id="answerTikzWorkbenchPreview" class="relative flex min-h-[280px] flex-1 items-center justify-center overflow-hidden rounded-2xl border border-slate-200 bg-white p-4 sm:min-h-[340px]">
+                        <div id="answerTikzWorkbenchPlaceholder" class="max-w-sm text-center text-slate-400"><i class="fa-regular fa-image mb-3 text-4xl text-slate-200" aria-hidden="true"></i><p class="text-xs font-semibold text-slate-500">生成或编译后在此查看效果</p><p id="tikzWorkbenchInsertHint" class="mt-1 text-[10px] leading-4">预览通过后新增到目标光标位置，不会覆盖已有绘图。</p></div>
+                        <img id="answerTikzWorkbenchPreviewImage" src="" alt="TikZ 绘图编译预览" class="hidden max-h-[390px] max-w-full cursor-zoom-in rounded-xl object-contain" data-safe-image-open>
+                        <div id="answerTikzWorkbenchLoading" class="absolute inset-0 hidden items-center justify-center bg-white/85 backdrop-blur-sm"><div class="text-center"><i class="fa-solid fa-spinner animate-spin text-2xl text-indigo-600" aria-hidden="true"></i><p id="answerTikzWorkbenchLoadingText" class="mt-3 text-xs font-semibold text-slate-600">AI 正在构造几何关系…</p></div></div>
+                    </div>
+
+                    <details id="answerTikzSourceDetails" class="mt-3 rounded-xl border border-slate-200 bg-white">
+                        <summary class="flex min-h-[44px] cursor-pointer items-center justify-between gap-3 px-3 py-2 text-xs font-bold text-slate-600 outline-none focus:ring-2 focus:ring-inset focus:ring-indigo-500/25"><span class="flex items-center gap-1.5"><i class="fa-solid fa-code text-indigo-500" aria-hidden="true"></i>TikZ 源码（高级编辑）</span><span class="text-[10px] font-normal text-slate-400">可手动修改后重新编译</span></summary>
+                        <div class="border-t border-slate-100 p-3"><textarea id="answerTikzWorkbenchCode" rows="9" spellcheck="false" placeholder="\\begin{tikzpicture} ... \\end{tikzpicture}" class="w-full resize-y rounded-xl border border-slate-200 bg-slate-950 p-3 font-mono text-xs leading-5 text-slate-100 outline-none selection:bg-indigo-600 focus:border-indigo-400 focus:ring-2 focus:ring-indigo-500/20"></textarea></div>
+                    </details>
+
+                    <div class="mt-4 flex shrink-0 flex-col-reverse gap-2 border-t border-slate-200/70 pt-4 sm:flex-row sm:justify-end">
+                        <button type="button" onclick="closeTikzWorkbench()" class="min-h-[44px] cursor-pointer rounded-xl border border-slate-200 bg-white px-4 py-2 text-xs font-semibold text-slate-600 transition-colors hover:bg-slate-50 focus:outline-none focus:ring-2 focus:ring-slate-400/25">取消</button>
+                        <button type="button" id="compileTikzWorkbenchBtn" onclick="compileTikzWorkbench()" class="min-h-[44px] cursor-pointer rounded-xl border border-indigo-200 bg-indigo-50 px-4 py-2 text-xs font-bold text-indigo-700 transition-colors hover:bg-indigo-100 focus:outline-none focus:ring-2 focus:ring-indigo-500/25 disabled:cursor-not-allowed disabled:opacity-60"><i class="fa-solid fa-play mr-1" aria-hidden="true"></i>编译预览</button>
+                        <button type="button" id="insertAnswerTikzWorkbenchBtn" onclick="applyTikzWorkbench()" disabled class="min-h-[44px] cursor-pointer rounded-xl bg-emerald-600 px-5 py-2 text-xs font-bold text-white shadow-sm transition-colors hover:bg-emerald-700 focus:outline-none focus:ring-2 focus:ring-emerald-500/30 disabled:cursor-not-allowed disabled:opacity-45"><i class="fa-solid fa-arrow-turn-down mr-1" aria-hidden="true"></i><span id="insertAnswerTikzWorkbenchLabel">新增到当前光标位置</span></button>
+                    </div>
+                </section>
+            </div>
+        </div>
+    </div>
     
     <!-- PDF PAGE VIEWER & MANUAL CROP LIGHTBOX MODAL - Apple Glass Style -->
     <div id="pdfCropModal" role="dialog" aria-modal="true" aria-hidden="true" aria-labelledby="pdfCropModalTitle" class="fixed inset-0 glass-modal-overlay z-50 flex items-center justify-center hidden opacity-0 transition-opacity duration-300">

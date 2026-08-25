@@ -104,6 +104,59 @@ if (similarlyNamed !== String.raw`\parent`) {
     assert re.search(r"\.choices-grid\s*\{[^}]*clear:\s*both;", css_source, re.DOTALL)
 
 
+def test_paper_preview_separates_choices_before_figure_layout():
+    paper_source = _read(STATIC_JS_DIR / "paper.js")
+    css_source = _read(CSS_PATH)
+
+    helper_start = paper_source.index("function splitChoiceContentForPaperPreview(raw)")
+    helper_end = paper_source.index("function formatQuestionContentHtml(", helper_start)
+    helper_source = paper_source[helper_start:helper_end]
+
+    node = shutil.which("node")
+    assert node, "Node.js is required for the frontend executable regression"
+    script = helper_source + r'''
+const source = String.raw`题干
+\begin{choices}
+\item A
+\item B
+\end{choices}
+
+![](/static/uploads/graph.png)`;
+const result = splitChoiceContentForPaperPreview(source);
+if (result.stemRaw.includes(String.raw`\begin{choices}`)) {
+  throw new Error(`choices leaked into stem: ${result.stemRaw}`);
+}
+if (!result.stemRaw.includes('/static/uploads/graph.png')) {
+  throw new Error(`figure was not retained with stem: ${result.stemRaw}`);
+}
+if (!result.choicesRaw.startsWith(String.raw`\begin{choices}`) || !result.choicesRaw.endsWith(String.raw`\end{choices}`)) {
+  throw new Error(`choices block was not preserved: ${result.choicesRaw}`);
+}
+'''
+    result = subprocess.run(
+        [node, "-e", script],
+        cwd=PROJECT_ROOT,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
+
+    split_position = paper_source.index(
+        "const choiceContentParts = isChoiceQuestion"
+    )
+    stem_render_position = paper_source.index(
+        "formatQuestionContentHtml(choiceContentParts.stemRaw", split_position
+    )
+    choices_render_position = paper_source.index(
+        "formatQuestionContentHtml(choiceContentParts.choicesRaw", stem_render_position
+    )
+    assert split_position < stem_render_position < choices_render_position
+    assert 'class="paper-choice-stem-row' in paper_source
+    assert 'class="paper-choice-options-row"' in paper_source
+    assert ".paper-choice-options-row" in css_source
+
+
 def test_static_dialogs_expose_modal_semantics_and_accessible_names():
     elements = _index_elements()
     labelled_dialogs = {
@@ -113,6 +166,7 @@ def test_static_dialogs_expose_modal_semantics_and_accessible_names():
         "statsModal": "statsModalTitle",
         "latexImportModal": "latexImportModalTitle",
         "pdfCropModal": "pdfCropModalTitle",
+        "answerTikzWorkbenchModal": "answerTikzWorkbenchTitle",
     }
 
     for dialog_id, title_id in labelled_dialogs.items():
@@ -222,11 +276,107 @@ def test_mobile_layout_touch_targets_and_dialog_panes_have_regression_guards():
         ".sidebar-pagination-controls",
         "overflow-x: auto",
         "overscroll-behavior-x: contain",
+        ".tikz-workbench-modal",
+        "#answerTikzWorkbenchModal",
+        ".answer-tikz-entry",
     ):
         assert marker in css_source
 
     assert "html.init-ws-paper #paperWorkspaceSection { display: flex !important; }" in css_source
     assert "sidebar-pagination-controls" in _read(STATIC_JS_DIR / "editor.js")
+
+
+def test_shared_tikz_workbench_is_multimodal_contextual_and_persistent():
+    index_source = _read(INDEX_PATH)
+    import_source = _read(STATIC_JS_DIR / "import.js")
+    api_source = _read(STATIC_JS_DIR / "api.js")
+
+    for marker in (
+        'id="openContentTikzWorkbenchBtn"',
+        'id="contentTikzAssetsPanel"',
+        'id="contentTikzAssetsList"',
+        'id="openAnswerTikzWorkbenchBtn"',
+        'id="answerTikzInstruction"',
+        'id="answerTikzReferenceInput"',
+        'id="answerTikzReferenceDropZone"',
+        'id="answerTikzUseContext"',
+        'id="answerTikzWorkbenchCode"',
+        'id="insertAnswerTikzWorkbenchBtn"',
+        'id="tikzWorkbenchTargetBadge"',
+        'role="button" tabindex="0"',
+    ):
+        assert marker in index_source
+
+    assert "const TikzState = {" in api_source
+    assert "contentAssets: []" in api_source
+    assert "answerAssets: []" in api_source
+    for marker in (
+        "window.openTikzWorkbench",
+        "window.openContentTikzWorkbench",
+        "window.openAnswerTikzWorkbench",
+        "window.renderContentTikzAssets",
+        "window.registerAutoContentTikzAsset",
+        "window.renderAnswerTikzAssets",
+        "window.collectAnswerImagePaths",
+        "formData.append('reference_image'",
+        "formData.append('reference_image_path'",
+        "fetch('/api/ai/draw_tikz'",
+        "insertMarkdownAtSavedCursor",
+        "answer_tikz_assets",
+        "content_tikz_assets",
+        "tikz_reference_image_path",
+        "window.MathBankModal.open(modal",
+        "EditorState.isCurrent(tikzWorkbenchState.editorSession)",
+    ):
+        assert marker in import_source
+
+    for removed_legacy_marker in (
+        'id="contentTikzContainer"',
+        'id="answerTikzContainer"',
+        'id="editContentTikzCode"',
+        'id="editAnswerTikzCode"',
+        "window.renderContentTikzToImage",
+        "window.renderAnswerTikzToImage",
+        "fetch('/api/correct_tikz'",
+        "fetch('/api/ai/draw_tikz_from_image'",
+    ):
+        assert removed_legacy_marker not in index_source
+        assert removed_legacy_marker not in import_source
+
+
+def test_ocr_auto_tikz_keeps_original_question_image_as_edit_reference():
+    ocr_source = _read(STATIC_JS_DIR / "ocr.js")
+    import_source = _read(STATIC_JS_DIR / "import.js")
+
+    for marker in (
+        "formData.append('skip_tikz'",
+        "window.registerAutoContentTikzAsset",
+        "referenceImagePath: data.image_path || ''",
+        "registerAutoTikzAsset('content', payload)",
+        "setTikzReferencePath(",
+        "data.reference_image_path",
+        "formData.append('reference_image_path'",
+    ):
+        assert marker in ocr_source or marker in import_source
+
+    assert "uploadedImages.push(safeReferencePath)" not in import_source
+    assert "hiddenTikzReferencePaths" in import_source
+
+
+def test_add_drawing_and_edit_drawing_are_separate_actions():
+    index_source = _read(INDEX_PATH)
+    import_source = _read(STATIC_JS_DIR / "import.js")
+
+    assert index_source.count("<span>新增绘图</span>") == 2
+    assert "<span>插入绘图</span>" not in index_source
+    assert "新增一幅题干 TikZ 绘图，不会覆盖已有绘图" in index_source
+    assert "新增一幅解答 TikZ 绘图，不会覆盖已有绘图" in index_source
+    assert "window.openContentTikzWorkbench = function(assetId = null)" in import_source
+    assert "window.openAnswerTikzWorkbench = function(assetId = null)" in import_source
+    assert "? `修改${targetLabel} TikZ 绘图`" in import_source
+    assert ": `新增${targetLabel} TikZ 绘图`" in import_source
+    assert "TikzState.contentAssets.push(nextAsset)" in import_source
+    assert "TikzState.contentAssets.splice(editingIndex, 1, nextAsset)" in import_source
 
 
 def test_paper_question_answers_are_collapsible_and_loaded_on_demand():

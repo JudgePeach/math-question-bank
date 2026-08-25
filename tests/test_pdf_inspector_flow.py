@@ -143,7 +143,7 @@ def test_pdf_inspector_detects_formula_loss_and_triggers_ocr_fallback():
 def test_pdf_parsing_force_ocr_strategy():
     """当指定 pdf_strategy="force_ocr" 时，应绕过原生提取并强制发起视觉转译。"""
     from main import DOCUMENT_TASKS, run_pdf_parsing_task
-    import fitz
+    import pymupdf as fitz
 
     # 创建简易单页 PDF
     doc = fitz.open()
@@ -172,7 +172,7 @@ def test_pdf_parsing_force_ocr_strategy():
 
 def test_pdf_cancel_during_ocr_prevents_paid_split_and_stays_cancelled():
     from main import DOCUMENT_TASKS, run_pdf_parsing_task
-    import fitz
+    import pymupdf as fitz
 
     document = fitz.open()
     document.new_page(width=595, height=842)

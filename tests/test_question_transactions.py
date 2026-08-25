@@ -117,6 +117,153 @@ def test_failed_update_keeps_old_image(client, db_session, monkeypatch):
         image.unlink(missing_ok=True)
 
 
+def test_saving_question_replaces_then_removes_single_tikz_reference(
+    client, db_session
+):
+    import main
+
+    rendered = Path(main.UPLOAD_DIR) / "reference-lifecycle-rendered.png"
+    old_reference = Path(main.UPLOAD_DIR) / "reference-lifecycle-old.png"
+    new_reference = Path(main.UPLOAD_DIR) / "reference-lifecycle-new.png"
+    for path in (rendered, old_reference, new_reference):
+        _write_png(path)
+    rendered_url = f"/{main.UPLOAD_DIR_REL}/{rendered.name}"
+    old_url = f"/{main.UPLOAD_DIR_REL}/{old_reference.name}"
+    new_url = f"/{main.UPLOAD_DIR_REL}/{new_reference.name}"
+    question = Question(
+        content=f"![TikZ]({rendered_url})",
+        question_type="single_choice",
+        tikz_code="\\begin{tikzpicture}\\end{tikzpicture}",
+        tikz_reference_image_path=old_url,
+    )
+    question.image_paths = [rendered_url, old_url]
+    db_session.add(question)
+    db_session.commit()
+
+    try:
+        replaced = client.put(
+            f"/api/questions/{question.id}",
+            data=_payload(
+                content=f"![TikZ]({rendered_url})",
+                tikz_code="\\begin{tikzpicture}\\end{tikzpicture}",
+                tikz_reference_image_path=new_url,
+                image_paths=json.dumps([rendered_url, new_url]),
+            ),
+            headers=_headers(),
+        )
+        assert replaced.status_code == 200
+        assert not old_reference.exists()
+        assert new_reference.exists()
+        assert replaced.json()["question"]["image_paths"] == [rendered_url]
+        assert replaced.json()["question"]["tikz_reference_image_path"] == new_url
+
+        removed = client.put(
+            f"/api/questions/{question.id}",
+            data=_payload(
+                content=f"![TikZ]({rendered_url})",
+                tikz_code="\\begin{tikzpicture}\\end{tikzpicture}",
+                tikz_reference_image_path="",
+                image_paths=json.dumps([rendered_url]),
+            ),
+            headers=_headers(),
+        )
+        assert removed.status_code == 200
+        assert not new_reference.exists()
+        assert rendered.exists()
+        assert removed.json()["question"]["tikz_reference_image_path"] == ""
+    finally:
+        for path in (rendered, old_reference, new_reference):
+            path.unlink(missing_ok=True)
+
+
+def test_multiple_content_tikz_assets_replace_and_delete_independently(
+    client, db_session
+):
+    import main
+
+    paths = {
+        name: Path(main.UPLOAD_DIR) / f"content-multi-{name}.png"
+        for name in ("render-one", "render-two", "ref-one", "ref-two", "ref-new")
+    }
+    for path in paths.values():
+        _write_png(path)
+    urls = {
+        name: f"/{main.UPLOAD_DIR_REL}/{path.name}" for name, path in paths.items()
+    }
+    tikz_code = "\\begin{tikzpicture}\\draw (0,0)--(1,1);\\end{tikzpicture}"
+    first = {
+        "id": "content_tikz_one",
+        "image_path": urls["render-one"],
+        "tikz_code": tikz_code,
+        "instruction": "第一幅",
+        "reference_image_path": urls["ref-one"],
+    }
+    second = {
+        "id": "content_tikz_two",
+        "image_path": urls["render-two"],
+        "tikz_code": tikz_code,
+        "instruction": "第二幅",
+        "reference_image_path": urls["ref-two"],
+    }
+    question = Question(
+        content=(
+            f"![TikZ]({urls['render-one']})\n\n"
+            f"![TikZ]({urls['render-two']})"
+        ),
+        question_type="single_choice",
+        tikz_code=tikz_code,
+        tikz_reference_image_path=urls["ref-one"],
+    )
+    question.content_tikz_assets = [first, second]
+    question.image_paths = list(urls.values())[:-1]
+    db_session.add(question)
+    db_session.commit()
+
+    try:
+        replaced_first = {
+            **first,
+            "reference_image_path": urls["ref-new"],
+        }
+        replaced = client.put(
+            f"/api/questions/{question.id}",
+            data=_payload(
+                content=question.content,
+                image_paths=json.dumps([
+                    urls["render-one"],
+                    urls["render-two"],
+                    urls["ref-new"],
+                    urls["ref-two"],
+                ]),
+                content_tikz_assets=json.dumps([replaced_first, second]),
+            ),
+            headers=_headers(),
+        )
+        assert replaced.status_code == 200
+        assert not paths["ref-one"].exists()
+        assert paths["ref-two"].exists()
+        assert paths["ref-new"].exists()
+        assert len(replaced.json()["question"]["content_tikz_assets"]) == 2
+
+        removed = client.put(
+            f"/api/questions/{question.id}",
+            data=_payload(
+                content=f"![TikZ]({urls['render-two']})",
+                image_paths=json.dumps([urls["render-two"], urls["ref-two"]]),
+                content_tikz_assets=json.dumps([second]),
+            ),
+            headers=_headers(),
+        )
+        assert removed.status_code == 200
+        assert not paths["render-one"].exists()
+        assert not paths["ref-new"].exists()
+        assert paths["render-two"].exists()
+        assert paths["ref-two"].exists()
+        assert removed.json()["question"]["content_tikz_assets"] == [second]
+    finally:
+        for path in paths.values():
+            path.unlink(missing_ok=True)
+
+
 def test_delete_only_removes_image_after_commit_and_last_reference(
     client, db_session, monkeypatch
 ):

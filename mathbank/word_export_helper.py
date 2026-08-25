@@ -540,12 +540,12 @@ $\displaystyle {formula}$
             pdf_path = temp_path / "formula.pdf"
             if completed.returncode != 0 or not pdf_path.exists():
                 return None
-            import fitz
+            import pymupdf as fitz
             from PIL import Image, ImageChops
 
-            pdf = fitz.open(pdf_path)
-            pixmap = pdf[0].get_pixmap(matrix=fitz.Matrix(3, 3), alpha=False)
-            image = Image.open(BytesIO(pixmap.tobytes("png"))).convert("RGB")
+            with fitz.open(pdf_path) as pdf:
+                pixmap = pdf[0].get_pixmap(matrix=fitz.Matrix(3, 3), alpha=False)
+                image = Image.open(BytesIO(pixmap.tobytes("png"))).convert("RGB")
             background = Image.new("RGB", image.size, "white")
             bbox = ImageChops.difference(image, background).getbbox()
             if bbox:

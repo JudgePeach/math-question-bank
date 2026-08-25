@@ -10,6 +10,7 @@ import signal
 import datetime
 import threading
 import requests
+from contextlib import asynccontextmanager
 from pathlib import Path
 
 if hasattr(sys.stdout, "reconfigure"):
@@ -112,6 +113,9 @@ from mathbank.asset_security import (
     MAX_SINGLE_IMAGE_BYTES,
     UploadTooLargeError,
     harden_private_path,
+    normalize_answer_tikz_assets,
+    normalize_content_tikz_assets,
+    normalize_optional_upload_asset_reference,
     normalize_raster_image,
     normalize_upload_asset_reference,
     normalize_upload_asset_references,
@@ -164,28 +168,10 @@ def schedule_database_export(
 
 
 def print_startup_diagnostics():
-    """打印美观的系统环境、虚拟环境与加速引擎自检面板"""
+    """打印不扫描 PATH、不阻塞就绪的基础启动诊断。"""
     is_venv = sys.prefix != sys.base_prefix
     env_type = f"虚拟环境 ({os.path.basename(sys.prefix)})" if is_venv else "全局/系统环境"
     pdf_insp_ok = is_pdf_inspector_available()
-    
-    # 检查 LaTeX 编译器
-    latex_engine = "未检测到 (需安装 TeX Live / MacTeX)"
-    if shutil.which("xelatex"):
-        latex_engine = "XeLaTeX (已就绪)"
-    elif shutil.which("pdflatex"):
-        latex_engine = "pdfLaTeX (已就绪)"
-
-    pandoc_path = os.getenv("MATHBANK_PANDOC_PATH", "").strip() or shutil.which("pandoc")
-    pandoc_status = f"已就绪 ({pandoc_path})" if pandoc_path else "未检测到 (Word 公式将使用图片兜底)"
-
-    # 检查 PyMuPDF
-    fitz_ok = False
-    try:
-        import fitz
-        fitz_ok = True
-    except ImportError:
-        pass
 
     print("=" * 64, flush=True)
     print("      本地数学题库教研系统 (MathBank) 启动自检与诊断面板", flush=True)
@@ -195,15 +181,33 @@ def print_startup_diagnostics():
     if is_venv:
         print(f"  • 虚拟环境根目录   : {sys.prefix}", flush=True)
     print(f"  • PDF Inspector 引擎: {'🚀 已就绪 (原生矢量试卷毫秒级直提)' if pdf_insp_ok else '⚠️ 未安装 (已自动平滑降级至 VLM 多模态 OCR)'}", flush=True)
-    print(f"  • PyMuPDF 渲染器    : {'✅ 已就绪' if fitz_ok else '❌ 未安装 (建议 pip install pymupdf)'}", flush=True)
-    print(f"  • LaTeX 编译排版    : {latex_engine}", flush=True)
-    print(f"  • Word 原生公式转换 : Pandoc {pandoc_status}", flush=True)
+    print("  • 可选排版工具   : 服务就绪后后台检测", flush=True)
     print(f"  • SQLite 本地数据库 : {DATABASE_PATH}", flush=True)
     print(f"  • 项目静态与根路径 : {PROJECT_ROOT}", flush=True)
     print("=" * 64, flush=True)
 
 
 print_startup_diagnostics()
+
+
+def print_optional_tool_diagnostics():
+    """服务就绪后再扫描可选工具，避免慢 PATH 阻断启动。"""
+
+    latex_engine = shutil.which("xelatex") or shutil.which("pdflatex")
+    pandoc_path = os.getenv("MATHBANK_PANDOC_PATH", "").strip() or shutil.which("pandoc")
+    try:
+        import pymupdf  # noqa: F401
+
+        pymupdf_status = "ready"
+    except ImportError:
+        pymupdf_status = "missing"
+    print(
+        "[Optional Tools] "
+        f"latex={latex_engine or 'missing'}, "
+        f"pandoc={pandoc_path or 'missing'}, "
+        f"pymupdf={pymupdf_status}",
+        flush=True,
+    )
 
 def heal_database_curriculum_names():
     from mathbank.database import SessionLocal
@@ -295,7 +299,28 @@ def load_or_create_local_token() -> str:
 
 LOCAL_TOKEN = load_or_create_local_token()
 
-app = FastAPI(title="本地化数学题库管理系统 API")
+
+@asynccontextmanager
+async def app_lifespan(_app: FastAPI):
+    """在模块完整导入后再启动低优先级维护任务。"""
+
+    if IS_TESTING:
+        yield
+        return
+
+    DOCUMENT_TASKS.start_maintenance(interval_seconds=60.0)
+    threading.Thread(
+        target=start_startup_cleanup,
+        name="mathbank-post-startup-maintenance",
+        daemon=True,
+    ).start()
+    try:
+        yield
+    finally:
+        DOCUMENT_TASKS.shutdown(wait=False)
+
+
+app = FastAPI(title="本地化数学题库管理系统 API", lifespan=app_lifespan)
 
 # Enable CORS for local development (restrict allowed origins)
 app.add_middleware(
@@ -444,20 +469,20 @@ def recalibrate_usage_counts():
         print(f"[Usage Calibration Error] {e}")
 
 def start_startup_cleanup():
-    # 稍等 2.5 秒，让主服务先启动完毕并打开浏览器，不占用首屏加载时间
+    # Lifespan 已确保模块完整导入；再让出短暂时间给首屏请求。
     time.sleep(2.5)
-    clean_orphaned_images()
-    recalibrate_usage_counts()
     try:
         backup_path = create_full_backup_if_due()
         if backup_path:
             print(f"[Backup] 已创建并验证每日完整备份: {backup_path.name}")
     except Exception as exc:
         print(f"[Backup Error] 每日完整备份失败: {type(exc).__name__}: {exc}")
-
-# 仅在非测试环境下启动静默自愈清理后台守护线程
-if not IS_TESTING:
-    threading.Thread(target=start_startup_cleanup, daemon=True).start()
+        print_optional_tool_diagnostics()
+        return
+    heal_database_curriculum_names()
+    clean_orphaned_images()
+    recalibrate_usage_counts()
+    print_optional_tool_diagnostics()
 
 
 # Ensure directories exist
@@ -758,59 +783,38 @@ def ocr_via_provider(
         )
 
 
-def draw_tikz_via_high_model(image_path: str, prefer_draw: str, latex_content: str = None) -> str:
-    """使用指定的高级绘图模型（多模态或纯文本自适应）生成 TikZ 代码"""
-    import base64
-    import re
+def extract_tikz_source(ai_message: str) -> str:
+    """Extract one complete TikZ environment from a model response."""
 
-    provider = resolve_draw_provider(prefer_draw)
-    if not provider.api_key:
-        print(
-            f"[High Model Draw] 未配置 {provider.credential_label}，降级跳过。"
-        )
-        return None
+    message = str(ai_message or "").strip()
+    match = re.search(
+        r"\\begin\s*\{\s*tikzpicture\s*\}.*?\\end\s*\{\s*tikzpicture\s*\}",
+        message,
+        re.DOTALL | re.IGNORECASE,
+    )
+    if match:
+        return match.group(0).strip()
 
-    model_name = provider.model_name
-    is_multimodal = provider.supports_image_input
+    match_block = re.search(
+        r"```(?:latex|tex)?\s*(.*?)```",
+        message,
+        re.DOTALL | re.IGNORECASE,
+    )
+    if match_block:
+        code = match_block.group(1).strip()
+        if code and "tikzpicture" not in code.lower():
+            return f"\\begin{{tikzpicture}}\n{code}\n\\end{{tikzpicture}}"
 
-    if is_multimodal:
-        # 多模态图文输入模式
-        try:
-            with open(image_path, "rb") as f:
-                encoded_image = base64.b64encode(f.read()).decode("utf-8")
-        except Exception as e:
-            print(f"[High Model Draw] 读取裁剪小图 Base64 失败: {str(e)}")
-            return None
-            
-        prompt = build_tikz_draw_prompt(latex_content, multimodal=True)
-        
-        content_payload = [
-            {"type": "text", "text": prompt},
-            {
-                "type": "image_url",
-                "image_url": {
-                    "url": f"data:image/png;base64,{encoded_image}"
-                }
-            }
-        ]
-    else:
-        # 纯文本推理模式 (如 Qwen3.5-397B)，我们把题目题干文字作为逻辑来源
-        if not latex_content:
-            print("[High Model Draw] 纯文本高级绘图模型未获得输入文本，跳过。")
-            return None
-            
-        prompt = build_tikz_draw_prompt(latex_content, multimodal=False)
-        content_payload = prompt
+    raise RuntimeError("绘图模型未返回完整的 tikzpicture 源码。")
+
+
+def request_tikz_completion(provider, content_payload, *, timeout: int = 120) -> str:
+    """Send one TikZ model request with the shared reasoning and parser policy."""
 
     payload = {
-        "model": model_name,
-        "messages": [
-            {
-                "role": "user",
-                "content": content_payload
-            }
-        ],
-        "stream": False
+        "model": provider.model_name,
+        "messages": [{"role": "user", "content": content_payload}],
+        "stream": False,
     }
     payload = inject_reasoning_effort(payload, provider.reasoning_effort)
     payload = apply_bailian_thinking_policy(
@@ -819,31 +823,101 @@ def draw_tikz_via_high_model(image_path: str, prefer_draw: str, latex_content: s
         model_name=provider.model_name,
         task="draw",
     )
+    response = post_chat_completion(
+        provider,
+        payload,
+        timeout=timeout,
+        check_status=False,
+    )
+    if response.status_code != 200:
+        raise RuntimeError(
+            f"{provider.provider_label} 绘图接口返回 HTTP {response.status_code}"
+        )
+    choices = response.json().get("choices", [])
+    if not choices:
+        raise RuntimeError(f"{provider.provider_label} 绘图接口未返回 choices。")
+    ai_message = choices[0].get("message", {}).get("content", "")
+    return extract_tikz_source(ai_message)
+
+
+def draw_tikz_via_high_model(
+    image_path: Optional[str],
+    prefer_draw: str,
+    latex_content: Optional[str] = None,
+    *,
+    instruction: str = "",
+    existing_tikz: str = "",
+    require_image_support: bool = False,
+) -> Optional[str]:
+    """使用指定的高级绘图模型（多模态或纯文本自适应）生成 TikZ 代码。"""
+    import base64
+    provider = resolve_draw_provider(prefer_draw)
+    if not provider.api_key:
+        print(
+            f"[High Model Draw] 未配置 {provider.credential_label}，降级跳过。"
+        )
+        return None
+
+    has_reference_image = bool(image_path)
+    if has_reference_image and require_image_support and not provider.supports_image_input:
+        raise RuntimeError(
+            f"当前绘图模型 {provider.model_name} 不支持参考图输入，"
+            "请在 API 设置中选择支持图像的 TikZ 绘图模型。"
+        )
+    use_image_input = has_reference_image and provider.supports_image_input
+
+    if use_image_input:
+        # 多模态图文输入模式
+        try:
+            with open(image_path, "rb") as f:
+                encoded_image = base64.b64encode(f.read()).decode("utf-8")
+        except Exception as e:
+            print(f"[High Model Draw] 读取裁剪小图 Base64 失败: {str(e)}")
+            return None
+            
+        suffix = Path(image_path).suffix.lower()
+        image_media_type = {
+            ".jpg": "image/jpeg",
+            ".jpeg": "image/jpeg",
+            ".gif": "image/gif",
+            ".webp": "image/webp",
+        }.get(suffix, "image/png")
+        prompt = build_tikz_draw_prompt(
+            latex_content,
+            multimodal=True,
+            instruction=instruction,
+            existing_tikz=existing_tikz,
+        )
+        
+        content_payload = [
+            {"type": "text", "text": prompt},
+            {
+                "type": "image_url",
+                "image_url": {
+                    "url": f"data:{image_media_type};base64,{encoded_image}"
+                }
+            }
+        ]
+    else:
+        # 纯文本推理模式。带有视觉能力的模型也可以在没有参考图时走此分支。
+        if not any((latex_content, instruction, existing_tikz)):
+            print("[High Model Draw] 绘图模型未获得任何可用输入，跳过。")
+            return None
+            
+        prompt = build_tikz_draw_prompt(
+            latex_content,
+            multimodal=False,
+            instruction=instruction,
+            existing_tikz=existing_tikz,
+        )
+        content_payload = prompt
 
     try:
-        response = post_chat_completion(
+        return request_tikz_completion(
             provider,
-            payload,
+            content_payload,
             timeout=120,
-            check_status=False,
         )
-        if response.status_code == 200:
-            res_json = response.json()
-            choices = res_json.get("choices", [])
-            if choices:
-                ai_message = choices[0].get("message", {}).get("content", "")
-                match = re.search(r"\\begin{tikzpicture}.*?\\end{tikzpicture}", ai_message, re.DOTALL | re.IGNORECASE)
-                if match:
-                    return match.group(0)
-                match_block = re.search(r"```(?:latex)?(.*?)```", ai_message, re.DOTALL | re.IGNORECASE)
-                if match_block:
-                    code = match_block.group(1).strip()
-                    if "tikzpicture" not in code:
-                        code = f"\\begin{{tikzpicture}}\n{code}\n\\end{{tikzpicture}}"
-                    return code
-                return ai_message.strip()
-        else:
-            print(f"[High Model Draw Error] 接口返回 HTTP {response.status_code}")
     except Exception as e:
         print(f"[High Model Draw Error] 大模型请求发生异常: {str(e)}")
     return None
@@ -1608,9 +1682,9 @@ def compile_tikz_to_png(tikz_code: str) -> str:
     if not shutil.which("xelatex"):
         raise RuntimeError("系统未检测到 'xelatex' 编译器。请确保您的系统已安装 MacTeX/TeX Live 并将其加入 PATH。")
 
-    # 2. 检查 PyMuPDF (fitz)
+    # 2. 检查 PyMuPDF
     try:
-        import fitz
+        import pymupdf as fitz
     except ImportError:
         raise RuntimeError("Python 环境中未安装 'pymupdf'，无法将 PDF 转换为图像，请运行 'pip install pymupdf' 安装。")
 
@@ -1687,14 +1761,13 @@ def compile_tikz_to_png(tikz_code: str) -> str:
         if not os.path.exists(pdf_path):
             raise RuntimeError("编译未生成 PDF 文件。")
 
-        # 使用 fitz 将 PDF 转换成 PNG
-        doc = fitz.open(pdf_path)
-        if len(doc) == 0:
-            raise RuntimeError("生成的 PDF 文件为空。")
-        page = doc.load_page(0)
-        pix = page.get_pixmap(dpi=150)
-        pix.save(png_path)
-        doc.close()
+        # 使用 PyMuPDF 将 PDF 转换成 PNG，并确保异常路径也会关闭文档。
+        with fitz.open(pdf_path) as doc:
+            if len(doc) == 0:
+                raise RuntimeError("生成的 PDF 文件为空。")
+            page = doc.load_page(0)
+            pix = page.get_pixmap(dpi=150)
+            pix.save(png_path)
 
         if not os.path.exists(png_path):
             raise RuntimeError("PDF 转换 PNG 失败。")
@@ -1749,10 +1822,9 @@ def correct_tikz_endpoint(
                 "请在设置面板中配置后重试。"
             ),
         )
-    model_name = draw_provider.model_name
     print(
         f"[TikZ Correction] 启用 {draw_provider.provider_label} 高级模型进行纠错: "
-        f"{model_name}, Base URL: {draw_provider.chat_completions_url}"
+        f"{draw_provider.model_name}, Base URL: {draw_provider.chat_completions_url}"
     )
 
     # 对原始截图进行 Base64 编码
@@ -1842,45 +1914,12 @@ def correct_tikz_endpoint(
             }
         ]
 
-    payload = {
-        "model": model_name,
-        "messages": [
-            {
-                "role": "user",
-                "content": content_payload
-            }
-        ],
-        "stream": False
-    }
-    payload = inject_reasoning_effort(payload, draw_provider.reasoning_effort)
-    payload = apply_bailian_thinking_policy(
-        payload,
-        provider_code=draw_provider.provider_code,
-        model_name=draw_provider.model_name,
-        task="draw",
-    )
-
     try:
-        response = post_chat_completion(
+        corrected_code = request_tikz_completion(
             draw_provider,
-            payload,
+            content_payload,
             timeout=90,
-            check_status=False,
         )
-        if response.status_code != 200:
-            raise RuntimeError(f"大模型接口返回错误 HTTP {response.status_code}")
-        
-        res_json = response.json()
-        choices = res_json.get("choices", [])
-        if not choices:
-            raise RuntimeError("大模型返回结果为空 choices")
-            
-        ai_message = choices[0].get("message", {}).get("content", "")
-        
-        # 使用正则从大模型的回答中抓取 ```latex ... ``` 里面的内容
-        match = re.search(r"```(?:latex)?(.*?)```", ai_message, re.DOTALL | re.IGNORECASE)
-        corrected_code = match.group(1).strip() if match else ai_message.strip()
-        
         return {
             "status": "success",
             "corrected_code": corrected_code,
@@ -1888,6 +1927,104 @@ def correct_tikz_endpoint(
         }
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"AI 纠错请求失败: {str(e)}")
+
+@app.post("/api/ai/draw_tikz")
+def draw_tikz_workbench_endpoint(
+    instruction: str = Form(""),
+    context: str = Form(""),
+    existing_tikz: str = Form(""),
+    reference_image_path: str = Form(""),
+    reference_image: Optional[UploadFile] = File(None),
+):
+    """从文字、参考图或已有源码生成/修改 TikZ，供手动录题工作台使用。"""
+
+    instruction = (instruction or "").strip()
+    context = (context or "").strip()
+    existing_tikz = (existing_tikz or "").strip()
+    reference_image_path = (reference_image_path or "").strip()
+    has_uploaded_reference = bool(reference_image and reference_image.filename)
+    has_reference = has_uploaded_reference or bool(reference_image_path)
+    if not instruction and not existing_tikz and not has_reference:
+        raise HTTPException(status_code=400, detail="请输入绘图要求、上传参考图或提供已有 TikZ 源码。")
+    if len(instruction) > 4000:
+        raise HTTPException(status_code=400, detail="绘图要求不能超过 4000 个字符。")
+    if len(context) > 30000:
+        raise HTTPException(status_code=400, detail="绘图上下文不能超过 30000 个字符。")
+    if len(existing_tikz) > 200000:
+        raise HTTPException(status_code=400, detail="TikZ 源码不能超过 200000 个字符。")
+
+    reference_path: Optional[Path] = None
+    temporary_reference_path: Optional[Path] = None
+    persisted_reference_url = ""
+    try:
+        if has_uploaded_reference:
+            raw = read_stream_limited(reference_image.file, MAX_SINGLE_IMAGE_BYTES)
+            normalized = normalize_raster_image(raw)
+            temporary_reference_path = Path(TMP_UPLOAD_DIR) / (
+                f"tikz_reference_{uuid.uuid4().hex}{normalized.extension}"
+            )
+            temporary_reference_path.write_bytes(normalized.data)
+            reference_path = temporary_reference_path
+        elif reference_image_path:
+            normalized_reference = normalize_upload_asset_reference(
+                reference_image_path,
+                uploads_dir=UPLOAD_DIR,
+                url_prefix=UPLOAD_DIR_REL,
+            )
+            reference_path = resolve_upload_asset(
+                normalized_reference,
+                uploads_dir=UPLOAD_DIR,
+                url_prefix=UPLOAD_DIR_REL,
+            )
+            persisted_reference_url = normalized_reference
+
+        prefer_draw = (
+            os.getenv("PREFER_DRAW_MODEL")
+            or os.getenv("PREFER_PARSE_MODEL")
+            or "Qwen/Qwen3-VL-32B-Instruct"
+        )
+        tikz_code = draw_tikz_via_high_model(
+            str(reference_path) if reference_path else None,
+            prefer_draw,
+            latex_content=context,
+            instruction=instruction,
+            existing_tikz=existing_tikz,
+            require_image_support=has_reference,
+        )
+        if not tikz_code:
+            raise RuntimeError(
+                "TikZ 绘图模型未返回可用源码，请检查绘图模型与 API 密钥设置。"
+            )
+        if temporary_reference_path is not None:
+            persisted_name = (
+                f"tikz_reference_{uuid.uuid4().hex}"
+                f"{temporary_reference_path.suffix.lower()}"
+            )
+            persisted_path = Path(UPLOAD_DIR) / persisted_name
+            temporary_reference_path.replace(persisted_path)
+            temporary_reference_path = None
+            persisted_reference_url = f"/{UPLOAD_DIR_REL}/{persisted_name}"
+        return {
+            "status": "success",
+            "tikz_code": tikz_code,
+            "used_reference_image": has_reference,
+            "reference_image_path": persisted_reference_url,
+        }
+    except UploadTooLargeError as exc:
+        raise HTTPException(status_code=413, detail="参考图不能超过 10MB。") from exc
+    except InvalidImageError as exc:
+        raise HTTPException(status_code=400, detail=f"参考图无效: {str(exc)}") from exc
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=f"AI TikZ 绘图失败: {str(exc)}") from exc
+    finally:
+        if temporary_reference_path is not None:
+            try:
+                temporary_reference_path.unlink(missing_ok=True)
+            except OSError:
+                pass
+
 
 @app.post("/api/ai/draw_tikz_from_image")
 def draw_tikz_from_image_endpoint(
@@ -2099,6 +2236,80 @@ def committed_question_response(
         return {"status": "success", "question": {"id": question_id}}
 
 
+def prepare_question_assets(
+    content: str,
+    answer_markdown: str,
+    image_paths: str,
+    content_tikz_assets: Optional[str],
+    tikz_reference_image_path: str,
+    answer_tikz_assets: str,
+    tikz_code: str = "",
+    *,
+    promotion_log: list[tuple[Path, Path]],
+) -> tuple[
+    str,
+    str,
+    list[str],
+    str,
+    str,
+    list[dict[str, str]],
+    list[dict[str, str]],
+]:
+    """Promote and validate all visible and AI-only assets in one policy path."""
+
+    parsed_img_paths = json.loads(image_paths) if image_paths else []
+    content, answer_markdown, parsed_img_paths = promote_question_temp_assets(
+        content,
+        answer_markdown,
+        parsed_img_paths,
+        promotion_log=promotion_log,
+    )
+    parsed_img_paths = normalize_upload_asset_references(
+        parsed_img_paths,
+        uploads_dir=UPLOAD_DIR,
+        url_prefix=UPLOAD_DIR_REL,
+    )
+    parsed_answer_tikz_assets = normalize_answer_tikz_assets(
+        answer_tikz_assets,
+        allowed_image_paths=parsed_img_paths,
+        uploads_dir=UPLOAD_DIR,
+        url_prefix=UPLOAD_DIR_REL,
+    )
+    if content_tikz_assets is None:
+        # Compatibility for clients and existing drafts created before v5.
+        parsed_content_tikz_assets: list[dict[str, str]] = []
+        parsed_tikz_code = str(tikz_code or "").strip()
+        parsed_tikz_reference_image_path = normalize_optional_upload_asset_reference(
+            tikz_reference_image_path,
+            allowed_image_paths=parsed_img_paths,
+            uploads_dir=UPLOAD_DIR,
+            url_prefix=UPLOAD_DIR_REL,
+        )
+    else:
+        parsed_content_tikz_assets = normalize_content_tikz_assets(
+            content_tikz_assets,
+            allowed_image_paths=parsed_img_paths,
+            uploads_dir=UPLOAD_DIR,
+            url_prefix=UPLOAD_DIR_REL,
+        )
+        first_content_asset = (
+            parsed_content_tikz_assets[0] if parsed_content_tikz_assets else {}
+        )
+        parsed_tikz_code = str(first_content_asset.get("tikz_code") or "")
+        parsed_tikz_reference_image_path = str(
+            first_content_asset.get("reference_image_path") or ""
+        )
+    return (
+        content,
+        answer_markdown,
+        parsed_img_paths,
+        parsed_tikz_code,
+        parsed_tikz_reference_image_path,
+        parsed_content_tikz_assets,
+        parsed_answer_tikz_assets,
+    )
+
+
 @app.post("/api/questions")
 def create_question(
     background_tasks: BackgroundTasks,
@@ -2112,6 +2323,9 @@ def create_question(
     answer_markdown: str = Form(""),
     review: str = Form(""),
     tikz_code: str = Form(""),
+    content_tikz_assets: Optional[str] = Form(None),
+    tikz_reference_image_path: str = Form(""),
+    answer_tikz_assets: str = Form("[]"),
     figure_align: str = Form("right"),
     tags: str = Form(""),
     related_question_id: str = Form(""),
@@ -2123,20 +2337,23 @@ def create_question(
         # 规范化填空题下划线为 \fillin 宏
         content = normalize_fillin_macro(content)
 
-        # Validate json array format
-        parsed_img_paths = json.loads(image_paths) if image_paths else []
-        
-        # 自动晋升临时图片
-        content, answer_markdown, parsed_img_paths = promote_question_temp_assets(
+        (
             content,
             answer_markdown,
             parsed_img_paths,
+            parsed_tikz_code,
+            parsed_tikz_reference_image_path,
+            parsed_content_tikz_assets,
+            parsed_answer_tikz_assets,
+        ) = prepare_question_assets(
+            content,
+            answer_markdown,
+            image_paths,
+            content_tikz_assets,
+            tikz_reference_image_path,
+            answer_tikz_assets,
+            tikz_code,
             promotion_log=asset_promotions,
-        )
-        parsed_img_paths = normalize_upload_asset_references(
-            parsed_img_paths,
-            uploads_dir=UPLOAD_DIR,
-            url_prefix=UPLOAD_DIR_REL,
         )
         
         # 1. Fallback if third level is empty, default to chapter
@@ -2153,11 +2370,14 @@ def create_question(
             source=source,
             answer_markdown=answer_markdown,
             review=review,
-            tikz_code=tikz_code,
+            tikz_code=parsed_tikz_code,
+            tikz_reference_image_path=parsed_tikz_reference_image_path,
             figure_align=figure_align if figure_align in ["right", "center", "bottom_right"] else "right",
             tags=tags
         )
         db_question.image_paths = parsed_img_paths
+        db_question.content_tikz_assets = parsed_content_tikz_assets
+        db_question.answer_tikz_assets = parsed_answer_tikz_assets
         
         # Handle related question association (transitive relation)
         related_id_int = int(related_question_id) if related_question_id and related_question_id.strip() else None
@@ -2216,6 +2436,9 @@ def update_question(
     answer_markdown: str = Form(""),
     review: str = Form(""),
     tikz_code: str = Form(""),
+    content_tikz_assets: Optional[str] = Form(None),
+    tikz_reference_image_path: str = Form(""),
+    answer_tikz_assets: str = Form("[]"),
     figure_align: str = Form("right"),
     tags: str = Form(""),
     related_question_id: str = Form(""),
@@ -2232,19 +2455,23 @@ def update_question(
         # 规范化填空题下划线为 \fillin 宏
         content = normalize_fillin_macro(content)
 
-        parsed_img_paths = json.loads(image_paths) if image_paths else []
-        
-        # 自动晋升临时图片
-        content, answer_markdown, parsed_img_paths = promote_question_temp_assets(
+        (
             content,
             answer_markdown,
             parsed_img_paths,
+            parsed_tikz_code,
+            parsed_tikz_reference_image_path,
+            parsed_content_tikz_assets,
+            parsed_answer_tikz_assets,
+        ) = prepare_question_assets(
+            content,
+            answer_markdown,
+            image_paths,
+            content_tikz_assets,
+            tikz_reference_image_path,
+            answer_tikz_assets,
+            tikz_code,
             promotion_log=asset_promotions,
-        )
-        parsed_img_paths = normalize_upload_asset_references(
-            parsed_img_paths,
-            uploads_dir=UPLOAD_DIR,
-            url_prefix=UPLOAD_DIR_REL,
         )
         
         # 1. Fallback if third level is empty, default to chapter
@@ -2260,7 +2487,8 @@ def update_question(
         db_question.source = source
         db_question.answer_markdown = answer_markdown
         db_question.review = review
-        db_question.tikz_code = tikz_code
+        db_question.tikz_code = parsed_tikz_code
+        db_question.tikz_reference_image_path = parsed_tikz_reference_image_path
         if figure_align in ["right", "center", "bottom_right"]:
             db_question.figure_align = figure_align
         db_question.tags = tags
@@ -2268,6 +2496,8 @@ def update_question(
         removed_images = set(old_images) - set(parsed_img_paths)
 
         db_question.image_paths = parsed_img_paths
+        db_question.content_tikz_assets = parsed_content_tikz_assets
+        db_question.answer_tikz_assets = parsed_answer_tikz_assets
         
         # Handle related question association updates (transitive relation)
         related_id_int = int(related_question_id) if related_question_id and related_question_id.strip() else None
@@ -2572,7 +2802,6 @@ def load_or_init_metadata():
                     
                     METADATA_CACHE = loaded
                     print(f"[Metadata] Loaded custom metadata from {METADATA_FILE}")
-                    heal_database_curriculum_names()
                     return
         except Exception as e:
             print(f"[Metadata Warning] Error loading {METADATA_FILE}: {e}. Overwriting with default.")
@@ -2588,7 +2817,6 @@ def load_or_init_metadata():
         print(f"[Metadata Error] Could not write default metadata: {e}")
         
     METADATA_CACHE = default_metadata
-    heal_database_curriculum_names()
 
 # Load metadata on startup
 load_or_init_metadata()
@@ -4241,7 +4469,7 @@ def run_pdf_parsing_task(
     tmp_pdf_path = Path(TMP_UPLOAD_DIR) / f"{task_id}.pdf"
 
     try:
-        import fitz
+        import pymupdf as fitz
     except ImportError:
         DOCUMENT_TASKS.fail(
             task_id,
@@ -4615,12 +4843,6 @@ def _delete_task_temp_assets(paths: list) -> int:
             except OSError:
                 pass
     return removed
-
-
-# Start only after the cleanup callback above exists.  The one-minute sweep
-# bounds a one-hour terminal TTL even when no later request creates a task.
-if not IS_TESTING:
-    DOCUMENT_TASKS.start_maintenance(interval_seconds=60.0)
 
 
 def run_docx_parsing_task(

@@ -54,8 +54,13 @@ def test_export_database_to_files(db_session, tmp_path):
         category_compulsory="必修一",
         category_chapter="第一章",
         category_knowledge="知识点A",
-        difficulty="easy"
+        difficulty="easy",
+        tikz_reference_image_path="/static/uploads/ai-reference.png",
     )
+    q.image_paths = [
+        "/static/uploads/visible-figure.png",
+        "/static/uploads/ai-reference.png",
+    ]
     db_session.add(q)
     db_session.commit()
 
@@ -81,6 +86,7 @@ def test_export_database_to_files(db_session, tmp_path):
             data = json.load(f)
             assert len(data) == 1
             assert data[0]["content"] == q.content
+            assert data[0]["image_paths"] == ["/static/uploads/visible-figure.png"]
 
         # Check MD export
         assert os.path.exists(sync_helper.MD_BACKUP_PATH)
@@ -89,6 +95,8 @@ def test_export_database_to_files(db_session, tmp_path):
             assert "这只是一道测试同步导出的题目" in md_content
             assert "$x+y=2$" in md_content
             assert "必修一" in md_content
+            assert "visible-figure.png" in md_content
+            assert "ai-reference.png" not in md_content
     finally:
         # Restore paths
         sync_helper.BACKUP_DIR = original_backup_dir

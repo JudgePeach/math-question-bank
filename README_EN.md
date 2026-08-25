@@ -6,7 +6,7 @@
 
 **MathBank** is a lightweight, semi-automated math question bank and exam paper layout workbench running entirely on your local computer, tailored specifically for secondary school mathematics teachers.
 
-No frontend build step is required. The Windows portable package includes Python and runs after extraction. The macOS package does not include Python, so confirm that Python 3.10 or newer is installed on the Mac before launching it; the launcher automatically detects it and creates or repairs the isolated project `venv`. MathBank supports second-level real-time preview of LaTeX formulas and geometric figures, deeply integrated with one-click exam paper creation, A4 simulation canvas layout, Gaokao-level PDF exam paper export, DeepSeek AI problem solving, and one-click formula OCR recognition.
+No frontend build step is required. The Windows 10/11 x64 portable package includes Python and its matching app-local VC++ Runtime and runs after extraction. The macOS package does not include Python, so confirm that Python 3.10 or newer is installed on the Mac before launching it; the launcher automatically detects it and creates or repairs the isolated project `venv`. MathBank supports second-level real-time preview of LaTeX formulas and geometric figures, deeply integrated with one-click exam paper creation, A4 simulation canvas layout, Gaokao-level PDF exam paper export, DeepSeek AI problem solving, and one-click formula OCR recognition.
 
 ![MathBank Question Bank Workbench](docs/images/screenshot1.png)
 
@@ -82,7 +82,7 @@ flowchart LR
 
 If you are unfamiliar with command line or Python environments, head to the [**Releases Page**](https://github.com/JudgePeach/math-question-bank/releases). Each archive is accompanied by a `.zip.sha256` checksum file; verify it before extraction:
 
-* **Windows Users**: Download `MathBank-Windows-x64.zip` (it includes the complete Python 3.10 runtime; no separate Python installation is required), extract it, and double-click **`启动题库系统.bat`**.
+* **Windows Users**: Use Windows 10/11 x64 and download `MathBank-Windows-x64.zip` (it includes the complete Python 3.10 and app-local VC++ runtimes; no separate runtime installation is required), extract it, and double-click **`启动题库系统.bat`**.
 * **macOS Users**: Download `MathBank-macOS.zip`. **The macOS package does not include Python, so confirm that Python 3.10 or newer is installed on the Mac before launching MathBank.** The launcher automatically detects a supported Python and creates or repairs the isolated project `venv`; if none is found, it asks the user to install one and stops. Network access is required when the environment is first created or repaired; then double-click **`启动题库系统.command`**.
 
 Both launchers stop only a previously recorded process whose project identity is verified. If another program owns port 8000 they exit safely, and they never open a browser after a failed health check.
@@ -163,7 +163,7 @@ Directly using [DeepSeek Official Open Platform](https://platform.deepseek.com/)
   5. **macOS Finder:** press `Command + Shift + .` first so hidden files such as `.env.example` are visible, then copy all *contents* of the extracted folder into the existing installation and merge same-named directories. **Do not choose Replace for the entire project folder**; Finder may remove local files that exist only in the old folder.
   6. Double-click the new launcher. Before importing application dependencies, it verifies the Release and removes only files managed by the previous Release that no longer exist in the new one. If verification fails, startup stops; extract the ZIP again and repeat the complete content merge.
 
-  Overlay upgrades preserve root databases and their WAL/SHM files, `.env`, `data_backup/`, `static/uploads/`, `.system_generated/`, and `venv/`. Never delete the existing installation and replace it with the new folder. The Windows portable package includes its complete Python runtime, so no separate Python installation is required. The macOS package does not include Python, so confirm that Python 3.10 or newer is installed on the Mac before launching it. The macOS launcher automatically creates or repairs `venv`; network access is needed only when the environment is first created or when `requirements.txt` changed/dependencies are missing.
+  Overlay upgrades preserve root databases and their WAL/SHM files, `.env`, `data_backup/`, `static/uploads/`, `.system_generated/`, and `venv/`. Never delete the existing installation and replace it with the new folder. The Windows 10/11 x64 portable package includes its complete Python and VC++ runtimes, so no separate runtime installation is required. The macOS package does not include Python, so confirm that Python 3.10 or newer is installed on the Mac before launching it. The macOS launcher automatically creates or repairs `venv`; network access is needed only when the environment is first created or when `requirements.txt` changed/dependencies are missing.
 
 > [!IMPORTANT]
 > **Data Backup Recommendation**

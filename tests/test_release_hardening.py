@@ -31,6 +31,18 @@ class _FakeResponse(io.BytesIO):
         return self._url
 
 
+def _minimal_x64_pe():
+    """Build the small PE header needed by the pinned-DLL architecture check."""
+
+    payload = bytearray(0x88)
+    payload[:2] = b"MZ"
+    pe_offset = 0x80
+    payload[0x3C:0x40] = pe_offset.to_bytes(4, "little")
+    payload[pe_offset : pe_offset + 4] = b"PE\0\0"
+    payload[pe_offset + 4 : pe_offset + 6] = (0x8664).to_bytes(2, "little")
+    return bytes(payload)
+
+
 def test_runtime_downloads_have_fixed_sha256_and_default_tls():
     source = (PROJECT_ROOT / "scripts" / "build_release.py").read_text(
         encoding="utf-8"
@@ -40,10 +52,26 @@ def test_runtime_downloads_have_fixed_sha256_and_default_tls():
     assert "urlretrieve" not in source
     assert len(build_release.PYTHON_ZIP_SHA256) == 64
     assert len(build_release.NUGET_ZIP_SHA256) == 64
+    assert len(build_release.MSVC_REDIST_VSIX_SHA256) == 64
     int(build_release.PYTHON_ZIP_SHA256, 16)
     int(build_release.NUGET_ZIP_SHA256, 16)
+    int(build_release.MSVC_REDIST_VSIX_SHA256, 16)
     assert build_release.PYTHON_ZIP_URL.startswith("https://www.python.org/")
     assert build_release.NUGET_ZIP_URL.startswith("https://api.nuget.org/")
+    assert build_release.MSVC_REDIST_VSIX_URL.startswith(
+        "https://download.visualstudio.microsoft.com/"
+    )
+    assert build_release.MSVC_REDIST_PACKAGE_VERSION.startswith("14.51.")
+    assert set(build_release.MSVC_RUNTIME_DLLS) == {
+        "msvcp140.dll",
+        "vcruntime140.dll",
+        "vcruntime140_1.dll",
+    }
+    assert all(
+        "/x64/Microsoft.VC145.CRT/" in member
+        and "debug_nonredist" not in member
+        for member, _digest in build_release.MSVC_RUNTIME_DLLS.values()
+    )
 
 
 def test_download_verified_rechecks_cache_and_replaces_atomically(tmp_path, monkeypatch):
@@ -100,6 +128,62 @@ def test_download_verified_preserves_cache_when_replacement_fails(tmp_path, monk
         )
     assert cache_path.read_bytes() == original
     assert not list(tmp_path.glob("*.download"))
+
+
+def test_msvc_runtime_vsix_extracts_only_pinned_production_x64_files(
+    tmp_path, monkeypatch
+):
+    runtime_members = {}
+    archive_path = tmp_path / "runtime.vsix"
+    for filename in ("msvcp140.dll", "vcruntime140.dll", "vcruntime140_1.dll"):
+        member = f"Contents/VC/Redist/MSVC/test/x64/Microsoft.VC145.CRT/{filename}"
+        payload = _minimal_x64_pe()
+        digest = hashlib.sha256(payload).hexdigest()
+        runtime_members[filename] = (member, digest)
+    with zipfile.ZipFile(archive_path, "w") as archive:
+        for filename, (member, _digest) in runtime_members.items():
+            archive.writestr(member, _minimal_x64_pe())
+        archive.writestr(
+            "Contents/VC/Redist/MSVC/test/debug_nonredist/msvcp140d.dll",
+            _minimal_x64_pe(),
+        )
+
+    runtime_dir = tmp_path / "python"
+    monkeypatch.setattr(build_release, "PYTHON_DIR", str(runtime_dir))
+    monkeypatch.setattr(build_release, "MSVC_RUNTIME_DLLS", runtime_members)
+    monkeypatch.setattr(
+        build_release,
+        "download_verified",
+        lambda *_args, **_kwargs: str(archive_path),
+    )
+
+    build_release.download_and_extract_msvc_runtime()
+
+    assert {path.name for path in runtime_dir.glob("*.dll")} == set(runtime_members)
+    assert not any("debug" in path.name.casefold() for path in runtime_dir.iterdir())
+    assert (runtime_dir / build_release.MSVC_RUNTIME_NOTICE_NAME).is_file()
+
+
+def test_msvc_runtime_vsix_rejects_missing_pinned_member(tmp_path, monkeypatch):
+    member = "Contents/VC/Redist/MSVC/test/x64/Microsoft.VC145.CRT/msvcp140.dll"
+    payload = _minimal_x64_pe()
+    digest = hashlib.sha256(payload).hexdigest()
+    archive_path = tmp_path / "missing-runtime.vsix"
+    with zipfile.ZipFile(archive_path, "w") as archive:
+        archive.writestr("placeholder.txt", "missing runtime")
+
+    monkeypatch.setattr(build_release, "PYTHON_DIR", str(tmp_path / "python"))
+    monkeypatch.setattr(
+        build_release, "MSVC_RUNTIME_DLLS", {"msvcp140.dll": (member, digest)}
+    )
+    monkeypatch.setattr(
+        build_release,
+        "download_verified",
+        lambda *_args, **_kwargs: str(archive_path),
+    )
+
+    with pytest.raises(RuntimeError, match="missing production member"):
+        build_release.download_and_extract_msvc_runtime()
 
 
 @pytest.mark.parametrize("digest", ["", "abc", "g" * 64, "0" * 63])
@@ -184,6 +268,8 @@ def test_windows_runtime_layout_requires_platform_transitive_dependencies(tmp_pa
     message = str(exc_info.value)
     assert "greenlet" in message
     assert "colorama" in message
+    assert "pymupdf" in message
+    assert "msvcp140.dll" in message
 
 
 def test_embedded_python_path_includes_application_root(tmp_path, monkeypatch):
@@ -218,6 +304,10 @@ def test_windows_runtime_rejects_missing_application_root(tmp_path):
         "python/site-packages/sqlalchemy",
         "python/site-packages/greenlet",
         "python/site-packages/colorama",
+        "python/site-packages/pymupdf",
+        "python/site-packages/pdf_inspector",
+        f"python/{build_release.MSVC_RUNTIME_NOTICE_NAME}",
+        *(f"python/{name}" for name in build_release.MSVC_RUNTIME_DLLS),
     )
     for relative_path in required_paths:
         path = tmp_path / relative_path
@@ -337,6 +427,8 @@ def _make_minimal_windows_tree(root):
         "static/uploads/.gitkeep",
         "python/python.exe",
         "python/_sqlite3.pyd",
+        *(f"python/{name}" for name in build_release.MSVC_RUNTIME_DLLS),
+        f"python/{build_release.MSVC_RUNTIME_NOTICE_NAME}",
     ):
         path = root / relative_path
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -360,6 +452,14 @@ def test_finished_windows_archive_revalidates_crlf_launcher(tmp_path):
     with zipfile.ZipFile(archive_path, "r") as archive:
         payload = archive.read(build_release.WINDOWS_LAUNCHER_NAME)
     assert payload == b"@echo off\r\nexit /b 0\r\n"
+
+
+def test_windows_release_tree_requires_app_local_msvc_runtime(tmp_path):
+    _make_minimal_windows_tree(tmp_path)
+    (tmp_path / "python" / "msvcp140.dll").unlink()
+
+    with pytest.raises(RuntimeError, match="msvcp140.dll"):
+        build_release.assert_release_tree_clean(tmp_path, "windows-x64")
 
 
 def _make_minimal_macos_tree(root):
@@ -566,6 +666,7 @@ def test_main_failure_removes_stale_and_partial_cross_platform_outputs(
         "clean_directories",
         "download_python",
         "download_and_extract_sqlite",
+        "download_and_extract_msvc_runtime",
         "configure_python_path",
         "download_and_extract_wheels",
         "copy_app_files",
@@ -729,12 +830,16 @@ def test_launchers_require_python_310_and_only_stop_verified_mathbank_processes(
     assert "requirements.sha256" in mac_launcher
     assert "hashlib.sha256" in mac_launcher
     assert "-m pip check" in mac_launcher
+    assert "import pymupdf as fitz" in mac_launcher
+    assert ", fitz," not in mac_launcher
     assert "/healthz" in mac_launcher
     assert "/api/questions" not in mac_launcher
-    assert "deadline = time.monotonic() + 10.0" in mac_launcher
-    assert "min(0.4, remaining)" in mac_launcher
+    assert "ProxyHandler({})" in mac_launcher
+    assert "deadline = time.monotonic() + 60.0" in mac_launcher
+    assert "min(2.0, remaining)" in mac_launcher
     assert "time.sleep(min(0.5, remaining))" in mac_launcher
-    assert "timeout=2" not in mac_launcher
+    assert "-u -m uvicorn main:app" in mac_launcher
+    assert "probe.log" in mac_launcher
     assert "-B -m scripts.release_overlay --platform macos" in mac_launcher
     assert mac_launcher.index("stop_previous_owned_server ||") < mac_launcher.index(
         "stop_verified_legacy_mathbank_listeners\n"
@@ -749,23 +854,74 @@ def test_launchers_require_python_310_and_only_stop_verified_mathbank_processes(
     assert "server.identity" in windows_launcher
     assert "Get-CimInstance Win32_Process" in windows_launcher
     assert "Stop-Process" in windows_launcher
+    assert "$portableExe=Join-Path $savedRoot 'python\\python.exe'" in windows_launcher
+    assert "$venvExe=Join-Path $savedRoot 'venv\\Scripts\\python.exe'" in windows_launcher
     assert "sys.version_info >= (3, 10)" in windows_launcher
     assert "浏览器不会打开" in windows_launcher
     assert "requirements.sha256" in windows_launcher
     assert "hashlib.sha256" in windows_launcher
     assert "-m pip check" in windows_launcher
+    assert "import pymupdf as fitz" in windows_launcher
+    assert ", fitz," not in windows_launcher
+    assert "msvcp140.dll" in windows_launcher
+    assert "python\\%%d" in windows_launcher
+    assert "ctypes.WinDLL(str(runtime / 'msvcp140.dll'))" in windows_launcher
+    portable_check = windows_launcher[
+        windows_launcher.index(":verify_portable_dependencies"):
+        windows_launcher.index(":dependencies_ready")
+    ]
+    assert ">nul 2>&1" not in portable_check
+    assert "便携包依赖不完整或已损坏" not in portable_check
     assert "/healthz" in windows_launcher
     assert "/api/questions" not in windows_launcher
+    assert "@('-u','-m','uvicorn','main:app'" in windows_launcher
+    assert "probe.log" in windows_launcher
     windows_health = windows_launcher[
         windows_launcher.index("正在探测后台服务启动状态"):
         windows_launcher.index(":health_complete")
     ]
     assert "[Diagnostics.Stopwatch]::StartNew()" in windows_health
-    assert "Elapsed.TotalSeconds -lt 10" in windows_health
-    assert "[Math]::Min(400" in windows_health
+    assert "Elapsed.TotalSeconds -lt 60" in windows_health
+    assert "$request.Proxy=$null" in windows_health
+    assert "$request.KeepAlive=$false" in windows_health
+    assert "$webEx=$_.Exception" in windows_health
+    assert "$webEx=$_;" not in windows_health
+    assert "[Math]::Min(2000" in windows_health
     assert "[Math]::Min(500" in windows_health
     assert "ping " not in windows_health.lower()
     assert "-B -m scripts.release_overlay --platform windows-x64" in windows_launcher
+    assert ":stop_verified_legacy_server" in windows_launcher
+    assert "'python\\python.exe'" in windows_launcher
+    assert "$sameExe -or !$sameCommand" in windows_launcher
+    legacy_start = windows_launcher.index("\n:stop_verified_legacy_server")
+    legacy_stop = windows_launcher[
+        legacy_start:windows_launcher.index("\n:stop_owned_server", legacy_start)
+    ]
+    assert "http://127.0.0.1:8000/api/version" in legacy_stop
+    assert "JudgePeach/math-question-bank" in legacy_stop
+    assert "http://127.0.0.1:8000/api/shutdown" in legacy_stop
+    assert ".system_generated\\local_token" in legacy_stop
+    assert "Stop-Process" not in legacy_stop
+    assert windows_launcher.index("call :stop_verified_legacy_server") < windows_launcher.index(
+        "-B -m scripts.release_overlay --platform windows-x64"
+    )
+    windows_start = windows_launcher[
+        windows_launcher.index("echo 正在启动服务"):
+        windows_launcher.index("正在探测后台服务启动状态")
+    ]
+    assert windows_start.index("MATHBANK_IDENTITY_FILE") < windows_start.index(
+        "MATHBANK_PID_FILE"
+    )
+    assert "$process.Kill()" in windows_start
+    assert "$process.WaitForExit(5000)" in windows_start
+    assert "if ($process -and !$process.HasExited)" in windows_start
+    assert "Remove-Item -LiteralPath $env:MATHBANK_PID_FILE" in windows_start
+    health_failure = windows_launcher[
+        windows_launcher.index(":health_complete"):
+        windows_launcher.index(":start_browser")
+    ]
+    assert "状态文件已保留" in health_failure
+    assert "if errorlevel 1" in health_failure
     assert windows_launcher.index("call :stop_owned_server") < windows_launcher.index(
         "-B -m scripts.release_overlay --platform windows-x64"
     ) < windows_launcher.index("正在检查运行环境依赖是否完整")
@@ -777,6 +933,14 @@ def test_release_builder_uses_invoking_interpreter_for_pip():
     )
     assert 'sys.executable,\n        "-m",\n        "pip"' in source
     assert '"pip", "download"' not in source
+
+
+def test_windows_ci_builds_and_import_smokes_embedded_runtime():
+    workflow = (PROJECT_ROOT / ".github" / "workflows" / "ci.yml").read_text(
+        encoding="utf-8"
+    )
+    assert "download_and_extract_msvc_runtime()" in workflow
+    assert "validate_windows_runtime(b.BUILD_DIR)" in workflow
 
 
 def test_release_builder_never_runs_during_unit_import(monkeypatch):

@@ -305,7 +305,7 @@ if (idleClears !== 0 || toasts !== feedbackAfterAbort) {{
     assert result.returncode == 0, result.stderr
 
 
-def test_editor_bound_uploads_and_tikz_requests_reject_old_sessions_in_real_js():
+def test_editor_bound_uploads_reject_old_sessions_in_real_js():
     node = shutil.which("node")
     assert node, "Node.js is required for the frontend executable regression"
 
@@ -318,15 +318,6 @@ def test_editor_bound_uploads_and_tikz_requests_reject_old_sessions_in_real_js()
         ocr_source[content_upload_start:content_upload_end]
         + ocr_source[answer_upload_start:answer_upload_end]
     )
-
-    import_source = _read(STATIC_JS_DIR / "import.js")
-    request_helper_start = import_source.index("function beginEditorBoundRequest(")
-    request_helper_end = import_source.index(
-        "window.extractTikzCodeFromTextarea", request_helper_start
-    )
-    request_helper_source = import_source[request_helper_start:request_helper_end]
-    assert import_source.count("const finishRequest = beginEditorBoundRequest(") == 6
-    assert import_source.count("if (!finishRequest()) return;") == 12
 
     script = f"""
 let generation = 1;
@@ -347,7 +338,6 @@ function insertAnswerImageTag() {{ insertedAnswer += 1; }}
 function renderIllustrationBadges() {{}}
 function showToast() {{}}
 {upload_source}
-{request_helper_source}
 
 (async () => {{
   uploadIllustration({{ type: 'image/png' }});
@@ -359,24 +349,6 @@ function showToast() {{}}
   await new Promise(resolve => setTimeout(resolve, 0));
   if (insertedContent || insertedAnswer || uploadedImages.length) {{
     throw new Error('old upload response wrote into the replacement editor session');
-  }}
-
-  const button = {{ disabled: true, innerHTML: 'busy' }};
-  generation = 3;
-  const finishOldSession = beginEditorBoundRequest(button, 'idle');
-  generation = 4;
-  if (finishOldSession() !== false || button.disabled !== false) {{
-    throw new Error('stale TikZ request did not release its own button safely');
-  }}
-
-  button.disabled = true;
-  const finishSuperseded = beginEditorBoundRequest(button, 'first');
-  const finishNewest = beginEditorBoundRequest(button, 'second');
-  if (finishSuperseded() !== false || button.disabled !== true) {{
-    throw new Error('old TikZ callback modified controls owned by a newer request');
-  }}
-  if (finishNewest() !== true || button.disabled !== false || button.innerHTML !== 'second') {{
-    throw new Error('current TikZ callback could not finish its request');
   }}
 }})().catch(error => {{ console.error(error); process.exitCode = 1; }});
 """
@@ -397,7 +369,7 @@ def test_delayed_tikz_auto_compile_rejects_old_editor_session_in_real_js():
 
     import_source = _read(STATIC_JS_DIR / "import.js")
     helper_start = import_source.index("window.extractTikzCodeFromTextarea = function(")
-    helper_end = import_source.index("// 题干清理与编译", helper_start)
+    helper_end = import_source.index("\n        });\n\n        // 单题一键补全", helper_start)
     helper_source = import_source[helper_start:helper_end]
 
     script = f"""
@@ -411,29 +383,22 @@ function setTimeout(callback) {{ delayedCallback = callback; }}
 function showToast() {{}}
 class Event {{}}
 let compileCalls = 0;
-let focusCalls = 0;
+let openCalls = 0;
 const textarea = {{
   value: '\\\\begin{{tikzpicture}}\\\\draw (0,0)--(1,1);\\\\end{{tikzpicture}}',
   dispatchEvent() {{}}
 }};
-const tikzInput = {{
-  value: '',
-  dispatchEvent() {{}},
-  scrollIntoView() {{}},
-  focus() {{ focusCalls += 1; }}
-}};
-const container = {{ classList: {{ remove() {{}} }} }};
+const workbenchCode = {{ value: '' }};
 const document = {{
   getElementById(id) {{
     if (id === 'editContent') return textarea;
-    if (id === 'editContentTikzCode') return tikzInput;
-    if (id === 'contentTikzContainer') return container;
+    if (id === 'answerTikzWorkbenchCode') return workbenchCode;
     return null;
   }}
 }};
 const window = {{
-  renderContentTikzToImage() {{ compileCalls += 1; }},
-  renderAnswerTikzToImage() {{ compileCalls += 1; }}
+  openTikzWorkbench() {{ openCalls += 1; }},
+  compileTikzWorkbench() {{ compileCalls += 1; }}
 }};
 {helper_source}
 
@@ -441,16 +406,87 @@ window.extractTikzCodeFromTextarea('editContent');
 if (!delayedCallback) throw new Error('TikZ auto compile was not scheduled');
 generation = 2;
 delayedCallback();
-if (compileCalls !== 0 || focusCalls !== 0) {{
+if (compileCalls !== 0 || openCalls !== 0) {{
   throw new Error('old TikZ timer acted on the replacement editor session');
 }}
 
 textarea.value = '\\\\begin{{tikzpicture}}\\\\draw (0,0)--(2,2);\\\\end{{tikzpicture}}';
 window.extractTikzCodeFromTextarea('editContent');
 delayedCallback();
-if (compileCalls !== 1 || focusCalls !== 1) {{
-  throw new Error('current TikZ timer no longer compiles and focuses');
+if (compileCalls !== 1 || openCalls !== 1 || !workbenchCode.value.includes('tikzpicture')) {{
+  throw new Error('current TikZ timer no longer opens and compiles in the shared workbench');
 }}
+"""
+
+    result = subprocess.run(
+        [node, "-e", script],
+        cwd=PROJECT_ROOT,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
+
+
+def test_failed_tikz_generation_keeps_selected_reference_for_retry_in_real_js():
+    node = shutil.which("node")
+    assert node, "Node.js is required for the frontend executable regression"
+
+    import_source = _read(STATIC_JS_DIR / "import.js")
+    state_start = import_source.index("const tikzWorkbenchState = {")
+    state_end = import_source.index("function setTikzWorkbenchStatus", state_start)
+    state_source = import_source[state_start:state_end]
+    generate_start = import_source.index("window.generateTikzWithAI = async function()")
+    generate_end = import_source.index(
+        "window.compileTikzWorkbench = async function()", generate_start
+    )
+    generate_source = import_source[generate_start:generate_end]
+
+    script = f"""
+const window = {{}};
+{state_source}
+const selectedReference = {{ name: 'reference.png', type: 'image/png' }};
+tikzWorkbenchState.referenceFile = selectedReference;
+const instruction = {{ value: '按图重绘' }};
+const code = {{ value: '' }};
+const document = {{
+  getElementById(id) {{
+    if (id === 'answerTikzInstruction') return instruction;
+    if (id === 'answerTikzWorkbenchCode') return code;
+    return null;
+  }}
+}};
+class FormData {{
+  constructor() {{ this.items = []; submitted.push(this); }}
+  append(key, value) {{ this.items.push([key, value]); }}
+}}
+const submitted = [];
+async function fetch() {{
+  return {{ ok: false, json: async () => ({{ detail: 'simulated failure' }}) }};
+}}
+function tikzContextText() {{ return '题干'; }}
+function setTikzWorkbenchBusy() {{}}
+function setTikzWorkbenchStatus() {{}}
+function setTikzReferencePath() {{ throw new Error('failure must not replace the local file'); }}
+async function renderTikzWorkbenchCode() {{ throw new Error('failure must not compile'); }}
+function showToast() {{}}
+const EditorState = {{ isCurrent: () => true }};
+{generate_source}
+
+(async () => {{
+  await window.generateTikzWithAI();
+  await window.generateTikzWithAI();
+  if (tikzWorkbenchState.referenceFile !== selectedReference) {{
+    throw new Error('failed generation discarded the selected reference');
+  }}
+  if (submitted.length !== 2) throw new Error('retry did not submit a second request');
+  for (const form of submitted) {{
+    const reference = form.items.find(([key]) => key === 'reference_image');
+    if (!reference || reference[1] !== selectedReference) {{
+      throw new Error('retry did not reuse the selected reference file');
+    }}
+  }}
+}})().catch(error => {{ console.error(error); process.exitCode = 1; }});
 """
 
     result = subprocess.run(
@@ -706,6 +742,7 @@ def test_request_snapshot_keeps_post_submit_edits_dirty_in_real_js():
 const window = {{}};
 let originalQuestionState = null;
 let uploadedImages = ['/static/uploads/saved.png'];
+const TikzState = {{ contentAssets: [], answerAssets: [] }};
 const values = {{
   editContent: 'request payload',
   editAnswerMarkdown: 'saved answer',

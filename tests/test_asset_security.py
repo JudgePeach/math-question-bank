@@ -12,6 +12,9 @@ from PIL import Image
 from main import LOCAL_TOKEN, compile_tikz_to_png
 from mathbank.asset_security import (
     AssetSecurityError,
+    normalize_answer_tikz_assets,
+    normalize_content_tikz_assets,
+    normalize_optional_upload_asset_reference,
     normalize_upload_asset_reference,
     resolve_upload_asset,
     write_private_text_atomic,
@@ -88,6 +91,53 @@ def test_upload_asset_resolver_rejects_traversal_and_symlinks(tmp_path):
             uploads_dir=upload_dir,
             url_prefix="static/uploads",
         )
+
+
+def test_tikz_reference_assets_must_be_registered_with_question_images(tmp_path):
+    upload_dir = tmp_path / "uploads"
+    upload_dir.mkdir()
+    rendered = upload_dir / "tikz.png"
+    reference = upload_dir / "original.png"
+    rendered.write_bytes(_png_bytes())
+    reference.write_bytes(_png_bytes())
+    rendered_url = "/static/uploads/tikz.png"
+    reference_url = "/static/uploads/original.png"
+
+    with pytest.raises(AssetSecurityError, match="image_paths"):
+        normalize_optional_upload_asset_reference(
+            reference_url,
+            allowed_image_paths=[rendered_url],
+            uploads_dir=upload_dir,
+            url_prefix="static/uploads",
+        )
+
+    assets = normalize_answer_tikz_assets(
+        [{
+            "id": "tikz_reference_test",
+            "image_path": rendered_url,
+            "reference_image_path": reference_url,
+            "tikz_code": "\\begin{tikzpicture}\\end{tikzpicture}",
+            "instruction": "",
+        }],
+        allowed_image_paths=[rendered_url, reference_url],
+        uploads_dir=upload_dir,
+        url_prefix="static/uploads",
+    )
+    assert assets[0]["reference_image_path"] == reference_url
+
+    content_assets = normalize_content_tikz_assets(
+        [{
+            "id": "content_tikz_reference_test",
+            "image_path": rendered_url,
+            "reference_image_path": reference_url,
+            "tikz_code": "\\begin{tikzpicture}\\end{tikzpicture}",
+            "instruction": "题干示意图",
+        }],
+        allowed_image_paths=[rendered_url, reference_url],
+        uploads_dir=upload_dir,
+        url_prefix="static/uploads",
+    )
+    assert content_assets[0]["instruction"] == "题干示意图"
 
 
 def test_single_upload_reencodes_real_images_and_rejects_active_content(client, tmp_path):

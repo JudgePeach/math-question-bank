@@ -363,23 +363,37 @@ def build_latex_document(
             q = item.get("question", {})
             raw_content = q.get("content", "")
             q_score = item.get("score", 5)
-            tikz = q.get("tikz_code", "").strip()
+            content_tikz_assets = q.get("content_tikz_assets", [])
+            if not isinstance(content_tikz_assets, list):
+                content_tikz_assets = []
+            tikz_codes = [
+                str(asset.get("tikz_code") or "").strip()
+                for asset in content_tikz_assets
+                if isinstance(asset, dict) and str(asset.get("tikz_code") or "").strip()
+            ]
+            if not tikz_codes:
+                legacy_tikz = q.get("tikz_code", "").strip()
+                if legacy_tikz:
+                    tikz_codes = [legacy_tikz]
+            tikz_image_names = {
+                os.path.basename(str(asset.get("image_path") or ""))
+                for asset in content_tikz_assets
+                if isinstance(asset, dict) and asset.get("image_path")
+            }
 
             fig_body = ""
             cleaned_raw = raw_content
-            tikz_code = ""
 
-            if tikz or r"\begin{tikzpicture}" in raw_content:
-                tikz_code = tikz
-                if not tikz_code and r"\begin{tikzpicture}" in raw_content:
+            if tikz_codes or r"\begin{tikzpicture}" in raw_content:
+                if not tikz_codes and r"\begin{tikzpicture}" in raw_content:
                     m = re.search(r'(\\begin\{tikzpicture\}[\s\S]*?\\end\{tikzpicture\})', raw_content)
                     if m:
-                        tikz_code = m.group(1)
-                        cleaned_raw = cleaned_raw.replace(tikz_code, '').strip()
+                        tikz_codes = [m.group(1)]
+                        cleaned_raw = cleaned_raw.replace(tikz_codes[0], '').strip()
                 
                 cleaned_raw = re.sub(r'!\[.*?\]\([^)]+\)', '', cleaned_raw).strip()
             fig_elements = []
-            if tikz_code:
+            for tikz_code in tikz_codes:
                 if r"\begin{tikzpicture}" not in tikz_code:
                     tikz_code = f"\\begin{{tikzpicture}}\n{tikz_code}\n\\end{{tikzpicture}}"
                 fig_elements.append(f"\\resizebox{{4.5cm}}{{!}}{{{tikz_code}}}")
@@ -388,10 +402,12 @@ def build_latex_document(
             if img_matches:
                 for img_path in img_matches:
                     img_filename = os.path.basename(img_path)
-                    # 避免在已经输出了矢量 tikz_code 时二次重叠渲染同名生成图 tikz_xxx.png
-                    if tikz_code and img_filename.startswith("tikz_"):
+                    # 每幅已有可编辑源码的 TikZ 图输出矢量代码，跳过其对应 PNG。
+                    if img_filename in tikz_image_names:
                         continue
-                    img_w = "3.8cm" if (len(img_matches) > 1 and not (tikz_code and img_filename.startswith("tikz_"))) or (tikz_code and not img_filename.startswith("tikz_")) else "5.0cm"
+                    if not content_tikz_assets and tikz_codes and img_filename.startswith("tikz_"):
+                        continue
+                    img_w = "3.8cm" if len(img_matches) > 1 or tikz_codes else "5.0cm"
                     fig_elements.append(f"\\includegraphics[width={img_w}]{{{img_filename}}}")
                 cleaned_raw = re.sub(r'!\[.*?\]\([^)]+\)', '', cleaned_raw).strip()
 
@@ -447,7 +463,10 @@ def build_latex_document(
                     lines.append(r"  \setlength{\parindent}{2em}")
                     lines.append(r"  \hangindent=0pt")
                     lines.append(r"  \hangafter=0")
-                    lines.append(f"  {stem_text}")
+                    # The question environment already owns the item label.  A minipage
+                    # starts a fresh paragraph, so suppress its first-line indent while
+                    # preserving the configured indent for any later paragraphs.
+                    lines.append(f"  \\noindent {stem_text}")
                     lines.append(r"\end{minipage}%")
                     lines.append(r"\hfill")
                     lines.append(r"\begin{minipage}[t]{5.2cm}")
@@ -997,8 +1016,17 @@ def build_answer_sheet_latex(title: str, subtitle: str, questions_data: list) ->
 
         # Check for figures
         q_content = q.get("content", "")
-        tikz_code = q.get("tikz_code", "").strip()
-        full_content = q_content + ("\n" + tikz_code if tikz_code else "")
+        content_tikz_assets = q.get("content_tikz_assets", [])
+        tikz_codes = [
+            str(asset.get("tikz_code") or "").strip()
+            for asset in content_tikz_assets
+            if isinstance(asset, dict) and str(asset.get("tikz_code") or "").strip()
+        ] if isinstance(content_tikz_assets, list) else []
+        if not tikz_codes:
+            legacy_tikz = q.get("tikz_code", "").strip()
+            if legacy_tikz:
+                tikz_codes = [legacy_tikz]
+        full_content = q_content + ("\n" + "\n".join(tikz_codes) if tikz_codes else "")
         fig_code = extract_figures_for_answer_sheet(full_content)
         if fig_code:
             fig_node = f"\\node[anchor=north east, inner sep=0pt, outer sep=0pt] at ({fig_coords}) {{\\resizebox{{4.2cm}}{{!}}{{{fig_code}}}}};"

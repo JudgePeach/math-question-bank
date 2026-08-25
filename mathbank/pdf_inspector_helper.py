@@ -14,7 +14,7 @@ except ImportError:
     _PDF_INSPECTOR_AVAILABLE = False
 
 try:
-    import fitz
+    import pymupdf as fitz
     _FITZ_AVAILABLE = True
 except ImportError:
     fitz = None
@@ -86,19 +86,19 @@ def _extract_fitz_pages(
     if not _FITZ_AVAILABLE:
         return []
     try:
-        doc = fitz.open(stream=file_bytes, filetype="pdf")
-        selected = page_indices if page_indices is not None else list(range(len(doc)))
-        pages = []
-        for page_index in selected:
-            if page_index < 0 or page_index >= len(doc):
-                continue
-            text = doc.load_page(page_index).get_text("text").strip()
-            pages.append({
-                "page_index": page_index,
-                "markdown": text,
-                "needs_ocr": len(text) < 30,
-                "source": "pymupdf",
-            })
+        with fitz.open(stream=file_bytes, filetype="pdf") as doc:
+            selected = page_indices if page_indices is not None else list(range(len(doc)))
+            pages = []
+            for page_index in selected:
+                if page_index < 0 or page_index >= len(doc):
+                    continue
+                text = doc.load_page(page_index).get_text("text").strip()
+                pages.append({
+                    "page_index": page_index,
+                    "markdown": text,
+                    "needs_ocr": len(text) < 30,
+                    "source": "pymupdf",
+                })
         return pages
     except Exception:
         return []

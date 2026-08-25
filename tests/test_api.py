@@ -1,3 +1,4 @@
+import base64
 import os
 import json
 from types import SimpleNamespace
@@ -539,6 +540,112 @@ def test_figure_align_api(client):
     res_get = client.get(f"/api/questions/{q_id}")
     assert res_get.status_code == 200
     assert res_get.json()["figure_align"] == "center"
+
+
+def test_question_persists_editable_tikz_assets_and_original_reference(client):
+    headers = {"X-Local-Token": LOCAL_TOKEN}
+    tiny_png = base64.b64decode(
+        "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUB"
+        "AScY42YAAAAASUVORK5CYII="
+    )
+    upload = client.post(
+        "/api/upload",
+        files={"file": ("tikz.png", tiny_png, "image/png")},
+        headers=headers,
+    )
+    assert upload.status_code == 200
+    image_path = upload.json()["file_path"]
+    reference_upload = client.post(
+        "/api/upload",
+        files={"file": ("original.png", tiny_png, "image/png")},
+        headers=headers,
+    )
+    assert reference_upload.status_code == 200
+    reference_path = reference_upload.json()["file_path"]
+    answer_reference_upload = client.post(
+        "/api/upload",
+        files={"file": ("answer-original.png", tiny_png, "image/png")},
+        headers=headers,
+    )
+    assert answer_reference_upload.status_code == 200
+    answer_reference_path = answer_reference_upload.json()["file_path"]
+    content_second_upload = client.post(
+        "/api/upload",
+        files={"file": ("tikz-second.png", tiny_png, "image/png")},
+        headers=headers,
+    )
+    assert content_second_upload.status_code == 200
+    content_second_path = content_second_upload.json()["file_path"]
+    tikz_code = "\\begin{tikzpicture}\\draw (0,0)--(1,1);\\end{tikzpicture}"
+    content_assets = [
+        {
+            "id": "content_tikz_first",
+            "image_path": image_path,
+            "tikz_code": tikz_code,
+            "instruction": "题干第一幅图",
+            "reference_image_path": reference_path,
+        },
+        {
+            "id": "content_tikz_second",
+            "image_path": content_second_path,
+            "tikz_code": tikz_code,
+            "instruction": "题干第二幅图",
+        },
+    ]
+    asset = {
+        "id": "tikz_test_asset",
+        "image_path": image_path,
+        "tikz_code": tikz_code,
+        "instruction": "绘制线段",
+        "reference_image_path": answer_reference_path,
+    }
+    payload = {
+        "content": (
+            f"TikZ 多幅题干插图持久化测试\n\n![TikZ]({image_path})"
+            f"\n\n![TikZ]({content_second_path})"
+        ),
+        "question_type": "detailed_answer",
+        "category_compulsory": "必修一",
+        "category_chapter": "几何",
+        "category_knowledge": "线段",
+        "difficulty": "medium",
+        "answer_markdown": f"![TikZ 几何图]({image_path})",
+        "image_paths": json.dumps([
+            image_path,
+            content_second_path,
+            reference_path,
+            answer_reference_path,
+        ]),
+        "tikz_code": tikz_code,
+        "tikz_reference_image_path": reference_path,
+        "content_tikz_assets": json.dumps(content_assets, ensure_ascii=False),
+        "answer_tikz_assets": json.dumps([asset], ensure_ascii=False),
+    }
+
+    response = client.post("/api/questions", data=payload, headers=headers)
+
+    assert response.status_code == 200
+    stored = response.json()["question"]
+    assert stored["content_tikz_assets"] == content_assets
+    assert stored["answer_tikz_assets"] == [asset]
+    assert stored["tikz_reference_image_path"] == reference_path
+    assert reference_path not in stored["image_paths"]
+    assert answer_reference_path not in stored["image_paths"]
+    assert reference_path not in stored["content"]
+    assert answer_reference_path not in stored["content"]
+    assert answer_reference_path not in stored["answer_markdown"]
+    detail = client.get(f"/api/questions/{stored['id']}")
+    assert detail.status_code == 200
+    assert len(detail.json()["content_tikz_assets"]) == 2
+    assert detail.json()["content_tikz_assets"][1]["instruction"] == "题干第二幅图"
+    assert detail.json()["answer_tikz_assets"][0]["tikz_code"] == tikz_code
+    assert detail.json()["tikz_reference_image_path"] == reference_path
+    assert reference_path not in detail.json()["image_paths"]
+    assert answer_reference_path not in detail.json()["image_paths"]
+    summary = client.get("/api/questions").json()[0]
+    assert "content_tikz_assets" not in summary
+    assert "answer_tikz_assets" not in summary
+    assert "tikz_reference_image_path" not in summary
 
 
 def test_version_and_update_check_api(client):

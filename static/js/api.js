@@ -504,6 +504,21 @@
         let systemMetadata = { question_types: [], difficulties: [], curriculum: {} };
         let uploadedImages = [];
         let uploadedAnswerImages = [];
+        const TikzState = {
+            contentAssets: [],
+            answerAssets: [],
+            reset() {
+                this.contentAssets = [];
+                this.answerAssets = [];
+            },
+            referencePaths() {
+                return [
+                    ...this.contentAssets.map(asset => asset && asset.reference_image_path),
+                    ...this.answerAssets.map(asset => asset && asset.reference_image_path)
+                ].map(path => window.MathBankSafe.safeImageUrl(path)).filter(Boolean);
+            }
+        };
+        window.TikzState = TikzState;
         let originalQuestionState = null;
         let contentOcrAbortController = null;
         let answerOcrAbortController = null;

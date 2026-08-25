@@ -15,6 +15,7 @@ from sqlalchemy import (
     event,
 )
 from sqlalchemy.engine import Engine
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import declarative_base, sessionmaker
 from mathbank.paths import DATABASE_FILE, sqlite_url
 
@@ -50,21 +51,48 @@ def _utcnow_naive():
 
 
 def configure_sqlite_wal(database_engine: Engine) -> str | None:
-    """Enable and verify WAL mode for a persistent SQLite database."""
+    """Prefer WAL, but keep a local single-user database usable with DELETE."""
 
     database_name = database_engine.url.database
     if not database_name or database_name == ":memory:":
         return None
-    with database_engine.connect().execution_options(
-        isolation_level="AUTOCOMMIT"
-    ) as connection:
-        mode = str(
-            connection.exec_driver_sql("PRAGMA journal_mode=WAL").scalar_one()
-        ).lower()
-        if mode != "wal":
-            raise RuntimeError(f"SQLite WAL 模式启用失败，当前模式: {mode}")
-        connection.exec_driver_sql("PRAGMA synchronous=NORMAL")
-        connection.exec_driver_sql("PRAGMA wal_autocheckpoint=1000")
+    wal_error = None
+    try:
+        with database_engine.connect().execution_options(
+            isolation_level="AUTOCOMMIT"
+        ) as connection:
+            mode = str(
+                connection.exec_driver_sql("PRAGMA journal_mode=WAL").scalar_one()
+            ).lower()
+            if mode == "wal":
+                connection.exec_driver_sql("PRAGMA synchronous=NORMAL")
+                connection.exec_driver_sql("PRAGMA wal_autocheckpoint=1000")
+            else:
+                wal_error = f"journal_mode returned {mode}"
+    except SQLAlchemyError as exc:
+        mode = ""
+        wal_error = f"{type(exc).__name__}: {exc}"
+
+    if mode != "wal":
+        try:
+            with database_engine.connect().execution_options(
+                isolation_level="AUTOCOMMIT"
+            ) as connection:
+                mode = str(
+                    connection.exec_driver_sql("PRAGMA journal_mode=DELETE").scalar_one()
+                ).lower()
+                if mode != "delete":
+                    raise RuntimeError(
+                        f"SQLite 无法启用 WAL 或 DELETE 日志模式，当前模式: {mode}"
+                    )
+                connection.exec_driver_sql("PRAGMA synchronous=FULL")
+        except SQLAlchemyError as exc:
+            raise RuntimeError("SQLite WAL 降级至 DELETE 模式失败") from exc
+        print(
+            "[Database Warning] WAL mode is unavailable; using the safer "
+            f"single-user DELETE journal fallback ({wal_error}).",
+            flush=True,
+        )
     try:
         Path(database_name).resolve().chmod(0o600)
     except OSError:
@@ -87,6 +115,9 @@ class Question(Base):
     association_group_id = Column(String(100), default="", index=True)  # 关联题目分组ID (支持传递关系)
     _image_paths = Column(Text, default="[]", name="image_paths")  # 以JSON字符串形式存储相对路径列表
     tikz_code = Column(Text, default="")  # TikZ 几何绘图源代码
+    tikz_reference_image_path = Column(Text, default="")  # 题干 TikZ 自动重绘时的原题参考图
+    _content_tikz_assets = Column(Text, default="[]", name="content_tikz_assets")  # 题干多图 TikZ 源码与渲染图映射
+    _answer_tikz_assets = Column(Text, default="[]", name="answer_tikz_assets")  # 解答多图 TikZ 源码与渲染图映射
     figure_align = Column(String(50), default="right")  # 插图排版位置: right (题干右侧), center (下方居中), bottom_right (下方居右)
     tags = Column(Text, default="")  # 自定义标签 (逗号分隔或字符串)
     usage_count = Column(Integer, default=0, index=True)  # 组卷引用次数
@@ -107,6 +138,52 @@ class Question(Base):
         else:
             self._image_paths = "[]"
 
+    @property
+    def answer_tikz_assets(self):
+        try:
+            value = json.loads(self._answer_tikz_assets or "[]")
+            return value if isinstance(value, list) else []
+        except Exception:
+            return []
+
+    @answer_tikz_assets.setter
+    def answer_tikz_assets(self, value):
+        if isinstance(value, list):
+            self._answer_tikz_assets = json.dumps(value, ensure_ascii=False)
+        else:
+            self._answer_tikz_assets = "[]"
+
+    @property
+    def content_tikz_assets(self):
+        try:
+            value = json.loads(self._content_tikz_assets or "[]")
+            return value if isinstance(value, list) else []
+        except Exception:
+            return []
+
+    @content_tikz_assets.setter
+    def content_tikz_assets(self, value):
+        if isinstance(value, list):
+            self._content_tikz_assets = json.dumps(value, ensure_ascii=False)
+        else:
+            self._content_tikz_assets = "[]"
+
+    @property
+    def display_image_paths(self):
+        """Return question figures while keeping AI-only references hidden."""
+
+        hidden_references = {
+            str(self.tikz_reference_image_path or "").strip()
+        }
+        for asset in [*self.content_tikz_assets, *self.answer_tikz_assets]:
+            if not isinstance(asset, dict):
+                continue
+            reference = str(asset.get("reference_image_path") or "").strip()
+            if reference:
+                hidden_references.add(reference)
+        hidden_references.discard("")
+        return [path for path in self.image_paths if path not in hidden_references]
+
     def to_dict(self):
         return {
             "id": self.id,
@@ -121,8 +198,11 @@ class Question(Base):
             "has_answer": bool((self.answer_markdown or "").strip()),
             "review": self.review,
             "association_group_id": self.association_group_id,
-            "image_paths": self.image_paths,
+            "image_paths": self.display_image_paths,
             "tikz_code": self.tikz_code,
+            "tikz_reference_image_path": self.tikz_reference_image_path or "",
+            "content_tikz_assets": self.content_tikz_assets,
+            "answer_tikz_assets": self.answer_tikz_assets,
             "figure_align": self.figure_align or "right",
             "tags": self.tags,
             "usage_count": self.usage_count or 0,
@@ -141,7 +221,7 @@ class Question(Base):
             "source": self.source,
             "has_answer": bool((self.answer_markdown or "").strip()),
             "association_group_id": self.association_group_id,
-            "image_paths": self.image_paths,
+            "image_paths": self.display_image_paths,
             "tikz_code": self.tikz_code,
             "figure_align": self.figure_align or "right",
             "tags": self.tags,
@@ -311,6 +391,12 @@ def init_db():
                     "id", "paper_id", "question_id", "order_index", "score",
                 },
             }
+            if current_version >= 3:
+                required_columns["questions"].add("answer_tikz_assets")
+            if current_version >= 4:
+                required_columns["questions"].add("tikz_reference_image_path")
+            if current_version >= 5:
+                required_columns["questions"].add("content_tikz_assets")
             for table_name in core_tables:
                 columns = {
                     row[1]

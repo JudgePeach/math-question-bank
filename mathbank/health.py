@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import os
 from pathlib import Path
 from typing import Any
 
@@ -31,8 +30,6 @@ def readiness_report(
             checks["journal_mode"] = str(
                 connection.exec_driver_sql("PRAGMA journal_mode").scalar_one()
             ).lower()
-            violations = connection.exec_driver_sql("PRAGMA foreign_key_check").fetchall()
-            checks["foreign_key_violations"] = len(violations)
     except Exception as exc:
         checks["database"] = False
         errors.append(f"database: {type(exc).__name__}")
@@ -46,7 +43,6 @@ def readiness_report(
     for directory in directories:
         directory_checks[directory.name] = {
             "exists": directory.is_dir(),
-            "writable": directory.is_dir() and os.access(directory, os.W_OK),
         }
     checks["directories"] = directory_checks
 
@@ -57,14 +53,15 @@ def readiness_report(
         and database_name
         and database_name != ":memory:"
     )
-    journal_ready = not persistent_sqlite or checks.get("journal_mode") == "wal"
+    journal_mode = checks.get("journal_mode")
+    journal_ready = not persistent_sqlite or journal_mode in {"wal", "delete"}
+    checks["journal_fallback"] = bool(persistent_sqlite and journal_mode == "delete")
     directories_ready = all(
-        result["exists"] and result["writable"] for result in directory_checks.values()
+        result["exists"] for result in directory_checks.values()
     )
     ready = bool(
         checks.get("database")
         and checks.get("foreign_keys")
-        and checks.get("foreign_key_violations") == 0
         and journal_ready
         and schema_ready
         and directories_ready

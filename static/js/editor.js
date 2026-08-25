@@ -163,6 +163,12 @@ let bankQuestionsRetryTimer = null;
                 category_chapter: document.getElementById('editChapter').value,
                 category_knowledge: document.getElementById('editKnowledge').value,
                 image_paths: JSON.stringify(uploadedImages),
+                tikz_code: TikzState.contentAssets[0] ? TikzState.contentAssets[0].tikz_code : '',
+                tikz_reference_image_path: TikzState.contentAssets[0]
+                    ? (TikzState.contentAssets[0].reference_image_path || '')
+                    : '',
+                content_tikz_assets: JSON.stringify(TikzState.contentAssets),
+                answer_tikz_assets: JSON.stringify(TikzState.answerAssets),
                 tags: document.getElementById('editTags') ? document.getElementById('editTags').value : ''
             };
             originalQuestionState = {
@@ -178,6 +184,10 @@ let bankQuestionsRetryTimer = null;
                 category_chapter: snapshot.category_chapter,
                 category_knowledge: snapshot.category_knowledge,
                 image_paths: snapshot.image_paths,
+                tikz_code: snapshot.tikz_code || '',
+                tikz_reference_image_path: snapshot.tikz_reference_image_path || '',
+                content_tikz_assets: snapshot.content_tikz_assets || '[]',
+                answer_tikz_assets: snapshot.answer_tikz_assets || '[]',
                 tags: snapshot.tags
             };
         }
@@ -195,6 +205,14 @@ let bankQuestionsRetryTimer = null;
             const currentChap = document.getElementById('editChapter').value;
             const currentKnow = document.getElementById('editKnowledge').value;
             const currentImages = JSON.stringify(uploadedImages);
+            const currentTikzCode = TikzState.contentAssets[0]
+                ? TikzState.contentAssets[0].tikz_code
+                : '';
+            const currentTikzReferencePath = TikzState.contentAssets[0]
+                ? (TikzState.contentAssets[0].reference_image_path || '')
+                : '';
+            const currentContentTikzAssets = JSON.stringify(TikzState.contentAssets);
+            const currentAnswerTikzAssets = JSON.stringify(TikzState.answerAssets);
             const currentTags = document.getElementById('editTags') ? document.getElementById('editTags').value : '';
 
             return currentContent === snapshot.content &&
@@ -207,6 +225,10 @@ let bankQuestionsRetryTimer = null;
                    currentChap === snapshot.category_chapter &&
                    currentKnow === snapshot.category_knowledge &&
                    currentImages === snapshot.image_paths &&
+                   currentTikzCode === (snapshot.tikz_code || '') &&
+                   currentTikzReferencePath === (snapshot.tikz_reference_image_path || '') &&
+                   currentContentTikzAssets === (snapshot.content_tikz_assets || '[]') &&
+                   currentAnswerTikzAssets === (snapshot.answer_tikz_assets || '[]') &&
                    currentTags === snapshot.tags;
         }
         window.editorMatchesBackupSnapshot = editorMatchesBackupSnapshot;
@@ -432,8 +454,17 @@ let bankQuestionsRetryTimer = null;
                 tags: tags,
                 image_paths: Array.from(new Set([
                     ...uploadedImages,
-                    ...(typeof uploadedAnswerImages !== 'undefined' ? uploadedAnswerImages : [])
+                    ...(typeof uploadedAnswerImages !== 'undefined' ? uploadedAnswerImages : []),
+                    ...TikzState.referencePaths()
                 ])),
+                tikz_code: TikzState.contentAssets[0]
+                    ? TikzState.contentAssets[0].tikz_code
+                    : '',
+                tikz_reference_image_path: TikzState.contentAssets[0]
+                    ? (TikzState.contentAssets[0].reference_image_path || '')
+                    : '',
+                content_tikz_assets: TikzState.contentAssets,
+                answer_tikz_assets: TikzState.answerAssets,
                 isDraft: true,
                 updated_at: new Date().toISOString()
             };
@@ -503,10 +534,26 @@ let bankQuestionsRetryTimer = null;
             }
             
             // Load images
-            uploadedImages = Array.isArray(draft.image_paths)
+            const allDraftImages = Array.isArray(draft.image_paths)
                 ? draft.image_paths.map(path => window.MathBankSafe.safeImageUrl(path)).filter(Boolean)
                 : [];
+            uploadedAnswerImages = typeof window.collectAnswerImagePaths === 'function'
+                ? window.collectAnswerImagePaths(draft.answer_markdown || '')
+                : [];
+            uploadedImages = allDraftImages.filter(path => !uploadedAnswerImages.includes(path));
+            window.hydrateTikzState(draft);
+            const hiddenTikzReferencePaths = new Set(TikzState.referencePaths());
+            uploadedImages = uploadedImages.filter(path => !hiddenTikzReferencePaths.has(path));
             renderIllustrationBadges();
+            if (typeof window.renderAnswerImageBadges === 'function') {
+                window.renderAnswerImageBadges();
+            }
+            if (typeof window.renderAnswerTikzAssets === 'function') {
+                window.renderAnswerTikzAssets();
+            }
+            if (typeof window.renderContentTikzAssets === 'function') {
+                window.renderContentTikzAssets();
+            }
             
             // Update preview and side panels
             if (typeof window.updateContentPreview === 'function') {

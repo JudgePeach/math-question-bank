@@ -23,9 +23,8 @@
                 };
             }
 
-            window.syncAnswerImagesFromMarkdown = function() {
-                const textarea = document.getElementById('editAnswerMarkdown');
-                const markdown = textarea ? textarea.value : '';
+            window.collectAnswerImagePaths = function(markdown) {
+                markdown = String(markdown || '');
                 const foundImages = [];
                 const imagePattern = /!\[.*?\]\(([^)]+)\)/g;
                 let match;
@@ -35,12 +34,52 @@
                         foundImages.push(safePath);
                     }
                 }
-                uploadedAnswerImages = foundImages;
+                return foundImages;
+            };
+
+            window.syncAnswerImagesFromMarkdown = function() {
+                const textarea = document.getElementById('editAnswerMarkdown');
+                const markdown = textarea ? textarea.value : '';
+                uploadedAnswerImages = window.collectAnswerImagePaths(markdown);
                 if (typeof window.renderAnswerImageBadges === 'function') {
                     window.renderAnswerImageBadges();
                 }
             };
         })();
+
+        function findContentTikzImagePath(markdown) {
+            return window.collectAnswerImagePaths(markdown).find(path => {
+                const filename = String(path).split('/').pop() || '';
+                return filename.startsWith('tikz_');
+            }) || '';
+        }
+
+        window.hydrateTikzState = function(record) {
+            const tikzCode = String(record && record.tikz_code || '').trim();
+            const storedContentAssets = Array.isArray(record && record.content_tikz_assets)
+                ? record.content_tikz_assets
+                : [];
+            TikzState.contentAssets = storedContentAssets.length > 0
+                ? storedContentAssets
+                : (tikzCode ? [{
+                    id: 'content_tikz_legacy',
+                    image_path: findContentTikzImagePath(record.content || ''),
+                    tikz_code: tikzCode,
+                    instruction: '',
+                    reference_image_path: window.MathBankSafe.safeImageUrl(
+                        record.tikz_reference_image_path || ''
+                    )
+                }] : []);
+            TikzState.answerAssets = Array.isArray(record && record.answer_tikz_assets)
+                ? record.answer_tikz_assets
+                : [];
+        };
+
+        function resetTikzEditorState() {
+            TikzState.reset();
+            if (typeof window.renderContentTikzAssets === 'function') window.renderContentTikzAssets();
+            if (typeof window.renderAnswerTikzAssets === 'function') window.renderAnswerTikzAssets();
+        }
 
         function startNewQuestionWithoutPrompt() {
             if (window.blockEditorSessionChangeWhileSaving && window.blockEditorSessionChangeWhileSaving()) {
@@ -62,6 +101,8 @@
             document.getElementById('ocrOutputBox').classList.add('hidden');
             
             uploadedImages = [];
+            uploadedAnswerImages = [];
+            resetTikzEditorState();
             renderIllustrationBadges();
             
             document.getElementById('editQType').value = 'single_choice';
@@ -147,6 +188,8 @@
                 document.getElementById('ocrOutputBox').classList.add('hidden');
                 
                 uploadedImages = [];
+                uploadedAnswerImages = [];
+                resetTikzEditorState();
                 renderIllustrationBadges();
                 
                 // Reset select lists
@@ -182,35 +225,13 @@
             }
             EditorState.reset();
             document.getElementById('editorTitle').textContent = '录入新数学题';
-            
-            window.lastOcrOriginalImagePath = '';
-            window.contentLastCompiledTikzPath = '';
-            window.answerLastCompiledTikzPath = '';
+
             document.getElementById('editContent').value = '';
             document.getElementById('editSource').value = '';
             document.getElementById('editAnswerMarkdown').value = '';
             document.getElementById('aiCustomPrompt').value = '';
             document.getElementById('editReview').value = '';
             if (document.getElementById('editTags')) document.getElementById('editTags').value = '';
-            if (document.getElementById('editContentTikzCode')) document.getElementById('editContentTikzCode').value = '';
-            if (document.getElementById('editAnswerTikzCode')) document.getElementById('editAnswerTikzCode').value = '';
-            
-            // Hide Content & Answer TikZ Panels
-            if (document.getElementById('contentTikzContainer')) document.getElementById('contentTikzContainer').classList.add('hidden');
-            if (document.getElementById('answerTikzContainer')) document.getElementById('answerTikzContainer').classList.add('hidden');
-            
-            if (document.getElementById('contentTikzPreviewImage')) {
-                document.getElementById('contentTikzPreviewImage').classList.add('hidden');
-                document.getElementById('contentTikzPreviewImage').src = '';
-                document.getElementById('contentTikzPreviewPlaceholder').classList.remove('hidden');
-                document.getElementById('contentTikzStatusText').textContent = '未编译';
-            }
-            if (document.getElementById('answerTikzPreviewImage')) {
-                document.getElementById('answerTikzPreviewImage').classList.add('hidden');
-                document.getElementById('answerTikzPreviewImage').src = '';
-                document.getElementById('answerTikzPreviewPlaceholder').classList.remove('hidden');
-                document.getElementById('answerTikzStatusText').textContent = '未编译';
-            }
             
             document.getElementById('editRelatedQuestion').value = '';
             document.getElementById('editRelatedQuestionNum').value = '';
@@ -226,6 +247,8 @@
             document.getElementById('ocrOutputBox').classList.add('hidden');
             
             uploadedImages = [];
+            uploadedAnswerImages = [];
+            resetTikzEditorState();
             renderIllustrationBadges();
             
             // Reset selects
@@ -549,53 +572,31 @@
                             card.classList.remove('active');
                         }
                     }
-                    window.lastOcrOriginalImagePath = '';
-                    window.contentLastCompiledTikzPath = '';
-                    window.answerLastCompiledTikzPath = '';
                     // Load values to editor
                     document.getElementById('editContent').value = fullItem.content;
                     document.getElementById('editSource').value = fullItem.source || '';
                     document.getElementById('editAnswerMarkdown').value = fullItem.answer_markdown || '';
                     document.getElementById('editReview').value = fullItem.review || '';
-                    if (document.getElementById('editContentTikzCode')) {
-                        document.getElementById('editContentTikzCode').value = fullItem.tikz_code || '';
-                    }
-                    if (document.getElementById('editAnswerTikzCode')) {
-                        document.getElementById('editAnswerTikzCode').value = '';
-                    }
-                    
-                    // Reset TikZ Preview on load
-                    if (document.getElementById('contentTikzPreviewImage')) {
-                        document.getElementById('contentTikzPreviewImage').classList.add('hidden');
-                        document.getElementById('contentTikzPreviewImage').src = '';
-                        document.getElementById('contentTikzPreviewPlaceholder').classList.remove('hidden');
-                        document.getElementById('contentTikzStatusText').textContent = fullItem.tikz_code ? '已加载' : '未编译';
-                    }
-                    if (document.getElementById('answerTikzPreviewImage')) {
-                        document.getElementById('answerTikzPreviewImage').classList.add('hidden');
-                        document.getElementById('answerTikzPreviewImage').src = '';
-                        document.getElementById('answerTikzPreviewPlaceholder').classList.remove('hidden');
-                        document.getElementById('answerTikzStatusText').textContent = '未编译';
-                    }
-                    
-                    uploadedImages = Array.isArray(fullItem.image_paths)
+
+                    window.hydrateTikzState(fullItem);
+                    const allStoredImages = Array.isArray(fullItem.image_paths)
                         ? fullItem.image_paths.map(path => window.MathBankSafe.safeImageUrl(path)).filter(Boolean)
                         : [];
+                    uploadedAnswerImages = window.collectAnswerImagePaths(fullItem.answer_markdown || '');
+                    const hiddenTikzReferencePaths = new Set(TikzState.referencePaths());
+                    uploadedImages = allStoredImages.filter(path => {
+                        return !uploadedAnswerImages.includes(path)
+                            && !hiddenTikzReferencePaths.has(path);
+                    });
                     renderIllustrationBadges();
-                    
-                    // Show or hide Content TikZ container dynamically on load
-                    const contentContainer = document.getElementById('contentTikzContainer');
-                    if (contentContainer) {
-                        const hasOriginalImage = uploadedImages.some(path => !path.includes('/tikz_'));
-                        if (fullItem.tikz_code || hasOriginalImage) {
-                            contentContainer.classList.remove('hidden');
-                        } else {
-                            contentContainer.classList.add('hidden');
-                        }
+                    if (typeof window.renderAnswerImageBadges === 'function') {
+                        window.renderAnswerImageBadges();
                     }
-                    const answerContainer = document.getElementById('answerTikzContainer');
-                    if (answerContainer) {
-                        answerContainer.classList.add('hidden');
+                    if (typeof window.renderAnswerTikzAssets === 'function') {
+                        window.renderAnswerTikzAssets();
+                    }
+                    if (typeof window.renderContentTikzAssets === 'function') {
+                        window.renderContentTikzAssets();
                     }
                     
                     // Cascade bindings
@@ -699,7 +700,14 @@
                 const answerMarkdown = document.getElementById('editAnswerMarkdown').value;
                 const review = document.getElementById('editReview').value;
                 const relatedQuestionId = document.getElementById('editRelatedQuestion').value;
-                const tikzCode = document.getElementById('editContentTikzCode') ? document.getElementById('editContentTikzCode').value : '';
+                const contentTikzAssets = Array.isArray(TikzState.contentAssets)
+                    ? TikzState.contentAssets
+                    : [];
+                const firstContentTikzAsset = contentTikzAssets[0] || null;
+                const tikzCode = firstContentTikzAsset ? firstContentTikzAsset.tikz_code : '';
+                const tikzReferencePath = firstContentTikzAsset
+                    ? (window.MathBankSafe.safeImageUrl(firstContentTikzAsset.reference_image_path) || '')
+                    : '';
                 const tags = document.getElementById('editTags') ? document.getElementById('editTags').value.trim() : '';
                 
                 if (!content.trim()) {
@@ -757,6 +765,10 @@
                     category_chapter: chapter,
                     category_knowledge: knowledge,
                     image_paths: JSON.stringify(Array.from(uploadedImages)),
+                    tikz_code: tikzCode,
+                    tikz_reference_image_path: tikzReferencePath,
+                    content_tikz_assets: JSON.stringify(contentTikzAssets),
+                    answer_tikz_assets: JSON.stringify(TikzState.answerAssets),
                     tags: tags
                 });
                 
@@ -772,10 +784,14 @@
                 formData.append('review', review);
                 formData.append('related_question_id', relatedQuestionId);
                 formData.append('tikz_code', tikzCode);
+                formData.append('tikz_reference_image_path', tikzReferencePath);
+                formData.append('content_tikz_assets', JSON.stringify(contentTikzAssets));
+                formData.append('answer_tikz_assets', JSON.stringify(TikzState.answerAssets));
                 formData.append('tags', tags);
                 const combinedImages = Array.from(new Set([
                     ...uploadedImages,
-                    ...(typeof uploadedAnswerImages !== 'undefined' ? uploadedAnswerImages : [])
+                    ...(typeof uploadedAnswerImages !== 'undefined' ? uploadedAnswerImages : []),
+                    ...TikzState.referencePaths()
                 ].map(path => window.MathBankSafe.safeImageUrl(path)).filter(Boolean)));
                 formData.append('image_paths', JSON.stringify(combinedImages));
                 
@@ -3566,18 +3582,706 @@
             // Initialize empty original state
             backupEditorState(null, null);
 
-            // ================== TikZ Geometry Drawing & AI Correction Helpers (双通道分离设计) ==================
-            function beginEditorBoundRequest(button, idleHtml) {
-                const editorSession = EditorState.snapshot();
-                const requestToken = {};
-                button._mathbankEditorRequestToken = requestToken;
-                return () => {
-                    if (button._mathbankEditorRequestToken !== requestToken) return false;
-                    button.disabled = false;
-                    button.innerHTML = idleHtml;
-                    return EditorState.isCurrent(editorSession);
+            // ================== Shared on-demand multimodal TikZ workbench ==================
+            const tikzWorkbenchState = {
+                target: 'answer',
+                referenceFile: null,
+                referenceObjectUrl: '',
+                referencePath: '',
+                compiledPath: '',
+                compiledCode: '',
+                editingAssetId: null,
+                caretStart: 0,
+                caretEnd: 0,
+                busy: false,
+                editorSession: null
+            };
+
+            function setTikzWorkbenchStatus(text, tone = 'idle') {
+                const status = document.getElementById('answerTikzWorkbenchStatus');
+                if (!status) return;
+                status.textContent = text;
+                const tones = {
+                    idle: 'bg-slate-100 text-slate-500',
+                    busy: 'bg-indigo-50 text-indigo-700',
+                    success: 'bg-emerald-50 text-emerald-700',
+                    error: 'bg-red-50 text-red-700',
+                    warning: 'bg-amber-50 text-amber-700'
                 };
+                status.className = `rounded-md px-2 py-1 text-[10px] font-semibold ${tones[tone] || tones.idle}`;
             }
+
+            function setTikzWorkbenchBusy(isBusy, message = '') {
+                tikzWorkbenchState.busy = isBusy;
+                const loading = document.getElementById('answerTikzWorkbenchLoading');
+                const loadingText = document.getElementById('answerTikzWorkbenchLoadingText');
+                const generateButton = document.getElementById('generateAnswerTikzBtn');
+                const compileButton = document.getElementById('compileTikzWorkbenchBtn');
+                const insertButton = document.getElementById('insertAnswerTikzWorkbenchBtn');
+                const source = document.getElementById('answerTikzWorkbenchCode');
+                if (loading) {
+                    loading.classList.toggle('hidden', !isBusy);
+                    loading.classList.toggle('flex', isBusy);
+                }
+                if (loadingText && message) loadingText.textContent = message;
+                for (const button of [generateButton, compileButton]) {
+                    if (!button) continue;
+                    button.disabled = isBusy;
+                    button.setAttribute('aria-busy', String(isBusy));
+                }
+                if (insertButton) {
+                    const compiledSourceIsCurrent = Boolean(
+                        tikzWorkbenchState.compiledPath
+                        && source
+                        && source.value.trim() === tikzWorkbenchState.compiledCode
+                    );
+                    insertButton.disabled = isBusy || !compiledSourceIsCurrent;
+                }
+                if (isBusy) setTikzWorkbenchStatus(message || '处理中…', 'busy');
+            }
+
+            function resetTikzWorkbenchPreview() {
+                tikzWorkbenchState.compiledPath = '';
+                tikzWorkbenchState.compiledCode = '';
+                const preview = document.getElementById('answerTikzWorkbenchPreviewImage');
+                const placeholder = document.getElementById('answerTikzWorkbenchPlaceholder');
+                const insertButton = document.getElementById('insertAnswerTikzWorkbenchBtn');
+                if (preview) {
+                    preview.src = '';
+                    preview.classList.add('hidden');
+                }
+                if (placeholder) placeholder.classList.remove('hidden');
+                if (insertButton) insertButton.disabled = true;
+            }
+
+            function clearTikzReference() {
+                if (tikzWorkbenchState.referenceObjectUrl) {
+                    URL.revokeObjectURL(tikzWorkbenchState.referenceObjectUrl);
+                }
+                tikzWorkbenchState.referenceFile = null;
+                tikzWorkbenchState.referenceObjectUrl = '';
+                tikzWorkbenchState.referencePath = '';
+                const input = document.getElementById('answerTikzReferenceInput');
+                const preview = document.getElementById('answerTikzReferencePreview');
+                const previewWrap = document.getElementById('answerTikzReferencePreviewWrap');
+                const placeholder = document.getElementById('answerTikzReferencePlaceholder');
+                if (input) input.value = '';
+                if (preview) preview.src = '';
+                if (previewWrap) {
+                    previewWrap.classList.add('hidden');
+                    previewWrap.classList.remove('flex');
+                }
+                if (placeholder) placeholder.classList.remove('hidden');
+            }
+
+            function setTikzReferencePath(path, sourceLabel = '已载入题目参考图') {
+                const safePath = window.MathBankSafe.safeImageUrl(path);
+                if (!safePath) return;
+                clearTikzReference();
+                tikzWorkbenchState.referencePath = safePath;
+                const preview = document.getElementById('answerTikzReferencePreview');
+                const previewWrap = document.getElementById('answerTikzReferencePreviewWrap');
+                const placeholder = document.getElementById('answerTikzReferencePlaceholder');
+                if (preview) preview.src = safePath;
+                if (previewWrap) {
+                    previewWrap.classList.remove('hidden');
+                    previewWrap.classList.add('flex');
+                }
+                if (placeholder) placeholder.classList.add('hidden');
+                setTikzWorkbenchStatus(sourceLabel, 'success');
+            }
+
+            function setTikzReferenceFile(file) {
+                if (!file) return;
+                if (!String(file.type || '').startsWith('image/')) {
+                    showToast('参考文件必须是图片。', 'error');
+                    return;
+                }
+                if (file.size > 10 * 1024 * 1024) {
+                    showToast('参考图不能超过 10MB。', 'error');
+                    return;
+                }
+                clearTikzReference();
+                resetTikzWorkbenchPreview();
+                tikzWorkbenchState.referenceFile = file;
+                tikzWorkbenchState.referenceObjectUrl = URL.createObjectURL(file);
+                const preview = document.getElementById('answerTikzReferencePreview');
+                const previewWrap = document.getElementById('answerTikzReferencePreviewWrap');
+                const placeholder = document.getElementById('answerTikzReferencePlaceholder');
+                if (preview) preview.src = tikzWorkbenchState.referenceObjectUrl;
+                if (previewWrap) {
+                    previewWrap.classList.remove('hidden');
+                    previewWrap.classList.add('flex');
+                }
+                if (placeholder) placeholder.classList.add('hidden');
+                setTikzWorkbenchStatus('已添加参考图，请生成绘图', 'success');
+            }
+
+            function tikzContextText() {
+                const useContext = document.getElementById('answerTikzUseContext');
+                if (useContext && !useContext.checked) return '';
+                const content = document.getElementById('editContent').value.trim();
+                const answer = document.getElementById('editAnswerMarkdown').value.trim();
+                if (tikzWorkbenchState.target === 'content') {
+                    return `【题干】\n${content || '暂无'}`;
+                }
+                return `【题干】\n${content || '暂无'}\n\n【当前解答】\n${answer || '暂无'}`;
+            }
+
+            function normalizedTikzAssets(target) {
+                const assets = target === 'content'
+                    ? TikzState.contentAssets
+                    : TikzState.answerAssets;
+                if (!Array.isArray(assets)) return [];
+                return assets.filter(asset => {
+                    return asset && typeof asset === 'object'
+                        && typeof asset.id === 'string'
+                        && window.MathBankSafe.safeImageUrl(asset.image_path)
+                        && typeof asset.tikz_code === 'string'
+                        && (!asset.reference_image_path || window.MathBankSafe.safeImageUrl(asset.reference_image_path));
+                });
+            }
+
+            function normalizedContentTikzAssets() {
+                return normalizedTikzAssets('content');
+            }
+
+            function normalizedAnswerTikzAssets() {
+                return normalizedTikzAssets('answer');
+            }
+
+            function registerAutoTikzAsset(target, { tikzCode, imagePath, referenceImagePath }) {
+                const safeImagePath = window.MathBankSafe.safeImageUrl(imagePath);
+                const safeReferencePath = window.MathBankSafe.safeImageUrl(referenceImagePath);
+                if (!tikzCode || !safeImagePath) return;
+                const assets = target === 'content'
+                    ? TikzState.contentAssets
+                    : TikzState.answerAssets;
+                const existingIndex = assets.findIndex(
+                    asset => asset.image_path === safeImagePath
+                );
+                const asset = {
+                    id: existingIndex >= 0
+                        ? assets[existingIndex].id
+                        : `tikz_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+                    image_path: safeImagePath,
+                    tikz_code: tikzCode,
+                    instruction: ''
+                };
+                if (safeReferencePath) asset.reference_image_path = safeReferencePath;
+                if (existingIndex >= 0) assets.splice(existingIndex, 1, asset);
+                else assets.push(asset);
+                const uploadedPaths = target === 'content' ? uploadedImages : uploadedAnswerImages;
+                if (!uploadedPaths.includes(safeImagePath)) {
+                    uploadedPaths.push(safeImagePath);
+                }
+                if (typeof renderIllustrationBadges === 'function') renderIllustrationBadges();
+                if (target === 'content') window.renderContentTikzAssets();
+                else window.renderAnswerTikzAssets();
+            }
+
+            window.registerAutoContentTikzAsset = function(payload) {
+                registerAutoTikzAsset('content', payload);
+            };
+
+            window.registerAutoAnswerTikzAsset = function(payload) {
+                registerAutoTikzAsset('answer', payload);
+            };
+
+            function renderTikzAssetCollection(target) {
+                const isContent = target === 'content';
+                const assets = normalizedTikzAssets(target);
+                if (isContent) TikzState.contentAssets = assets;
+                else TikzState.answerAssets = assets;
+                const panel = document.getElementById(
+                    isContent ? 'contentTikzAssetsPanel' : 'answerTikzAssetsPanel'
+                );
+                const list = document.getElementById(
+                    isContent ? 'contentTikzAssetsList' : 'answerTikzAssetsList'
+                );
+                const count = document.getElementById(
+                    isContent ? 'contentTikzAssetsCount' : 'answerTikzAssetsCount'
+                );
+                if (!panel || !list || !count) return;
+                list.replaceChildren();
+                count.textContent = `${assets.length} 幅`;
+                panel.classList.toggle('hidden', assets.length === 0);
+
+                assets.forEach((asset, index) => {
+                    const safePath = window.MathBankSafe.safeImageUrl(asset.image_path);
+                    const card = document.createElement('div');
+                    card.className = `answer-tikz-asset-card${isContent ? ' content-tikz-asset-card' : ''}`;
+
+                    const image = document.createElement('img');
+                    image.src = safePath;
+                    image.alt = `${isContent ? '题干' : '解答'} TikZ 插图 ${index + 1} 缩略图`;
+                    image.loading = 'lazy';
+                    image.decoding = 'async';
+
+                    const label = document.createElement('span');
+                    label.className = 'min-w-0 max-w-[140px]';
+                    const labelTitle = document.createElement('span');
+                    labelTitle.className = 'block truncate text-[11px] font-semibold';
+                    labelTitle.textContent = `${isContent ? '题干' : '解答'} TikZ 绘图 ${index + 1}`;
+                    const labelMeta = document.createElement('span');
+                    labelMeta.className = 'mt-0.5 block truncate text-[9px] text-slate-500';
+                    labelMeta.textContent = asset.reference_image_path
+                        ? (isContent ? '已绑定题目参考图' : '已绑定解答参考图')
+                        : '可继续编辑';
+                    label.append(labelTitle, labelMeta);
+
+                    const editButton = document.createElement('button');
+                    editButton.type = 'button';
+                    editButton.className = 'flex min-h-[44px] min-w-[44px] cursor-pointer items-center justify-center text-indigo-600 transition-colors hover:bg-indigo-50 focus:outline-none focus:ring-2 focus:ring-indigo-500/25';
+                    editButton.setAttribute('aria-label', `修改${isContent ? '题干' : '解答'} TikZ 绘图 ${index + 1}`);
+                    editButton.innerHTML = '<i class="fa-solid fa-pen" aria-hidden="true"></i>';
+                    editButton.addEventListener('click', () => {
+                        if (isContent) window.openContentTikzWorkbench(asset.id);
+                        else window.openAnswerTikzWorkbench(asset.id);
+                    });
+
+                    const deleteButton = document.createElement('button');
+                    deleteButton.type = 'button';
+                    deleteButton.className = 'flex min-h-[44px] min-w-[44px] cursor-pointer items-center justify-center text-slate-400 transition-colors hover:bg-red-50 hover:text-red-600 focus:outline-none focus:ring-2 focus:ring-red-500/25';
+                    deleteButton.setAttribute('aria-label', `删除${isContent ? '题干' : '解答'} TikZ 绘图 ${index + 1}`);
+                    deleteButton.innerHTML = '<i class="fa-solid fa-xmark" aria-hidden="true"></i>';
+                    deleteButton.addEventListener('click', () => {
+                        if (isContent) window.deleteContentTikzAsset(asset.id);
+                        else window.deleteAnswerTikzAsset(asset.id);
+                    });
+
+                    card.append(image, label, editButton, deleteButton);
+                    list.appendChild(card);
+                });
+            }
+
+            window.renderContentTikzAssets = function() {
+                renderTikzAssetCollection('content');
+            };
+
+            window.renderAnswerTikzAssets = function() {
+                renderTikzAssetCollection('answer');
+            };
+
+            window.openTikzWorkbench = function(target = 'answer', assetId = null) {
+                const modal = document.getElementById('answerTikzWorkbenchModal');
+                const surface = modal && modal.querySelector('[data-modal-surface]');
+                const normalizedTarget = target === 'content' ? 'content' : 'answer';
+                const targetInput = document.getElementById(
+                    normalizedTarget === 'content' ? 'editContent' : 'editAnswerMarkdown'
+                );
+                if (!modal || !surface || !targetInput) return;
+
+                const asset = assetId
+                    ? normalizedTikzAssets(normalizedTarget).find(item => item.id === assetId)
+                    : null;
+                tikzWorkbenchState.editorSession = EditorState.snapshot();
+                tikzWorkbenchState.target = normalizedTarget;
+                tikzWorkbenchState.editingAssetId = asset ? asset.id : null;
+                tikzWorkbenchState.caretStart = targetInput.selectionStart || 0;
+                tikzWorkbenchState.caretEnd = targetInput.selectionEnd || tikzWorkbenchState.caretStart;
+                clearTikzReference();
+                resetTikzWorkbenchPreview();
+
+                document.getElementById('answerTikzInstruction').value = asset ? (asset.instruction || '') : '';
+                document.getElementById('answerTikzWorkbenchCode').value = asset ? asset.tikz_code : '';
+                const targetLabel = normalizedTarget === 'content' ? '题干' : '解答';
+                document.getElementById('answerTikzWorkbenchHeading').textContent = asset
+                    ? `修改${targetLabel} TikZ 绘图`
+                    : `新增${targetLabel} TikZ 绘图`;
+                document.getElementById('tikzWorkbenchTargetBadge').textContent = asset
+                    ? `修改${targetLabel}绘图`
+                    : `新增到${targetLabel}`;
+                document.getElementById('insertAnswerTikzWorkbenchLabel').textContent = asset
+                    ? `更新${targetLabel}中的绘图`
+                    : `新增到${targetLabel}当前光标位置`;
+                document.getElementById('tikzWorkbenchDescription').textContent = asset
+                    ? `修改当前${targetLabel}绘图；预览通过后只更新这一幅图。`
+                    : `创建一幅新的${targetLabel}绘图；不会覆盖已有绘图。`;
+                document.getElementById('tikzWorkbenchContextHint').textContent = normalizedTarget === 'content'
+                    ? '向 AI 提供当前题干，用于校正点名和几何关系。'
+                    : '向 AI 提供题干与已输入解答，用于校正点名和几何关系。';
+                document.getElementById('tikzWorkbenchInsertHint').textContent = asset
+                    ? `预览通过后只更新当前${targetLabel}绘图，不会新增副本。`
+                    : `预览通过后新增到${targetLabel}当前光标位置，不会覆盖已有绘图。`;
+                document.getElementById('tikzWorkbenchReferenceHint').textContent = normalizedTarget === 'content'
+                    ? '如果该图由 OCR 自动生成，此处会直接载入当时的原题图。'
+                    : '建议只截取几何插图区域，AI 将参考其拓扑、标注与实虚线。';
+
+                if (asset && asset.reference_image_path) {
+                    setTikzReferencePath(
+                        asset.reference_image_path,
+                        normalizedTarget === 'content' ? '已载入 OCR 原题参考图' : '已载入参考图'
+                    );
+                }
+
+                if (asset) {
+                    const safePath = window.MathBankSafe.safeImageUrl(asset.image_path);
+                    if (safePath) {
+                        const preview = document.getElementById('answerTikzWorkbenchPreviewImage');
+                        document.getElementById('answerTikzWorkbenchPlaceholder').classList.add('hidden');
+                        preview.src = safePath;
+                        preview.classList.remove('hidden');
+                        tikzWorkbenchState.compiledPath = safePath;
+                        tikzWorkbenchState.compiledCode = asset.tikz_code;
+                        document.getElementById('insertAnswerTikzWorkbenchBtn').disabled = false;
+                        setTikzWorkbenchStatus(
+                            asset.reference_image_path ? '已载入源码与参考图' : '已载入可编辑源码',
+                            'success'
+                        );
+                    } else {
+                        setTikzWorkbenchStatus('已载入源码，请编译预览', 'warning');
+                    }
+                } else {
+                    setTikzWorkbenchStatus('等待输入', 'idle');
+                }
+
+                modal.classList.remove('hidden');
+                modal.classList.add('flex');
+                window.MathBankModal.open(modal, { onEscape: window.closeTikzWorkbench });
+                requestAnimationFrame(() => {
+                    modal.classList.remove('opacity-0');
+                    surface.classList.remove('scale-95');
+                    surface.classList.add('scale-100');
+                });
+            };
+
+            window.openContentTikzWorkbench = function(assetId = null) {
+                window.openTikzWorkbench('content', assetId);
+            };
+
+            window.openAnswerTikzWorkbench = function(assetId = null) {
+                window.openTikzWorkbench('answer', assetId);
+            };
+
+            window.closeTikzWorkbench = function() {
+                if (tikzWorkbenchState.busy) {
+                    showToast('TikZ 正在生成或编译，请稍候。', 'info');
+                    return;
+                }
+                const modal = document.getElementById('answerTikzWorkbenchModal');
+                const surface = modal && modal.querySelector('[data-modal-surface]');
+                if (!modal || modal.classList.contains('hidden')) return;
+                window.MathBankModal.close(modal);
+                modal.classList.add('opacity-0');
+                if (surface) {
+                    surface.classList.remove('scale-100');
+                    surface.classList.add('scale-95');
+                }
+                setTimeout(() => {
+                    modal.classList.add('hidden');
+                    modal.classList.remove('flex');
+                    clearTikzReference();
+                }, 200);
+            };
+
+            async function renderTikzWorkbenchCode(tikzCode) {
+                const formData = new FormData();
+                formData.append('tikz_code', tikzCode);
+                const response = await fetch('/api/render_tikz', { method: 'POST', body: formData });
+                const data = await response.json().catch(() => ({}));
+                if (!response.ok || data.status !== 'success') {
+                    throw new Error(data.detail || data.message || 'TikZ 编译失败');
+                }
+                if (!EditorState.isCurrent(tikzWorkbenchState.editorSession)) {
+                    throw new Error('当前编辑题目已变更，本次绘图结果已丢弃。');
+                }
+                const safePath = window.MathBankSafe.safeImageUrl(data.image_path);
+                if (!safePath) throw new Error('服务器返回了无效的预览图路径。');
+
+                const preview = document.getElementById('answerTikzWorkbenchPreviewImage');
+                document.getElementById('answerTikzWorkbenchPlaceholder').classList.add('hidden');
+                preview.src = `${safePath}?t=${Date.now()}`;
+                preview.classList.remove('hidden');
+                tikzWorkbenchState.compiledPath = safePath;
+                tikzWorkbenchState.compiledCode = tikzCode;
+                document.getElementById('insertAnswerTikzWorkbenchBtn').disabled = false;
+                setTikzWorkbenchStatus(
+                    tikzWorkbenchState.editingAssetId ? '编译成功，可更新' : '编译成功，可新增',
+                    'success'
+                );
+                return safePath;
+            }
+
+            window.generateTikzWithAI = async function() {
+                const instruction = document.getElementById('answerTikzInstruction').value.trim();
+                const existingTikz = document.getElementById('answerTikzWorkbenchCode').value.trim();
+                if (
+                    !instruction
+                    && !existingTikz
+                    && !tikzWorkbenchState.referenceFile
+                    && !tikzWorkbenchState.referencePath
+                ) {
+                    showToast('请输入绘图要求、添加参考图或填入 TikZ 源码。', 'error');
+                    return;
+                }
+                setTikzWorkbenchBusy(true, 'AI 正在构造几何关系…');
+                try {
+                    const formData = new FormData();
+                    formData.append('instruction', instruction);
+                    formData.append('context', tikzContextText());
+                    formData.append('existing_tikz', existingTikz);
+                    if (tikzWorkbenchState.referenceFile) {
+                        formData.append('reference_image', tikzWorkbenchState.referenceFile);
+                    } else if (tikzWorkbenchState.referencePath) {
+                        formData.append('reference_image_path', tikzWorkbenchState.referencePath);
+                    }
+                    const response = await fetch('/api/ai/draw_tikz', { method: 'POST', body: formData });
+                    const data = await response.json().catch(() => ({}));
+                    if (!response.ok || data.status !== 'success' || !data.tikz_code) {
+                        throw new Error(data.detail || data.message || 'AI 未返回可用的 TikZ 源码');
+                    }
+                    if (!EditorState.isCurrent(tikzWorkbenchState.editorSession)) return;
+                    if (data.reference_image_path) {
+                        setTikzReferencePath(
+                            data.reference_image_path,
+                            '已保留新参考图，保存题目后将清理旧图'
+                        );
+                    }
+                    document.getElementById('answerTikzWorkbenchCode').value = data.tikz_code;
+                    document.getElementById('answerTikzSourceDetails').open = false;
+                    setTikzWorkbenchBusy(true, '源码已生成，正在安全编译…');
+                    await renderTikzWorkbenchCode(data.tikz_code);
+                } catch (error) {
+                    setTikzWorkbenchStatus('生成或编译失败', 'error');
+                    showToast(error.message || 'AI TikZ 绘图失败', 'error');
+                } finally {
+                    setTikzWorkbenchBusy(false);
+                }
+            };
+
+            window.compileTikzWorkbench = async function() {
+                const tikzCode = document.getElementById('answerTikzWorkbenchCode').value.trim();
+                if (!tikzCode) {
+                    showToast('请先输入或生成 TikZ 源码。', 'error');
+                    return;
+                }
+                setTikzWorkbenchBusy(true, '正在安全编译 TikZ…');
+                try {
+                    await renderTikzWorkbenchCode(tikzCode);
+                } catch (error) {
+                    setTikzWorkbenchStatus('编译失败', 'error');
+                    document.getElementById('answerTikzSourceDetails').open = true;
+                    showToast(error.message || 'TikZ 编译失败', 'error');
+                } finally {
+                    setTikzWorkbenchBusy(false);
+                }
+            };
+
+            function insertMarkdownAtSavedCursor(textarea, markdown) {
+                const start = Math.min(tikzWorkbenchState.caretStart, textarea.value.length);
+                const end = Math.min(tikzWorkbenchState.caretEnd, textarea.value.length);
+                const before = textarea.value.slice(0, start);
+                const after = textarea.value.slice(end);
+                const prefix = before && !before.endsWith('\n\n') ? (before.endsWith('\n') ? '\n' : '\n\n') : '';
+                const suffix = after && !after.startsWith('\n\n') ? (after.startsWith('\n') ? '\n' : '\n\n') : '';
+                const insertion = `${prefix}${markdown}${suffix}`;
+                textarea.value = before + insertion + after;
+                const nextPosition = before.length + insertion.length;
+                textarea.setSelectionRange(nextPosition, nextPosition);
+            }
+
+            window.applyTikzWorkbench = function() {
+                const tikzCode = document.getElementById('answerTikzWorkbenchCode').value.trim();
+                const imagePath = window.MathBankSafe.safeImageUrl(tikzWorkbenchState.compiledPath);
+                if (!imagePath || !tikzCode || tikzCode !== tikzWorkbenchState.compiledCode) {
+                    showToast('源码已改动或尚未编译，请先点击“编译预览”。', 'error');
+                    return;
+                }
+                if (!EditorState.isCurrent(tikzWorkbenchState.editorSession)) {
+                    showToast('当前编辑题目已变更，请重新打开绘图工作台。', 'error');
+                    return;
+                }
+
+                const instruction = document.getElementById('answerTikzInstruction').value.trim();
+                const referencePath = window.MathBankSafe.safeImageUrl(
+                    tikzWorkbenchState.referencePath
+                );
+                if (tikzWorkbenchState.target === 'content') {
+                    const contentInput = document.getElementById('editContent');
+                    if (!contentInput) return;
+                    const editingIndex = TikzState.contentAssets.findIndex(
+                        asset => asset.id === tikzWorkbenchState.editingAssetId
+                    );
+                    const assetId = editingIndex >= 0
+                        ? TikzState.contentAssets[editingIndex].id
+                        : `tikz_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+                    const nextAsset = {
+                        id: assetId,
+                        image_path: imagePath,
+                        tikz_code: tikzCode,
+                        instruction: instruction
+                    };
+                    if (referencePath) nextAsset.reference_image_path = referencePath;
+
+                    let oldPath = '';
+                    if (editingIndex >= 0) {
+                        oldPath = TikzState.contentAssets[editingIndex].image_path;
+                        if (oldPath && contentInput.value.includes(oldPath)) {
+                            contentInput.value = contentInput.value.split(oldPath).join(imagePath);
+                        } else if (!contentInput.value.includes(imagePath)) {
+                            insertMarkdownAtSavedCursor(contentInput, `![TikZ 几何图](${imagePath})`);
+                        }
+                        TikzState.contentAssets.splice(editingIndex, 1, nextAsset);
+                    } else {
+                        insertMarkdownAtSavedCursor(contentInput, `![TikZ 几何图](${imagePath})`);
+                        TikzState.contentAssets.push(nextAsset);
+                    }
+                    if (!uploadedImages.includes(imagePath)) uploadedImages.push(imagePath);
+                    contentInput.dispatchEvent(new Event('input'));
+                    if (oldPath && oldPath !== imagePath) {
+                        removeUploadedPathIfUnused(oldPath);
+                    }
+                    renderIllustrationBadges();
+                    window.renderContentTikzAssets();
+                    window.closeTikzWorkbench();
+                    contentInput.focus({ preventScroll: true });
+                    showToast(editingIndex >= 0
+                        ? 'TikZ 绘图已更新，请保存题目。'
+                        : '已新增一幅 TikZ 绘图到题干。');
+                    return;
+                }
+
+                const answerInput = document.getElementById('editAnswerMarkdown');
+                const editingIndex = TikzState.answerAssets.findIndex(
+                    asset => asset.id === tikzWorkbenchState.editingAssetId
+                );
+                const assetId = editingIndex >= 0
+                    ? TikzState.answerAssets[editingIndex].id
+                    : `tikz_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+                const nextAsset = {
+                    id: assetId,
+                    image_path: imagePath,
+                    tikz_code: tikzCode,
+                    instruction: instruction
+                };
+                if (referencePath) nextAsset.reference_image_path = referencePath;
+
+                if (editingIndex >= 0) {
+                    const oldPath = TikzState.answerAssets[editingIndex].image_path;
+                    if (answerInput.value.includes(oldPath)) {
+                        answerInput.value = answerInput.value.split(oldPath).join(imagePath);
+                    } else {
+                        insertMarkdownAtSavedCursor(answerInput, `![TikZ 几何图](${imagePath})`);
+                    }
+                    TikzState.answerAssets.splice(editingIndex, 1, nextAsset);
+                } else {
+                    insertMarkdownAtSavedCursor(answerInput, `![TikZ 几何图](${imagePath})`);
+                    TikzState.answerAssets.push(nextAsset);
+                }
+
+                answerInput.dispatchEvent(new Event('input'));
+                if (typeof window.syncAnswerImagesFromMarkdown === 'function') {
+                    window.syncAnswerImagesFromMarkdown();
+                }
+                window.renderAnswerTikzAssets();
+                window.closeTikzWorkbench();
+                answerInput.focus({ preventScroll: true });
+                showToast(editingIndex >= 0 ? 'TikZ 绘图已更新，请保存题目。' : '已新增一幅 TikZ 绘图到解答。');
+            };
+
+            function removeUploadedPathIfUnused(path, excludedAsset = null) {
+                const safePath = window.MathBankSafe.safeImageUrl(path);
+                if (!safePath) return;
+                const content = document.getElementById('editContent').value;
+                const answer = document.getElementById('editAnswerMarkdown').value;
+                if (content.includes(safePath) || answer.includes(safePath)) return;
+                const usedByContentAsset = normalizedContentTikzAssets().some(asset => {
+                    return !(excludedAsset && excludedAsset.target === 'content' && asset.id === excludedAsset.id)
+                        && (asset.image_path === safePath || asset.reference_image_path === safePath);
+                });
+                if (usedByContentAsset) return;
+                const usedByAnswerAsset = normalizedAnswerTikzAssets().some(asset => {
+                    return !(excludedAsset && excludedAsset.target === 'answer' && asset.id === excludedAsset.id)
+                        && (asset.image_path === safePath || asset.reference_image_path === safePath);
+                });
+                if (usedByAnswerAsset) return;
+                uploadedImages = uploadedImages.filter(item => item !== safePath);
+            }
+
+            window.deleteContentTikzAsset = function(assetId) {
+                const asset = normalizedContentTikzAssets().find(item => item.id === assetId);
+                if (!asset || !confirm('确定从题干中删除这幅 TikZ 绘图吗？')) return;
+                const contentInput = document.getElementById('editContent');
+                if (asset.image_path) {
+                    const escapedPath = asset.image_path.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+                    contentInput.value = contentInput.value
+                        .replace(new RegExp(`!\\[[^\\]]*\\]\\(${escapedPath}\\)`, 'g'), '')
+                        .replace(/\n{3,}/g, '\n\n');
+                }
+                const referencePath = asset.reference_image_path;
+                TikzState.contentAssets = TikzState.contentAssets.filter(item => item.id !== assetId);
+                contentInput.dispatchEvent(new Event('input'));
+                removeUploadedPathIfUnused(asset.image_path, { target: 'content', id: assetId });
+                removeUploadedPathIfUnused(referencePath, { target: 'content', id: assetId });
+                renderIllustrationBadges();
+                window.renderContentTikzAssets();
+                showToast('TikZ 绘图已从题干中移除。', 'info');
+            };
+
+            window.deleteAnswerTikzAsset = function(assetId) {
+                const asset = normalizedAnswerTikzAssets().find(item => item.id === assetId);
+                if (!asset || !confirm('确定从解答中删除这幅 TikZ 绘图吗？')) return;
+                const answerInput = document.getElementById('editAnswerMarkdown');
+                const escapedPath = asset.image_path.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+                answerInput.value = answerInput.value
+                    .replace(new RegExp(`!\\[[^\\]]*\\]\\(${escapedPath}\\)`, 'g'), '')
+                    .replace(/\n{3,}/g, '\n\n');
+                TikzState.answerAssets = TikzState.answerAssets.filter(item => item.id !== assetId);
+                answerInput.dispatchEvent(new Event('input'));
+                if (typeof window.syncAnswerImagesFromMarkdown === 'function') window.syncAnswerImagesFromMarkdown();
+                removeUploadedPathIfUnused(asset.image_path, { target: 'answer', id: assetId });
+                removeUploadedPathIfUnused(asset.reference_image_path, { target: 'answer', id: assetId });
+                renderIllustrationBadges();
+                window.renderAnswerTikzAssets();
+                showToast('TikZ 绘图已从解答中移除。', 'info');
+            };
+
+            const referenceInput = document.getElementById('answerTikzReferenceInput');
+            const referenceDropZone = document.getElementById('answerTikzReferenceDropZone');
+            const removeReferenceButton = document.getElementById('removeAnswerTikzReferenceBtn');
+            const workbenchModal = document.getElementById('answerTikzWorkbenchModal');
+            referenceInput.addEventListener('change', () => setTikzReferenceFile(referenceInput.files[0]));
+            referenceDropZone.addEventListener('click', event => {
+                if (!event.target.closest('#removeAnswerTikzReferenceBtn')) referenceInput.click();
+            });
+            referenceDropZone.addEventListener('keydown', event => {
+                if (event.key === 'Enter' || event.key === ' ') {
+                    event.preventDefault();
+                    referenceInput.click();
+                }
+            });
+            referenceDropZone.addEventListener('dragover', event => {
+                event.preventDefault();
+                referenceDropZone.classList.add('border-indigo-500', 'bg-indigo-50');
+            });
+            referenceDropZone.addEventListener('dragleave', () => {
+                referenceDropZone.classList.remove('border-indigo-500', 'bg-indigo-50');
+            });
+            referenceDropZone.addEventListener('drop', event => {
+                event.preventDefault();
+                referenceDropZone.classList.remove('border-indigo-500', 'bg-indigo-50');
+                setTikzReferenceFile(event.dataTransfer.files[0]);
+            });
+            removeReferenceButton.addEventListener('click', event => {
+                event.stopPropagation();
+                clearTikzReference();
+                setTikzWorkbenchStatus('参考图已移除', 'idle');
+            });
+            workbenchModal.addEventListener('paste', event => {
+                const imageItem = Array.from(event.clipboardData && event.clipboardData.items || [])
+                    .find(item => item.type && item.type.startsWith('image/'));
+                if (!imageItem) return;
+                event.preventDefault();
+                setTikzReferenceFile(imageItem.getAsFile());
+            });
+            document.getElementById('answerTikzWorkbenchCode').addEventListener('input', event => {
+                if (event.target.value.trim() !== tikzWorkbenchState.compiledCode) {
+                    document.getElementById('insertAnswerTikzWorkbenchBtn').disabled = true;
+                    setTikzWorkbenchStatus('源码已修改，请重新编译', 'warning');
+                }
+            });
+            window.renderAnswerTikzAssets();
 
             window.extractTikzCodeFromTextarea = function(textareaId) {
                 const textarea = document.getElementById(textareaId);
@@ -3590,464 +4294,25 @@
                 if (match) {
                     const tikzBlock = match[1].trim();
                     const isContent = (textareaId === 'editContent');
-                    const targetInputId = isContent ? 'editContentTikzCode' : 'editAnswerTikzCode';
-                    const targetContainerId = isContent ? 'contentTikzContainer' : 'answerTikzContainer';
-                    
-                    // Show Container
-                    const container = document.getElementById(targetContainerId);
-                    if (container) container.classList.remove('hidden');
-                    
-                    // Fill input
-                    const tikzInput = document.getElementById(targetInputId);
-                    if (tikzInput) {
-                        tikzInput.value = tikzBlock;
-                        tikzInput.dispatchEvent(new Event('input'));
-                    }
-                    
+
                     // Clear from textarea
                     text = text.replace(tikzRegex, '').trim();
                     textarea.value = text;
                     textarea.dispatchEvent(new Event('input'));
                     
-                    // Auto-compile
-                    const compileFn = isContent ? window.renderContentTikzToImage : window.renderAnswerTikzToImage;
-                    if (typeof compileFn === 'function') {
+                    if (typeof window.openTikzWorkbench === 'function') {
                         const editorSession = EditorState.snapshot();
                         const targetName = isContent ? '题干' : '解答';
                         showToast(`🎉 检测到${targetName}中的 TikZ 代码！已自动提取并开始编译。`, 'info');
                         setTimeout(() => {
                             if (!EditorState.isCurrent(editorSession)) return;
-                            compileFn();
-                            
-                            // Scroll to focus
-                            if (tikzInput) {
-                                tikzInput.scrollIntoView({ behavior: 'smooth', block: 'center' });
-                                tikzInput.focus();
-                            }
+                            window.openTikzWorkbench(isContent ? 'content' : 'answer');
+                            const workbenchCode = document.getElementById('answerTikzWorkbenchCode');
+                            if (workbenchCode) workbenchCode.value = tikzBlock;
+                            window.compileTikzWorkbench();
                         }, 200);
                     }
                 }
-            };
-
-            // 题干清理与编译
-            window.clearContentTikzCode = function() {
-                if (confirm("确定要清空题干 TikZ 代码吗？")) {
-                    document.getElementById('editContentTikzCode').value = '';
-                    document.getElementById('contentTikzPreviewImage').classList.add('hidden');
-                    document.getElementById('contentTikzPreviewImage').src = '';
-                    document.getElementById('contentTikzPreviewPlaceholder').classList.remove('hidden');
-                    document.getElementById('contentTikzStatusText').textContent = '已清空';
-                }
-            };
-
-            window.renderContentTikzToImage = function() {
-                const tikzCode = document.getElementById('editContentTikzCode').value;
-                if (!tikzCode.trim()) {
-                    showToast('请输入题干 TikZ 绘图代码后重试。', 'error');
-                    return;
-                }
-                
-                const btn = document.getElementById('btnRenderContentTikz');
-                const statusText = document.getElementById('contentTikzStatusText');
-                const placeholder = document.getElementById('contentTikzPreviewPlaceholder');
-                const previewImg = document.getElementById('contentTikzPreviewImage');
-                
-                btn.disabled = true;
-                btn.innerHTML = '<i class="fa-solid fa-spinner animate-spin"></i> <span>编译中...</span>';
-                statusText.textContent = '编译中...';
-                const finishRequest = beginEditorBoundRequest(
-                    btn,
-                    '<i class="fa-solid fa-circle-play"></i> <span>编译并插入题干</span>'
-                );
-                
-                const formData = new FormData();
-                formData.append('tikz_code', tikzCode);
-                
-                fetch('/api/render_tikz', {
-                    method: 'POST',
-                    body: formData
-                })
-                .then(r => {
-                    if (!r.ok) {
-                        return r.json().then(data => { throw new Error(data.detail || '编译失败') });
-                    }
-                    return r.json();
-                })
-                .then(data => {
-                    if (!finishRequest()) return;
-                    
-                    if (data.status === 'success') {
-                        showToast('题干 TikZ 几何图编译成功，已插入插图列表！');
-                        statusText.textContent = '编译成功';
-                        
-                        placeholder.classList.add('hidden');
-                        previewImg.src = data.image_path + '?t=' + new Date().getTime();
-                        previewImg.classList.remove('hidden');
-                        
-                        const cleanPath = data.image_path;
-                        const contentInput = document.getElementById('editContent');
-                        const oldPath = window.contentLastCompiledTikzPath;
-                        
-                        // Replace previous compiled path if exists
-                        if (oldPath && oldPath !== cleanPath) {
-                            const idx = uploadedImages.indexOf(oldPath);
-                            if (idx > -1) {
-                                uploadedImages.splice(idx, 1);
-                            }
-                            if (contentInput && contentInput.value.includes(oldPath)) {
-                                contentInput.value = contentInput.value.split(oldPath).join(cleanPath);
-                                contentInput.dispatchEvent(new Event('input'));
-                            }
-                        }
-                        
-                        if (!uploadedImages.includes(cleanPath)) {
-                            uploadedImages.push(cleanPath);
-                        }
-                        renderIllustrationBadges();
-                        
-                        if (contentInput && !contentInput.value.includes(cleanPath)) {
-                            contentInput.value += `\n\n![](${cleanPath})`;
-                            contentInput.dispatchEvent(new Event('input'));
-                        }
-                        
-                        window.contentLastCompiledTikzPath = cleanPath;
-                    }
-                })
-                .catch(err => {
-                    if (!finishRequest()) return;
-                    statusText.textContent = '编译出错';
-                    placeholder.classList.remove('hidden');
-                    previewImg.classList.add('hidden');
-                    showToast('题干 TikZ 编译出错: ' + err.message, 'error');
-                });
-            };
-
-            window.correctContentTikzWithAI = function() {
-                let originalPath = window.lastOcrOriginalImagePath || '';
-                if (!originalPath) {
-                    const originalImgs = uploadedImages.filter(path => !path.includes('/tikz_'));
-                    if (originalImgs.length > 0) {
-                        originalPath = originalImgs[0];
-                    }
-                }
-                
-                if (!originalPath) {
-                    showToast('无法纠错：当前题目未检测到任何原始截图作为参考比对模板。', 'error');
-                    return;
-                }
-                
-                const tikzCode = document.getElementById('editContentTikzCode').value;
-                const btn = document.getElementById('btnCorrectContentTikz');
-                const statusText = document.getElementById('contentTikzStatusText');
-                
-                btn.disabled = true;
-                btn.innerHTML = '<i class="fa-solid fa-spinner animate-spin"></i> <span>纠错中...</span>';
-                statusText.textContent = '纠错中...';
-                const finishRequest = beginEditorBoundRequest(
-                    btn,
-                    '<i class="fa-solid fa-wand-magic-sparkles animate-pulse"></i> <span>AI 纠错</span>'
-                );
-                
-                const formData = new FormData();
-                formData.append('tikz_code', tikzCode);
-                formData.append('original_image_path', originalPath);
-                
-                const userPromptInput = document.getElementById('contentTikzUserPrompt');
-                const userPrompt = userPromptInput ? userPromptInput.value.trim() : '';
-                formData.append('user_prompt', userPrompt);
-                
-                fetch('/api/correct_tikz', {
-                    method: 'POST',
-                    body: formData
-                })
-                .then(r => {
-                    if (!r.ok) {
-                        return r.json().then(data => { throw new Error(data.detail || '纠错失败') });
-                    }
-                    return r.json();
-                })
-                .then(data => {
-                    if (!finishRequest()) return;
-                    
-                    if (data.status === 'success') {
-                        showToast('AI 纠错完成，已回填并重新编译代码！');
-                        document.getElementById('editContentTikzCode').value = data.corrected_code;
-                        document.getElementById('editContentTikzCode').dispatchEvent(new Event('input'));
-                        window.renderContentTikzToImage();
-                    }
-                })
-                .catch(err => {
-                    if (!finishRequest()) return;
-                    statusText.textContent = '纠错失败';
-                    showToast('AI 纠错出错: ' + err.message, 'error');
-                });
-            };
-
-            // 解答清理与编译
-            window.clearAnswerTikzCode = function() {
-                if (confirm("确定要清空解答 TikZ 代码吗？")) {
-                    document.getElementById('editAnswerTikzCode').value = '';
-                    document.getElementById('answerTikzPreviewImage').classList.add('hidden');
-                    document.getElementById('answerTikzPreviewImage').src = '';
-                    document.getElementById('answerTikzPreviewPlaceholder').classList.remove('hidden');
-                    document.getElementById('answerTikzStatusText').textContent = '已清空';
-                }
-            };
-
-            window.renderAnswerTikzToImage = function() {
-                const tikzCode = document.getElementById('editAnswerTikzCode').value;
-                if (!tikzCode.trim()) {
-                    showToast('请输入解答 TikZ 绘图代码后重试。', 'error');
-                    return;
-                }
-                
-                const btn = document.getElementById('btnRenderAnswerTikz');
-                const statusText = document.getElementById('answerTikzStatusText');
-                const placeholder = document.getElementById('answerTikzPreviewPlaceholder');
-                const previewImg = document.getElementById('answerTikzPreviewImage');
-                
-                btn.disabled = true;
-                btn.innerHTML = '<i class="fa-solid fa-spinner animate-spin"></i> <span>编译中...</span>';
-                statusText.textContent = '编译中...';
-                const finishRequest = beginEditorBoundRequest(
-                    btn,
-                    '<i class="fa-solid fa-play"></i> <span>编译并插入解答</span>'
-                );
-                
-                const formData = new FormData();
-                formData.append('tikz_code', tikzCode);
-                
-                fetch('/api/render_tikz', {
-                    method: 'POST',
-                    body: formData
-                })
-                .then(r => {
-                    if (!r.ok) {
-                        return r.json().then(data => { throw new Error(data.detail || '编译失败') });
-                    }
-                    return r.json();
-                })
-                .then(data => {
-                    if (!finishRequest()) return;
-                    
-                    if (data.status === 'success') {
-                        showToast('解答 TikZ 几何图编译成功，已插入解答文本中！');
-                        statusText.textContent = '编译成功';
-                        
-                        placeholder.classList.add('hidden');
-                        previewImg.src = data.image_path + '?t=' + new Date().getTime();
-                        previewImg.classList.remove('hidden');
-                        
-                        const cleanPath = data.image_path;
-                        const answerInput = document.getElementById('editAnswerMarkdown');
-                        const oldPath = window.answerLastCompiledTikzPath;
-                        
-                        // Replace previous compiled path if exists
-                        if (oldPath && oldPath !== cleanPath) {
-                            if (answerInput && answerInput.value.includes(oldPath)) {
-                                answerInput.value = answerInput.value.split(oldPath).join(cleanPath);
-                                answerInput.dispatchEvent(new Event('input'));
-                            }
-                        }
-                        
-                        if (answerInput && !answerInput.value.includes(cleanPath)) {
-                            answerInput.value += `\n\n![](${cleanPath})`;
-                            answerInput.dispatchEvent(new Event('input'));
-                        }
-                        
-                        window.answerLastCompiledTikzPath = cleanPath;
-                    }
-                })
-                .catch(err => {
-                    if (!finishRequest()) return;
-                    statusText.textContent = '编译出错';
-                    placeholder.classList.remove('hidden');
-                    previewImg.classList.add('hidden');
-                    showToast('解答 TikZ 编译出错: ' + err.message, 'error');
-                });
-            };
-
-            window.correctAnswerTikzWithAI = function() {
-                let originalPath = window.lastOcrOriginalImagePath || '';
-                if (!originalPath) {
-                    const originalImgs = uploadedImages.filter(path => !path.includes('/tikz_'));
-                    if (originalImgs.length > 0) {
-                        originalPath = originalImgs[0];
-                    }
-                }
-                
-                if (!originalPath) {
-                    showToast('无法纠错：当前题目未检测到任何原始截图作为参考比对模板。', 'error');
-                    return;
-                }
-                
-                const tikzCode = document.getElementById('editAnswerTikzCode').value;
-                const btn = document.getElementById('btnCorrectAnswerTikz');
-                const statusText = document.getElementById('answerTikzStatusText');
-                
-                btn.disabled = true;
-                btn.innerHTML = '<i class="fa-solid fa-spinner animate-spin"></i> <span>纠错中...</span>';
-                statusText.textContent = '纠错中...';
-                const finishRequest = beginEditorBoundRequest(
-                    btn,
-                    '<i class="fa-solid fa-wand-magic-sparkles animate-pulse"></i> <span>AI 纠错</span>'
-                );
-                
-                const formData = new FormData();
-                formData.append('tikz_code', tikzCode);
-                formData.append('original_image_path', originalPath);
-                
-                const userPromptInput = document.getElementById('answerTikzUserPrompt');
-                const userPrompt = userPromptInput ? userPromptInput.value.trim() : '';
-                formData.append('user_prompt', userPrompt);
-                
-                fetch('/api/correct_tikz', {
-                    method: 'POST',
-                    body: formData
-                })
-                .then(r => {
-                    if (!r.ok) {
-                        return r.json().then(data => { throw new Error(data.detail || '纠错失败') });
-                    }
-                    return r.json();
-                })
-                .then(data => {
-                    if (!finishRequest()) return;
-                    
-                    if (data.status === 'success') {
-                        showToast('AI 纠错完成，已回填并重新编译代码！');
-                        document.getElementById('editAnswerTikzCode').value = data.corrected_code;
-                        document.getElementById('editAnswerTikzCode').dispatchEvent(new Event('input'));
-                        window.renderAnswerTikzToImage();
-                    }
-                })
-                .catch(err => {
-                    if (!finishRequest()) return;
-                    statusText.textContent = '纠错失败';
-                    showToast('AI 纠错出错: ' + err.message, 'error');
-                });
-            };
-
-            window.drawContentTikzFromImageWithAI = function() {
-                let originalPath = window.lastOcrOriginalImagePath || '';
-                if (!originalPath) {
-                    const originalImgs = typeof uploadedImages !== 'undefined' ? uploadedImages.filter(path => !path.includes('/tikz_')) : [];
-                    if (originalImgs.length > 0) {
-                        originalPath = originalImgs[0];
-                    }
-                }
-                
-                if (!originalPath) {
-                    showToast('当前题目未检测到任何插图可供 AI 识别绘图。', 'error');
-                    return;
-                }
-                
-                const latexContent = document.getElementById('editContent').value;
-                const btn = document.getElementById('btnDrawContentTikzFromImage');
-                const statusText = document.getElementById('contentTikzStatusText');
-                
-                btn.disabled = true;
-                btn.innerHTML = '<i class="fa-solid fa-spinner animate-spin"></i> <span>识别绘制中...</span>';
-                statusText.textContent = '识别绘制中...';
-                const finishRequest = beginEditorBoundRequest(
-                    btn,
-                    '<i class="fa-solid fa-circle-nodes"></i> <span>AI 识图绘图</span>'
-                );
-                
-                const formData = new FormData();
-                formData.append('image_path', originalPath);
-                if (latexContent && latexContent.trim()) {
-                    formData.append('latex_content', latexContent);
-                }
-                
-                fetch('/api/ai/draw_tikz_from_image', {
-                    method: 'POST',
-                    body: formData
-                })
-                .then(r => {
-                    if (!r.ok) {
-                        return r.json().then(data => { throw new Error(data.detail || '识别绘图失败') });
-                    }
-                    return r.json();
-                })
-                .then(data => {
-                    if (!finishRequest()) return;
-                    
-                    if (data.status === 'success') {
-                        showToast('AI 识图绘图完成，已生成 TikZ 代码并开始自动编译！');
-                        document.getElementById('editContentTikzCode').value = data.tikz_code;
-                        document.getElementById('editContentTikzCode').dispatchEvent(new Event('input'));
-                        window.renderContentTikzToImage();
-                    } else {
-                        throw new Error(data.message || '识别绘图失败');
-                    }
-                })
-                .catch(err => {
-                    if (!finishRequest()) return;
-                    statusText.textContent = '识别绘图失败';
-                    showToast('AI 识图绘图出错: ' + err.message, 'error');
-                });
-            };
-
-            window.drawAnswerTikzFromImageWithAI = function() {
-                let originalPath = window.lastOcrOriginalImagePath || '';
-                if (!originalPath) {
-                    const originalImgs = typeof uploadedImages !== 'undefined' ? uploadedImages.filter(path => !path.includes('/tikz_')) : [];
-                    if (originalImgs.length > 0) {
-                        originalPath = originalImgs[0];
-                    }
-                }
-                
-                if (!originalPath) {
-                    showToast('当前题目未检测到任何插图可供 AI 识别绘图。', 'error');
-                    return;
-                }
-                
-                const latexContent = document.getElementById('editContent').value;
-                const btn = document.getElementById('btnDrawAnswerTikzFromImage');
-                const statusText = document.getElementById('answerTikzStatusText');
-                
-                btn.disabled = true;
-                btn.innerHTML = '<i class="fa-solid fa-spinner animate-spin"></i> <span>识别绘制中...</span>';
-                statusText.textContent = '识别绘制中...';
-                const finishRequest = beginEditorBoundRequest(
-                    btn,
-                    '<i class="fa-solid fa-circle-nodes"></i> <span>AI 识图绘图</span>'
-                );
-                
-                const formData = new FormData();
-                formData.append('image_path', originalPath);
-                if (latexContent && latexContent.trim()) {
-                    formData.append('latex_content', latexContent);
-                }
-                
-                fetch('/api/ai/draw_tikz_from_image', {
-                    method: 'POST',
-                    body: formData
-                })
-                .then(r => {
-                    if (!r.ok) {
-                        return r.json().then(data => { throw new Error(data.detail || '识别绘图失败') });
-                    }
-                    return r.json();
-                })
-                .then(data => {
-                    if (!finishRequest()) return;
-                    
-                    if (data.status === 'success') {
-                        showToast('AI 识图绘图完成，已生成 TikZ 代码并开始自动编译！');
-                        document.getElementById('editAnswerTikzCode').value = data.tikz_code;
-                        document.getElementById('editAnswerTikzCode').dispatchEvent(new Event('input'));
-                        window.renderAnswerTikzToImage();
-                    } else {
-                        throw new Error(data.message || '识别绘图失败');
-                    }
-                })
-                .catch(err => {
-                    if (!finishRequest()) return;
-                    statusText.textContent = '识别绘图失败';
-                    showToast('AI 识图绘图出错: ' + err.message, 'error');
-                });
             };
         });
 

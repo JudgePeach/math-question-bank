@@ -6,6 +6,7 @@ import stat
 import sys
 import types
 import zipfile
+from contextlib import closing, contextmanager
 from pathlib import Path
 
 import pytest
@@ -20,8 +21,15 @@ from mathbank.backup import (
 )
 
 
+@contextmanager
+def _sqlite_connection(path):
+    with closing(sqlite3.connect(path)) as connection:
+        with connection:
+            yield connection
+
+
 def _create_database(path, question_count=1, image_paths=None, content=None, answer=None):
-    with sqlite3.connect(path) as connection:
+    with _sqlite_connection(path) as connection:
         connection.executescript(
             """
             PRAGMA foreign_keys=ON;
@@ -120,7 +128,7 @@ def test_full_backup_round_trip_restores_database_uploads_and_metadata(tmp_path)
 
     assert safety_backup.is_file()
     assert not list(safety.glob("mathbank-raw-pre-restore-*.zip"))
-    with sqlite3.connect(database) as connection:
+    with _sqlite_connection(database) as connection:
         assert connection.execute("SELECT COUNT(*) FROM questions").fetchone()[0] == 1
     assert (uploads / "figure.png").read_bytes() == b"original-image"
     assert json.loads(metadata.read_text(encoding="utf-8"))["curriculum"] == "original"
@@ -272,7 +280,7 @@ def test_restore_rolls_back_all_resources_when_upload_swap_fails(tmp_path, monke
         )
 
     assert injected["raised"] is True
-    with sqlite3.connect(database) as connection:
+    with _sqlite_connection(database) as connection:
         assert connection.execute("SELECT COUNT(*) FROM questions").fetchone()[0] == 2
     assert (uploads / "figure.png").read_bytes() == b"current-image"
     assert json.loads(metadata.read_text(encoding="utf-8"))["state"] == "current"
@@ -350,7 +358,7 @@ def test_restore_quarantines_corrupt_current_database_before_recovery(tmp_path):
             recovery_manifest["capture_stage"]
             == "before-current-database-sqlite-probe"
         )
-    with sqlite3.connect(database) as connection:
+    with _sqlite_connection(database) as connection:
         assert connection.execute("SELECT COUNT(*) FROM questions").fetchone()[0] == 1
 
 
@@ -360,7 +368,7 @@ def test_online_backup_includes_committed_wal_rows(tmp_path):
     uploads.mkdir()
     _create_database(database)
 
-    with sqlite3.connect(database) as writer:
+    with _sqlite_connection(database) as writer:
         assert writer.execute("PRAGMA journal_mode=WAL").fetchone()[0] == "wal"
         writer.execute(
             "INSERT INTO questions (id, content) VALUES (?, ?)",
@@ -481,7 +489,7 @@ def test_test_upload_prefix_requires_explicit_parser_parameter(tmp_path):
         database,
         image_paths=["/static/test_uploads/fixture.png"],
     )
-    with sqlite3.connect(database) as connection:
+    with _sqlite_connection(database) as connection:
         assert backup_module._database_upload_references(
             connection,
             url_prefix="/static/test_uploads",

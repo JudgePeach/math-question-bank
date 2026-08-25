@@ -45,6 +45,54 @@ NUGET_ZIP_URL = (
 )
 NUGET_ZIP_SHA256 = "7c6f99b160a36a7e09492dfcff2b0a3a60bb5229ca44cdcc3ecb32871a6144d0"
 
+# Microsoft Visual C++ Runtime used by the pinned Windows wheels.  The
+# production DLLs below come from the Visual Studio 2026 Stable VC\Redist
+# payload, not from debug_nonredist and not from an unversioned third-party
+# DLL mirror.  Microsoft requires the deployed Runtime to be at least as new
+# as the MSVC tools used to build an application; current greenlet/Pillow
+# wheels use linker 14.51.
+MSVC_REDIST_VSIX_URL = (
+    "https://download.visualstudio.microsoft.com/download/pr/"
+    "3984a6ef-2ffc-4c07-962e-bf9e9b862819/"
+    "24a1c8dba0376d9b008ac2ba430d13c06664fc6f163511fd7866485030e289af/"
+    "Microsoft.VC.14.51.CRT.Redist.X64.base.vsix"
+)
+MSVC_REDIST_VSIX_SHA256 = (
+    "24a1c8dba0376d9b008ac2ba430d13c06664fc6f163511fd7866485030e289af"
+)
+MSVC_REDIST_PACKAGE_ID = "Microsoft.VC.14.51.CRT.Redist.X64.base"
+MSVC_REDIST_PACKAGE_VERSION = "14.51.36247"
+MSVC_REDIST_MEMBER_ROOT = (
+    "Contents/VC/Redist/MSVC/14.51.36231/x64/Microsoft.VC145.CRT"
+)
+MSVC_RUNTIME_DLLS = {
+    "msvcp140.dll": (
+        f"{MSVC_REDIST_MEMBER_ROOT}/msvcp140.dll",
+        "7c26614e1d733892c2deac7e245ce115504b1d80592dd0a01b08e3e5a55f89ca",
+    ),
+    "vcruntime140.dll": (
+        f"{MSVC_REDIST_MEMBER_ROOT}/vcruntime140.dll",
+        "d1f4225df2cd877dbf130d5668a021dce3f94118455ff5ec952061c30afc9ce7",
+    ),
+    "vcruntime140_1.dll": (
+        f"{MSVC_REDIST_MEMBER_ROOT}/vcruntime140_1.dll",
+        "a7146c08f89fe5b04541ab507cdb59ff7b44534d4ba3c668a426c6450a03434e",
+    ),
+}
+MSVC_RUNTIME_NOTICE_NAME = "MICROSOFT-VC-RUNTIME-SOURCE.txt"
+MSVC_RUNTIME_NOTICE = f"""Microsoft Visual C++ x64 Runtime files
+
+Package: {MSVC_REDIST_PACKAGE_ID} {MSVC_REDIST_PACKAGE_VERSION}
+Source: {MSVC_REDIST_VSIX_URL}
+Archive SHA-256: {MSVC_REDIST_VSIX_SHA256}
+Files: {', '.join(MSVC_RUNTIME_DLLS)}
+Supported MathBank target: Windows 10/11 x64
+
+The DLLs are copied unmodified from the production VC\\Redist directory.
+Redistribution is subject to the Microsoft Visual Studio license terms:
+https://learn.microsoft.com/en-us/visualstudio/releases/2026/redistribution
+"""
+
 ROOT_FILE_ALLOWLIST = (
     "main.py",
     ".env.example",
@@ -224,6 +272,39 @@ def _safe_zip_members(zip_ref):
         yield member
 
 
+def _atomic_write_bytes(path, content):
+    """Atomically replace *path* with already-validated binary content."""
+
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    descriptor, temporary_path = tempfile.mkstemp(
+        prefix=f".{path.name}.", suffix=".tmp", dir=path.parent
+    )
+    try:
+        with os.fdopen(descriptor, "wb") as handle:
+            handle.write(content)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temporary_path, path)
+    finally:
+        if os.path.exists(temporary_path):
+            os.unlink(temporary_path)
+
+
+def _pe_machine(payload, label="PE file"):
+    """Return the COFF machine value from a small, already hash-pinned DLL."""
+
+    payload = bytes(payload)
+    if len(payload) < 64 or payload[:2] != b"MZ":
+        raise RuntimeError(f"{label} is not a valid PE file")
+    pe_offset = int.from_bytes(payload[0x3C:0x40], "little")
+    if pe_offset < 0 or pe_offset + 6 > len(payload):
+        raise RuntimeError(f"{label} has an invalid PE header")
+    if payload[pe_offset : pe_offset + 4] != b"PE\0\0":
+        raise RuntimeError(f"{label} has no PE signature")
+    return int.from_bytes(payload[pe_offset + 4 : pe_offset + 6], "little")
+
+
 def validate_release_source():
     """Fail before packaging when release-critical imports or hints are broken."""
     print("🔎 Validating release source imports and type annotations...")
@@ -310,12 +391,10 @@ def download_and_extract_sqlite():
         "official CPython NuGet package",
     )
 
-    print("📦 Extracting sqlite3 binaries and VC runtime DLLs...")
+    print("📦 Extracting sqlite3 binaries...")
     required_members = {
         "tools/DLLs/_sqlite3.pyd": os.path.join(PYTHON_DIR, "_sqlite3.pyd"),
         "tools/DLLs/sqlite3.dll": os.path.join(PYTHON_DIR, "sqlite3.dll"),
-        "tools/vcruntime140.dll": os.path.join(PYTHON_DIR, "vcruntime140.dll"),
-        "tools/vcruntime140_1.dll": os.path.join(PYTHON_DIR, "vcruntime140_1.dll"),
     }
     extracted_members = set()
     with zipfile.ZipFile(cache_path, "r") as zip_ref:
@@ -336,7 +415,53 @@ def download_and_extract_sqlite():
     missing = sorted(set(required_members) - extracted_members)
     if missing:
         raise RuntimeError(f"official CPython NuGet package is missing: {missing}")
-    print("✅ sqlite3 binaries and VC runtime DLLs injected successfully!")
+    print("✅ sqlite3 binaries injected successfully!")
+
+
+def download_and_extract_msvc_runtime():
+    """Inject the pinned production x64 MSVC Runtime from Microsoft's VSIX."""
+
+    cache_path = os.path.join(CACHE_DIR, "msvc145_runtime_x64.vsix")
+    cache_path = download_verified(
+        MSVC_REDIST_VSIX_URL,
+        cache_path,
+        MSVC_REDIST_VSIX_SHA256,
+        f"{MSVC_REDIST_PACKAGE_ID} {MSVC_REDIST_PACKAGE_VERSION}",
+    )
+
+    print("📦 Extracting verified Microsoft Visual C++ x64 Runtime DLLs...")
+    with zipfile.ZipFile(cache_path, "r") as zip_ref:
+        safe_members = list(_safe_zip_members(zip_ref))
+        name_set = {member.filename for member in safe_members if not member.is_dir()}
+
+        validated_payloads = {}
+        for filename, (member_name, expected_hash) in MSVC_RUNTIME_DLLS.items():
+            if "debug_nonredist" in member_name.casefold():
+                raise RuntimeError("debug_nonredist files cannot enter a Release")
+            if member_name not in name_set:
+                raise RuntimeError(
+                    f"Microsoft VC Runtime VSIX is missing production member: {member_name}"
+                )
+            payload = zip_ref.read(member_name)
+            actual_hash = hashlib.sha256(payload).hexdigest()
+            if not hmac.compare_digest(actual_hash, expected_hash):
+                raise RuntimeError(
+                    f"Microsoft VC Runtime member SHA-256 mismatch: {member_name}"
+                )
+            if _pe_machine(payload, member_name) != 0x8664:
+                raise RuntimeError(
+                    f"Microsoft VC Runtime member is not x64: {member_name}"
+                )
+            validated_payloads[filename] = payload
+
+    for filename, payload in validated_payloads.items():
+        _atomic_write_bytes(Path(PYTHON_DIR, filename), payload)
+
+    _atomic_write_text(
+        Path(PYTHON_DIR, MSVC_RUNTIME_NOTICE_NAME),
+        MSVC_RUNTIME_NOTICE,
+    )
+    print("✅ Microsoft VC Runtime injected: " + ", ".join(validated_payloads))
 
 
 def configure_python_path():
@@ -578,6 +703,8 @@ def assert_release_tree_clean(root, platform_name):
             {
                 "python/python.exe",
                 "python/_sqlite3.pyd",
+                *(f"python/{name}" for name in MSVC_RUNTIME_DLLS),
+                f"python/{MSVC_RUNTIME_NOTICE_NAME}",
                 "启动题库系统.bat",
             }
         )
@@ -697,6 +824,10 @@ def validate_windows_runtime(root):
         root / "python" / "site-packages" / "sqlalchemy",
         root / "python" / "site-packages" / "greenlet",
         root / "python" / "site-packages" / "colorama",
+        root / "python" / "site-packages" / "pymupdf",
+        root / "python" / "site-packages" / "pdf_inspector",
+        root / "python" / MSVC_RUNTIME_NOTICE_NAME,
+        *(root / "python" / name for name in MSVC_RUNTIME_DLLS),
     )
     missing = [str(path.relative_to(root)) for path in required if not path.exists()]
     if missing:
@@ -716,15 +847,18 @@ def validate_windows_runtime(root):
             f"python310._pth is missing: {missing_path_lines}"
         )
     if os.name == "nt":
+        smoke_code = (
+            "import ctypes, pathlib, sys; "
+            "runtime=pathlib.Path(sys.executable).with_name('msvcp140.dll').resolve(); "
+            "ctypes.WinDLL(str(runtime)); "
+            "import sqlite3, fastapi, uvicorn, sqlalchemy, greenlet, colorama; "
+            "import pymupdf, pdf_inspector, mathbank.ai_json, scripts"
+        )
         subprocess.check_call(
             [
                 str(python_executable),
                 "-c",
-                (
-                    "import sqlite3, fastapi, uvicorn, sqlalchemy, greenlet, colorama; "
-                    "import pdf_inspector; "
-                    "import mathbank.ai_json"
-                ),
+                smoke_code,
             ],
             cwd=root,
         )
@@ -824,6 +958,16 @@ def verify_zip_archive(zip_path, required_members):
             if launcher_info.create_system == 3 and not unix_mode & 0o111:
                 raise RuntimeError("finished macOS launcher is not executable")
         else:
+            runtime_members = {
+                *(f"python/{name}" for name in MSVC_RUNTIME_DLLS),
+                f"python/{MSVC_RUNTIME_NOTICE_NAME}",
+            }
+            missing_runtime = sorted(runtime_members - names)
+            if missing_runtime:
+                raise RuntimeError(
+                    "finished Windows release is missing app-local VC Runtime: "
+                    + ", ".join(missing_runtime)
+                )
             launcher_info = file_infos.get(WINDOWS_LAUNCHER_NAME)
             if launcher_info is None:
                 raise RuntimeError("finished Windows release has no launcher")
@@ -928,16 +1072,19 @@ def _build_archive(staging_root, archive_stem, platform_name, launcher_name):
         validate_staged_python_sources(staging_root)
         write_release_manifest(staging_root, platform_name)
         archive_path = Path(shutil.make_archive(archive_stem, "zip", staging_root))
-        verify_zip_archive(
-            archive_path,
-            {
-                "RELEASE-MANIFEST.json",
-                "main.py",
-                launcher_name,
-                "scripts/release_overlay.py",
-                "覆盖升级说明.txt",
-            },
-        )
+        required_members = {
+            "RELEASE-MANIFEST.json",
+            "main.py",
+            launcher_name,
+            "scripts/release_overlay.py",
+            "覆盖升级说明.txt",
+        }
+        if platform_name == "windows-x64":
+            required_members.update(
+                f"python/{name}" for name in MSVC_RUNTIME_DLLS
+            )
+            required_members.add(f"python/{MSVC_RUNTIME_NOTICE_NAME}")
+        verify_zip_archive(archive_path, required_members)
         checksum_path = _write_archive_checksum(archive_path)
     except Exception:
         archive_path.unlink(missing_ok=True)
@@ -992,6 +1139,7 @@ def main():
         clean_directories()
         download_python()
         download_and_extract_sqlite()
+        download_and_extract_msvc_runtime()
         configure_python_path()
         download_and_extract_wheels()
         copy_app_files(BUILD_DIR, "启动题库系统.bat")
