@@ -229,13 +229,13 @@ def download_verified(url, cache_path, expected_sha256, label):
         try:
             verify_sha256(cache_path, expected, label)
             validate_zip(cache_path, label)
-            print(f"💾 Using verified cached {label}...")
+            print(f"[cache] Using verified cached {label}...")
             return cache_path
         except RuntimeError as exc:
             # Keep the old cache untouched until a replacement is fully verified.
-            print(f"⚠️ Ignoring invalid cached {label}: {exc}")
+            print(f"[warning] Ignoring invalid cached {label}: {exc}")
 
-    print(f"📥 Downloading {label} from {url}...")
+    print(f"[download] Downloading {label} from {url}...")
     file_descriptor, temporary_path = tempfile.mkstemp(
         prefix=f".{Path(cache_path).name}.",
         suffix=".download",
@@ -307,7 +307,7 @@ def _pe_machine(payload, label="PE file"):
 
 def validate_release_source():
     """Fail before packaging when release-critical imports or hints are broken."""
-    print("🔎 Validating release source imports and type annotations...")
+    print("[validate] Validating release source imports and type annotations...")
     validation_code = (
         "from typing import get_type_hints; "
         "from mathbank.ai_json import parse_ai_json; "
@@ -359,7 +359,7 @@ def _remove_release_outputs():
 
 
 def clean_directories():
-    print("🧹 Cleaning old directories...")
+    print("[build] Cleaning old directories...")
     os.makedirs(DIST_DIR, exist_ok=True)
     for path in (BUILD_DIR, WHEELS_DIR, MACOS_BUILD_DIR):
         shutil.rmtree(path, ignore_errors=True)
@@ -377,7 +377,7 @@ def download_python():
         PYTHON_ZIP_SHA256,
         "Python 3.10.11 embedded runtime",
     )
-    print("📦 Extracting Python...")
+    print("[build] Extracting Python...")
     with zipfile.ZipFile(cache_path, "r") as zip_ref:
         zip_ref.extractall(PYTHON_DIR, members=_safe_zip_members(zip_ref))
 
@@ -391,7 +391,7 @@ def download_and_extract_sqlite():
         "official CPython NuGet package",
     )
 
-    print("📦 Extracting sqlite3 binaries...")
+    print("[build] Extracting sqlite3 binaries...")
     required_members = {
         "tools/DLLs/_sqlite3.pyd": os.path.join(PYTHON_DIR, "_sqlite3.pyd"),
         "tools/DLLs/sqlite3.dll": os.path.join(PYTHON_DIR, "sqlite3.dll"),
@@ -415,7 +415,7 @@ def download_and_extract_sqlite():
     missing = sorted(set(required_members) - extracted_members)
     if missing:
         raise RuntimeError(f"official CPython NuGet package is missing: {missing}")
-    print("✅ sqlite3 binaries injected successfully!")
+    print("[ok] sqlite3 binaries injected successfully.")
 
 
 def download_and_extract_msvc_runtime():
@@ -429,7 +429,7 @@ def download_and_extract_msvc_runtime():
         f"{MSVC_REDIST_PACKAGE_ID} {MSVC_REDIST_PACKAGE_VERSION}",
     )
 
-    print("📦 Extracting verified Microsoft Visual C++ x64 Runtime DLLs...")
+    print("[build] Extracting verified Microsoft Visual C++ x64 Runtime DLLs...")
     with zipfile.ZipFile(cache_path, "r") as zip_ref:
         safe_members = list(_safe_zip_members(zip_ref))
         name_set = {member.filename for member in safe_members if not member.is_dir()}
@@ -461,11 +461,11 @@ def download_and_extract_msvc_runtime():
         Path(PYTHON_DIR, MSVC_RUNTIME_NOTICE_NAME),
         MSVC_RUNTIME_NOTICE,
     )
-    print("✅ Microsoft VC Runtime injected: " + ", ".join(validated_payloads))
+    print("[ok] Microsoft VC Runtime injected: " + ", ".join(validated_payloads))
 
 
 def configure_python_path():
-    print("⚙️ Configuring python310._pth...")
+    print("[build] Configuring python310._pth...")
     pth_file = os.path.join(PYTHON_DIR, "python310._pth")
     if not os.path.isfile(pth_file):
         raise RuntimeError("embedded Python archive is missing python310._pth")
@@ -495,7 +495,7 @@ def configure_python_path():
 
 
 def download_and_extract_wheels():
-    print("📥 Checking and downloading Windows wheels for requirements...")
+    print("[build] Checking and downloading Windows wheels for requirements...")
     validate_target_requirements()
     requirements_file = os.path.join(BASE_DIR, "requirements-windows.txt")
     os.makedirs(CACHE_WHEELS_DIR, exist_ok=True)
@@ -525,7 +525,7 @@ def download_and_extract_wheels():
     print(f"Running command: {subprocess.list2cmdline(cmd)}")
     subprocess.check_call(cmd, cwd=BASE_DIR)
 
-    print("💾 Updating local wheels cache...")
+    print("[cache] Updating local wheels cache...")
     wheel_paths = sorted(Path(WHEELS_DIR).glob("*.whl"))
     if not wheel_paths:
         raise RuntimeError("pip did not resolve any Windows wheels")
@@ -537,7 +537,7 @@ def download_and_extract_wheels():
             shutil.copy2(wheel_path, temporary)
             os.replace(temporary, destination)
 
-    print("📦 Extracting wheels into site-packages...")
+    print("[build] Extracting wheels into site-packages...")
     for wheel_path in wheel_paths:
         with zipfile.ZipFile(wheel_path, "r") as zip_ref:
             zip_ref.extractall(SITE_PACKAGES, members=_safe_zip_members(zip_ref))
@@ -611,7 +611,7 @@ def copy_app_files(destination, launcher_name):
     """Copy only approved application assets into a release staging tree."""
     destination = Path(destination)
     destination.mkdir(parents=True, exist_ok=True)
-    print(f"📂 Copying allowlisted application files to {destination}...")
+    print(f"[build] Copying allowlisted application files to {destination}...")
 
     for relative_name in ROOT_FILE_ALLOWLIST:
         _copy_allowlisted_entry(
@@ -1090,13 +1090,13 @@ def _build_archive(staging_root, archive_stem, platform_name, launcher_name):
         archive_path.unlink(missing_ok=True)
         checksum_path.unlink(missing_ok=True)
         raise
-    print(f"🎉 Release archive created: {archive_path}")
-    print(f"🔐 Archive checksum created: {checksum_path}")
+    print(f"[ok] Release archive created: {archive_path}")
+    print(f"[ok] Archive checksum created: {checksum_path}")
     return os.fspath(archive_path)
 
 
 def zip_release():
-    print("🤐 Zipping Windows release package...")
+    print("[build] Zipping Windows release package...")
     validate_windows_runtime(BUILD_DIR)
     return _build_archive(
         BUILD_DIR,
@@ -1107,7 +1107,7 @@ def zip_release():
 
 
 def zip_macos_release():
-    print("🤐 Zipping macOS release package...")
+    print("[build] Zipping macOS release package...")
     macos_build_dir = MACOS_BUILD_DIR
     copy_app_files(macos_build_dir, "启动题库系统.command")
     launcher_path = os.path.join(macos_build_dir, "启动题库系统.command")
@@ -1124,7 +1124,7 @@ def zip_macos_release():
 
 
 def cleanup_temp():
-    print("🧹 Cleaning up temporary files...")
+    print("[build] Cleaning up temporary files...")
     shutil.rmtree(WHEELS_DIR, ignore_errors=True)
     shutil.rmtree(BUILD_DIR, ignore_errors=True)
 
@@ -1147,12 +1147,12 @@ def main():
         zip_release()
         zip_macos_release()
         cleanup_temp()
-        print("🚀 Windows & macOS Release Packages Built Successfully!")
+        print("[ok] Windows and macOS Release packages built successfully.")
     except Exception as exc:
         # The two platform archives are one release set.  If either side fails,
         # remove both known outputs while preserving every unrelated dist file.
         _remove_release_outputs()
-        print(f"❌ Error during packaging: {exc}")
+        print(f"[error] Error during packaging: {exc}")
         raise
 
 

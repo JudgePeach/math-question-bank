@@ -1,3 +1,4 @@
+import ast
 import hashlib
 import io
 import json
@@ -71,6 +72,34 @@ def test_runtime_downloads_have_fixed_sha256_and_default_tls():
         "/x64/Microsoft.VC145.CRT/" in member
         and "debug_nonredist" not in member
         for member, _digest in build_release.MSVC_RUNTIME_DLLS.values()
+    )
+
+
+def test_release_builder_print_literals_are_ascii_for_windows_consoles():
+    source_path = PROJECT_ROOT / "scripts" / "build_release.py"
+    source = source_path.read_text(encoding="utf-8")
+    tree = ast.parse(source, filename=str(source_path))
+    violations = []
+
+    for node in ast.walk(tree):
+        if not (
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Name)
+            and node.func.id == "print"
+        ):
+            continue
+        for argument in node.args:
+            for child in ast.walk(argument):
+                if (
+                    isinstance(child, ast.Constant)
+                    and isinstance(child.value, str)
+                    and not child.value.isascii()
+                ):
+                    violations.append((node.lineno, child.value))
+
+    assert violations == [], (
+        "Release builder print literals must remain ASCII-safe for Windows "
+        f"CP1252/CP936 consoles: {violations}"
     )
 
 
