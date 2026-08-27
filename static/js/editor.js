@@ -2152,7 +2152,10 @@ let bankQuestionsRetryTimer = null;
                           .replace(/>/g, '&gt;');
             }
 
-            placeholders.forEach(({ placeholder, original }) => {
+            // Adjacent inline math such as $a$$b$$c$ can make a later
+            // placeholder contain an earlier one. Restore in LIFO order so
+            // the outer placeholder is expanded before its nested token.
+            placeholders.slice().reverse().forEach(({ placeholder, original }) => {
                 tempText = tempText.replace(placeholder, () => escapeHtml(original));
             });
             

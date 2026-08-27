@@ -104,6 +104,62 @@ if (similarlyNamed !== String.raw`\parent`) {
     assert re.search(r"\.choices-grid\s*\{[^}]*clear:\s*both;", css_source, re.DOTALL)
 
 
+def test_editor_preview_restores_adjacent_math_without_splitting_fillin_lines():
+    editor_source = _read(STATIC_JS_DIR / "editor.js")
+    helper_start = editor_source.index("function transformFillinMacro(clean)")
+    helper_marker = "window.preprocessFormulaForKaTeX = preprocessFormulaForKaTeX;"
+    helper_end = editor_source.index(helper_marker, helper_start) + len(helper_marker)
+    helper_source = editor_source[helper_start:helper_end]
+
+    node = shutil.which("node")
+    assert node, "Node.js is required for the frontend executable regression"
+    script = r"""
+global.window = {
+  MathBankSafe: {
+    safeImageUrl(value) { return value; },
+    escapeAttribute(value) { return value; },
+  },
+};
+""" + helper_source + r"""
+const fillin = String.raw`\fillin`;
+const renderedFillin = String.raw`$\underline{\hspace{1.5cm}}$`;
+for (let count = 1; count <= 6; count += 1) {
+  const source = `11${fillin.repeat(count)}`;
+  const rendered = window.preprocessFormulaForKaTeX(source);
+  const expected = `11${renderedFillin.repeat(count)}`;
+  if (rendered !== expected) {
+    throw new Error(`continuous fillin changed at count ${count}: ${rendered}`);
+  }
+  if (rendered.includes('@@MATH_PLACEHOLDER_')) {
+    throw new Error(`math placeholder leaked at count ${count}: ${rendered}`);
+  }
+}
+
+for (const source of [
+  String.raw`$a$$b$$c$`,
+  String.raw`$a$$b$$c$$d$$e$`,
+  String.raw`prefix$$a+b$$suffix`,
+  String.raw`text $a$ and $b$`,
+]) {
+  const rendered = window.preprocessFormulaForKaTeX(source);
+  if (rendered !== source) {
+    throw new Error(`adjacent math changed: ${source} -> ${rendered}`);
+  }
+  if (rendered.includes('@@MATH_PLACEHOLDER_')) {
+    throw new Error(`math placeholder leaked: ${rendered}`);
+  }
+}
+"""
+    result = subprocess.run(
+        [node, "-e", script],
+        cwd=PROJECT_ROOT,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
+
+
 def test_paper_preview_separates_choices_before_figure_layout():
     paper_source = _read(STATIC_JS_DIR / "paper.js")
     css_source = _read(CSS_PATH)
