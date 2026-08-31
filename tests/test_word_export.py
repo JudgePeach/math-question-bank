@@ -340,6 +340,49 @@ def test_word_export_api_rejects_empty_paper(client):
     assert "卷面为空" in response.json()["message"]
 
 
+def test_pandoc_runtime_status_api_reports_existing_install(client, monkeypatch):
+    monkeypatch.setattr(
+        "main.pandoc_status",
+        lambda: {
+            "status": "ready",
+            "available": True,
+            "source": "system",
+            "version": "pandoc 3.test",
+            "path": "/test/pandoc",
+        },
+    )
+    monkeypatch.setattr(
+        "main.PANDOC_INSTALL_MANAGER.snapshot",
+        lambda: {"status": "idle", "task_id": None},
+    )
+
+    response = client.get("/api/runtime/pandoc/status")
+
+    assert response.status_code == 200
+    assert response.json()["pandoc"]["source"] == "system"
+    assert response.json()["pandoc"]["available"] is True
+
+
+def test_pandoc_runtime_install_api_requires_token_and_returns_task(client, monkeypatch):
+    state = {
+        "task_id": "pandoc-task",
+        "status": "queued",
+        "progress": 0,
+        "message": "queued",
+    }
+    monkeypatch.setattr("main.PANDOC_INSTALL_MANAGER.ensure", lambda: state)
+
+    forbidden = client.post("/api/runtime/pandoc/install")
+    accepted = client.post(
+        "/api/runtime/pandoc/install",
+        headers={"X-Local-Token": LOCAL_TOKEN},
+    )
+
+    assert forbidden.status_code == 403
+    assert accepted.status_code == 202
+    assert accepted.json()["pandoc"]["task_id"] == "pandoc-task"
+
+
 def test_word_export_title_block_matches_exam_layout():
     data, _ = build_word_document(
         "2026高中数学期末考试",
@@ -431,4 +474,3 @@ def test_create_word_bundle_zip():
         assert archive.namelist() == ["高一数学月考.docx", "高一数学月考_含答案与解析.docx"]
         assert archive.read("高一数学月考.docx") == main_bytes
         assert archive.read("高一数学月考_含答案与解析.docx") == ans_bytes
-

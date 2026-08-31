@@ -73,6 +73,7 @@ flowchart LR
   * **macOS 用户**：推荐安装 [**MacTeX 官网**](https://www.tug.org/mactex/)（安装包约 5GB，国内推荐使用 [清华大学镜像站](https://mirrors.tuna.tsinghua.edu.cn/CTAN/systems/mac/mactex/) 极速下载）
   * **Windows 用户**：推荐安装 [**TeX Live 官网**](https://www.tug.org/texlive/)（ISO 镜像约 5GB，国内推荐使用 [清华大学镜像站](https://mirrors.tuna.tsinghua.edu.cn/CTAN/systems/texlive/Images/) 极速下载；也可选择 MiKTeX）
 - **📄 Word (.docx) 试卷安全导入**：无需安装 Microsoft Word 或 MathType。系统可转换常见 OMML 公式，并使用 `olefile` + MTEF v5 记录树解析 MathType 结构；普通 `32`、拉丁 `p` 等不会再因旧的字符规则被误判。系统还会递归保留超链接/修订文字/Symbol 字符并提取表格与原图，不能高置信转换的公式则保留 Word 预览图。拆卷报告会分别显示结构转换、内嵌 LaTeX、有限兼容及人工核对数量。
+- **📝 Word 可编辑公式导出**：系统会优先复用电脑上已安装的 Pandoc。首次导出时如未检测到，经用户确认后自动下载并安装到 MathBank 本地运行目录，安装完成后自动继续原导出；无需管理员权限、手动选路径或配置 PATH。下载优先使用 Pandoc 官方 GitHub Release，失败时自动切换 SourceForge 备用线路，两条线路均使用同一固定 SHA-256 校验。
 
 ---
 

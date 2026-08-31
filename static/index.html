@@ -1849,6 +1849,47 @@
         </div>
     </div>
 
+    <!-- Pandoc on-demand installation for editable Word formulas -->
+    <div id="pandocInstallModal" role="dialog" aria-modal="true" aria-hidden="true" aria-labelledby="pandocInstallTitle" class="fixed inset-0 z-[90] hidden items-center justify-center bg-slate-950/55 p-4 opacity-0 backdrop-blur-sm transition-opacity duration-200">
+        <div data-modal-surface class="glass-modal w-full max-w-lg scale-95 rounded-3xl border border-white/50 p-6 shadow-2xl transition-transform duration-200 sm:p-7">
+            <div class="flex items-start gap-4">
+                <span class="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-blue-50 text-xl text-blue-600 dark:bg-blue-500/15 dark:text-blue-300">
+                    <i class="fa-solid fa-file-word" aria-hidden="true"></i>
+                </span>
+                <div class="min-w-0 flex-1">
+                    <h3 id="pandocInstallTitle" class="text-base font-bold text-slate-800 dark:text-slate-100">安装 Word 可编辑公式组件</h3>
+                    <p id="pandocInstallDescription" class="mt-2 text-sm leading-6 text-slate-600 dark:text-slate-300">
+                        安装 Pandoc 后，导出的数学公式可在 Word/WPS 中直接编辑。组件仅安装在 MathBank 本地目录，无需管理员权限，也不会修改系统环境。
+                    </p>
+                </div>
+            </div>
+
+            <div id="pandocInstallNotice" class="mt-5 rounded-2xl border border-blue-100 bg-blue-50/80 px-4 py-3 text-xs leading-5 text-blue-800 dark:border-blue-500/20 dark:bg-blue-500/10 dark:text-blue-200">
+                首次安装需要联网下载约 25～42 MB，完成后可离线使用。不安装仍可兼容导出，但公式可能无法编辑，部分复杂公式需要人工核对。
+            </div>
+
+            <div id="pandocInstallProgress" class="mt-5 hidden" aria-live="polite">
+                <div class="mb-2 flex items-center justify-between gap-3 text-xs font-semibold text-slate-600 dark:text-slate-300">
+                    <span id="pandocInstallProgressText">正在准备下载…</span>
+                    <span id="pandocInstallProgressValue">0%</span>
+                </div>
+                <div class="h-2.5 overflow-hidden rounded-full bg-slate-200/80 dark:bg-slate-700">
+                    <div id="pandocInstallProgressBar" class="h-full w-0 rounded-full bg-gradient-to-r from-blue-500 to-indigo-500 transition-[width] duration-300"></div>
+                </div>
+            </div>
+
+            <div id="pandocInstallError" class="mt-5 hidden rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-xs leading-5 text-rose-700 dark:border-rose-500/30 dark:bg-rose-500/10 dark:text-rose-200"></div>
+
+            <div class="mt-6 flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
+                <button id="pandocCancelBtn" type="button" class="rounded-xl border border-slate-200 px-4 py-2.5 text-sm font-semibold text-slate-600 transition-colors hover:bg-slate-100 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800">取消</button>
+                <button id="pandocCompatibilityBtn" type="button" class="rounded-xl border border-amber-200 bg-amber-50 px-4 py-2.5 text-sm font-semibold text-amber-700 transition-colors hover:bg-amber-100 dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-200">本次兼容导出</button>
+                <button id="pandocInstallBtn" type="button" class="rounded-xl bg-blue-600 px-4 py-2.5 text-sm font-bold text-white shadow-lg shadow-blue-500/20 transition-all hover:bg-blue-700 active:scale-95">
+                    <i class="fa-solid fa-download mr-1.5" aria-hidden="true"></i>安装并继续导出
+                </button>
+            </div>
+        </div>
+    </div>
+
     <!-- MAIN APP JAVASCRIPT -->
     <script src="/static/js/api.js?v=1.0.1"></script>
     <script src="/static/js/editor.js?v=1.0.1"></script>

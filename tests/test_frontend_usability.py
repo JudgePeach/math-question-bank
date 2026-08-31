@@ -516,6 +516,30 @@ def test_sidebar_uses_server_pagination_and_latest_request_wins():
     assert "questions.slice(" not in load_source
 
 
+def test_word_export_prepares_pandoc_once_and_can_continue_in_compatibility_mode():
+    index_source = _read(INDEX_PATH)
+    paper_source = _read(STATIC_JS_DIR / "paper.js")
+
+    for marker in (
+        'id="pandocInstallModal"',
+        '安装 Word 可编辑公式组件',
+        '安装并继续导出',
+        '本次兼容导出',
+        'id="pandocInstallProgressBar"',
+    ):
+        assert marker in index_source
+
+    for marker in (
+        "fetch('/api/runtime/pandoc/status')",
+        "fetch('/api/runtime/pandoc/install', { method: 'POST' })",
+        "pollPandocInstall(state.task_id)",
+        "await ensurePandocForWordExport()",
+        "await generateAndDownloadWord(payload)",
+        "decision === 'compatibility'",
+    ):
+        assert marker in paper_source
+
+
 def test_generated_tailwind_classes_use_configured_scales():
     combined_source = "\n".join((_read(INDEX_PATH), *(_read(path) for path in JS_FILES)))
     assert "text-2xs" not in combined_source

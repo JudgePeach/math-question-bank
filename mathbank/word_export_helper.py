@@ -29,6 +29,8 @@ from docx.oxml import OxmlElement, parse_xml
 from docx.oxml.ns import nsdecls, qn
 from docx.shared import Cm, Inches, Pt, RGBColor
 
+from mathbank.runtime_components import find_usable_pandoc
+
 
 MATH_NS = "http://schemas.openxmlformats.org/officeDocument/2006/math"
 WORD_NS = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
@@ -125,18 +127,8 @@ class PreparedQuestion:
 
 
 def _find_pandoc() -> str | None:
-    configured = os.getenv("MATHBANK_PANDOC_PATH", "").strip()
-    if configured and Path(configured).is_file():
-        return configured
-    found = shutil.which("pandoc")
-    if found:
-        return found
-    common = (
-        "/opt/homebrew/bin/pandoc",
-        "/usr/local/bin/pandoc",
-        r"C:\\Program Files\\Pandoc\\pandoc.exe",
-    )
-    return next((item for item in common if Path(item).is_file()), None)
+    resolved = find_usable_pandoc()
+    return os.fspath(resolved[0]) if resolved else None
 
 
 def _normalize_formula(formula: str) -> str:

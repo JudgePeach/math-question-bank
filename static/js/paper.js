@@ -1961,26 +1961,191 @@
         } catch (e) {}
     }
 
-    window.exportPaperWord = async function () {
-        const cart = window.PaperStore.cart;
-        if (cart.length === 0) {
-            if (window.showToast) window.showToast('卷面为空，无法导出 Word 试卷', 'warning');
-            return;
+    function setPandocModalVisible(visible) {
+        const modal = document.getElementById('pandocInstallModal');
+        if (!modal) return;
+        const surface = modal.querySelector('[data-modal-surface]');
+        if (visible) {
+            modal.classList.remove('hidden');
+            modal.classList.add('flex');
+            requestAnimationFrame(() => {
+                modal.classList.remove('opacity-0');
+                if (surface) surface.classList.remove('scale-95');
+            });
+            modal.setAttribute('aria-hidden', 'false');
+        } else {
+            modal.classList.add('opacity-0');
+            if (surface) surface.classList.add('scale-95');
+            modal.setAttribute('aria-hidden', 'true');
+            setTimeout(() => {
+                modal.classList.add('hidden');
+                modal.classList.remove('flex');
+            }, 200);
+        }
+    }
+
+    function resetPandocInstallModal() {
+        const progress = document.getElementById('pandocInstallProgress');
+        const error = document.getElementById('pandocInstallError');
+        const install = document.getElementById('pandocInstallBtn');
+        const compatibility = document.getElementById('pandocCompatibilityBtn');
+        const cancel = document.getElementById('pandocCancelBtn');
+        if (progress) progress.classList.add('hidden');
+        if (error) {
+            error.classList.add('hidden');
+            error.textContent = '';
+        }
+        if (install) {
+            install.disabled = false;
+            install.innerHTML = '<i class="fa-solid fa-download mr-1.5" aria-hidden="true"></i>安装并继续导出';
+        }
+        if (compatibility) compatibility.disabled = false;
+        if (cancel) cancel.disabled = false;
+    }
+
+    function updatePandocInstallProgress(state) {
+        const progress = document.getElementById('pandocInstallProgress');
+        const text = document.getElementById('pandocInstallProgressText');
+        const value = document.getElementById('pandocInstallProgressValue');
+        const bar = document.getElementById('pandocInstallProgressBar');
+        const install = document.getElementById('pandocInstallBtn');
+        const compatibility = document.getElementById('pandocCompatibilityBtn');
+        const cancel = document.getElementById('pandocCancelBtn');
+        const percent = Math.max(0, Math.min(100, parseInt(state.progress || '0', 10)));
+        if (progress) progress.classList.remove('hidden');
+        if (text) text.textContent = state.message || '正在准备 Word 可编辑公式组件…';
+        if (value) value.textContent = `${percent}%`;
+        if (bar) bar.style.width = `${percent}%`;
+        if (install) {
+            install.disabled = true;
+            install.innerHTML = '<i class="fa-solid fa-spinner fa-spin mr-1.5" aria-hidden="true"></i>正在安装…';
+        }
+        if (compatibility) compatibility.disabled = true;
+        if (cancel) cancel.disabled = true;
+    }
+
+    function showPandocInstallError(message) {
+        const error = document.getElementById('pandocInstallError');
+        const install = document.getElementById('pandocInstallBtn');
+        const compatibility = document.getElementById('pandocCompatibilityBtn');
+        const cancel = document.getElementById('pandocCancelBtn');
+        if (error) {
+            error.textContent = message || 'Word 可编辑公式组件安装失败，尚未修改现有运行环境。';
+            error.classList.remove('hidden');
+        }
+        if (install) {
+            install.disabled = false;
+            install.innerHTML = '<i class="fa-solid fa-rotate-right mr-1.5" aria-hidden="true"></i>重新安装';
+        }
+        if (compatibility) compatibility.disabled = false;
+        if (cancel) cancel.disabled = false;
+    }
+
+    function waitForPandocDecision() {
+        resetPandocInstallModal();
+        setPandocModalVisible(true);
+        return new Promise(resolve => {
+            const install = document.getElementById('pandocInstallBtn');
+            const compatibility = document.getElementById('pandocCompatibilityBtn');
+            const cancel = document.getElementById('pandocCancelBtn');
+            const finish = decision => {
+                if (install) install.onclick = null;
+                if (compatibility) compatibility.onclick = null;
+                if (cancel) cancel.onclick = null;
+                if (decision !== 'install') setPandocModalVisible(false);
+                resolve(decision);
+            };
+            if (install) install.onclick = () => finish('install');
+            if (compatibility) compatibility.onclick = () => finish('compatibility');
+            if (cancel) cancel.onclick = () => finish('cancel');
+        });
+    }
+
+    async function pollPandocInstall(taskId) {
+        const deadline = Date.now() + 15 * 60 * 1000;
+        while (Date.now() < deadline) {
+            const response = await fetch(`/api/runtime/pandoc/install/${encodeURIComponent(taskId)}`);
+            if (!response.ok) throw new Error('Pandoc 安装任务已失效。');
+            const data = await response.json();
+            const state = data.pandoc || {};
+            updatePandocInstallProgress(state);
+            if (state.status === 'completed' || state.status === 'ready') return true;
+            if (state.status === 'error') throw new Error(state.error || state.message || 'Pandoc 安装失败。');
+            await new Promise(resolve => setTimeout(resolve, 750));
+        }
+        throw new Error('Pandoc 安装等待超时，请重试。');
+    }
+
+    async function installPandocAndContinue() {
+        while (true) {
+            try {
+                updatePandocInstallProgress({ progress: 0, message: '正在准备下载…' });
+                const response = await fetch('/api/runtime/pandoc/install', { method: 'POST' });
+                const data = await response.json();
+                if (!response.ok || data.status !== 'success') {
+                    throw new Error(data.message || 'Pandoc 安装任务创建失败。');
+                }
+                const state = data.pandoc || {};
+                if (state.status !== 'ready') {
+                    if (!state.task_id) throw new Error('Pandoc 安装任务缺少标识。');
+                    await pollPandocInstall(state.task_id);
+                }
+                setPandocModalVisible(false);
+                if (window.showToast) window.showToast('Word 可编辑公式组件已安装，正在继续导出…', 'success');
+                return true;
+            } catch (error) {
+                showPandocInstallError(error && error.message ? error.message : 'Pandoc 安装失败。');
+                const decision = await new Promise(resolve => {
+                    const install = document.getElementById('pandocInstallBtn');
+                    const compatibility = document.getElementById('pandocCompatibilityBtn');
+                    const cancel = document.getElementById('pandocCancelBtn');
+                    if (install) install.onclick = () => resolve('retry');
+                    if (compatibility) compatibility.onclick = () => resolve('compatibility');
+                    if (cancel) cancel.onclick = () => resolve('cancel');
+                });
+                if (decision === 'retry') continue;
+                setPandocModalVisible(false);
+                return decision === 'compatibility';
+            }
+        }
+    }
+
+    async function ensurePandocForWordExport() {
+        let response;
+        try {
+            response = await fetch('/api/runtime/pandoc/status');
+            if (!response.ok) throw new Error('无法检查 Pandoc 状态。');
+            const data = await response.json();
+            const state = data.pandoc || {};
+            if (state.available || state.status === 'ready') return true;
+            if (['queued', 'downloading', 'verifying'].includes(state.status) && state.task_id) {
+                resetPandocInstallModal();
+                setPandocModalVisible(true);
+                updatePandocInstallProgress(state);
+                await pollPandocInstall(state.task_id);
+                setPandocModalVisible(false);
+                return true;
+            }
+            if (state.status === 'unsupported') {
+                if (window.showToast) window.showToast('当前系统暂不支持自动安装 Pandoc，可使用兼容模式导出', 'warning');
+            }
+        } catch (error) {
+            if (window.showToast) window.showToast(error.message || '无法检查 Word 公式组件', 'error');
+            return false;
         }
 
+        const decision = await waitForPandocDecision();
+        if (decision === 'cancel') return false;
+        if (decision === 'compatibility') return true;
+        return installPandocAndContinue();
+    }
+
+    async function generateAndDownloadWord(payload) {
         try {
-            const isExam19 = window.PaperStore.meta.paper_type === 'exam_19';
+            const isExam19 = payload.paper_type === 'exam_19';
             if (window.showToast) {
                 window.showToast(isExam19 ? '正在生成 Word 试卷及解析压缩包（正文+解析，不含答题卡）...' : '正在生成 Word 试卷及参考答案压缩包...', 'info');
             }
-            const payload = {
-                title: window.PaperStore.meta.title,
-                subtitle: window.PaperStore.meta.subtitle,
-                paper_type: window.PaperStore.meta.paper_type,
-                show_notice: window.PaperStore.meta.show_notice !== false,
-                show_secret: window.PaperStore.meta.show_secret !== false,
-                questions: buildCartQuestionsPayload()
-            };
             const res = await fetch('/api/paper/export/word', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
@@ -1997,7 +2162,7 @@
             }
 
             const blob = await res.blob();
-            const rawTitle = (window.PaperStore.meta.title || '试卷').trim();
+            const rawTitle = (payload.title || '试卷').trim();
             const safeTitle = rawTitle.replace(/[/\\?%*:|"<>]/g, '_') || '试卷';
             const filename = `${safeTitle}_Word打包.zip`;
             const nativeCount = parseInt(res.headers.get('X-Word-Native-Formulas') || '0', 10);
@@ -2047,6 +2212,24 @@
         } catch (e) {
             if (window.showToast) window.showToast('Word 生成请求异常', 'error');
         }
+    }
+
+    window.exportPaperWord = async function () {
+        const cart = window.PaperStore.cart;
+        if (cart.length === 0) {
+            if (window.showToast) window.showToast('卷面为空，无法导出 Word 试卷', 'warning');
+            return;
+        }
+        const payload = {
+            title: window.PaperStore.meta.title,
+            subtitle: window.PaperStore.meta.subtitle,
+            paper_type: window.PaperStore.meta.paper_type,
+            show_notice: window.PaperStore.meta.show_notice !== false,
+            show_secret: window.PaperStore.meta.show_secret !== false,
+            questions: buildCartQuestionsPayload()
+        };
+        if (!await ensurePandocForWordExport()) return;
+        await generateAndDownloadWord(payload);
     };
 
     window.exportPaperBundle = async function () {

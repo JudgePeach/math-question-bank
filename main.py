@@ -32,6 +32,10 @@ from dotenv import load_dotenv
 from mathbank.database import Question, QuestionCurriculum, Paper, PaperQuestion, engine, get_db, init_db
 from mathbank.paper_helper import build_latex_document, build_answer_sheet_latex, compile_tex_to_pdf, create_tex_zip_package, create_full_bundle_zip_package, collect_referenced_images, build_restricted_tex_environment
 from mathbank.word_export_helper import build_word_document, create_word_bundle_zip
+from mathbank.runtime_components import (
+    PANDOC_INSTALL_MANAGER,
+    pandoc_status,
+)
 from mathbank.sync_helper import export_database_to_files
 from mathbank.backup import acquire_runtime_lock, create_full_backup_if_due
 from mathbank.health import readiness_report
@@ -5493,6 +5497,37 @@ def export_paper_pdf(payload: dict, db: Session = Depends(get_db)):
             )
     except Exception as e:
         return JSONResponse(content={"status": "error", "message": f"编译 PDF 异常: {str(e)}"}, status_code=500)
+
+
+@app.get("/api/runtime/pandoc/status")
+def get_pandoc_runtime_status():
+    """Report whether Word-native formula conversion is currently available."""
+    install_state = PANDOC_INSTALL_MANAGER.snapshot()
+    if install_state.get("status") in {"queued", "downloading", "verifying"}:
+        return {"status": "success", "pandoc": install_state}
+    return {"status": "success", "pandoc": pandoc_status()}
+
+
+@app.post("/api/runtime/pandoc/install")
+def install_pandoc_runtime():
+    """Start or join the single verified app-local Pandoc installation task."""
+    state = PANDOC_INSTALL_MANAGER.ensure()
+    status_code = 200 if state.get("status") == "ready" else 202
+    return JSONResponse(
+        status_code=status_code,
+        content={"status": "success", "pandoc": state},
+    )
+
+
+@app.get("/api/runtime/pandoc/install/{task_id}")
+def get_pandoc_install_status(task_id: str):
+    state = PANDOC_INSTALL_MANAGER.snapshot()
+    if not state.get("task_id") or state.get("task_id") != task_id:
+        return JSONResponse(
+            status_code=404,
+            content={"status": "error", "message": "Pandoc 安装任务不存在或已过期。"},
+        )
+    return {"status": "success", "pandoc": state}
 
 
 @app.post("/api/paper/export/word")
