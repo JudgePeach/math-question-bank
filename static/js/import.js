@@ -1203,6 +1203,11 @@
         let parsedDuplicateSummaryVisible = false;
         let parsedDuplicateActiveIndices = [];
         let parsedDuplicateReviewResolver = null;
+        let parsedDuplicateCandidateObserver = null;
+        let parsedDuplicateCandidateRenderJobs = new WeakMap();
+        let parsedDuplicateCandidateFallbackQueue = [];
+        let parsedDuplicateCandidateFallbackFrame = null;
+        let parsedDuplicateCandidateRenderGeneration = 0;
         let allSourcesList = [];
 
         function replaceParsedQuestions(nextQuestions) {
@@ -3165,6 +3170,73 @@
             return labels[String(reason || '')] || window.MathBankSafe.sanitizePlainText(String(reason || ''));
         }
 
+        function resetParsedDuplicateCandidateRendering() {
+            parsedDuplicateCandidateRenderGeneration += 1;
+            if (parsedDuplicateCandidateObserver) {
+                parsedDuplicateCandidateObserver.disconnect();
+                parsedDuplicateCandidateObserver = null;
+            }
+            parsedDuplicateCandidateRenderJobs = new WeakMap();
+            parsedDuplicateCandidateFallbackQueue = [];
+            parsedDuplicateCandidateFallbackFrame = null;
+        }
+
+        function drainParsedDuplicateCandidateFallbackQueue(generation) {
+            if (generation !== parsedDuplicateCandidateRenderGeneration) return;
+            parsedDuplicateCandidateFallbackFrame = null;
+            const job = parsedDuplicateCandidateFallbackQueue.shift();
+            if (job) job();
+            if (parsedDuplicateCandidateFallbackQueue.length > 0) {
+                parsedDuplicateCandidateFallbackFrame = window.requestAnimationFrame(() => {
+                    drainParsedDuplicateCandidateFallbackQueue(generation);
+                });
+            }
+        }
+
+        function prepareParsedDuplicateCandidateRendering(root) {
+            resetParsedDuplicateCandidateRendering();
+            if (typeof window.IntersectionObserver !== 'function') return;
+            const observer = new window.IntersectionObserver(entries => {
+                entries.forEach(entry => {
+                    if (!entry.isIntersecting && entry.intersectionRatio <= 0) return;
+                    observer.unobserve(entry.target);
+                    const job = parsedDuplicateCandidateRenderJobs.get(entry.target);
+                    parsedDuplicateCandidateRenderJobs.delete(entry.target);
+                    if (job) job();
+                });
+            }, {
+                root: root,
+                rootMargin: '120px 0px'
+            });
+            parsedDuplicateCandidateObserver = observer;
+        }
+
+        function scheduleParsedDuplicateCandidateRender(container, text) {
+            if (!container) return;
+            const generation = parsedDuplicateCandidateRenderGeneration;
+            const render = () => {
+                if (generation !== parsedDuplicateCandidateRenderGeneration) return;
+                try {
+                    window.renderQuestionPreviewContent(container, text, { includeImages: false });
+                } catch (error) {
+                    container.textContent = '题干渲染失败，请稍后重试。';
+                } finally {
+                    container.setAttribute('aria-busy', 'false');
+                }
+            };
+            if (parsedDuplicateCandidateObserver) {
+                parsedDuplicateCandidateRenderJobs.set(container, render);
+                parsedDuplicateCandidateObserver.observe(container);
+                return;
+            }
+            parsedDuplicateCandidateFallbackQueue.push(render);
+            if (parsedDuplicateCandidateFallbackFrame === null) {
+                parsedDuplicateCandidateFallbackFrame = window.requestAnimationFrame(() => {
+                    drainParsedDuplicateCandidateFallbackQueue(generation);
+                });
+            }
+        }
+
         function appendDuplicateCandidate(container, candidate) {
             if (!candidate || typeof candidate !== 'object') return;
             const row = document.createElement('div');
@@ -3174,56 +3246,47 @@
             const seq = candidate.seq_num || candidate.id || '?';
             const source = window.MathBankSafe.sanitizePlainText(String(candidate.source || '来源未标注'));
             title.textContent = `已收录 #${seq} · ${source} · 相似度 ${Math.round(Number(candidate.score || 0) * 100)}%`;
-            const content = document.createElement('p');
-            content.className = 'mt-2 whitespace-pre-wrap break-words text-[11px] leading-5 text-slate-700 dark:text-slate-200';
-            const plainContent = window.MathBankSafe.sanitizePlainText(String(candidate.content || ''));
-            content.textContent = plainContent.length > 220 ? `${plainContent.slice(0, 220)}…` : plainContent;
-            row.append(title, content);
-            if (plainContent) {
+            row.appendChild(title);
+            if (candidate.content_truncated) {
                 const details = document.createElement('details');
                 details.className = 'mt-2 rounded-lg border border-slate-200 p-2 dark:border-slate-700';
                 const summary = document.createElement('summary');
                 summary.className = 'min-h-11 cursor-pointer py-3 text-[10px] font-bold text-brand-600 dark:text-brand-200';
-                summary.textContent = '查看完整题干与公式';
+                summary.textContent = '点击加载并渲染完整题干';
                 const fullContent = document.createElement('div');
                 fullContent.className = 'mt-2 break-words text-[11px] leading-5 text-slate-700 dark:text-slate-200';
-                fullContent.textContent = candidate.content_truncated
-                    ? '展开后加载完整题干…'
-                    : plainContent;
+                fullContent.textContent = '展开后加载完整题干…';
                 let mathRendered = false;
                 details.addEventListener('toggle', async () => {
                     if (!details.open || mathRendered) return;
                     mathRendered = true;
-                    let completeContent = plainContent;
-                    if (candidate.content_truncated && candidate.id) {
-                        try {
-                            const response = await fetch(`/api/questions/${Number(candidate.id)}`);
-                            if (!response.ok) throw new Error(`HTTP ${response.status}`);
-                            const fullQuestion = await response.json();
-                            completeContent = String(fullQuestion.content || plainContent);
-                        } catch (error) {
-                            mathRendered = false;
-                            fullContent.textContent = '完整题干加载失败，请稍后重试。';
-                            return;
-                        }
-                    }
-                    fullContent.textContent = completeContent;
                     try {
-                        renderMathInElement(fullContent, {
-                            delimiters: [
-                                {left: '$$', right: '$$', display: true},
-                                {left: '$', right: '$', display: false},
-                                {left: '\\(', right: '\\)', display: false},
-                                {left: '\\[', right: '\\]', display: true}
-                            ],
-                            throwOnError: false
-                        });
+                        if (!candidate.id) throw new Error('候选题标识缺失');
+                        const response = await fetch(`/api/questions/${Number(candidate.id)}`);
+                        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+                        const fullQuestion = await response.json();
+                        window.renderQuestionPreviewContent(
+                            fullContent,
+                            String(fullQuestion.content || ''),
+                            { includeImages: false }
+                        );
                     } catch (error) {
-                        fullContent.textContent = completeContent;
+                        mathRendered = false;
+                        fullContent.textContent = '完整题干加载失败，请稍后重试。';
                     }
                 });
                 details.append(summary, fullContent);
                 row.appendChild(details);
+            } else {
+                const renderedContent = document.createElement('div');
+                renderedContent.className = 'mt-2 break-words text-[11px] leading-5 text-slate-700 dark:text-slate-200';
+                renderedContent.setAttribute('aria-busy', 'true');
+                renderedContent.textContent = '进入可见区域后自动渲染题干…';
+                scheduleParsedDuplicateCandidateRender(
+                    renderedContent,
+                    String(candidate.content || '')
+                );
+                row.appendChild(renderedContent);
             }
             const imagePaths = Array.isArray(candidate.image_paths)
                 ? candidate.image_paths.map(path => window.MathBankSafe.safeImageUrl(path)).filter(Boolean)
@@ -3264,6 +3327,7 @@
         function renderParsedDuplicateReview(entries) {
             const list = document.getElementById('parsedDuplicateReviewList');
             if (!list) return;
+            prepareParsedDuplicateCandidateRendering(list);
             list.textContent = '';
             entries.forEach(entry => {
                 const section = document.createElement('section');
@@ -3342,6 +3406,7 @@
 
         function closeParsedDuplicateReviewModal(action = 'review') {
             const modal = document.getElementById('parsedDuplicateReviewModal');
+            resetParsedDuplicateCandidateRendering();
             if (modal && !modal.classList.contains('hidden')) {
                 window.MathBankModal.close(modal);
                 modal.classList.add('opacity-0');

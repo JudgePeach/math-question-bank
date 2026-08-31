@@ -1608,37 +1608,8 @@ let bankQuestionsRetryTimer = null;
                     return;
                 }
                 
-                // Formatted content (standard Markdown with protected LaTeX to HTML)
-                let html = parseMarkdownWithMath(text);
-                
-                previewContainer.innerHTML = html;
-                paperContainer.innerHTML = html;
-                
-                // Trigger KaTeX render
-                try {
-                    renderMathInElement(previewContainer, {
-                        delimiters: [
-                            {left: '$$', right: '$$', display: true},
-                            {left: '$', right: '$', display: false},
-                            {left: '\\(', right: '\\)', display: false},
-                            {left: '\\[', right: '\\]', display: true}
-                        ],
-                        throwOnError: false
-                    });
-                    renderMathInElement(paperContainer, {
-                        delimiters: [
-                            {left: '$$', right: '$$', display: true},
-                            {left: '$', right: '$', display: false},
-                            {left: '\\(', right: '\\)', display: false},
-                            {left: '\\[', right: '\\]', display: true}
-                        ],
-                        throwOnError: false
-                    });
-                    adaptChoicesGridLayout(previewContainer);
-                    adaptChoicesGridLayout(paperContainer);
-                } catch(e) {
-                    console.error('KaTeX rendering error: ', e);
-                }
+                const preparedHtml = renderQuestionPreviewContent(previewContainer, text);
+                renderQuestionPreviewContent(paperContainer, text, { preparedHtml: preparedHtml });
             };
 
             const updateAnswerPreview = () => {
@@ -2172,6 +2143,44 @@ let bankQuestionsRetryTimer = null;
             return window.MathBankSafe.sanitizeRichHtml(preprocessFormulaForKaTeX(text));
         }
         window.parseMarkdownWithMath = parseMarkdownWithMath;
+
+        function renderQuestionPreviewContent(container, text, options = {}) {
+            if (!container) return;
+            const settings = options && typeof options === 'object' ? options : {};
+            const includeImages = settings.includeImages !== false;
+            let preparedHtml;
+            if (typeof settings.preparedHtml === 'string') {
+                preparedHtml = window.MathBankSafe.sanitizeRichHtml(settings.preparedHtml);
+                if (!includeImages) {
+                    preparedHtml = preparedHtml.replace(/<img\b[^>]*>/gi, '');
+                }
+            } else {
+                let source = String(text || '');
+                if (!includeImages) {
+                    source = source
+                        .replace(/!\[[^\]\n]*\]\(\s*(?:<[^>\n]*>|[^\s)]+)(?:\s+(?:"[^"\n]*"|'[^'\n]*'))?\s*\)/gi, '')
+                        .replace(/<img\b[^>]*>/gi, '');
+                }
+                preparedHtml = parseMarkdownWithMath(source);
+            }
+            container.innerHTML = preparedHtml;
+            try {
+                renderMathInElement(container, {
+                    delimiters: [
+                        {left: '$$', right: '$$', display: true},
+                        {left: '$', right: '$', display: false},
+                        {left: '\\(', right: '\\)', display: false},
+                        {left: '\\[', right: '\\]', display: true}
+                    ],
+                    throwOnError: false
+                });
+            } catch (error) {
+                console.error('KaTeX question preview rendering error: ', error);
+            }
+            adaptChoicesGridLayout(container);
+            return preparedHtml;
+        }
+        window.renderQuestionPreviewContent = renderQuestionPreviewContent;
 
         // Format raw OCR questions by detecting choice options and introducing nice line breaks
         function formatQuestionContent(text) {

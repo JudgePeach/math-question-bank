@@ -160,6 +160,87 @@ for (const source of [
     assert result.returncode == 0, result.stderr
 
 
+def test_shared_question_preview_pipeline_renders_fillin_through_local_preprocessor():
+    editor_source = _read(STATIC_JS_DIR / "editor.js")
+    helper_start = editor_source.index("function transformFillinMacro(clean)")
+    helper_marker = "window.renderQuestionPreviewContent = renderQuestionPreviewContent;"
+    helper_end = editor_source.index(helper_marker, helper_start) + len(helper_marker)
+    helper_source = editor_source[helper_start:helper_end]
+
+    node = shutil.which("node")
+    assert node, "Node.js is required for the frontend executable regression"
+    script = r"""
+global.window = {
+  MathBankSafe: {
+    safeImageUrl(value) { return value; },
+    escapeAttribute(value) { return value; },
+    sanitizeRichHtml(value) { return value; },
+  },
+};
+let katexCalls = 0;
+let choicesCalls = 0;
+function renderMathInElement(container, options) {
+  katexCalls += 1;
+  const serialized = options.delimiters.map(item => `${item.left}:${item.right}:${item.display}`);
+  const expected = ['$$:$$:true', '$:$:false', '\\(:\\):false', '\\[:\\]:true'];
+  if (JSON.stringify(serialized) !== JSON.stringify(expected)) {
+    throw new Error(`unexpected KaTeX delimiters: ${JSON.stringify(serialized)}`);
+  }
+  if (options.throwOnError !== false) throw new Error('question preview must tolerate KaTeX errors');
+}
+function adaptChoicesGridLayout(container) {
+  choicesCalls += 1;
+  if (!container) throw new Error('choices layout received no container');
+}
+""" + helper_source + r"""
+const originalPreprocess = preprocessFormulaForKaTeX;
+let preprocessCalls = 0;
+preprocessFormulaForKaTeX = function(text) {
+  preprocessCalls += 1;
+  return originalPreprocess(text);
+};
+const container = { innerHTML: '' };
+const source = String.raw`填空：\fillin ![配图](/static/uploads/a.png) <img src="/static/uploads/b.png">`;
+const preparedHtml = window.renderQuestionPreviewContent(
+  container,
+  source,
+  { includeImages: false }
+);
+if (container.innerHTML.includes(String.raw`\fillin`)) {
+  throw new Error(`fillin macro leaked into shared preview: ${container.innerHTML}`);
+}
+if (!container.innerHTML.includes(String.raw`\underline{\hspace{1.5cm}}`)) {
+  throw new Error(`local fillin underline was not generated: ${container.innerHTML}`);
+}
+if (container.innerHTML.includes('<img') || container.innerHTML.includes('/static/uploads/')) {
+  throw new Error(`question images leaked into image-free preview: ${container.innerHTML}`);
+}
+const reusedContainer = { innerHTML: '' };
+const reusedHtml = window.renderQuestionPreviewContent(
+  reusedContainer,
+  String.raw`这段\fillin不应再预处理`,
+  { includeImages: false, preparedHtml: preparedHtml }
+);
+if (reusedHtml !== preparedHtml || reusedContainer.innerHTML !== preparedHtml) {
+  throw new Error('prepared question HTML was not reused exactly');
+}
+if (preprocessCalls !== 1) {
+  throw new Error(`preparedHtml path reran preprocessing: ${preprocessCalls}`);
+}
+if (katexCalls !== 2 || choicesCalls !== 2) {
+  throw new Error(`shared pipeline calls were incomplete: katex=${katexCalls}, choices=${choicesCalls}`);
+}
+"""
+    result = subprocess.run(
+        [node, "-e", script],
+        cwd=PROJECT_ROOT,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
+
+
 def test_paper_preview_separates_choices_before_figure_layout():
     paper_source = _read(STATIC_JS_DIR / "paper.js")
     css_source = _read(CSS_PATH)

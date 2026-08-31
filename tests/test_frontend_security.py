@@ -990,14 +990,67 @@ let peak = 0;
     assert result.returncode == 0, result.stderr
 
 
-def test_duplicate_review_renders_server_content_only_through_text_sinks():
+def test_shared_question_preview_pipeline_is_used_by_editor_and_duplicate_review():
+    editor_source = _read(STATIC_JS_DIR / "editor.js")
     import_source = _read(STATIC_JS_DIR / "import.js")
+
+    helper_start = editor_source.index("function renderQuestionPreviewContent")
+    helper_end = editor_source.index(
+        "window.renderQuestionPreviewContent = renderQuestionPreviewContent;",
+        helper_start,
+    )
+    helper_source = editor_source[helper_start:helper_end]
+    parse_position = helper_source.index("preparedHtml = parseMarkdownWithMath(source)")
+    katex_position = helper_source.index("renderMathInElement(container")
+    choices_position = helper_source.index("adaptChoicesGridLayout(container)")
+    assert parse_position < katex_position < choices_position
+    assert "throwOnError: false" in helper_source
+    assert "settings.includeImages !== false" in helper_source
+    assert "typeof settings.preparedHtml === 'string'" in helper_source
+    assert "return preparedHtml" in helper_source
+    assert ".replace(/<img\\b[^>]*>/gi, '')" in helper_source
+    assert "window.renderQuestionPreviewContent = renderQuestionPreviewContent;" in editor_source
+
+    parse_start = editor_source.index("function parseMarkdownWithMath(text)")
+    parse_end = editor_source.index("window.parseMarkdownWithMath = parseMarkdownWithMath;", parse_start)
+    parse_source = editor_source[parse_start:parse_end]
+    assert "sanitizeRichHtml(preprocessFormulaForKaTeX(text))" in parse_source
+
+    update_start = editor_source.index("const updateContentPreview = () =>")
+    update_end = editor_source.index("const updateAnswerPreview = () =>", update_start)
+    update_source = editor_source[update_start:update_end]
+    assert "const preparedHtml = renderQuestionPreviewContent(previewContainer, text)" in update_source
+    assert "renderQuestionPreviewContent(paperContainer, text, { preparedHtml: preparedHtml })" in update_source
+    assert "renderMathInElement(" not in update_source
+
+    scheduler_start = import_source.index("function resetParsedDuplicateCandidateRendering")
     candidate_start = import_source.index("function appendDuplicateCandidate")
+    scheduler_source = import_source[scheduler_start:candidate_start]
     candidate_end = import_source.index("function renderParsedDuplicateReview", candidate_start)
     candidate_source = import_source[candidate_start:candidate_end]
+    review_start = import_source.index("function renderParsedDuplicateReview", candidate_end)
+    review_end = import_source.index("function openParsedDuplicateReviewModal", review_start)
+    review_source = import_source[review_start:review_end]
 
     assert "sanitizePlainText" in candidate_source
-    assert "content.textContent" in candidate_source
+    assert candidate_source.count("window.renderQuestionPreviewContent(") == 1
+    assert "scheduleParsedDuplicateCandidateRender(" in candidate_source
+    assert "new window.IntersectionObserver" in scheduler_source
+    assert "parsedDuplicateCandidateObserver.disconnect()" in scheduler_source
+    assert "parsedDuplicateCandidateObserver.observe(container)" in scheduler_source
+    assert "window.requestAnimationFrame" in scheduler_source
+    assert "{ includeImages: false }" in scheduler_source
+    assert "container.setAttribute('aria-busy', 'false')" in scheduler_source
+    assert "{ includeImages: false }" in candidate_source
+    assert "renderedContent.setAttribute('aria-busy', 'true')" in candidate_source
+    assert review_source.index("prepareParsedDuplicateCandidateRendering(list)") < review_source.index(
+        "list.textContent = ''"
+    )
+    assert "renderMathInElement(" not in candidate_source
+    assert "content.textContent" not in candidate_source
+    assert "plainContent" not in candidate_source
+    assert "点击加载并渲染完整题干" in candidate_source
+    assert "fetch(`/api/questions/${Number(candidate.id)}`)" in candidate_source
     assert "reasonText.textContent" in candidate_source
     assert ".innerHTML" not in candidate_source
     assert "(?<=" not in import_source
