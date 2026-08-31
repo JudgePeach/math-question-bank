@@ -60,6 +60,42 @@ def test_tokenize_mixed_content_keeps_inline_and_display_math():
     assert [item.display for item in math_tokens] == [False, True]
 
 
+def test_word_fillin_uses_longer_native_underlined_blank(monkeypatch):
+    monkeypatch.setattr(
+        word_export_helper.PandocOmmlConverter,
+        "convert_many",
+        lambda self, formulas: {},
+    )
+    data, _ = build_word_document(
+        "填空线长度测试",
+        "",
+        "quiz",
+        [
+            {
+                "question": {
+                    "id": 1,
+                    "question_type": "fill_in_blank",
+                    "content": r"若 $x=1$，则结果为 \fillin。",
+                    "answer_markdown": "1",
+                    "image_paths": [],
+                },
+                "score": 5,
+            }
+        ],
+    )
+    document = etree.fromstring(_document_xml(data))
+    namespaces = {
+        "w": "http://schemas.openxmlformats.org/wordprocessingml/2006/main",
+    }
+    underlined_text = document.xpath(
+        ".//w:r[w:rPr/w:u]/w:t/text()",
+        namespaces=namespaces,
+    )
+
+    assert "\u00a0" * word_export_helper.WORD_FILLIN_BLANK_SPACES in underlined_text
+    assert word_export_helper.WORD_FILLIN_BLANK_SPACES == 18
+
+
 @pytest.mark.skipif(shutil.which("pandoc") is None, reason="Pandoc is not installed")
 def test_word_export_uses_native_omml_when_pandoc_is_available():
     data, diagnostics = build_word_document(

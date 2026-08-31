@@ -60,6 +60,7 @@ CJK_BODY_FONT = "SimSun"
 CJK_HEADING_FONT = "SimHei"
 CJK_TITLE_FONT = "STZhongsong"
 LATIN_FONT = "Times New Roman"
+WORD_FILLIN_BLANK_SPACES = 18
 STIX_TWO_MATH_PATHS = (
     Path("/System/Library/Fonts/Supplemental/STIXTwoMath.otf"),
     Path("/Library/Fonts/STIXTwoMath.otf"),
@@ -637,7 +638,7 @@ class WordExamBuilder:
     def add_mixed(self, paragraph, text: str, size: float = BODY_FONT_SIZE) -> None:
         for token in tokenize_mixed_content(text):
             if isinstance(token, BlankToken):
-                run = paragraph.add_run("\u00a0" * 10)
+                run = paragraph.add_run("\u00a0" * WORD_FILLIN_BLANK_SPACES)
                 _set_run_font(run, size)
                 run.underline = True
                 continue
