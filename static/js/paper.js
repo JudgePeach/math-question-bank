@@ -2498,9 +2498,8 @@
                     });
                 }
 
-                // Close modal
-                const modal = document.getElementById('savedPapersModal');
-                if (modal) modal.remove();
+                // Close through the shared manager so background inert/aria state is restored.
+                window.closeSavedPapersModal();
 
                 // Re-render UI
                 if (typeof window.renderPaperWorkspace === 'function') {

@@ -415,6 +415,21 @@ def test_modal_manager_traps_focus_handles_escape_and_restores_focus():
     assert "window.MathBankModal.open(modal" in paper_source
 
 
+def test_loading_saved_paper_restores_modal_background_interactivity():
+    paper_source = _read(STATIC_JS_DIR / "paper.js")
+
+    close_start = paper_source.index("window.closeSavedPapersModal = function ()")
+    close_end = paper_source.index("window.openSavedPapersModal = async function ()", close_start)
+    close_source = paper_source[close_start:close_end]
+    load_start = paper_source.index("window.loadSavedPaper = async function (paperId)")
+    load_end = paper_source.index("window.deleteSavedPaper = async function (paperId)", load_start)
+    load_source = paper_source[load_start:load_end]
+
+    assert close_source.index("window.MathBankModal.close(modal)") < close_source.index("modal.remove()")
+    assert "window.closeSavedPapersModal();" in load_source
+    assert "modal.remove()" not in load_source
+
+
 def test_mobile_layout_touch_targets_and_dialog_panes_have_regression_guards():
     css_source = _read(CSS_PATH)
 
