@@ -26,6 +26,7 @@ from sqlalchemy.orm import Session
 from mathbank.asset_security import resolve_upload_asset
 from mathbank.database import Question, QuestionFingerprint as StoredFingerprint
 from mathbank.question_duplicates import (
+    EMPTY_TEXT_BAND,
     FINGERPRINT_VERSION,
     QuestionDuplicateInput,
     QuestionFingerprint,
@@ -253,6 +254,8 @@ def _stored_values(fingerprint: QuestionFingerprint) -> dict[str, object]:
     }
     for band_no, band_value in enumerate(fingerprint.bands):
         values[f"band{band_no}"] = band_value
+    for band_no, band_value in enumerate(fingerprint.text_bands):
+        values[f"text_band{band_no}"] = band_value
     return values
 
 
@@ -322,10 +325,19 @@ def recall_question_ids(
             StoredFingerprint.question_id != int(exclude_id)
         )
     safe_limit = max(1, min(int(limit), 1000))
-    exact_ids = [row[0] for row in exact_query.limit(safe_limit).all()]
+    exact_rows = exact_query.limit(safe_limit + 1).all()
+    exact_truncated = len(exact_rows) > safe_limit
+    exact_ids = [row[0] for row in exact_rows[:safe_limit]]
     if len(exact_ids) >= safe_limit:
         if diagnostics is not None:
-            diagnostics.update({"truncated_band_count": 0, "index_complete": True})
+            diagnostics.update(
+                {
+                    "truncated_band_count": int(exact_truncated),
+                    "exact_truncated": exact_truncated,
+                    "dropped_by_global_budget": int(exact_truncated),
+                    "index_complete": not exact_truncated,
+                }
+            )
         return exact_ids
 
     band_selects = []
@@ -359,14 +371,27 @@ def recall_question_ids(
     truncated_band_count = sum(
         count > safe_limit for count in per_band_count.values()
     )
-    near_rows = sorted(hit_count.items(), key=lambda item: (-item[1], item[0]))[
-        : max(1, safe_limit - len(exact_ids))
+    exact_id_set = set(exact_ids)
+    ranked_new_hits = [
+        item
+        for item in sorted(hit_count.items(), key=lambda item: (-item[1], item[0]))
+        if item[0] not in exact_id_set
     ]
+    available_slots = max(0, safe_limit - len(exact_ids))
+    dropped_by_global_budget = max(0, len(ranked_new_hits) - available_slots)
+    near_rows = ranked_new_hits[:available_slots]
+    incomplete_signal_count = (
+        truncated_band_count
+        + int(exact_truncated)
+        + int(dropped_by_global_budget > 0)
+    )
     if diagnostics is not None:
         diagnostics.update(
             {
-                "truncated_band_count": truncated_band_count,
-                "index_complete": truncated_band_count == 0,
+                "truncated_band_count": incomplete_signal_count,
+                "exact_truncated": exact_truncated,
+                "dropped_by_global_budget": dropped_by_global_budget,
+                "index_complete": incomplete_signal_count == 0,
             }
         )
 
@@ -382,24 +407,93 @@ def recall_question_ids(
     return result
 
 
-def find_indexed_candidates(
+def recall_text_fragment_question_ids(
     db: Session,
     fingerprint: QuestionFingerprint,
     *,
+    exclude_id: int | None = None,
+    exclude_ids: Iterable[int] = (),
+    limit: int = MAX_RECALL_CANDIDATES,
+    diagnostics: dict[str, object] | None = None,
+) -> list[int]:
+    """Recall bounded substring candidates through eight text-fragment indexes."""
+
+    safe_limit = max(1, min(int(limit), 1000))
+    excluded = {int(value) for value in exclude_ids}
+    if exclude_id is not None:
+        excluded.add(int(exclude_id))
+    length_floor = max(1, int(fingerprint.token_count * 0.55))
+    length_ceiling = max(length_floor, int(fingerprint.token_count * 1.8) + 4)
+    band_selects = []
+    for band_no, band_value in enumerate(fingerprint.text_bands):
+        if not band_value or band_value == EMPTY_TEXT_BAND:
+            continue
+        conditions = [
+            StoredFingerprint.fingerprint_version == FINGERPRINT_VERSION,
+            getattr(StoredFingerprint, f"text_band{band_no}") == band_value,
+            StoredFingerprint.token_count.between(length_floor, length_ceiling),
+        ]
+        if excluded:
+            conditions.append(StoredFingerprint.question_id.notin_(excluded))
+        bounded_band = (
+            select(
+                StoredFingerprint.question_id.label("question_id"),
+                literal(band_no).label("band_no"),
+            )
+            .where(*conditions)
+            .limit(safe_limit + 1)
+            .subquery(f"duplicate_text_band_{band_no}")
+        )
+        band_selects.append(
+            select(bounded_band.c.question_id, bounded_band.c.band_no)
+        )
+
+    if not band_selects:
+        if diagnostics is not None:
+            diagnostics.update(
+                {"text_truncated_band_count": 0, "text_index_complete": True}
+            )
+        return []
+
+    union_rows = db.execute(union_all(*band_selects)).all()
+    per_band_count: Counter[int] = Counter()
+    hit_count: Counter[int] = Counter()
+    for question_id, band_no in union_rows:
+        per_band_count[int(band_no)] += 1
+        if per_band_count[int(band_no)] <= safe_limit:
+            hit_count[int(question_id)] += 1
+    truncated_band_count = sum(
+        count > safe_limit for count in per_band_count.values()
+    )
+    ranked_hits = sorted(hit_count.items(), key=lambda item: (-item[1], item[0]))
+    dropped_by_global_budget = max(0, len(ranked_hits) - safe_limit)
+    incomplete_signal_count = truncated_band_count + int(
+        dropped_by_global_budget > 0
+    )
+    if diagnostics is not None:
+        diagnostics.update(
+            {
+                "text_truncated_band_count": incomplete_signal_count,
+                "text_dropped_by_global_budget": dropped_by_global_budget,
+                "text_index_complete": incomplete_signal_count == 0,
+            }
+        )
+    return [
+        question_id
+        for question_id, _hit_count in ranked_hits[:safe_limit]
+    ]
+
+
+def _rank_indexed_candidate_ids(
+    db: Session,
+    fingerprint: QuestionFingerprint,
+    question_ids: Sequence[int],
+    *,
     uploads_dir: str | Path,
     url_prefix: str,
-    exclude_id: int | None = None,
-    limit: int = 5,
-    fingerprint_cache: dict[int, QuestionFingerprint] | None = None,
-    diagnostics: dict[str, object] | None = None,
+    limit: int,
+    fingerprint_cache: dict[int, QuestionFingerprint] | None,
 ) -> list[IndexedCandidate]:
-    question_ids = recall_question_ids(
-        db,
-        fingerprint,
-        exclude_id=exclude_id,
-        limit=max(20, min(MAX_RECALL_CANDIDATES, int(limit) * 8)),
-        diagnostics=diagnostics,
-    )
     if not question_ids:
         return []
     questions = db.query(Question).filter(Question.id.in_(question_ids)).all()
@@ -428,7 +522,99 @@ def find_indexed_candidates(
             item.question.id,
         )
     )
-    return ranked[: max(1, min(int(limit), 20))]
+    return ranked[:limit]
+
+
+def find_indexed_candidates(
+    db: Session,
+    fingerprint: QuestionFingerprint,
+    *,
+    uploads_dir: str | Path,
+    url_prefix: str,
+    exclude_id: int | None = None,
+    limit: int = 5,
+    fingerprint_cache: dict[int, QuestionFingerprint] | None = None,
+    diagnostics: dict[str, object] | None = None,
+) -> list[IndexedCandidate]:
+    result_limit = max(1, min(int(limit), 20))
+    working_cache = fingerprint_cache if fingerprint_cache is not None else {}
+    shared_budget = max(
+        20,
+        min(MAX_RECALL_CANDIDATES, result_limit * 8),
+    )
+    primary_budget = (shared_budget + 1) // 2
+    primary_diagnostics: dict[str, object] = {}
+    primary_ids = recall_question_ids(
+        db,
+        fingerprint,
+        exclude_id=exclude_id,
+        limit=primary_budget,
+        diagnostics=primary_diagnostics,
+    )
+    primary_ranked = _rank_indexed_candidate_ids(
+        db,
+        fingerprint,
+        primary_ids,
+        uploads_dir=uploads_dir,
+        url_prefix=url_prefix,
+        limit=result_limit,
+        fingerprint_cache=working_cache,
+    )
+    if diagnostics is not None:
+        diagnostics.update(primary_diagnostics)
+        diagnostics.update(
+            {
+                "candidate_budget": shared_budget,
+                "primary_candidate_count": len(primary_ids),
+                "text_candidate_count": 0,
+                "text_fallback_used": False,
+                "text_truncated_band_count": 0,
+                "text_index_complete": True,
+            }
+        )
+    if primary_ranked:
+        return primary_ranked
+
+    remaining_budget = max(0, shared_budget - len(primary_ids))
+    if remaining_budget == 0:
+        return []
+    text_diagnostics: dict[str, object] = {}
+    text_ids = recall_text_fragment_question_ids(
+        db,
+        fingerprint,
+        exclude_id=exclude_id,
+        exclude_ids=primary_ids,
+        limit=remaining_budget,
+        diagnostics=text_diagnostics,
+    )
+    if diagnostics is not None:
+        primary_truncated = int(
+            primary_diagnostics.get("truncated_band_count") or 0
+        )
+        text_truncated = int(
+            text_diagnostics.get("text_truncated_band_count") or 0
+        )
+        diagnostics.update(text_diagnostics)
+        diagnostics.update(
+            {
+                "truncated_band_count": primary_truncated + text_truncated,
+                "index_complete": bool(
+                    primary_diagnostics.get("index_complete", True)
+                    and text_diagnostics.get("text_index_complete", True)
+                ),
+                "text_candidate_count": len(text_ids),
+                "text_fallback_used": True,
+            }
+        )
+    return _rank_indexed_candidate_ids(
+        db,
+        fingerprint,
+        text_ids,
+        uploads_dir=uploads_dir,
+        url_prefix=url_prefix,
+        limit=result_limit,
+        fingerprint_cache=working_cache,
+    )
 
 
 def exact_duplicate_ids(

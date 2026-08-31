@@ -18,7 +18,7 @@ from sqlalchemy.engine import Engine
 from mathbank.paths import SCHEMA_SNAPSHOT_DIR
 
 
-LATEST_SCHEMA_VERSION = 7
+LATEST_SCHEMA_VERSION = 8
 LEGACY_REQUIRED_TABLES = {
     "questions",
     "question_curriculums",
@@ -27,7 +27,7 @@ LEGACY_REQUIRED_TABLES = {
 }
 REQUIRED_TABLES = LEGACY_REQUIRED_TABLES | {"question_fingerprints"}
 
-QUESTION_FINGERPRINT_COLUMNS = {
+V6_QUESTION_FINGERPRINT_COLUMNS = {
     "question_id",
     "fingerprint_version",
     "content_revision_hash",
@@ -51,6 +51,17 @@ QUESTION_FINGERPRINT_COLUMNS = {
     "status",
     "updated_at",
 }
+V7_QUESTION_FINGERPRINT_COLUMNS = set(V6_QUESTION_FINGERPRINT_COLUMNS)
+QUESTION_FINGERPRINT_COLUMNS = V7_QUESTION_FINGERPRINT_COLUMNS | {
+    "text_band0",
+    "text_band1",
+    "text_band2",
+    "text_band3",
+    "text_band4",
+    "text_band5",
+    "text_band6",
+    "text_band7",
+}
 
 V6_QUESTION_FINGERPRINT_INDEXES = {
     "idx_question_fingerprints_exact": ("fingerprint_version", "exact_hash"),
@@ -64,7 +75,7 @@ V6_QUESTION_FINGERPRINT_INDEXES = {
     "idx_question_fingerprints_band7": ("fingerprint_version", "band7"),
 }
 
-QUESTION_FINGERPRINT_INDEXES = {
+V7_QUESTION_FINGERPRINT_INDEXES = {
     "idx_question_fingerprints_exact": ("fingerprint_version", "exact_hash"),
     "idx_question_fingerprints_band0": (
         "fingerprint_version",
@@ -104,6 +115,50 @@ QUESTION_FINGERPRINT_INDEXES = {
     "idx_question_fingerprints_band7": (
         "fingerprint_version",
         "band7",
+        "token_count",
+    ),
+}
+
+QUESTION_FINGERPRINT_INDEXES = {
+    **V7_QUESTION_FINGERPRINT_INDEXES,
+    "idx_question_fingerprints_text_band0": (
+        "fingerprint_version",
+        "text_band0",
+        "token_count",
+    ),
+    "idx_question_fingerprints_text_band1": (
+        "fingerprint_version",
+        "text_band1",
+        "token_count",
+    ),
+    "idx_question_fingerprints_text_band2": (
+        "fingerprint_version",
+        "text_band2",
+        "token_count",
+    ),
+    "idx_question_fingerprints_text_band3": (
+        "fingerprint_version",
+        "text_band3",
+        "token_count",
+    ),
+    "idx_question_fingerprints_text_band4": (
+        "fingerprint_version",
+        "text_band4",
+        "token_count",
+    ),
+    "idx_question_fingerprints_text_band5": (
+        "fingerprint_version",
+        "text_band5",
+        "token_count",
+    ),
+    "idx_question_fingerprints_text_band6": (
+        "fingerprint_version",
+        "text_band6",
+        "token_count",
+    ),
+    "idx_question_fingerprints_text_band7": (
+        "fingerprint_version",
+        "text_band7",
         "token_count",
     ),
 }
@@ -202,10 +257,16 @@ def _ensure_tikz_asset_columns(connection) -> dict[str, int]:
 def _validate_question_fingerprint_schema(
     connection,
     *,
+    expected_columns: set[str] | None = None,
     expected_indexes: dict[str, tuple[str, ...]] | None = None,
 ) -> None:
     """Fail closed when a versioned fingerprint table is structurally damaged."""
 
+    expected_columns = (
+        QUESTION_FINGERPRINT_COLUMNS
+        if expected_columns is None
+        else expected_columns
+    )
     expected_indexes = (
         QUESTION_FINGERPRINT_INDEXES
         if expected_indexes is None
@@ -227,11 +288,17 @@ def _validate_question_fingerprint_schema(
         'PRAGMA table_info("question_fingerprints")'
     ).fetchall()
     columns = {row[1] for row in table_info}
-    missing_columns = QUESTION_FINGERPRINT_COLUMNS - columns
+    missing_columns = expected_columns - columns
     if missing_columns:
         raise RuntimeError(
             "数据库表 question_fingerprints 缺少核心字段: "
             + ", ".join(sorted(missing_columns))
+        )
+    unexpected_columns = columns - expected_columns
+    if unexpected_columns:
+        raise RuntimeError(
+            "数据库表 question_fingerprints 包含与版本不符的字段: "
+            + ", ".join(sorted(unexpected_columns))
         )
 
     primary_key = [
@@ -266,6 +333,17 @@ def _validate_question_fingerprint_schema(
         raise RuntimeError(
             "question_fingerprints 缺少查重索引: "
             + ", ".join(sorted(missing_indexes))
+        )
+    managed_indexes = {
+        name
+        for name in index_rows
+        if name.startswith("idx_question_fingerprints_")
+    }
+    unexpected_indexes = managed_indexes - set(expected_indexes)
+    if unexpected_indexes:
+        raise RuntimeError(
+            "question_fingerprints 包含与版本不符的查重索引: "
+            + ", ".join(sorted(unexpected_indexes))
         )
     for index_name, expected_columns in expected_indexes.items():
         actual_columns = tuple(
@@ -312,6 +390,14 @@ def _ensure_question_fingerprint_table(connection) -> int:
                 figure_count INTEGER NOT NULL DEFAULT 0,
                 visible_image_hashes TEXT NOT NULL DEFAULT '[]',
                 tikz_hashes TEXT NOT NULL DEFAULT '[]',
+                text_band0 VARCHAR(16) NOT NULL DEFAULT '',
+                text_band1 VARCHAR(16) NOT NULL DEFAULT '',
+                text_band2 VARCHAR(16) NOT NULL DEFAULT '',
+                text_band3 VARCHAR(16) NOT NULL DEFAULT '',
+                text_band4 VARCHAR(16) NOT NULL DEFAULT '',
+                text_band5 VARCHAR(16) NOT NULL DEFAULT '',
+                text_band6 VARCHAR(16) NOT NULL DEFAULT '',
+                text_band7 VARCHAR(16) NOT NULL DEFAULT '',
                 band0 INTEGER NOT NULL DEFAULT 0,
                 band1 INTEGER NOT NULL DEFAULT 0,
                 band2 INTEGER NOT NULL DEFAULT 0,
@@ -517,8 +603,15 @@ def _upgrade_derived_schema(engine: Engine) -> dict[str, int]:
             raise
 
 
-def _upgrade_v6_fingerprint_indexes(engine: Engine) -> dict[str, int]:
-    """Upgrade v6 band indexes to include token_count without rebuilding data."""
+def _upgrade_v6_or_v7_fingerprint_schema(
+    engine: Engine,
+    *,
+    from_version: int,
+) -> dict[str, int]:
+    """Upgrade v6/v7 indexes and add v8 text bands in one transaction."""
+
+    if from_version not in {6, 7}:
+        raise ValueError(f"unsupported fingerprint schema upgrade: {from_version}")
 
     with engine.connect().execution_options(isolation_level="AUTOCOMMIT") as connection:
         transaction_started = False
@@ -527,23 +620,54 @@ def _upgrade_v6_fingerprint_indexes(engine: Engine) -> dict[str, int]:
             transaction_started = True
             _validate_question_fingerprint_schema(
                 connection,
-                expected_indexes=V6_QUESTION_FINGERPRINT_INDEXES,
+                expected_columns=(
+                    V6_QUESTION_FINGERPRINT_COLUMNS
+                    if from_version == 6
+                    else V7_QUESTION_FINGERPRINT_COLUMNS
+                ),
+                expected_indexes=(
+                    V6_QUESTION_FINGERPRINT_INDEXES
+                    if from_version == 6
+                    else V7_QUESTION_FINGERPRINT_INDEXES
+                ),
             )
             rebuilt_indexes = 0
-            for index_name, columns in QUESTION_FINGERPRINT_INDEXES.items():
-                if index_name == "idx_question_fingerprints_exact":
-                    continue
-                connection.exec_driver_sql(f'DROP INDEX "{index_name}"')
+            if from_version == 6:
+                for index_name, columns in V7_QUESTION_FINGERPRINT_INDEXES.items():
+                    if index_name == "idx_question_fingerprints_exact":
+                        continue
+                    connection.exec_driver_sql(f'DROP INDEX "{index_name}"')
+                    connection.exec_driver_sql(
+                        f'CREATE INDEX "{index_name}" ON question_fingerprints '
+                        f"({', '.join(columns)})"
+                    )
+                    rebuilt_indexes += 1
+
+            for band_no in range(8):
+                connection.exec_driver_sql(
+                    "ALTER TABLE question_fingerprints "
+                    f"ADD COLUMN text_band{band_no} VARCHAR(16) "
+                    "NOT NULL DEFAULT ''"
+                )
+
+            added_text_indexes = 0
+            for band_no in range(8):
+                index_name = f"idx_question_fingerprints_text_band{band_no}"
+                columns = QUESTION_FINGERPRINT_INDEXES[index_name]
                 connection.exec_driver_sql(
                     f'CREATE INDEX "{index_name}" ON question_fingerprints '
                     f"({', '.join(columns)})"
                 )
-                rebuilt_indexes += 1
+                added_text_indexes += 1
             _validate_question_fingerprint_schema(connection)
             connection.exec_driver_sql(f"PRAGMA user_version={LATEST_SCHEMA_VERSION}")
             connection.exec_driver_sql("COMMIT")
             transaction_started = False
-            return {"rebuilt_question_fingerprint_indexes": rebuilt_indexes}
+            return {
+                "rebuilt_question_fingerprint_indexes": rebuilt_indexes,
+                "added_question_fingerprint_text_columns": 8,
+                "added_question_fingerprint_text_indexes": added_text_indexes,
+            }
         except Exception:
             if transaction_started:
                 connection.exec_driver_sql("ROLLBACK")
@@ -586,8 +710,11 @@ def migrate_database(
     )
     if current < 2:
         stats = _rebuild_relationship_tables(engine)
-    elif current == 6:
-        stats = _upgrade_v6_fingerprint_indexes(engine)
+    elif current in {6, 7}:
+        stats = _upgrade_v6_or_v7_fingerprint_schema(
+            engine,
+            from_version=current,
+        )
     else:
         stats = _upgrade_derived_schema(engine)
     return {

@@ -324,6 +324,54 @@ class QuestionFingerprint(Base):
             "band7",
             "token_count",
         ),
+        Index(
+            "idx_question_fingerprints_text_band0",
+            "fingerprint_version",
+            "text_band0",
+            "token_count",
+        ),
+        Index(
+            "idx_question_fingerprints_text_band1",
+            "fingerprint_version",
+            "text_band1",
+            "token_count",
+        ),
+        Index(
+            "idx_question_fingerprints_text_band2",
+            "fingerprint_version",
+            "text_band2",
+            "token_count",
+        ),
+        Index(
+            "idx_question_fingerprints_text_band3",
+            "fingerprint_version",
+            "text_band3",
+            "token_count",
+        ),
+        Index(
+            "idx_question_fingerprints_text_band4",
+            "fingerprint_version",
+            "text_band4",
+            "token_count",
+        ),
+        Index(
+            "idx_question_fingerprints_text_band5",
+            "fingerprint_version",
+            "text_band5",
+            "token_count",
+        ),
+        Index(
+            "idx_question_fingerprints_text_band6",
+            "fingerprint_version",
+            "text_band6",
+            "token_count",
+        ),
+        Index(
+            "idx_question_fingerprints_text_band7",
+            "fingerprint_version",
+            "text_band7",
+            "token_count",
+        ),
     )
 
     question_id = Column(
@@ -356,6 +404,30 @@ class QuestionFingerprint(Base):
     )
     tikz_hashes = Column(
         Text, default="[]", server_default=text("'[]'"), nullable=False
+    )
+    text_band0 = Column(
+        String(16), default="", server_default=text("''"), nullable=False
+    )
+    text_band1 = Column(
+        String(16), default="", server_default=text("''"), nullable=False
+    )
+    text_band2 = Column(
+        String(16), default="", server_default=text("''"), nullable=False
+    )
+    text_band3 = Column(
+        String(16), default="", server_default=text("''"), nullable=False
+    )
+    text_band4 = Column(
+        String(16), default="", server_default=text("''"), nullable=False
+    )
+    text_band5 = Column(
+        String(16), default="", server_default=text("''"), nullable=False
+    )
+    text_band6 = Column(
+        String(16), default="", server_default=text("''"), nullable=False
+    )
+    text_band7 = Column(
+        String(16), default="", server_default=text("''"), nullable=False
     )
     band0 = Column(Integer, default=0, server_default=text("0"), nullable=False)
     band1 = Column(Integer, default=0, server_default=text("0"), nullable=False)

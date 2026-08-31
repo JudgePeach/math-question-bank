@@ -118,6 +118,7 @@ def test_question_fingerprint_defaults_and_cascade_delete(db_session):
     assert stored.tikz_hashes == "[]"
     assert stored.status == "pending"
     assert stored.updated_at is not None
+    assert [stored.text_band0, stored.text_band1, stored.text_band7] == ["", "", ""]
     assert [stored.band0, stored.band1, stored.band7] == [0, 0, 0]
 
     db_session.delete(question)

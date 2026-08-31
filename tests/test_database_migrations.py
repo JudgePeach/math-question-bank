@@ -87,22 +87,55 @@ def _create_version_five_database(path):
         )
 
 
-def _create_version_six_database(path):
+def _replace_with_pre_v8_fingerprint_table(connection, indexes):
+    connection.execute("DROP TABLE question_fingerprints")
+    connection.execute(
+        """
+        CREATE TABLE question_fingerprints (
+            question_id INTEGER NOT NULL,
+            fingerprint_version INTEGER NOT NULL,
+            content_revision_hash VARCHAR(64) NOT NULL DEFAULT '',
+            exact_hash VARCHAR(64) NOT NULL DEFAULT '',
+            critical_math_hash VARCHAR(64) NOT NULL DEFAULT '',
+            answer_hash VARCHAR(64) NOT NULL DEFAULT '',
+            simhash_hex VARCHAR(32) NOT NULL DEFAULT '',
+            token_count INTEGER NOT NULL DEFAULT 0,
+            choice_count INTEGER NOT NULL DEFAULT 0,
+            figure_count INTEGER NOT NULL DEFAULT 0,
+            visible_image_hashes TEXT NOT NULL DEFAULT '[]',
+            tikz_hashes TEXT NOT NULL DEFAULT '[]',
+            band0 INTEGER NOT NULL DEFAULT 0,
+            band1 INTEGER NOT NULL DEFAULT 0,
+            band2 INTEGER NOT NULL DEFAULT 0,
+            band3 INTEGER NOT NULL DEFAULT 0,
+            band4 INTEGER NOT NULL DEFAULT 0,
+            band5 INTEGER NOT NULL DEFAULT 0,
+            band6 INTEGER NOT NULL DEFAULT 0,
+            band7 INTEGER NOT NULL DEFAULT 0,
+            status VARCHAR(20) NOT NULL DEFAULT 'pending',
+            updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            PRIMARY KEY (question_id, fingerprint_version),
+            FOREIGN KEY(question_id) REFERENCES questions(id) ON DELETE CASCADE
+        )
+        """
+    )
+    for index_name, columns in indexes.items():
+        connection.execute(
+            f'CREATE INDEX "{index_name}" ON question_fingerprints '
+            f"({', '.join(columns)})"
+        )
+
+
+def _create_pre_v8_database(path, *, version, indexes):
     engine = create_engine(f"sqlite:///{path}")
     database_module.Base.metadata.create_all(bind=engine)
     engine.dispose()
     with _sqlite_connection(path) as connection:
-        for band_no in range(8):
-            index_name = f"idx_question_fingerprints_band{band_no}"
-            connection.execute(f'DROP INDEX "{index_name}"')
-            connection.execute(
-                f'CREATE INDEX "{index_name}" ON question_fingerprints '
-                f"(fingerprint_version, band{band_no})"
-            )
-        connection.execute("PRAGMA user_version=6")
+        _replace_with_pre_v8_fingerprint_table(connection, indexes)
+        connection.execute(f"PRAGMA user_version={version}")
         connection.execute(
             "INSERT INTO questions (id, content, image_paths) "
-            "VALUES (1, '已存 v6 题目', '[]')"
+            f"VALUES (1, '已存 v{version} 题目', '[]')"
         )
         connection.execute(
             "INSERT INTO question_fingerprints "
@@ -110,6 +143,22 @@ def _create_version_six_database(path):
             "band0, band1, band2, band3, band4, band5, band6, band7, status) "
             "VALUES (1, 2, 'preserve-me', 17, 1, 2, 3, 4, 5, 6, 7, 8, 'ready')"
         )
+
+
+def _create_version_six_database(path):
+    _create_pre_v8_database(
+        path,
+        version=6,
+        indexes=db_migrations.V6_QUESTION_FINGERPRINT_INDEXES,
+    )
+
+
+def _create_version_seven_database(path):
+    _create_pre_v8_database(
+        path,
+        version=7,
+        indexes=db_migrations.V7_QUESTION_FINGERPRINT_INDEXES,
+    )
 
 
 def test_migration_repairs_legacy_relationships_and_adds_constraints(tmp_path, monkeypatch):
@@ -262,6 +311,18 @@ def test_version_five_adds_indexed_non_unique_fingerprint_table(
         )
         assert "idx_question_fingerprints_band0" in band_plan
         assert "token_count" in band_plan
+        text_band_plan = " ".join(
+            str(value)
+            for row in connection.execute(
+                "EXPLAIN QUERY PLAN SELECT question_id "
+                "FROM question_fingerprints "
+                "WHERE fingerprint_version = 1 AND text_band0 = '' "
+                "AND token_count BETWEEN 0 AND 20"
+            )
+            for value in row
+        )
+        assert "idx_question_fingerprints_text_band0" in text_band_plan
+        assert "token_count" in text_band_plan
 
         connection.execute("DELETE FROM questions WHERE id = 1")
         assert connection.execute(
@@ -279,17 +340,20 @@ def test_version_six_rebuilds_band_indexes_transactionally(tmp_path, monkeypatch
     result = db_migrations.migrate_database(engine)
 
     assert result["from_version"] == 6
-    assert result["to_version"] == 7
+    assert result["to_version"] == 8
     assert result["rebuilt_question_fingerprint_indexes"] == 8
+    assert result["added_question_fingerprint_text_columns"] == 8
+    assert result["added_question_fingerprint_text_indexes"] == 8
     assert result["backup"]
     assert list(snapshot_dir.glob("*.db"))
     assert list(snapshot_dir.glob("*.sha256"))
     with _sqlite_connection(database_path) as connection:
-        assert connection.execute("PRAGMA user_version").fetchone()[0] == 7
+        assert connection.execute("PRAGMA user_version").fetchone()[0] == 8
         assert connection.execute(
-            "SELECT exact_hash, token_count, band0, band7, status "
+            "SELECT exact_hash, token_count, band0, band7, text_band0, "
+            "text_band7, status "
             "FROM question_fingerprints WHERE question_id = 1"
-        ).fetchone() == ("preserve-me", 17, 1, 8, "ready")
+        ).fetchone() == ("preserve-me", 17, 1, 8, "", "", "ready")
         index_rows = {
             row[1]: row
             for row in connection.execute(
@@ -323,7 +387,7 @@ def test_init_db_upgrades_v6_indexes_without_create_all_masking_them(
     database_module.init_db()
 
     with _sqlite_connection(database_path) as connection:
-        assert connection.execute("PRAGMA user_version").fetchone()[0] == 7
+        assert connection.execute("PRAGMA user_version").fetchone()[0] == 8
         for index_name, expected_columns in (
             db_migrations.QUESTION_FINGERPRINT_INDEXES.items()
         ):
@@ -349,11 +413,11 @@ def test_version_six_index_ddl_failure_rolls_back_all_indexes(
     engine = create_engine(f"sqlite:///{database_path}")
 
     def inject_failure(_conn, _cursor, statement, _parameters, _context, _many):
-        if "CREATE INDEX" in statement and "band4" in statement:
-            raise RuntimeError("injected v7 index migration failure")
+        if "CREATE INDEX" in statement and "text_band4" in statement:
+            raise RuntimeError("injected combined v8 migration failure")
 
     event.listen(engine, "before_cursor_execute", inject_failure)
-    with pytest.raises(RuntimeError, match="injected v7 index migration failure"):
+    with pytest.raises(RuntimeError, match="injected combined v8 migration failure"):
         db_migrations.migrate_database(engine)
     event.remove(engine, "before_cursor_execute", inject_failure)
 
@@ -362,8 +426,108 @@ def test_version_six_index_ddl_failure_rolls_back_all_indexes(
         assert connection.execute(
             "SELECT exact_hash FROM question_fingerprints WHERE question_id = 1"
         ).fetchone() == ("preserve-me",)
+        columns = {
+            row[1]
+            for row in connection.execute(
+                'PRAGMA table_info("question_fingerprints")'
+            )
+        }
+        assert columns == db_migrations.V6_QUESTION_FINGERPRINT_COLUMNS
         for index_name, expected_columns in (
             db_migrations.V6_QUESTION_FINGERPRINT_INDEXES.items()
+        ):
+            actual_columns = tuple(
+                row[2]
+                for row in connection.execute(
+                    f'PRAGMA index_info("{index_name}")'
+                )
+            )
+            assert actual_columns == expected_columns
+
+
+def test_version_seven_adds_text_bands_transactionally(tmp_path, monkeypatch):
+    database_path = tmp_path / "version-seven.db"
+    _create_version_seven_database(database_path)
+    snapshot_dir = tmp_path / "schema_snapshots"
+    monkeypatch.setattr(db_migrations, "SCHEMA_SNAPSHOT_DIR", snapshot_dir)
+    engine = create_engine(f"sqlite:///{database_path}")
+
+    result = db_migrations.migrate_database(engine)
+
+    assert result["from_version"] == 7
+    assert result["to_version"] == 8
+    assert result["rebuilt_question_fingerprint_indexes"] == 0
+    assert result["added_question_fingerprint_text_columns"] == 8
+    assert result["added_question_fingerprint_text_indexes"] == 8
+    assert result["backup"]
+    assert list(snapshot_dir.glob("*.db"))
+    assert list(snapshot_dir.glob("*.sha256"))
+    with _sqlite_connection(database_path) as connection:
+        assert connection.execute("PRAGMA user_version").fetchone()[0] == 8
+        table_info = connection.execute(
+            'PRAGMA table_info("question_fingerprints")'
+        ).fetchall()
+        columns = {row[1] for row in table_info}
+        assert columns == db_migrations.QUESTION_FINGERPRINT_COLUMNS
+        info_by_column = {row[1]: row for row in table_info}
+        for band_no in range(8):
+            column_info = info_by_column[f"text_band{band_no}"]
+            assert column_info[2].upper() == "VARCHAR(16)"
+            assert column_info[3] == 1
+            assert column_info[4] == "''"
+        assert connection.execute(
+            "SELECT exact_hash, text_band0, text_band7 "
+            "FROM question_fingerprints WHERE question_id = 1"
+        ).fetchone() == ("preserve-me", "", "")
+        for index_name, expected_columns in (
+            db_migrations.QUESTION_FINGERPRINT_INDEXES.items()
+        ):
+            actual_columns = tuple(
+                row[2]
+                for row in connection.execute(
+                    f'PRAGMA index_info("{index_name}")'
+                )
+            )
+            assert actual_columns == expected_columns
+
+
+def test_version_seven_text_index_failure_rolls_back_columns_and_indexes(
+    tmp_path, monkeypatch
+):
+    database_path = tmp_path / "version-seven-rollback.db"
+    _create_version_seven_database(database_path)
+    monkeypatch.setattr(
+        db_migrations, "SCHEMA_SNAPSHOT_DIR", tmp_path / "schema_snapshots"
+    )
+    engine = create_engine(f"sqlite:///{database_path}")
+
+    def inject_failure(_conn, _cursor, statement, _parameters, _context, _many):
+        if "CREATE INDEX" in statement and "text_band4" in statement:
+            raise RuntimeError("injected text-band migration failure")
+
+    event.listen(engine, "before_cursor_execute", inject_failure)
+    with pytest.raises(RuntimeError, match="injected text-band migration failure"):
+        db_migrations.migrate_database(engine)
+    event.remove(engine, "before_cursor_execute", inject_failure)
+
+    with _sqlite_connection(database_path) as connection:
+        assert connection.execute("PRAGMA user_version").fetchone()[0] == 7
+        columns = {
+            row[1]
+            for row in connection.execute(
+                'PRAGMA table_info("question_fingerprints")'
+            )
+        }
+        assert columns == db_migrations.V7_QUESTION_FINGERPRINT_COLUMNS
+        assert not {
+            row[1]
+            for row in connection.execute(
+                'PRAGMA index_list("question_fingerprints")'
+            )
+            if row[1].startswith("idx_question_fingerprints_text_band")
+        }
+        for index_name, expected_columns in (
+            db_migrations.V7_QUESTION_FINGERPRINT_INDEXES.items()
         ):
             actual_columns = tuple(
                 row[2]
@@ -385,17 +549,19 @@ def test_current_schema_rejects_unique_or_partial_lookup_index(
         connection.execute(
             f"PRAGMA user_version={db_migrations.LATEST_SCHEMA_VERSION}"
         )
-        connection.execute("DROP INDEX idx_question_fingerprints_band0")
         if malformed_kind == "unique":
+            connection.execute("DROP INDEX idx_question_fingerprints_band0")
             connection.execute(
                 "CREATE UNIQUE INDEX idx_question_fingerprints_band0 "
                 "ON question_fingerprints (fingerprint_version, band0, token_count)"
             )
         else:
+            connection.execute("DROP INDEX idx_question_fingerprints_text_band0")
             connection.execute(
-                "CREATE INDEX idx_question_fingerprints_band0 "
-                "ON question_fingerprints (fingerprint_version, band0, token_count) "
-                "WHERE band0 <> 0"
+                "CREATE INDEX idx_question_fingerprints_text_band0 "
+                "ON question_fingerprints "
+                "(fingerprint_version, text_band0, token_count) "
+                "WHERE text_band0 <> ''"
             )
 
     with pytest.raises(RuntimeError, match="不得设为"):

@@ -10,6 +10,7 @@ from mathbank.database import Base, Question, QuestionFingerprint
 from mathbank.question_duplicate_service import (
     find_indexed_candidates,
     recall_question_ids,
+    recall_text_fragment_question_ids,
     select_visible_question_images,
     tikz_signatures,
     upsert_question_fingerprint,
@@ -69,6 +70,12 @@ def test_question_write_persists_rebuildable_fingerprint(client, db_session):
     assert len(stored.exact_hash) == 64
     assert len(stored.simhash_hex) == 32
     assert stored.status == "ready"
+    expected = build_question_fingerprint(
+        {"content": "设 $x=1$，求 $x+1$。", "question_type": "single_choice"}
+    )
+    assert [getattr(stored, f"text_band{band_no}") for band_no in range(8)] == list(
+        expected.text_bands
+    )
 
 
 def test_check_finds_safe_latex_normalization_without_scanning_answers(
@@ -423,12 +430,19 @@ def test_candidate_refinement_is_bounded_before_expensive_rebuild(
 
     original = service.fingerprint_for_question
     calls = {"count": 0}
+    original_compare = service.compare_question_fingerprints
+    compare_calls = {"count": 0}
 
     def counted(*args, **kwargs):
         calls["count"] += 1
         return original(*args, **kwargs)
 
+    def counted_compare(*args, **kwargs):
+        compare_calls["count"] += 1
+        return original_compare(*args, **kwargs)
+
     monkeypatch.setattr(service, "fingerprint_for_question", counted)
+    monkeypatch.setattr(service, "compare_question_fingerprints", counted_compare)
     candidates = find_indexed_candidates(
         db_session,
         fingerprint,
@@ -576,3 +590,358 @@ def test_concurrent_backfill_uses_atomic_upsert_without_primary_key_failure(tmp_
     finally:
         verify.close()
         engine.dispose()
+
+
+_ID52_CONTENT = (
+    "某位同学暑假期间要在八月上旬完成一定量的英语单词的记忆，计划是："
+    "第一天记忆 $300$ 个单词，第一天后的每一天，在复习前面记忆过的单词的基础上"
+    "增加 $50$ 个新单词的记忆量．则该同学记忆的单词总个数 $y$ 与记忆天数 $x$ "
+    "的函数关系式为\n\n\\fillin．"
+)
+_ID53_CONTENT = (
+    "第一天后的每一天，在复习前面记忆过的单词的基础上增加 $50$ 个新单词的记忆量．"
+    "则该同学记忆的单词总个数 $y$ 与记忆天数 $x$ 的函数关系式为\n\n\\fillin．"
+)
+
+
+def test_text_fragment_fallback_recalls_real_prefix_trimmed_variant(
+    db_session, tmp_path
+):
+    stored_question = Question(
+        id=52,
+        content=_ID52_CONTENT,
+        question_type="fill_in_blank",
+        difficulty="normal",
+    )
+    db_session.add(stored_question)
+    db_session.flush()
+    stored_fingerprint = build_question_fingerprint(
+        {"content": _ID52_CONTENT, "question_type": "fill_in_blank"}
+    )
+    query_fingerprint = build_question_fingerprint(
+        {"content": _ID53_CONTENT, "question_type": "fill_in_blank"}
+    )
+    assert set(stored_fingerprint.bands).isdisjoint(query_fingerprint.bands)
+    assert set(stored_fingerprint.text_bands) & set(query_fingerprint.text_bands)
+    upsert_question_fingerprint(db_session, stored_question, stored_fingerprint)
+    db_session.commit()
+    diagnostics = {}
+
+    candidates = find_indexed_candidates(
+        db_session,
+        query_fingerprint,
+        uploads_dir=tmp_path,
+        url_prefix="static/uploads",
+        limit=5,
+        diagnostics=diagnostics,
+    )
+
+    assert [candidate.question.id for candidate in candidates] == [52]
+    assert candidates[0].comparison.classification == "possible_variant"
+    assert "NUMBER_CHANGED" in candidates[0].comparison.reasons
+    assert diagnostics["primary_candidate_count"] == 0
+    assert diagnostics["text_fallback_used"] is True
+    assert diagnostics["text_candidate_count"] == 1
+
+
+def test_text_fragment_fallback_is_skipped_when_primary_result_is_review_worthy(
+    db_session, tmp_path, monkeypatch
+):
+    import mathbank.question_duplicate_service as service
+
+    question = Question(
+        content="主索引已命中的题 $x=1$。",
+        question_type="detailed_answer",
+    )
+    db_session.add(question)
+    db_session.flush()
+    fingerprint = build_question_fingerprint(
+        {"content": question.content, "question_type": question.question_type}
+    )
+    upsert_question_fingerprint(db_session, question, fingerprint)
+    db_session.commit()
+
+    def unexpected_fallback(*_args, **_kwargs):
+        raise AssertionError("主索引已命中时不应调用文本兜底")
+
+    monkeypatch.setattr(
+        service,
+        "recall_text_fragment_question_ids",
+        unexpected_fallback,
+    )
+    diagnostics = {}
+
+    candidates = find_indexed_candidates(
+        db_session,
+        fingerprint,
+        uploads_dir=tmp_path,
+        url_prefix="static/uploads",
+        limit=5,
+        diagnostics=diagnostics,
+    )
+
+    assert [candidate.question.id for candidate in candidates] == [question.id]
+    assert diagnostics["text_fallback_used"] is False
+
+
+def test_text_fragment_recall_uses_eight_three_column_indexes(db_session):
+    fingerprint = build_question_fingerprint(
+        {"content": _ID53_CONTENT, "question_type": "fill_in_blank"}
+    )
+    captured = []
+
+    def capture_statement(_conn, _cursor, statement, parameters, _context, _many):
+        if "UNION ALL" in statement and "text_band" in statement:
+            captured.append((statement, parameters))
+
+    event.listen(db_session.bind, "before_cursor_execute", capture_statement)
+    try:
+        recall_text_fragment_question_ids(db_session, fingerprint, limit=40)
+    finally:
+        event.remove(db_session.bind, "before_cursor_execute", capture_statement)
+
+    assert len(captured) == 1
+    statement, parameters = captured[0]
+    assert statement.count("UNION ALL") == 7
+    raw_connection = db_session.connection().connection
+    plan = raw_connection.execute(
+        "EXPLAIN QUERY PLAN " + statement,
+        parameters,
+    ).fetchall()
+    details = "\n".join(str(row[3]) for row in plan)
+    for band_no in range(8):
+        assert f"idx_question_fingerprints_text_band{band_no}" in details
+
+
+def test_wide_text_fragment_bucket_is_bounded_and_disclosed(client, db_session):
+    fingerprint = build_question_fingerprint(
+        {"content": _ID53_CONTENT, "question_type": "fill_in_blank"}
+    )
+    questions = [
+        Question(content=f"文本分桶候选 {index}", question_type="detailed_answer")
+        for index in range(60)
+    ]
+    db_session.add_all(questions)
+    db_session.flush()
+    for index, question in enumerate(questions):
+        db_session.add(
+            QuestionFingerprint(
+                question_id=question.id,
+                fingerprint_version=fingerprint.fingerprint_version,
+                exact_hash=f"{index:064x}",
+                token_count=fingerprint.token_count,
+                **{
+                    f"text_band{band_no}": band_value
+                    for band_no, band_value in enumerate(fingerprint.text_bands)
+                },
+            )
+        )
+    db_session.commit()
+    diagnostics = {}
+
+    recalled = recall_text_fragment_question_ids(
+        db_session,
+        fingerprint,
+        limit=40,
+        diagnostics=diagnostics,
+    )
+
+    assert len(recalled) == 40
+    assert diagnostics["text_index_complete"] is False
+    assert diagnostics["text_truncated_band_count"] == 8
+
+    response = _check(
+        client,
+        [
+            {
+                "client_key": "wide-text-bucket",
+                "content": _ID53_CONTENT,
+                "question_type": "fill_in_blank",
+            }
+        ],
+    )
+    assert response.status_code == 200
+    assert response.json()["index"]["ready"] is False
+    assert "结果可能不完整" in response.json()["index"]["warning"]
+
+
+def test_primary_cross_band_global_budget_drop_is_disclosed(db_session):
+    query = build_question_fingerprint(
+        {"content": "跨分桶总预算查询 $x=1$", "question_type": "detailed_answer"}
+    )
+    for band_no, matching_value in enumerate(query.bands):
+        for offset in range(4):
+            question = Question(
+                content=f"跨分桶主候选 {band_no}-{offset}",
+                question_type="detailed_answer",
+            )
+            db_session.add(question)
+            db_session.flush()
+            values = {
+                f"band{index}": (value + 1000 + band_no + offset) % 65536
+                for index, value in enumerate(query.bands)
+            }
+            values[f"band{band_no}"] = matching_value
+            db_session.add(
+                QuestionFingerprint(
+                    question_id=question.id,
+                    fingerprint_version=query.fingerprint_version,
+                    exact_hash=f"{question.id:064x}",
+                    token_count=query.token_count,
+                    **values,
+                )
+            )
+    db_session.commit()
+    diagnostics = {}
+
+    recalled = recall_question_ids(
+        db_session,
+        query,
+        limit=20,
+        diagnostics=diagnostics,
+    )
+
+    assert len(recalled) == 20
+    assert diagnostics["dropped_by_global_budget"] == 12
+    assert diagnostics["index_complete"] is False
+
+
+def test_text_cross_band_global_budget_drop_reaches_api_warning(client, db_session):
+    query = build_question_fingerprint(
+        {"content": _ID53_CONTENT, "question_type": "fill_in_blank"}
+    )
+    nonempty_bands = [
+        (band_no, value)
+        for band_no, value in enumerate(query.text_bands)
+        if value != "ffffffffffffffff"
+    ]
+    assert len(nonempty_bands) == 8
+    for band_no, matching_value in nonempty_bands:
+        for offset in range(6):
+            question = Question(
+                content=f"跨分桶文本候选 {band_no}-{offset}",
+                question_type="detailed_answer",
+            )
+            db_session.add(question)
+            db_session.flush()
+            sim_values = {
+                f"band{index}": (value + 2000 + band_no + offset) % 65536
+                for index, value in enumerate(query.bands)
+            }
+            text_values = {
+                f"text_band{index}": "0000000000000000"
+                for index in range(8)
+            }
+            text_values[f"text_band{band_no}"] = matching_value
+            db_session.add(
+                QuestionFingerprint(
+                    question_id=question.id,
+                    fingerprint_version=query.fingerprint_version,
+                    exact_hash=f"{question.id + 1000:064x}",
+                    token_count=query.token_count,
+                    **sim_values,
+                    **text_values,
+                )
+            )
+    db_session.commit()
+    diagnostics = {}
+
+    recalled = recall_text_fragment_question_ids(
+        db_session,
+        query,
+        limit=20,
+        diagnostics=diagnostics,
+    )
+    response = _check(
+        client,
+        [
+            {
+                "client_key": "cross-band-budget",
+                "content": _ID53_CONTENT,
+                "question_type": "fill_in_blank",
+            }
+        ],
+    )
+
+    assert len(recalled) == 20
+    assert diagnostics["text_dropped_by_global_budget"] == 28
+    assert diagnostics["text_index_complete"] is False
+    assert response.status_code == 200
+    assert response.json()["index"]["ready"] is False
+    assert "结果可能不完整" in response.json()["index"]["warning"]
+
+
+def test_two_stage_candidate_rebuilds_share_one_bounded_budget(
+    db_session, tmp_path, monkeypatch
+):
+    import mathbank.question_duplicate_service as service
+
+    query = build_question_fingerprint(
+        {"content": _ID53_CONTENT, "question_type": "fill_in_blank"}
+    )
+    questions = [
+        Question(
+            content=f"完全无关的候选题 {index}：计算 $z={1000 + index}$。",
+            question_type="detailed_answer",
+        )
+        for index in range(100)
+    ]
+    db_session.add_all(questions)
+    db_session.flush()
+    for index, question in enumerate(questions):
+        primary = index < 50
+        db_session.add(
+            QuestionFingerprint(
+                question_id=question.id,
+                fingerprint_version=query.fingerprint_version,
+                exact_hash=f"{index + 1:064x}",
+                simhash_hex=query.simhash_hex,
+                token_count=query.token_count,
+                **{
+                    f"band{band_no}": (
+                        band_value if primary else (band_value + 1) % 65536
+                    )
+                    for band_no, band_value in enumerate(query.bands)
+                },
+                **{
+                    f"text_band{band_no}": (
+                        "0000000000000000" if primary else band_value
+                    )
+                    for band_no, band_value in enumerate(query.text_bands)
+                },
+            )
+        )
+    db_session.commit()
+    original = service.fingerprint_for_question
+    calls = {"count": 0}
+    original_compare = service.compare_question_fingerprints
+    compare_calls = {"count": 0}
+
+    def counted(*args, **kwargs):
+        calls["count"] += 1
+        return original(*args, **kwargs)
+
+    def counted_compare(*args, **kwargs):
+        compare_calls["count"] += 1
+        return original_compare(*args, **kwargs)
+
+    monkeypatch.setattr(service, "fingerprint_for_question", counted)
+    monkeypatch.setattr(service, "compare_question_fingerprints", counted_compare)
+    diagnostics = {}
+
+    candidates = find_indexed_candidates(
+        db_session,
+        query,
+        uploads_dir=tmp_path,
+        url_prefix="static/uploads",
+        limit=5,
+        diagnostics=diagnostics,
+    )
+
+    assert candidates == []
+    assert diagnostics["candidate_budget"] == 40
+    assert diagnostics["primary_candidate_count"] == 20
+    assert diagnostics["text_candidate_count"] == 20
+    assert diagnostics["text_fallback_used"] is True
+    assert calls["count"] <= 40
+    assert compare_calls["count"] <= 40

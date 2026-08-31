@@ -70,6 +70,44 @@ def _create_database(path, question_count=1, image_paths=None, content=None, ans
             )
 
 
+def _create_pre_v8_fingerprint_table(connection, indexes):
+    connection.execute(
+        """
+        CREATE TABLE question_fingerprints (
+            question_id INTEGER NOT NULL,
+            fingerprint_version INTEGER NOT NULL,
+            content_revision_hash VARCHAR(64) NOT NULL DEFAULT '',
+            exact_hash VARCHAR(64) NOT NULL DEFAULT '',
+            critical_math_hash VARCHAR(64) NOT NULL DEFAULT '',
+            answer_hash VARCHAR(64) NOT NULL DEFAULT '',
+            simhash_hex VARCHAR(32) NOT NULL DEFAULT '',
+            token_count INTEGER NOT NULL DEFAULT 0,
+            choice_count INTEGER NOT NULL DEFAULT 0,
+            figure_count INTEGER NOT NULL DEFAULT 0,
+            visible_image_hashes TEXT NOT NULL DEFAULT '[]',
+            tikz_hashes TEXT NOT NULL DEFAULT '[]',
+            band0 INTEGER NOT NULL DEFAULT 0,
+            band1 INTEGER NOT NULL DEFAULT 0,
+            band2 INTEGER NOT NULL DEFAULT 0,
+            band3 INTEGER NOT NULL DEFAULT 0,
+            band4 INTEGER NOT NULL DEFAULT 0,
+            band5 INTEGER NOT NULL DEFAULT 0,
+            band6 INTEGER NOT NULL DEFAULT 0,
+            band7 INTEGER NOT NULL DEFAULT 0,
+            status VARCHAR(20) NOT NULL DEFAULT 'pending',
+            updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            PRIMARY KEY (question_id, fingerprint_version),
+            FOREIGN KEY(question_id) REFERENCES questions(id) ON DELETE CASCADE
+        )
+        """
+    )
+    for index_name, columns in indexes.items():
+        connection.execute(
+            f'CREATE INDEX "{index_name}" ON question_fingerprints '
+            f"({', '.join(columns)})"
+        )
+
+
 def _create_real_wal_sidecar_bytes(path):
     connection = sqlite3.connect(path)
     try:
@@ -161,8 +199,7 @@ def test_backup_verifier_rejects_modified_payload(tmp_path):
 
 
 def test_schema_v6_backup_requires_and_counts_fingerprint_table(tmp_path):
-    from sqlalchemy import create_engine
-    from mathbank.database import QuestionFingerprint
+    from mathbank.db_migrations import V6_QUESTION_FINGERPRINT_INDEXES
 
     database = tmp_path / "math_question_bank.db"
     uploads = tmp_path / "uploads"
@@ -170,19 +207,10 @@ def test_schema_v6_backup_requires_and_counts_fingerprint_table(tmp_path):
     _create_database(database)
     with _sqlite_connection(database) as connection:
         connection.execute("PRAGMA user_version=6")
-    validation_engine = create_engine(f"sqlite:///{database.as_posix()}")
-    try:
-        QuestionFingerprint.__table__.create(validation_engine)
-    finally:
-        validation_engine.dispose()
-    with _sqlite_connection(database) as connection:
-        for band_no in range(8):
-            index_name = f"idx_question_fingerprints_band{band_no}"
-            connection.execute(f'DROP INDEX "{index_name}"')
-            connection.execute(
-                f'CREATE INDEX "{index_name}" ON question_fingerprints '
-                f"(fingerprint_version, band{band_no})"
-            )
+        _create_pre_v8_fingerprint_table(
+            connection,
+            V6_QUESTION_FINGERPRINT_INDEXES,
+        )
         connection.execute(
             "INSERT INTO question_fingerprints (question_id, fingerprint_version) "
             "VALUES (1, 2)"
@@ -198,6 +226,35 @@ def test_schema_v6_backup_requires_and_counts_fingerprint_table(tmp_path):
     manifest = verify_full_backup(archive)
 
     assert manifest["database"]["row_counts"]["question_fingerprints"] == 1
+
+
+def test_schema_v7_backup_uses_its_three_column_band_indexes(tmp_path):
+    from mathbank.db_migrations import V7_QUESTION_FINGERPRINT_INDEXES
+
+    database = tmp_path / "math_question_bank.db"
+    uploads = tmp_path / "uploads"
+    uploads.mkdir()
+    _create_database(database)
+    with _sqlite_connection(database) as connection:
+        connection.execute("PRAGMA user_version=7")
+        _create_pre_v8_fingerprint_table(
+            connection,
+            V7_QUESTION_FINGERPRINT_INDEXES,
+        )
+        connection.execute(
+            "INSERT INTO question_fingerprints (question_id, fingerprint_version) "
+            "VALUES (1, 2)"
+        )
+
+    archive = create_full_backup(
+        output_dir=tmp_path / "snapshots",
+        database_path=database,
+        uploads_dir=uploads,
+        metadata_path=tmp_path / "missing.json",
+        retention=None,
+    )
+
+    assert verify_full_backup(archive)["database"]["schema_version"] == 7
 
 
 def test_schema_v6_backup_rejects_missing_fingerprint_table(tmp_path):

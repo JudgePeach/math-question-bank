@@ -1,15 +1,21 @@
 from dataclasses import replace
+import re
 
 import pytest
 
+import mathbank.question_duplicates as duplicate_module
 from mathbank.question_duplicates import (
     DuplicateComparison,
+    EMPTY_TEXT_BAND,
+    FINGERPRINT_VERSION,
     QuestionDuplicateInput,
     QuestionFingerprint,
     build_question_fingerprint,
     compare_question_fingerprints,
     compare_questions,
+    compute_text_fragment_bands,
     extract_choices,
+    extract_critical_math_tokens,
     find_batch_duplicate_groups,
     normalize_math_text,
     simhash_bands,
@@ -61,6 +67,68 @@ def test_numbers_variables_relations_quantifiers_and_interval_brackets_survive()
         assert comparison.classification == "possible_variant"
         assert expected_reason in comparison.reasons
         assert comparison.auto_merge_allowed is False
+
+
+@pytest.mark.parametrize(
+    ("left_term", "right_term", "expected_reason"),
+    (
+        ("八月完成", "九月完成", "NUMBER_CHANGED"),
+        ("一元函数", "二元函数", "NUMBER_CHANGED"),
+        ("三本资料", "四本资料", "NUMBER_CHANGED"),
+        ("不存在实数解", "存在实数解", "QUANTIFIER_CHANGED"),
+        ("至少有一个解", "至多有一个解", "QUANTIFIER_CHANGED"),
+        ("不超过给定值", "不少于给定值", "RELATION_CHANGED"),
+        ("不大于零", "不小于零", "RELATION_CHANGED"),
+        ("大于等于零", "小于等于零", "RELATION_CHANGED"),
+        ("等于零", "不等于零", "RELATION_CHANGED"),
+        ("大于零", "小于零", "RELATION_CHANGED"),
+        ("正数", "负数", "RELATION_CHANGED"),
+        ("非正", "非负", "RELATION_CHANGED"),
+        ("为正", "为负", "RELATION_CHANGED"),
+        ("单调递增", "单调递减", "OPERATOR_CHANGED"),
+        ("递增", "递减", "OPERATOR_CHANGED"),
+        ("增加", "减少", "OPERATOR_CHANGED"),
+        ("上升", "下降", "OPERATOR_CHANGED"),
+        ("最大", "最小", "OPERATOR_CHANGED"),
+        ("奇数", "偶数", "OPERATOR_CHANGED"),
+    ),
+)
+def test_chinese_semantic_changes_are_variants_under_long_common_context(
+    left_term, right_term, expected_reason
+):
+    prefix = (
+        "在一次数学建模活动中，老师要求学生根据给出的完整背景材料和已知条件，"
+        "判断目标对象满足的核心性质为"
+    )
+    suffix = "，并结合定义写出严谨、完整且可以逐步核对的证明理由。"
+
+    comparison = compare_questions(
+        {"content": prefix + left_term + suffix},
+        {"content": prefix + right_term + suffix},
+    )
+
+    assert comparison.classification == "possible_variant"
+    assert expected_reason in comparison.reasons
+    assert comparison.auto_merge_allowed is False
+
+
+def test_chinese_semantic_matching_prefers_longest_words_without_bare_signs():
+    tokens = extract_critical_math_tokens(
+        normalize_math_text("命题不存在实数解，但这份正确结论由负责的学生给出。")
+    )
+
+    assert "不存在" in tokens
+    assert "存在" not in tokens
+    assert "正" not in tokens
+    assert "负" not in tokens
+
+    relation_tokens = extract_critical_math_tokens(
+        normalize_math_text("函数值不等于零，并且大于等于给定常数。")
+    )
+    assert "不等于" in relation_tokens
+    assert "大于等于" in relation_tokens
+    assert "等于" not in relation_tokens
+    assert "大于" not in relation_tokens
 
 
 def test_answer_change_invalidates_snapshot_without_changing_duplicate_identity():
@@ -238,9 +306,12 @@ def test_fingerprint_is_deterministic_serializable_and_has_eight_bands():
     assert rebuilt == original
     assert rebuilt.snapshot_hash == rebuilt.content_revision_hash
     assert rebuilt.critical_math_tokens == rebuilt.critical_tokens
+    assert original.fingerprint_version == FINGERPRINT_VERSION == 3
     assert len(original.simhash_hex) == 32
     assert original.bands == simhash_bands(original.simhash_hex)
     assert all(0 <= band <= 65535 for band in original.bands)
+    assert len(original.text_bands) == 8
+    assert all(re.fullmatch(r"[0-9a-f]{16}", band) for band in original.text_bands)
     assert build_question_fingerprint(
         QuestionDuplicateInput(
             r"已知 $x^2=1$，求 $x$。",
@@ -249,6 +320,94 @@ def test_fingerprint_is_deterministic_serializable_and_has_eight_bands():
             tikz_signatures=("tikz:def",),
         )
     ) == original
+
+
+def test_text_fragment_bands_are_stable_and_validated():
+    expected = (
+        "ffffa532292effff",
+        "ffffaec6ffffffff",
+        "bc81ffffffffffff",
+        "ffffae0cffffffff",
+        "ffff5e39ffff8a29",
+        "ffffffffffffffff",
+        "fbe8ffffffffffff",
+        "fffff46e5ae3ffff",
+    )
+
+    assert compute_text_fragment_bands("甲乙丙丁戊己庚辛") == expected
+    assert compute_text_fragment_bands("甲乙丙丁戊己庚辛") == expected
+    with pytest.raises(ValueError, match="16 lowercase hex"):
+        replace(fingerprint("稳定性测试题"), text_bands=("INVALID",) * 8)
+
+
+def test_text_fragment_oph_hashes_each_unique_feature_once(monkeypatch):
+    real_sha256 = duplicate_module.hashlib.sha256
+    calls = {"count": 0}
+
+    def counted_sha256(*args, **kwargs):
+        calls["count"] += 1
+        return real_sha256(*args, **kwargs)
+
+    monkeypatch.setattr(duplicate_module.hashlib, "sha256", counted_sha256)
+
+    # Six unique tokens produce three literal and three skeleton 4-grams.
+    bands = compute_text_fragment_bands("甲乙丙丁戊己")
+
+    assert len(bands) == 8
+    assert calls["count"] == 6
+
+
+def test_text_skeleton_recalls_month_and_number_variant_without_weakening_math():
+    august = fingerprint(
+        "八月计划第一天记忆 $50$ 个单词，随后每天复习并增加新单词。"
+    )
+    september = fingerprint(
+        "九月计划第一天记忆 $60$ 个单词，随后每天复习并增加新单词。"
+    )
+
+    shared = (set(august.text_bands) & set(september.text_bands)) - {
+        EMPTY_TEXT_BAND
+    }
+    comparison = compare_question_fingerprints(august, september)
+    scan = find_batch_duplicate_groups((august, september))
+
+    assert shared
+    assert august.exact_hash != september.exact_hash
+    assert comparison.classification == "possible_variant"
+    assert "NUMBER_CHANGED" in comparison.reasons
+    assert comparison.auto_merge_allowed is False
+    assert scan.candidate_pair_count == 1
+    assert scan.groups[0].strongest_classification == "possible_variant"
+
+
+def test_real_52_53_style_suffix_variant_is_recalled_by_text_band():
+    longer = fingerprint(
+        "某位同学暑假期间要在八月上旬完成一定量的英语单词的记忆，"
+        "计划是：第一天记忆 $300$ 个单词，第一天后的每一天，在复习"
+        "前面记忆过的单词的基础上增加 $50$ 个新单词的记忆量．则该"
+        "同学记忆的单词总个数 $y$ 与记忆天数 $x$ 的函数关系式为\n\n"
+        r"\fillin．"
+    )
+    suffix = fingerprint(
+        "第一天后的每一天，在复习前面记忆过的单词的基础上增加 $50$ "
+        "个新单词的记忆量．则该同学记忆的单词总个数 $y$ 与记忆天数 "
+        "$x$ 的函数关系式为\n\n"
+        r"\fillin．"
+    )
+
+    shared = (set(longer.text_bands) & set(suffix.text_bands)) - {
+        EMPTY_TEXT_BAND
+    }
+    scan = find_batch_duplicate_groups((longer, suffix))
+
+    assert set(longer.bands).isdisjoint(suffix.bands)
+    assert shared
+    assert scan.candidate_pair_count == 1
+    assert scan.compared_pair_count == 1
+    assert scan.groups[0].member_indexes == (0, 1)
+    assert scan.groups[0].strongest_classification == "possible_variant"
+    reasons = scan.groups[0].comparisons[0].comparison.reasons
+    assert "NUMBER_CHANGED" in reasons
 
 
 def test_input_mapping_and_comparison_are_api_friendly():
@@ -277,7 +436,7 @@ def test_duplicate_comparison_rejects_any_auto_merge_flag():
         DuplicateComparison("exact", 1.0, ("EXACT_TEXT",), False, True)
 
 
-def test_batch_exact_groups_need_only_linear_representative_pairs():
+def test_batch_exact_groups_need_only_linear_chain_pairs():
     duplicate = fingerprint("完全相同的题目 $x=1$")
     fingerprints = [duplicate, duplicate, duplicate, fingerprint("另一道题 $y=9$")]
 
@@ -291,6 +450,127 @@ def test_batch_exact_groups_need_only_linear_representative_pairs():
     assert scan.groups[0].strongest_classification == "exact"
 
 
+def test_batch_text_fallback_skips_items_with_primary_review(monkeypatch):
+    prefix = "在一个足够长的共同背景中，需要依据给定条件完成计算并写出完整理由，已知 "
+    contents = (
+        prefix + "$x=1$。",
+        prefix + "$x=2$。",
+        prefix + "$y=3$。",
+        prefix + "$y=4$。",
+    )
+    fingerprints = []
+    for index, content in enumerate(contents):
+        item = fingerprint(content)
+        primary_group = 100 if index < 2 else 200
+        controlled_simhash = (primary_group,) + tuple(
+            1000 + index * 10 + band for band in range(1, 8)
+        )
+        fingerprints.append(
+            replace(
+                item,
+                bands=controlled_simhash,
+                text_bands=("1111111111111111",)
+                + (EMPTY_TEXT_BAND,) * 7,
+            )
+        )
+
+    real_compare = duplicate_module.compare_question_fingerprints
+    calls = {"count": 0}
+
+    def counted_compare(*args, **kwargs):
+        calls["count"] += 1
+        return real_compare(*args, **kwargs)
+
+    monkeypatch.setattr(
+        duplicate_module, "compare_question_fingerprints", counted_compare
+    )
+
+    scan = find_batch_duplicate_groups(fingerprints)
+
+    assert calls["count"] == 2
+    assert scan.candidate_pair_count == 2
+    assert scan.compared_pair_count == 2
+    assert [group.member_indexes for group in scan.groups] == [(0, 1), (2, 3)]
+
+
+def test_batch_text_fallback_runs_after_primary_candidates_refine_to_none(
+    monkeypatch,
+):
+    prefix = "在一个足够长的共同背景中，需要依据给定条件完成计算并写出完整理由，已知 "
+    first = fingerprint(prefix + "$x=1$。")
+    unrelated = fingerprint("空间中有三个互相垂直的平面，判断直线的位置关系。")
+    variant = fingerprint(prefix + "$x=2$。")
+    fingerprints = (
+        replace(
+            first,
+            bands=(100, 1001, 1002, 1003, 1004, 1005, 1006, 1007),
+            text_bands=("2222222222222222",) + (EMPTY_TEXT_BAND,) * 7,
+        ),
+        replace(
+            unrelated,
+            bands=(100, 2001, 2002, 2003, 2004, 2005, 2006, 2007),
+            text_bands=("3333333333333333",) + (EMPTY_TEXT_BAND,) * 7,
+        ),
+        replace(
+            variant,
+            bands=(300, 3001, 3002, 3003, 3004, 3005, 3006, 3007),
+            text_bands=("2222222222222222",) + (EMPTY_TEXT_BAND,) * 7,
+        ),
+    )
+    real_compare = duplicate_module.compare_question_fingerprints
+    calls = {"count": 0}
+
+    def counted_compare(*args, **kwargs):
+        calls["count"] += 1
+        return real_compare(*args, **kwargs)
+
+    monkeypatch.setattr(
+        duplicate_module, "compare_question_fingerprints", counted_compare
+    )
+
+    scan = find_batch_duplicate_groups(fingerprints)
+
+    assert calls["count"] == 2
+    assert scan.candidate_pair_count == 2
+    assert scan.groups[0].member_indexes == (0, 2)
+    assert scan.groups[0].strongest_classification == "possible_variant"
+    assert "NUMBER_CHANGED" in scan.groups[0].comparisons[0].comparison.reasons
+
+
+def test_batch_two_stages_share_one_per_item_budget_and_report_drops():
+    prefix = "在一个足够长的共同背景中，需要依据给定条件完成计算并写出完整理由，已知 "
+    first = fingerprint(prefix + "$x=1$。")
+    unrelated = fingerprint("空间中有三个互相垂直的平面，判断直线的位置关系。")
+    variant = fingerprint(prefix + "$x=2$。")
+    fingerprints = (
+        replace(
+            first,
+            bands=(100, 1001, 1002, 1003, 1004, 1005, 1006, 1007),
+            text_bands=("2222222222222222",) + (EMPTY_TEXT_BAND,) * 7,
+        ),
+        replace(
+            unrelated,
+            bands=(100, 2001, 2002, 2003, 2004, 2005, 2006, 2007),
+            text_bands=("3333333333333333",) + (EMPTY_TEXT_BAND,) * 7,
+        ),
+        replace(
+            variant,
+            bands=(300, 3001, 3002, 3003, 3004, 3005, 3006, 3007),
+            text_bands=("2222222222222222",) + (EMPTY_TEXT_BAND,) * 7,
+        ),
+    )
+
+    scan = find_batch_duplicate_groups(
+        fingerprints,
+        max_candidates_per_item=1,
+    )
+
+    assert scan.candidate_pair_count == 1
+    assert scan.compared_pair_count == 1
+    assert scan.dropped_candidate_pair_count == 1
+    assert scan.index_complete is False
+
+
 def test_unrelated_large_batch_is_not_compared_all_pairs():
     # Unique explicit band values make the no-all-pairs property deterministic;
     # a 400-item all-pairs implementation would compare 79,800 pairs.
@@ -298,7 +578,16 @@ def test_unrelated_large_batch_is_not_compared_all_pairs():
     for index in range(400):
         item = fingerprint(f"题目 {index}：计算 $x+{index}$。")
         unique_bands = tuple(index * 8 + band for band in range(8))
-        fingerprints.append(replace(item, bands=unique_bands))
+        unique_text_bands = tuple(
+            f"{index * 8 + band:016x}" for band in range(8)
+        )
+        fingerprints.append(
+            replace(
+                item,
+                bands=unique_bands,
+                text_bands=unique_text_bands,
+            )
+        )
 
     scan = find_batch_duplicate_groups(fingerprints)
 
@@ -312,7 +601,13 @@ def test_broad_lsh_bucket_is_bounded_and_disclosed():
     fingerprints = []
     for index in range(10):
         item = fingerprint(f"题目 {index}：$x={index}$。")
-        fingerprints.append(replace(item, bands=(0,) * 8))
+        fingerprints.append(
+            replace(
+                item,
+                bands=(0,) * 8,
+                text_bands=(EMPTY_TEXT_BAND,) * 8,
+            )
+        )
 
     scan = find_batch_duplicate_groups(fingerprints, max_bucket_size=5)
 

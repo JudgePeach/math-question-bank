@@ -743,7 +743,10 @@ def verify_full_backup(archive_path: Path) -> dict[str, Any]:
                         raise RuntimeError(f"备份数据库行数不匹配: {table_name}")
                 from mathbank.db_migrations import (
                     LATEST_SCHEMA_VERSION,
+                    V6_QUESTION_FINGERPRINT_COLUMNS,
                     V6_QUESTION_FINGERPRINT_INDEXES,
+                    V7_QUESTION_FINGERPRINT_COLUMNS,
+                    V7_QUESTION_FINGERPRINT_INDEXES,
                     _validate_question_fingerprint_schema,
                 )
 
@@ -757,10 +760,23 @@ def verify_full_backup(archive_path: Path) -> dict[str, Any]:
                         with validation_engine.connect() as validation_connection:
                             _validate_question_fingerprint_schema(
                                 validation_connection,
+                                expected_columns=(
+                                    V6_QUESTION_FINGERPRINT_COLUMNS
+                                    if schema_version == 6
+                                    else (
+                                        V7_QUESTION_FINGERPRINT_COLUMNS
+                                        if schema_version == 7
+                                        else None
+                                    )
+                                ),
                                 expected_indexes=(
                                     V6_QUESTION_FINGERPRINT_INDEXES
                                     if schema_version == 6
-                                    else None
+                                    else (
+                                        V7_QUESTION_FINGERPRINT_INDEXES
+                                        if schema_version == 7
+                                        else None
+                                    )
                                 ),
                             )
                     finally:

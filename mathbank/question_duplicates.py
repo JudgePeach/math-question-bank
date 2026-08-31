@@ -24,10 +24,16 @@ import unicodedata
 from typing import Iterable, Literal, Mapping, Sequence
 
 
-FINGERPRINT_VERSION = 2
+FINGERPRINT_VERSION = 3
 SIMHASH_BITS = 128
 SIMHASH_BAND_COUNT = 8
 SIMHASH_BAND_BITS = 16
+TEXT_FRAGMENT_NGRAM_SIZE = 4
+TEXT_MINHASH_BIN_COUNT = 32
+TEXT_MINHASH_VALUES_PER_BAND = 4
+TEXT_MINHASH_BAND_COUNT = 8
+TEXT_MINHASH_EMPTY_VALUE = 0xFFFF
+EMPTY_TEXT_BAND = "ffffffffffffffff"
 DEFAULT_MAX_LSH_BUCKET_SIZE = 256
 DEFAULT_MAX_CANDIDATES_PER_ITEM = 128
 
@@ -59,7 +65,14 @@ _LEXICAL_TOKEN_RE = re.compile(
 )
 _CRITICAL_TOKEN_RE = re.compile(
     r"\\[A-Za-z@]+|"
-    r"有且仅有|至少一个|至多一个|任意|任一|所有|每个|存在|"
+    r"单调递增|单调递减|大于等于|小于等于|"
+    r"有且仅有|至少一个|至多一个|"
+    r"不存在|不超过|不少于|不大于|不小于|不等于|"
+    r"正数|负数|非正|非负|为正|为负|"
+    r"任意|任一|所有|每个|存在|至少|至多|"
+    r"递增|递减|增加|减少|上升|下降|"
+    r"大于|小于|等于|最大|最小|奇数|偶数|"
+    r"[零〇一二两三四五六七八九十百千万亿壹贰叁肆伍陆柒捌玖拾佰仟萬億]+|"
     r"\d+(?:\.\d+)?|\.\d+|"
     r"[A-Za-z]+|[\u0370-\u03ff]+|"
     r"<=>|<->|=>|->|<=|>=|!=|==|"
@@ -67,8 +80,14 @@ _CRITICAL_TOKEN_RE = re.compile(
     r"[+\-×÷*/^_=<>|]|"
     r"[()\[\]{}（）【】,，;；:]"
 )
-_NUMBER_RE = re.compile(r"^(?:\d+(?:\.\d+)?|\.\d+)$")
+_NUMBER_RE = re.compile(
+    r"^(?:\d+(?:\.\d+)?|\.\d+|"
+    r"[零〇一二两三四五六七八九十百千万亿壹贰叁肆伍陆柒捌玖拾佰仟萬億]+)$"
+)
 _VARIABLE_RE = re.compile(r"^(?:[A-Za-z]+|[\u0370-\u03ff]+)$")
+_CHINESE_NUMBER_CHARACTERS = frozenset(
+    "零〇一二两三四五六七八九十百千万亿壹贰叁肆伍陆柒捌玖拾佰仟萬億"
+)
 
 _FULLWIDTH_TRANSLATION = str.maketrans(
     {
@@ -159,6 +178,22 @@ _RELATION_TOKENS = frozenset(
         r"\supseteq",
         r"\approx",
         r"\equiv",
+        "不超过",
+        "不少于",
+        "不大于",
+        "不小于",
+        "大于等于",
+        "小于等于",
+        "不等于",
+        "大于",
+        "小于",
+        "等于",
+        "正数",
+        "负数",
+        "非正",
+        "非负",
+        "为正",
+        "为负",
     }
 )
 _QUANTIFIER_TOKENS = frozenset(
@@ -171,9 +206,12 @@ _QUANTIFIER_TOKENS = frozenset(
         "所有",
         "每个",
         "存在",
+        "不存在",
         "有且仅有",
         "至少一个",
         "至多一个",
+        "至少",
+        "至多",
         r"\forall",
         r"\exists",
         r"\nexists",
@@ -196,6 +234,18 @@ _OPERATOR_TOKENS = frozenset(
         r"\mp",
         r"\cup",
         r"\cap",
+        "单调递增",
+        "单调递减",
+        "递增",
+        "递减",
+        "增加",
+        "减少",
+        "上升",
+        "下降",
+        "最大",
+        "最小",
+        "奇数",
+        "偶数",
     }
 )
 _GREEK_COMMANDS = frozenset(
@@ -347,6 +397,7 @@ class QuestionFingerprint:
     critical_math_hash: str
     simhash_hex: str
     bands: tuple[int, ...]
+    text_bands: tuple[str, ...]
     token_count: int
     choice_count: int
     subquestion_count: int
@@ -382,6 +433,15 @@ class QuestionFingerprint:
             raise ValueError("bands must contain eight 16-bit values")
         if any(not 0 <= int(value) <= 0xFFFF for value in self.bands):
             raise ValueError("each SimHash band must be between 0 and 65535")
+        if len(self.text_bands) != TEXT_MINHASH_BAND_COUNT:
+            raise ValueError("text_bands must contain eight fragment bands")
+        if any(
+            not re.fullmatch(r"[0-9a-f]{16}", value)
+            for value in self.text_bands
+        ):
+            raise ValueError(
+                "each text fragment band must be 16 lowercase hex characters"
+            )
 
     @property
     def simhash_int(self) -> int:
@@ -409,6 +469,7 @@ class QuestionFingerprint:
             "critical_math_hash": self.critical_math_hash,
             "simhash_hex": self.simhash_hex,
             "bands": list(self.bands),
+            "text_bands": list(self.text_bands),
             "token_count": self.token_count,
             "choice_count": self.choice_count,
             "subquestion_count": self.subquestion_count,
@@ -437,6 +498,9 @@ class QuestionFingerprint:
             critical_math_hash=str(value["critical_math_hash"]),
             simhash_hex=str(value["simhash_hex"]),
             bands=tuple(int(item) for item in value.get("bands", ())),
+            text_bands=tuple(
+                str(item) for item in value.get("text_bands", ())
+            ),
             token_count=int(value.get("token_count", 0)),
             choice_count=int(value.get("choice_count", 0)),
             subquestion_count=int(value.get("subquestion_count", 0)),
@@ -799,6 +863,70 @@ def _simhash_features(
     return features
 
 
+def _text_fragment_skeleton_token(token: str) -> str:
+    """Normalize numeric values for recall only, never for final comparison."""
+
+    if _NUMBER_RE.fullmatch(token):
+        return "<NUM>"
+    if token and all(char in _CHINESE_NUMBER_CHARACTERS for char in token):
+        return "<NUM>"
+    return token
+
+
+def _text_fragment_features(canonical_text: str) -> set[str]:
+    """Return literal and numeric-skeleton lexical token 4-gram features."""
+
+    literal_tokens = _LEXICAL_TOKEN_RE.findall(canonical_text)
+    if len(literal_tokens) < TEXT_FRAGMENT_NGRAM_SIZE:
+        return set()
+    skeleton_tokens = [
+        _text_fragment_skeleton_token(token) for token in literal_tokens
+    ]
+    features: set[str] = set()
+    for namespace, tokens in (
+        ("literal", literal_tokens),
+        ("skeleton", skeleton_tokens),
+    ):
+        for index in range(len(tokens) - TEXT_FRAGMENT_NGRAM_SIZE + 1):
+            gram = "\x1f".join(
+                tokens[index : index + TEXT_FRAGMENT_NGRAM_SIZE]
+            )
+            features.add(f"{namespace}\x1f{gram}")
+    return features
+
+
+def compute_text_fragment_bands(canonical_text: str) -> tuple[str, ...]:
+    """Build eight 64-bit OPH bands from lexical token 4-grams.
+
+    Every unique literal or numeric-skeleton feature is SHA-256 hashed exactly
+    once.  Five digest bits select one of 32 bins and the lowest 16-bit value
+    wins inside that bin.  Four adjacent minima form one 16-hex-character band.
+    Empty bins use ``ffff``; a fully empty band is not indexed by batch recall.
+
+    Numeric skeletons only widen candidate recall.  Exact hashes, critical math
+    tokens, comparison scores, and final classifications retain original values.
+    """
+
+    minima = [TEXT_MINHASH_EMPTY_VALUE] * TEXT_MINHASH_BIN_COUNT
+    for feature in _text_fragment_features(str(canonical_text or "")):
+        digest = hashlib.sha256(feature.encode("utf-8")).digest()
+        bin_no = digest[0] & (TEXT_MINHASH_BIN_COUNT - 1)
+        value = min(int.from_bytes(digest[1:3], "big"), 0xFFFE)
+        if value < minima[bin_no]:
+            minima[bin_no] = value
+    return tuple(
+        "".join(
+            f"{value:04x}"
+            for value in minima[
+                start : start + TEXT_MINHASH_VALUES_PER_BAND
+            ]
+        )
+        for start in range(
+            0, TEXT_MINHASH_BIN_COUNT, TEXT_MINHASH_VALUES_PER_BAND
+        )
+    )
+
+
 def compute_simhash_128(features: Mapping[str, int] | Iterable[str]) -> int:
     """Return a deterministic 128-bit SimHash from weighted features."""
 
@@ -857,6 +985,7 @@ def build_question_fingerprint(
     critical_tokens = extract_critical_math_tokens(stem, choices)
     features = _simhash_features(canonical_text, critical_tokens)
     simhash = compute_simhash_128(features)
+    text_bands = compute_text_fragment_bands(canonical_text)
     answer_with_placeholders, _answer_figure_count = _replace_images(
         source.answer_markdown
     )
@@ -892,6 +1021,7 @@ def build_question_fingerprint(
         critical_math_hash=_stable_json_hash(critical_tokens),
         simhash_hex=f"{simhash:032x}",
         bands=simhash_bands(simhash),
+        text_bands=text_bands,
         token_count=lexical_token_count,
         choice_count=len(choices),
         subquestion_count=_subquestion_count(stem),
@@ -1018,7 +1148,7 @@ def _critical_shape(tokens: Sequence[str]) -> tuple[str, ...]:
         elif token in _QUANTIFIER_TOKENS:
             shaped.append("<quantifier>")
         elif token in _OPERATOR_TOKENS:
-            shaped.append(token)
+            shaped.append("<operator>")
         elif _VARIABLE_RE.fullmatch(token) or (
             token.startswith("\\") and token[1:] in _GREEK_COMMANDS
         ):
@@ -1236,8 +1366,10 @@ def find_batch_duplicate_groups(
 ) -> BatchDuplicateScan:
     """Find batch-local duplicate groups without an all-pairs scan.
 
-    Exact hashes are grouped in O(B).  Approximate candidates are generated by
-    eight inverted SimHash band indexes and deduplicated before refinement.
+    Exact hashes are grouped in O(B), then SimHash candidates are refined.
+    Text-fragment bands are consulted only for items which still have no
+    review-worthy primary result.  Both stages share one per-item candidate
+    budget and deduplicate pairs before refinement.
     Very broad LSH buckets and per-item candidate lists are bounded and reported
     through ``index_complete`` so callers never describe a partial scan as
     complete.
@@ -1251,57 +1383,109 @@ def find_batch_duplicate_groups(
         return BatchDuplicateScan((), 0, 0, 0, 0, 0)
 
     exact_groups: dict[str, list[int]] = defaultdict(list)
-    band_buckets: dict[tuple[int, int], list[int]] = defaultdict(list)
+    simhash_buckets: dict[tuple[int, int], list[int]] = defaultdict(list)
     for index, fingerprint in enumerate(fingerprints):
         exact_groups[fingerprint.exact_hash].append(index)
         for band_no, band_value in enumerate(fingerprint.bands):
-            band_buckets[(band_no, band_value)].append(index)
+            simhash_buckets[(band_no, band_value)].append(index)
 
-    exact_candidate_pairs: set[tuple[int, int]] = set()
+    candidate_pairs: set[tuple[int, int]] = set()
+    per_item_count: Counter[int] = Counter()
     exact_group_count = 0
     for members in exact_groups.values():
         if len(members) < 2:
             continue
         exact_group_count += 1
-        representative = members[0]
-        exact_candidate_pairs.update(
-            (representative, member) for member in members[1:]
+        # A chain retains one connected exact group with O(B) evidence without
+        # concentrating every comparison on a single representative item.
+        for left_index, right_index in zip(members, members[1:]):
+            pair = (left_index, right_index)
+            candidate_pairs.add(pair)
+            per_item_count[left_index] += 1
+            per_item_count[right_index] += 1
+
+    def add_bucket_candidates(
+        buckets: Mapping[tuple[object, ...], Sequence[int]],
+        *,
+        per_item_limit: int,
+        eligible_items: set[int] | None = None,
+    ) -> tuple[int, set[tuple[int, int]]]:
+        truncated = 0
+        stage_rejected: set[tuple[int, int]] = set()
+        for bucket_key in sorted(buckets):
+            members = buckets[bucket_key]
+            if len(members) < 2:
+                continue
+            if eligible_items is not None and not any(
+                member in eligible_items for member in members
+            ):
+                continue
+            if len(members) > max_bucket_size:
+                truncated += 1
+                continue
+            for offset, left_index in enumerate(members[:-1]):
+                for right_index in members[offset + 1 :]:
+                    if eligible_items is not None and not (
+                        left_index in eligible_items
+                        or right_index in eligible_items
+                    ):
+                        continue
+                    if (
+                        fingerprints[left_index].exact_hash
+                        == fingerprints[right_index].exact_hash
+                    ):
+                        continue
+                    pair = (left_index, right_index)
+                    if pair in candidate_pairs or pair in stage_rejected:
+                        continue
+                    if (
+                        per_item_count[left_index] >= per_item_limit
+                        or per_item_count[right_index] >= per_item_limit
+                    ):
+                        stage_rejected.add(pair)
+                        continue
+                    candidate_pairs.add(pair)
+                    per_item_count[left_index] += 1
+                    per_item_count[right_index] += 1
+        return truncated, stage_rejected
+
+    # Reserve part of the shared cap so noisy SimHash buckets cannot starve the
+    # text-fragment fallback for items whose primary candidates all refine away.
+    primary_item_limit = max(1, (max_candidates_per_item + 1) // 2)
+    primary_truncated, primary_rejected = add_bucket_candidates(
+        simhash_buckets,
+        per_item_limit=primary_item_limit,
+    )
+    primary_pairs = set(candidate_pairs)
+    comparisons: list[BatchPairComparison] = []
+    primary_review_items: set[int] = set()
+    for left_index, right_index in sorted(primary_pairs):
+        comparison = compare_question_fingerprints(
+            fingerprints[left_index], fingerprints[right_index]
+        )
+        if comparison.classification != "none":
+            comparisons.append(
+                BatchPairComparison(left_index, right_index, comparison)
+            )
+            primary_review_items.update((left_index, right_index))
+
+    fallback_items = set(range(len(fingerprints))) - primary_review_items
+    text_truncated = 0
+    text_rejected: set[tuple[int, int]] = set()
+    if fallback_items:
+        text_buckets: dict[tuple[int, str], list[int]] = defaultdict(list)
+        for index, fingerprint in enumerate(fingerprints):
+            for band_no, band_value in enumerate(fingerprint.text_bands):
+                if band_value != EMPTY_TEXT_BAND:
+                    text_buckets[(band_no, band_value)].append(index)
+        text_truncated, text_rejected = add_bucket_candidates(
+            text_buckets,
+            per_item_limit=max_candidates_per_item,
+            eligible_items=fallback_items,
         )
 
-    accepted_approximate_pairs: set[tuple[int, int]] = set()
-    per_item_count: Counter[int] = Counter()
-    truncated_bucket_count = 0
-    dropped_candidate_pair_count = 0
-    for bucket_key in sorted(band_buckets):
-        members = band_buckets[bucket_key]
-        if len(members) < 2:
-            continue
-        if len(members) > max_bucket_size:
-            truncated_bucket_count += 1
-            continue
-        for offset, left_index in enumerate(members[:-1]):
-            for right_index in members[offset + 1 :]:
-                if (
-                    fingerprints[left_index].exact_hash
-                    == fingerprints[right_index].exact_hash
-                ):
-                    continue
-                pair = (left_index, right_index)
-                if pair in accepted_approximate_pairs:
-                    continue
-                if (
-                    per_item_count[left_index] >= max_candidates_per_item
-                    or per_item_count[right_index] >= max_candidates_per_item
-                ):
-                    dropped_candidate_pair_count += 1
-                    continue
-                accepted_approximate_pairs.add(pair)
-                per_item_count[left_index] += 1
-                per_item_count[right_index] += 1
-
-    candidate_pairs = exact_candidate_pairs | accepted_approximate_pairs
-    comparisons: list[BatchPairComparison] = []
-    for left_index, right_index in sorted(candidate_pairs):
+    text_pairs = candidate_pairs - primary_pairs
+    for left_index, right_index in sorted(text_pairs):
         comparison = compare_question_fingerprints(
             fingerprints[left_index], fingerprints[right_index]
         )
@@ -1355,8 +1539,10 @@ def find_batch_duplicate_groups(
         candidate_pair_count=len(candidate_pairs),
         compared_pair_count=len(candidate_pairs),
         exact_group_count=exact_group_count,
-        truncated_bucket_count=truncated_bucket_count,
-        dropped_candidate_pair_count=dropped_candidate_pair_count,
+        truncated_bucket_count=primary_truncated + text_truncated,
+        dropped_candidate_pair_count=len(
+            (primary_rejected | text_rejected) - candidate_pairs
+        ),
     )
 
 
@@ -1373,6 +1559,8 @@ __all__ = [
     "compare_question_fingerprints",
     "compare_questions",
     "compute_simhash_128",
+    "compute_text_fragment_bands",
+    "EMPTY_TEXT_BAND",
     "extract_choices",
     "extract_critical_math_tokens",
     "find_batch_duplicate_groups",
