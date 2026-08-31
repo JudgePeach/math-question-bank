@@ -279,3 +279,13 @@ python3 -m scripts.restore data_backup/snapshots/mathbank-backup-时间戳.zip -
 ## 📄 开源协议
 
 本项目采用 [GNU AGPLv3](LICENSE) 协议开源。
+
+---
+
+## 💬 QQ 用户交流群
+
+欢迎加入 MathBank 用户交流群，群号：`1107557945`。
+
+<p align="center">
+  <img src="docs/images/qq-user-group.jpg" alt="MathBank QQ 用户交流群二维码" width="420">
+</p>
