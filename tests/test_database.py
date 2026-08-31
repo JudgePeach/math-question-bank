@@ -1,4 +1,4 @@
-from mathbank.database import Paper, Question
+from mathbank.database import Paper, Question, QuestionFingerprint
 
 def test_question_crud_operations(db_session):
     # 1. Create Question
@@ -94,3 +94,32 @@ def test_json_model_fields_fail_closed_on_wrong_json_shapes():
     payload = paper.to_dict()
     assert payload["show_secret"] is True
     assert payload["show_notice"] is True
+
+
+def test_question_fingerprint_defaults_and_cascade_delete(db_session):
+    question = Question(content="fingerprint source")
+    db_session.add(question)
+    db_session.flush()
+    fingerprint = QuestionFingerprint(
+        question_id=question.id,
+        fingerprint_version=1,
+        content_revision_hash="revision",
+        exact_hash="exact",
+        critical_math_hash="math",
+        answer_hash="answer",
+        simhash_hex="0" * 32,
+    )
+    db_session.add(fingerprint)
+    db_session.commit()
+
+    stored = db_session.get(QuestionFingerprint, (question.id, 1))
+    assert stored is not None
+    assert stored.visible_image_hashes == "[]"
+    assert stored.tikz_hashes == "[]"
+    assert stored.status == "pending"
+    assert stored.updated_at is not None
+    assert [stored.band0, stored.band1, stored.band7] == [0, 0, 0]
+
+    db_session.delete(question)
+    db_session.commit()
+    assert db_session.get(QuestionFingerprint, (question.id, 1)) is None

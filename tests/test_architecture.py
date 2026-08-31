@@ -256,12 +256,25 @@ def test_post_startup_maintenance_backs_up_before_mutating(monkeypatch):
         main, "recalibrate_usage_counts", lambda: calls.append("recalibrate")
     )
     monkeypatch.setattr(
+        main,
+        "rebuild_all_missing_fingerprints",
+        lambda *_args, **_kwargs: calls.append("fingerprints") or {"backfilled": 0},
+    )
+    monkeypatch.setattr(
         main, "print_optional_tool_diagnostics", lambda: calls.append("tools")
     )
 
     main.start_startup_cleanup()
 
-    assert calls == ["sleep", "backup", "heal", "clean", "recalibrate", "tools"]
+    assert calls == [
+        "sleep",
+        "backup",
+        "heal",
+        "clean",
+        "recalibrate",
+        "fingerprints",
+        "tools",
+    ]
 
 
 def test_post_startup_maintenance_stops_mutation_when_backup_fails(monkeypatch):

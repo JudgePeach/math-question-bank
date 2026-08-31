@@ -167,13 +167,22 @@ def _snapshot_database(source_path: Path, target_path: Path) -> dict[str, Any]:
                 "SELECT name FROM sqlite_master WHERE type='table'"
             ).fetchall()
         }
-        counts = {}
-        for table_name in (
+        required_count_tables = [
             "questions",
             "question_curriculums",
             "papers",
             "paper_questions",
-        ):
+        ]
+        if schema_version >= 6:
+            required_count_tables.append("question_fingerprints")
+        missing_required_tables = set(required_count_tables) - table_names
+        if missing_required_tables:
+            raise RuntimeError(
+                "数据库结构不完整，缺少备份必需表: "
+                + ", ".join(sorted(missing_required_tables))
+            )
+        counts = {}
+        for table_name in required_count_tables:
             if table_name in table_names:
                 counts[table_name] = int(
                     target.execute(f'SELECT COUNT(*) FROM "{table_name}"').fetchone()[0]
@@ -716,6 +725,8 @@ def verify_full_backup(archive_path: Path) -> dict[str, Any]:
                     "papers",
                     "paper_questions",
                 }
+                if schema_version >= 6:
+                    required_tables.add("question_fingerprints")
                 if not isinstance(row_counts, dict) or set(row_counts) != required_tables:
                     raise RuntimeError("备份数据库行数清单无效")
                 if not required_tables.issubset(table_names):
@@ -730,6 +741,30 @@ def verify_full_backup(archive_path: Path) -> dict[str, Any]:
                     )
                     if actual_count != expected_count:
                         raise RuntimeError(f"备份数据库行数不匹配: {table_name}")
+                from mathbank.db_migrations import (
+                    LATEST_SCHEMA_VERSION,
+                    V6_QUESTION_FINGERPRINT_INDEXES,
+                    _validate_question_fingerprint_schema,
+                )
+
+                if 6 <= schema_version <= LATEST_SCHEMA_VERSION:
+                    from sqlalchemy import create_engine
+
+                    validation_engine = create_engine(
+                        f"sqlite:///{database_copy.resolve().as_posix()}"
+                    )
+                    try:
+                        with validation_engine.connect() as validation_connection:
+                            _validate_question_fingerprint_schema(
+                                validation_connection,
+                                expected_indexes=(
+                                    V6_QUESTION_FINGERPRINT_INDEXES
+                                    if schema_version == 6
+                                    else None
+                                ),
+                            )
+                    finally:
+                        validation_engine.dispose()
                 referenced_uploads = _database_upload_references(connection)
                 missing_uploads = referenced_uploads - set(file_infos)
                 if missing_uploads:
@@ -957,6 +992,16 @@ def _restore_full_backup_unlocked(
     )
     try:
         manifest = verify_full_backup(archive_path)
+        from mathbank.db_migrations import LATEST_SCHEMA_VERSION
+
+        restore_schema_version = int(
+            manifest.get("database", {}).get("schema_version", 0)
+        )
+        if restore_schema_version > LATEST_SCHEMA_VERSION:
+            raise RuntimeError(
+                f"恢复包数据库版本 {restore_schema_version} 高于当前程序支持的 "
+                f"{LATEST_SCHEMA_VERSION}，请先升级 MathBank 再恢复。"
+            )
     except Exception:
         try:
             raw_candidate.unlink()

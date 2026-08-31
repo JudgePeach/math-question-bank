@@ -29,7 +29,33 @@ from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
 from dotenv import load_dotenv
 
-from mathbank.database import Question, QuestionCurriculum, Paper, PaperQuestion, engine, get_db, init_db
+from mathbank.database import (
+    Question,
+    QuestionCurriculum,
+    QuestionFingerprint as StoredQuestionFingerprint,
+    Paper,
+    PaperQuestion,
+    engine,
+    get_db,
+    init_db,
+)
+from mathbank.question_duplicates import (
+    QuestionDuplicateInput,
+    build_question_fingerprint,
+)
+from mathbank.question_duplicate_service import (
+    batch_local_matches,
+    exact_duplicate_ids,
+    find_indexed_candidates,
+    fingerprint_for_question,
+    index_status as duplicate_index_status,
+    rebuild_all_missing_fingerprints,
+    select_answer_images,
+    select_visible_question_images,
+    tikz_signatures as build_tikz_signatures,
+    upsert_question_fingerprint,
+    visible_image_signatures as build_visible_image_signatures,
+)
 from mathbank.paper_helper import build_latex_document, build_answer_sheet_latex, compile_tex_to_pdf, create_tex_zip_package, create_full_bundle_zip_package, collect_referenced_images, build_restricted_tex_environment
 from mathbank.word_export_helper import build_word_document, create_word_bundle_zip
 from mathbank.runtime_components import (
@@ -168,6 +194,47 @@ def schedule_database_export(
         print(
             f"[Database Export] Post-commit scheduling failed for {operation} "
             f"(type={type(exc).__name__}); the next write/startup export can retry."
+        )
+
+
+def schedule_question_fingerprint_retry(
+    background_tasks: BackgroundTasks,
+    *,
+    question_id: int,
+    operation: str,
+) -> None:
+    def retry_safely() -> None:
+        from mathbank.database import SessionLocal
+
+        retry_db = SessionLocal()
+        try:
+            question = retry_db.query(Question).filter(Question.id == question_id).first()
+            if question is None:
+                return
+            fingerprint = fingerprint_for_question(
+                question,
+                uploads_dir=UPLOAD_DIR,
+                url_prefix=UPLOAD_DIR_REL,
+            )
+            upsert_question_fingerprint(retry_db, question, fingerprint)
+            retry_db.commit()
+        except Exception as exc:
+            retry_db.rollback()
+            print(
+                f"[Duplicate Index] Post-commit retry failed for {operation} "
+                f"(question_id={question_id}, type={type(exc).__name__}); "
+                "startup backfill will retry."
+            )
+        finally:
+            retry_db.close()
+
+    try:
+        background_tasks.add_task(retry_safely)
+    except Exception as exc:
+        print(
+            f"[Duplicate Index] Retry scheduling failed for {operation} "
+            f"(question_id={question_id}, type={type(exc).__name__}); "
+            "startup backfill will retry."
         )
 
 
@@ -486,6 +553,25 @@ def start_startup_cleanup():
     heal_database_curriculum_names()
     clean_orphaned_images()
     recalibrate_usage_counts()
+    try:
+        from mathbank.database import SessionLocal
+
+        fingerprint_result = rebuild_all_missing_fingerprints(
+            SessionLocal,
+            uploads_dir=UPLOAD_DIR,
+            url_prefix=UPLOAD_DIR_REL,
+            batch_size=250,
+        )
+        if fingerprint_result.get("backfilled"):
+            print(
+                "[Duplicate Index] Backfill complete: "
+                f"{fingerprint_result['indexed']}/{fingerprint_result['total']}"
+            )
+    except Exception as exc:
+        print(
+            "[Duplicate Index] Background backfill failed "
+            f"(type={type(exc).__name__}); duplicate checks will report partial coverage."
+        )
     print_optional_tool_diagnostics()
 
 
@@ -2185,6 +2271,253 @@ def list_questions(
     seq_map = get_seq_mapping(db, [item.id for item in questions])
     return [{**item.to_summary_dict(), "seq_num": seq_map.get(item.id)} for item in questions]
 
+def _duplicate_payload_list(value, *, field_name: str, max_items: int = 50):
+    if value is None:
+        return []
+    if isinstance(value, str):
+        try:
+            value = json.loads(value)
+        except (TypeError, ValueError) as exc:
+            raise ValueError(f"{field_name} 格式无效") from exc
+    if not isinstance(value, list):
+        raise ValueError(f"{field_name} 必须是数组")
+    if len(value) > max_items:
+        raise ValueError(f"{field_name} 数量超过 {max_items} 项")
+    return value
+
+
+def _duplicate_input_from_payload(item: dict) -> QuestionDuplicateInput:
+    content = normalize_fillin_macro(str(item.get("content") or ""))
+    if not content.strip():
+        raise ValueError("题干内容不能为空")
+    if len(content) > 200_000:
+        raise ValueError("单题题干过长")
+    answer_markdown = str(item.get("answer_markdown") or "")
+    if len(answer_markdown) > 500_000:
+        raise ValueError("单题解析过长")
+    image_paths = [
+        str(path or "").strip()
+        for path in _duplicate_payload_list(
+            item.get("image_paths"), field_name="image_paths"
+        )
+        if str(path or "").strip()
+    ]
+    content_assets = _duplicate_payload_list(
+        item.get("content_tikz_assets"),
+        field_name="content_tikz_assets",
+    )
+    answer_assets = _duplicate_payload_list(
+        item.get("answer_tikz_assets"),
+        field_name="answer_tikz_assets",
+    )
+    legacy_reference = str(item.get("tikz_reference_image_path") or "").strip()
+    hidden_references = {legacy_reference}
+    for asset in [*content_assets, *answer_assets]:
+        if isinstance(asset, dict):
+            hidden_references.add(str(asset.get("reference_image_path") or "").strip())
+    hidden_references.discard("")
+    evidence_image_paths = [
+        path for path in image_paths if path not in hidden_references
+    ]
+    visible_paths = select_visible_question_images(
+        content,
+        answer_markdown,
+        evidence_image_paths,
+        content_assets,
+    )
+    return QuestionDuplicateInput(
+        content=content,
+        answer_markdown=answer_markdown,
+        question_type=str(item.get("question_type") or ""),
+        visible_image_signatures=build_visible_image_signatures(
+            visible_paths,
+            uploads_dir=UPLOAD_DIR,
+            url_prefix=UPLOAD_DIR_REL,
+        ),
+        tikz_signatures=build_tikz_signatures(
+            content_assets,
+            str(item.get("tikz_code") or ""),
+        ),
+        answer_asset_signatures=(
+            build_visible_image_signatures(
+                select_answer_images(
+                    answer_markdown,
+                    evidence_image_paths,
+                    answer_assets,
+                ),
+                uploads_dir=UPLOAD_DIR,
+                url_prefix=UPLOAD_DIR_REL,
+            )
+            + build_tikz_signatures(answer_assets)
+        ),
+    )
+
+
+def _prompt_visible_image_paths(question: Question) -> list[str]:
+    return select_visible_question_images(
+        question.content or "",
+        question.answer_markdown or "",
+        question.display_image_paths,
+        question.content_tikz_assets,
+    )
+
+
+@app.post("/api/questions/check-duplicates")
+def check_question_duplicates(payload: dict, db: Session = Depends(get_db)):
+    """Check only when a teacher initiates a save/import; never during parsing."""
+
+    if not isinstance(payload, dict):
+        raise HTTPException(status_code=400, detail="查重请求格式无效")
+    items = payload.get("items")
+    if not isinstance(items, list) or not items:
+        raise HTTPException(status_code=400, detail="items 必须是非空题目数组")
+    if len(items) > 500:
+        raise HTTPException(status_code=400, detail="单次最多查重 500 道题")
+    max_candidates = max(1, min(int(payload.get("max_candidates") or 5), 10))
+
+    try:
+        prepared = []
+        total_content_size = 0
+        for index, raw_item in enumerate(items):
+            if not isinstance(raw_item, dict):
+                raise ValueError(f"第 {index + 1} 道题格式无效")
+            duplicate_input = _duplicate_input_from_payload(raw_item)
+            total_content_size += len(duplicate_input.content) + len(
+                duplicate_input.answer_markdown
+            )
+            if total_content_size > 5_000_000:
+                raise ValueError("本次查重内容总量过大")
+            exclude_id = raw_item.get("exclude_id")
+            if exclude_id not in (None, ""):
+                exclude_id = int(exclude_id)
+                if exclude_id <= 0:
+                    raise ValueError("exclude_id 必须是正整数")
+            else:
+                exclude_id = None
+            client_key = str(raw_item.get("client_key") or index)
+            if len(client_key) > 128:
+                raise ValueError("client_key 过长")
+            prepared.append(
+                {
+                    "client_key": client_key,
+                    "exclude_id": exclude_id,
+                    "input": duplicate_input,
+                    "fingerprint": build_question_fingerprint(duplicate_input),
+                }
+            )
+    except (TypeError, ValueError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    try:
+        fingerprints = [item["fingerprint"] for item in prepared]
+        batch_matches, batch_diagnostics = batch_local_matches(fingerprints)
+        candidate_cache = {}
+        raw_results = []
+        all_candidate_ids = set()
+        truncated_recall_band_count = 0
+        for index, item in enumerate(prepared):
+            recall_diagnostics = {}
+            candidates = find_indexed_candidates(
+                db,
+                item["fingerprint"],
+                uploads_dir=UPLOAD_DIR,
+                url_prefix=UPLOAD_DIR_REL,
+                exclude_id=item["exclude_id"],
+                limit=max_candidates,
+                fingerprint_cache=candidate_cache,
+                diagnostics=recall_diagnostics,
+            )
+            truncated_recall_band_count += int(
+                recall_diagnostics.get("truncated_band_count") or 0
+            )
+            all_candidate_ids.update(candidate.question.id for candidate in candidates)
+            raw_results.append((index, item, candidates))
+        seq_map = get_seq_mapping(db, all_candidate_ids)
+        rank = {"exact": 3, "probable": 2, "possible_variant": 1, "none": 0}
+        response_items = []
+        for index, item, candidates in raw_results:
+            candidate_payloads = []
+            levels = []
+            needs_visual_review = False
+            for candidate in candidates:
+                comparison = candidate.comparison.to_dict()
+                levels.append(comparison["level"])
+                needs_visual_review = (
+                    needs_visual_review or comparison["needs_visual_review"]
+                )
+                question = candidate.question
+                content_preview = str(question.content or "")[:500]
+                candidate_images = _prompt_visible_image_paths(question)
+                candidate_payloads.append(
+                    {
+                        "id": question.id,
+                        "seq_num": seq_map.get(question.id),
+                        "content": content_preview,
+                        "content_truncated": len(str(question.content or "")) > 500,
+                        "source": question.source or "",
+                        "question_type": question.question_type or "",
+                        "has_answer": bool((question.answer_markdown or "").strip()),
+                        "image_paths": candidate_images[:4],
+                        "image_count": len(candidate_images),
+                        "snapshot_hash": candidate.fingerprint.content_revision_hash,
+                        **comparison,
+                    }
+                )
+            local_payloads = []
+            for local_match in batch_matches.get(index, []):
+                other_index = int(local_match["other_index"])
+                local_payload = {
+                    **local_match,
+                    "other_client_key": prepared[other_index]["client_key"],
+                }
+                local_payloads.append(local_payload)
+                levels.append(str(local_match["level"]))
+                needs_visual_review = (
+                    needs_visual_review
+                    or bool(local_match.get("needs_visual_review"))
+                )
+            level = max(levels, key=lambda value: rank.get(value, 0)) if levels else "none"
+            response_items.append(
+                {
+                    "client_key": item["client_key"],
+                    "snapshot_hash": item["fingerprint"].content_revision_hash,
+                    "level": level,
+                    "candidates": candidate_payloads,
+                    "batch_matches": local_payloads,
+                    "needs_visual_review": needs_visual_review,
+                }
+            )
+        status = duplicate_index_status(db)
+        if truncated_recall_band_count:
+            status = {
+                **status,
+                "ready": False,
+                "warning": (
+                    "近似候选分桶过宽，已为保持速度停止扩展；"
+                    "本次结果可能不完整。"
+                ),
+            }
+        if not batch_diagnostics.get("index_complete", True):
+            status = {
+                **status,
+                "ready": False,
+                "warning": "批内近似候选过多，结果可能不完整",
+            }
+        return {
+            "status": "success",
+            "index": status,
+            "batch_diagnostics": batch_diagnostics,
+            "items": response_items,
+        }
+    except Exception as exc:
+        db.rollback()
+        print(
+            "[Duplicate Check] Failed "
+            f"(type={type(exc).__name__}); saving remains available."
+        )
+        raise HTTPException(status_code=503, detail="查重暂不可用，可选择继续保存") from exc
+
+
 @app.get("/api/questions/{question_id}")
 def get_question(question_id: int, db: Session = Depends(get_db)):
     q = db.query(Question).filter(Question.id == question_id).first()
@@ -2314,6 +2647,94 @@ def prepare_question_assets(
     )
 
 
+def build_prepared_question_fingerprint(
+    *,
+    content: str,
+    answer_markdown: str,
+    question_type: str,
+    image_paths: list[str],
+    content_tikz_assets: list[dict[str, str]],
+    answer_tikz_assets: list[dict[str, str]],
+    tikz_code: str,
+    tikz_reference_image_path: str,
+):
+    hidden_references = {str(tikz_reference_image_path or "").strip()}
+    for asset in [*content_tikz_assets, *answer_tikz_assets]:
+        if isinstance(asset, dict):
+            hidden_references.add(str(asset.get("reference_image_path") or "").strip())
+    hidden_references.discard("")
+    registered_visible_paths = [
+        path for path in image_paths if path not in hidden_references
+    ]
+    visible_paths = select_visible_question_images(
+        content,
+        answer_markdown,
+        registered_visible_paths,
+        content_tikz_assets,
+    )
+    return build_question_fingerprint(
+        QuestionDuplicateInput(
+            content=content,
+            answer_markdown=answer_markdown,
+            question_type=question_type,
+            visible_image_signatures=build_visible_image_signatures(
+                visible_paths,
+                uploads_dir=UPLOAD_DIR,
+                url_prefix=UPLOAD_DIR_REL,
+            ),
+            tikz_signatures=build_tikz_signatures(
+                content_tikz_assets,
+                tikz_code,
+            ),
+            answer_asset_signatures=(
+                build_visible_image_signatures(
+                    select_answer_images(
+                        answer_markdown,
+                        image_paths,
+                        answer_tikz_assets,
+                    ),
+                    uploads_dir=UPLOAD_DIR,
+                    url_prefix=UPLOAD_DIR_REL,
+                )
+                + build_tikz_signatures(answer_tikz_assets)
+            ),
+        )
+    )
+
+
+def duplicate_review_required_response(
+    db: Session,
+    *,
+    fingerprint,
+    question_ids: list[int],
+    message: str,
+    code: str = "duplicate_review_required",
+):
+    questions = db.query(Question).filter(Question.id.in_(question_ids)).all()
+    seq_map = get_seq_mapping(db, question_ids)
+    return JSONResponse(
+        status_code=409,
+        content={
+            "status": "error",
+            "code": code,
+            "message": message,
+            "snapshot_hash": fingerprint.content_revision_hash,
+            "candidates": [
+                {
+                    "id": question.id,
+                    "seq_num": seq_map.get(question.id),
+                    "content": str(question.content or "")[:500],
+                    "content_truncated": len(str(question.content or "")) > 500,
+                    "source": question.source or "",
+                    "question_type": question.question_type or "",
+                    "image_paths": _prompt_visible_image_paths(question)[:4],
+                }
+                for question in questions
+            ],
+        },
+    )
+
+
 @app.post("/api/questions")
 def create_question(
     background_tasks: BackgroundTasks,
@@ -2334,10 +2755,23 @@ def create_question(
     tags: str = Form(""),
     related_question_id: str = Form(""),
     image_paths: str = Form("[]"),  # JSON array string
+    duplicate_snapshot_hash: str = Form(""),
+    duplicate_override: str = Form(""),
     db: Session = Depends(get_db)
 ):
     asset_promotions: list[tuple[Path, Path]] = []
+    duplicate_warning = ""
     try:
+        duplicate_snapshot_hash = str(duplicate_snapshot_hash or "").strip()
+        duplicate_override = str(duplicate_override or "").strip()
+        if duplicate_override not in {"", "independent"}:
+            raise ValueError("无效的查重处理方式")
+        if duplicate_override and not duplicate_snapshot_hash:
+            raise ValueError("独立保存确认缺少题目快照")
+        if duplicate_snapshot_hash and not re.fullmatch(
+            r"[0-9a-f]{64}", duplicate_snapshot_hash
+        ):
+            raise ValueError("查重题目快照格式无效")
         # 规范化填空题下划线为 \fillin 宏
         content = normalize_fillin_macro(content)
 
@@ -2399,6 +2833,54 @@ def create_question(
         db.add(db_question)
         db.flush()
 
+        try:
+            question_fingerprint = build_prepared_question_fingerprint(
+                content=content,
+                answer_markdown=answer_markdown,
+                question_type=question_type,
+                image_paths=parsed_img_paths,
+                content_tikz_assets=parsed_content_tikz_assets,
+                answer_tikz_assets=parsed_answer_tikz_assets,
+                tikz_code=parsed_tikz_code,
+                tikz_reference_image_path=parsed_tikz_reference_image_path,
+            )
+        except Exception as fingerprint_exc:
+            question_fingerprint = None
+            duplicate_warning = "题目已保存，但本次查重指纹未生成；后台将尝试补建，失败时下次启动继续。"
+            print(
+                "[Duplicate Index] Create fingerprint failed open "
+                f"(type={type(fingerprint_exc).__name__}); background backfill will retry."
+            )
+        if duplicate_snapshot_hash and question_fingerprint is not None:
+            if duplicate_snapshot_hash != question_fingerprint.content_revision_hash:
+                response = duplicate_review_required_response(
+                    db,
+                    fingerprint=question_fingerprint,
+                    question_ids=[],
+                    message="题目在查重后已发生变化，请重新查重后保存。",
+                    code="duplicate_snapshot_stale",
+                )
+                db.rollback()
+                rollback_question_asset_promotions(asset_promotions)
+                return response
+            exact_ids = exact_duplicate_ids(
+                db,
+                question_fingerprint,
+                exclude_id=db_question.id,
+            )
+            if exact_ids and duplicate_override != "independent":
+                response = duplicate_review_required_response(
+                    db,
+                    fingerprint=question_fingerprint,
+                    question_ids=exact_ids,
+                    message="入库前发现新的疑似已收录题，请核对后再决定。",
+                )
+                db.rollback()
+                rollback_question_asset_promotions(asset_promotions)
+                return response
+        if question_fingerprint is not None:
+            upsert_question_fingerprint(db, db_question, question_fingerprint)
+
         # Save the question and its active curriculum mirror atomically.
         active_version = get_active_version_code()
         curriculum_map = QuestionCurriculum(
@@ -2419,12 +2901,21 @@ def create_question(
     # Everything below is compensating or response work after the durable
     # success boundary; none of it may turn the write into a misleading 400.
     schedule_database_export(background_tasks, operation="create_question")
-    return committed_question_response(
+    if duplicate_warning:
+        schedule_question_fingerprint_retry(
+            background_tasks,
+            question_id=committed_question_id,
+            operation="create_question",
+        )
+    response = committed_question_response(
         db,
         db_question,
         committed_question_id,
         operation="create_question",
     )
+    if duplicate_warning:
+        response["warning"] = duplicate_warning
+    return response
 
 @app.put("/api/questions/{question_id}")
 def update_question(
@@ -2447,6 +2938,8 @@ def update_question(
     tags: str = Form(""),
     related_question_id: str = Form(""),
     image_paths: str = Form("[]"),
+    duplicate_snapshot_hash: str = Form(""),
+    duplicate_override: str = Form(""),
     db: Session = Depends(get_db)
 ):
     db_question = db.query(Question).filter(Question.id == question_id).first()
@@ -2454,8 +2947,19 @@ def update_question(
         raise HTTPException(status_code=404, detail="未找到对应的题目")
         
     asset_promotions: list[tuple[Path, Path]] = []
+    duplicate_warning = ""
     old_images = list(db_question.image_paths)
     try:
+        duplicate_snapshot_hash = str(duplicate_snapshot_hash or "").strip()
+        duplicate_override = str(duplicate_override or "").strip()
+        if duplicate_override not in {"", "independent"}:
+            raise ValueError("无效的查重处理方式")
+        if duplicate_override and not duplicate_snapshot_hash:
+            raise ValueError("独立保存确认缺少题目快照")
+        if duplicate_snapshot_hash and not re.fullmatch(
+            r"[0-9a-f]{64}", duplicate_snapshot_hash
+        ):
+            raise ValueError("查重题目快照格式无效")
         # 规范化填空题下划线为 \fillin 宏
         content = normalize_fillin_macro(content)
 
@@ -2541,6 +3045,58 @@ def update_question(
         curriculum_map.compulsory = category_compulsory
         curriculum_map.chapter = category_chapter
         curriculum_map.knowledge = category_knowledge
+
+        db.flush()
+        try:
+            question_fingerprint = build_prepared_question_fingerprint(
+                content=content,
+                answer_markdown=answer_markdown,
+                question_type=question_type,
+                image_paths=parsed_img_paths,
+                content_tikz_assets=parsed_content_tikz_assets,
+                answer_tikz_assets=parsed_answer_tikz_assets,
+                tikz_code=parsed_tikz_code,
+                tikz_reference_image_path=parsed_tikz_reference_image_path,
+            )
+        except Exception as fingerprint_exc:
+            question_fingerprint = None
+            duplicate_warning = "题目已更新，但本次查重指纹未生成；后台将尝试补建，失败时下次启动继续。"
+            db.query(StoredQuestionFingerprint).filter(
+                StoredQuestionFingerprint.question_id == db_question.id
+            ).delete(synchronize_session=False)
+            print(
+                "[Duplicate Index] Update fingerprint failed open "
+                f"(type={type(fingerprint_exc).__name__}); background backfill will retry."
+            )
+        if duplicate_snapshot_hash and question_fingerprint is not None:
+            if duplicate_snapshot_hash != question_fingerprint.content_revision_hash:
+                response = duplicate_review_required_response(
+                    db,
+                    fingerprint=question_fingerprint,
+                    question_ids=[],
+                    message="题目在查重后已发生变化，请重新查重后保存。",
+                    code="duplicate_snapshot_stale",
+                )
+                db.rollback()
+                rollback_question_asset_promotions(asset_promotions)
+                return response
+            exact_ids = exact_duplicate_ids(
+                db,
+                question_fingerprint,
+                exclude_id=db_question.id,
+            )
+            if exact_ids and duplicate_override != "independent":
+                response = duplicate_review_required_response(
+                    db,
+                    fingerprint=question_fingerprint,
+                    question_ids=exact_ids,
+                    message="更新后的题目与题库已有题相同，请核对后再决定。",
+                )
+                db.rollback()
+                rollback_question_asset_promotions(asset_promotions)
+                return response
+        if question_fingerprint is not None:
+            upsert_question_fingerprint(db, db_question, question_fingerprint)
         
         db.commit()
     except Exception as e:
@@ -2559,12 +3115,21 @@ def update_question(
             "the startup orphan cleanup."
         )
     schedule_database_export(background_tasks, operation="update_question")
-    return committed_question_response(
+    if duplicate_warning:
+        schedule_question_fingerprint_retry(
+            background_tasks,
+            question_id=question_id,
+            operation="update_question",
+        )
+    response = committed_question_response(
         db,
         db_question,
         question_id,
         operation="update_question",
     )
+    if duplicate_warning:
+        response["warning"] = duplicate_warning
+    return response
 
 @app.post("/api/questions/{question_id}/figure_align")
 def update_question_figure_align(

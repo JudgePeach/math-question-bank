@@ -1,5 +1,5 @@
 import re
-from mathbank.database import Question, SessionLocal
+from mathbank.database import Question, QuestionFingerprint, SessionLocal
 from mathbank.sync_helper import export_database_to_files
 
 def clean_choice_stem_parentheses(text: str) -> str:
@@ -22,6 +22,7 @@ def run_migration():
     session = SessionLocal()
 
     cleaned_count = 0
+    changed_question_ids = []
     try:
         questions = session.query(Question).all()
         for q in questions:
@@ -34,12 +35,18 @@ def run_migration():
                     if cleaned_stem != stem_part:
                         q.content = cleaned_stem + "\n\\begin{choices}\n" + parts[1].strip()
                         cleaned_count += 1
+                        changed_question_ids.append(q.id)
                 else:
                     cleaned_content = clean_choice_stem_parentheses(content)
                     if cleaned_content != content.strip():
                         q.content = cleaned_content
                         cleaned_count += 1
+                        changed_question_ids.append(q.id)
         
+        if changed_question_ids:
+            session.query(QuestionFingerprint).filter(
+                QuestionFingerprint.question_id.in_(changed_question_ids)
+            ).delete(synchronize_session=False)
         session.commit()
         print(f"清洗完成！共升级并净化了 {cleaned_count} 道选择题题干中的残留末尾空括号。")
         

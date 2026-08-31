@@ -7,12 +7,14 @@ from sqlalchemy import (
     Column,
     DateTime,
     ForeignKey,
+    Index,
     Integer,
     String,
     Text,
     UniqueConstraint,
     create_engine,
     event,
+    text,
 )
 from sqlalchemy.engine import Engine
 from sqlalchemy.exc import SQLAlchemyError
@@ -262,6 +264,121 @@ class QuestionCurriculum(Base):
             "knowledge": self.knowledge
         }
 
+
+class QuestionFingerprint(Base):
+    """Rebuildable duplicate-detection indexes derived from question content."""
+
+    __tablename__ = "question_fingerprints"
+
+    __table_args__ = (
+        Index(
+            "idx_question_fingerprints_exact",
+            "fingerprint_version",
+            "exact_hash",
+        ),
+        Index(
+            "idx_question_fingerprints_band0",
+            "fingerprint_version",
+            "band0",
+            "token_count",
+        ),
+        Index(
+            "idx_question_fingerprints_band1",
+            "fingerprint_version",
+            "band1",
+            "token_count",
+        ),
+        Index(
+            "idx_question_fingerprints_band2",
+            "fingerprint_version",
+            "band2",
+            "token_count",
+        ),
+        Index(
+            "idx_question_fingerprints_band3",
+            "fingerprint_version",
+            "band3",
+            "token_count",
+        ),
+        Index(
+            "idx_question_fingerprints_band4",
+            "fingerprint_version",
+            "band4",
+            "token_count",
+        ),
+        Index(
+            "idx_question_fingerprints_band5",
+            "fingerprint_version",
+            "band5",
+            "token_count",
+        ),
+        Index(
+            "idx_question_fingerprints_band6",
+            "fingerprint_version",
+            "band6",
+            "token_count",
+        ),
+        Index(
+            "idx_question_fingerprints_band7",
+            "fingerprint_version",
+            "band7",
+            "token_count",
+        ),
+    )
+
+    question_id = Column(
+        Integer,
+        ForeignKey("questions.id", ondelete="CASCADE"),
+        primary_key=True,
+        nullable=False,
+    )
+    fingerprint_version = Column(Integer, primary_key=True, nullable=False)
+    content_revision_hash = Column(
+        String(64), default="", server_default=text("''"), nullable=False
+    )
+    exact_hash = Column(
+        String(64), default="", server_default=text("''"), nullable=False
+    )
+    critical_math_hash = Column(
+        String(64), default="", server_default=text("''"), nullable=False
+    )
+    answer_hash = Column(
+        String(64), default="", server_default=text("''"), nullable=False
+    )
+    simhash_hex = Column(
+        String(32), default="", server_default=text("''"), nullable=False
+    )
+    token_count = Column(Integer, default=0, server_default=text("0"), nullable=False)
+    choice_count = Column(Integer, default=0, server_default=text("0"), nullable=False)
+    figure_count = Column(Integer, default=0, server_default=text("0"), nullable=False)
+    visible_image_hashes = Column(
+        Text, default="[]", server_default=text("'[]'"), nullable=False
+    )
+    tikz_hashes = Column(
+        Text, default="[]", server_default=text("'[]'"), nullable=False
+    )
+    band0 = Column(Integer, default=0, server_default=text("0"), nullable=False)
+    band1 = Column(Integer, default=0, server_default=text("0"), nullable=False)
+    band2 = Column(Integer, default=0, server_default=text("0"), nullable=False)
+    band3 = Column(Integer, default=0, server_default=text("0"), nullable=False)
+    band4 = Column(Integer, default=0, server_default=text("0"), nullable=False)
+    band5 = Column(Integer, default=0, server_default=text("0"), nullable=False)
+    band6 = Column(Integer, default=0, server_default=text("0"), nullable=False)
+    band7 = Column(Integer, default=0, server_default=text("0"), nullable=False)
+    status = Column(
+        String(20),
+        default="pending",
+        server_default=text("'pending'"),
+        nullable=False,
+    )
+    updated_at = Column(
+        DateTime,
+        default=_utcnow_naive,
+        onupdate=_utcnow_naive,
+        server_default=text("CURRENT_TIMESTAMP"),
+        nullable=False,
+    )
+
 class Paper(Base):
     __tablename__ = "papers"
 
@@ -336,6 +453,7 @@ def get_db():
 # Create tables
 def init_db():
     from mathbank.db_migrations import (
+        LEGACY_REQUIRED_TABLES,
         LATEST_SCHEMA_VERSION,
         REQUIRED_TABLES,
         create_pre_migration_backup,
@@ -357,18 +475,25 @@ def init_db():
                 "SELECT name FROM sqlite_master WHERE type='table'"
             ).fetchall()
         }
-        core_tables = existing_tables & REQUIRED_TABLES
+        core_tables = existing_tables & LEGACY_REQUIRED_TABLES
         if existing_tables:
             upgradeable_layouts = (
                 {"questions"},
                 {"questions", "question_curriculums"},
-                REQUIRED_TABLES,
+                LEGACY_REQUIRED_TABLES,
             )
             if current_version != 0:
-                upgradeable_layouts = (REQUIRED_TABLES,)
+                upgradeable_layouts = (LEGACY_REQUIRED_TABLES,)
             if core_tables not in upgradeable_layouts:
-                missing = ", ".join(sorted(REQUIRED_TABLES - core_tables))
+                missing = ", ".join(sorted(LEGACY_REQUIRED_TABLES - core_tables))
                 raise RuntimeError(f"数据库结构不完整，缺少必要数据表: {missing}")
+            if current_version >= LATEST_SCHEMA_VERSION:
+                missing = REQUIRED_TABLES - existing_tables
+                if missing:
+                    raise RuntimeError(
+                        "数据库结构不完整，缺少必要数据表: "
+                        + ", ".join(sorted(missing))
+                    )
 
             # Old releases legitimately had only the question tables.  Accept
             # those known layouts, but reject a similarly named damaged table
@@ -418,10 +543,24 @@ def init_db():
             to_version=LATEST_SCHEMA_VERSION,
         )
 
-    Base.metadata.create_all(bind=engine)
+    if existing_tables:
+        # Existing databases must leave fingerprint table/index creation or
+        # replacement to the explicit migration transaction below.  create_all
+        # remains responsible only for filling the known legacy core layout
+        # when upgrading very old question-only databases.
+        Base.metadata.create_all(
+            bind=engine,
+            tables=[
+                Question.__table__,
+                QuestionCurriculum.__table__,
+                Paper.__table__,
+                PaperQuestion.__table__,
+            ],
+        )
+    else:
+        Base.metadata.create_all(bind=engine)
     # Create indexes manually and execute automatic migrations for SQLite databases to ensure maximum performance at scale
     try:
-        from sqlalchemy import text
         with engine.begin() as conn:
             # Check column existence
             cursor = conn.execute(text("PRAGMA table_info(questions)"))

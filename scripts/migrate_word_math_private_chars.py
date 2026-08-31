@@ -3,7 +3,7 @@
 
 import sys
 
-from mathbank.database import Question, SessionLocal
+from mathbank.database import Question, QuestionFingerprint, SessionLocal
 from mathbank.omml_helper import (
     find_unknown_word_math_private_characters,
     normalize_known_word_math_private_characters,
@@ -42,6 +42,9 @@ def migrate_database_word_math_private_chars() -> dict:
                 unknown_by_question[question.id] = sorted(unknown_labels)
 
         if changed_questions:
+            db.query(QuestionFingerprint).filter(
+                QuestionFingerprint.question_id.in_(changed_questions)
+            ).delete(synchronize_session=False)
             db.commit()
             export_database_to_files(db)
         else:

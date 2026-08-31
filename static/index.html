@@ -1829,12 +1829,43 @@
                             </div>
                         </div>
 
+                        <div id="parsedDuplicateSummary" role="status" aria-live="polite" aria-atomic="true" class="hidden shrink-0 items-center gap-2 rounded-xl border border-slate-200 bg-slate-50/80 px-3 py-2 text-[10px] font-semibold text-slate-600 dark:border-slate-700 dark:bg-slate-900/70 dark:text-slate-200">
+                            <i id="parsedDuplicateSummaryIcon" class="fa-solid fa-magnifying-glass" aria-hidden="true"></i>
+                            <span id="parsedDuplicateSummaryText">正在检查题目是否已收录…</span>
+                        </div>
+
                         <!-- Card scroll list -->
                         <div class="flex-1 overflow-y-auto space-y-4 pr-1.5 custom-scrollbar pb-6" id="parsedCardsContainer">
                             <!-- Injected Card details -->
                         </div>
                     </div>
                 </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Duplicate review before importing a single question or a parsed paper batch -->
+    <div id="parsedDuplicateReviewModal" role="dialog" aria-modal="true" aria-hidden="true" aria-labelledby="parsedDuplicateReviewTitle" aria-describedby="parsedDuplicateReviewDescription" class="fixed inset-0 z-[95] hidden items-center justify-center bg-slate-950/55 p-4 opacity-0 backdrop-blur-sm transition-opacity duration-200">
+        <div data-modal-surface class="glass-modal flex max-h-[88vh] w-full max-w-3xl scale-95 flex-col overflow-hidden rounded-3xl border border-white/50 shadow-2xl transition-transform duration-200">
+            <div class="flex items-start gap-4 border-b border-slate-200/70 p-5 dark:border-slate-700 sm:p-6">
+                <span class="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-amber-50 text-lg text-amber-600 dark:bg-amber-500/15 dark:text-amber-300">
+                    <i class="fa-solid fa-code-compare" aria-hidden="true"></i>
+                </span>
+                <div class="min-w-0 flex-1">
+                    <h3 id="parsedDuplicateReviewTitle" tabindex="-1" data-modal-initial-focus="true" class="text-base font-bold text-slate-800 dark:text-slate-100">发现疑似已收录题目</h3>
+                    <p id="parsedDuplicateReviewDescription" class="mt-1.5 text-xs leading-5 text-slate-600 dark:text-slate-300">查重仅提供提示，不会自动删除、覆盖或合并题目。请先核对题干、公式与配图。</p>
+                </div>
+                <button type="button" data-modal-close onclick="closeParsedDuplicateReviewModal('review')" aria-label="关闭查重审查弹窗并返回题目列表" class="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl text-slate-500 transition-colors hover:bg-slate-100 hover:text-slate-700 focus:outline-none focus:ring-2 focus:ring-brand-500/30 dark:text-slate-300 dark:hover:bg-slate-800 dark:hover:text-white">
+                    <i class="fa-solid fa-xmark" aria-hidden="true"></i>
+                </button>
+            </div>
+
+            <div id="parsedDuplicateReviewList" class="min-h-0 flex-1 space-y-3 overflow-y-auto p-5 custom-scrollbar sm:p-6"></div>
+
+            <div class="flex flex-col-reverse gap-2 border-t border-slate-200/70 bg-slate-50/70 p-4 dark:border-slate-700 dark:bg-slate-900/70 sm:flex-row sm:items-center sm:justify-end sm:p-5">
+                <button id="duplicateReviewReturnBtn" type="button" onclick="closeParsedDuplicateReviewModal('review')" class="glass-btn min-h-11 rounded-xl px-4 py-2 text-xs font-bold text-slate-600 dark:text-slate-200">返回审查</button>
+                <button id="duplicateReviewSkipBtn" type="button" onclick="closeParsedDuplicateReviewModal('skip')" class="min-h-11 rounded-xl border border-amber-200 bg-amber-50 px-4 py-2 text-xs font-bold text-amber-700 transition-colors hover:bg-amber-100 dark:border-amber-500/40 dark:bg-amber-500/15 dark:text-amber-200 dark:hover:bg-amber-500/25">跳过疑似题，导入其余</button>
+                <button id="duplicateReviewIndependentBtn" type="button" onclick="closeParsedDuplicateReviewModal('independent')" class="min-h-11 rounded-xl bg-brand-600 px-4 py-2 text-xs font-bold text-white shadow-sm transition-colors hover:bg-brand-700">全部独立保存</button>
             </div>
         </div>
     </div>

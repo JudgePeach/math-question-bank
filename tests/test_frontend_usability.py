@@ -221,6 +221,7 @@ def test_static_dialogs_expose_modal_semantics_and_accessible_names():
         "updateModal": "updateModalTitle",
         "statsModal": "statsModalTitle",
         "latexImportModal": "latexImportModalTitle",
+        "parsedDuplicateReviewModal": "parsedDuplicateReviewTitle",
         "pdfCropModal": "pdfCropModalTitle",
         "answerTikzWorkbenchModal": "answerTikzWorkbenchTitle",
     }
@@ -247,6 +248,28 @@ def test_static_dialogs_expose_modal_semantics_and_accessible_names():
     assert workspace_button["aria-label"]
     for button_id in ("toggleSidebarBtn", "themeDropdownBtn", "darkModeBtn", "statsOpenBtn"):
         assert elements[button_id]["aria-label"]
+
+
+def test_duplicate_review_has_accessible_decision_controls_and_live_summary():
+    elements = _index_elements()
+    summary = elements["parsedDuplicateSummary"]
+    assert summary["role"] == "status"
+    assert summary["aria-live"] == "polite"
+    assert summary["aria-atomic"] == "true"
+
+    modal = elements["parsedDuplicateReviewModal"]
+    assert modal["aria-describedby"] == "parsedDuplicateReviewDescription"
+    for button_id in (
+        "duplicateReviewReturnBtn",
+        "duplicateReviewSkipBtn",
+        "duplicateReviewIndependentBtn",
+    ):
+        assert button_id in elements
+
+    import_source = _read(STATIC_JS_DIR / "import.js")
+    assert "window.MathBankModal.open(modal" in import_source
+    assert "onEscape: () => closeParsedDuplicateReviewModal('review')" in import_source
+    assert "badge.focus({ preventScroll: true })" in import_source
 
 
 def test_ai_classification_requires_manual_single_or_multi_choice_confirmation():

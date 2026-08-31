@@ -18,8 +18,95 @@ from sqlalchemy.engine import Engine
 from mathbank.paths import SCHEMA_SNAPSHOT_DIR
 
 
-LATEST_SCHEMA_VERSION = 5
-REQUIRED_TABLES = {"questions", "question_curriculums", "papers", "paper_questions"}
+LATEST_SCHEMA_VERSION = 7
+LEGACY_REQUIRED_TABLES = {
+    "questions",
+    "question_curriculums",
+    "papers",
+    "paper_questions",
+}
+REQUIRED_TABLES = LEGACY_REQUIRED_TABLES | {"question_fingerprints"}
+
+QUESTION_FINGERPRINT_COLUMNS = {
+    "question_id",
+    "fingerprint_version",
+    "content_revision_hash",
+    "exact_hash",
+    "critical_math_hash",
+    "answer_hash",
+    "simhash_hex",
+    "token_count",
+    "choice_count",
+    "figure_count",
+    "visible_image_hashes",
+    "tikz_hashes",
+    "band0",
+    "band1",
+    "band2",
+    "band3",
+    "band4",
+    "band5",
+    "band6",
+    "band7",
+    "status",
+    "updated_at",
+}
+
+V6_QUESTION_FINGERPRINT_INDEXES = {
+    "idx_question_fingerprints_exact": ("fingerprint_version", "exact_hash"),
+    "idx_question_fingerprints_band0": ("fingerprint_version", "band0"),
+    "idx_question_fingerprints_band1": ("fingerprint_version", "band1"),
+    "idx_question_fingerprints_band2": ("fingerprint_version", "band2"),
+    "idx_question_fingerprints_band3": ("fingerprint_version", "band3"),
+    "idx_question_fingerprints_band4": ("fingerprint_version", "band4"),
+    "idx_question_fingerprints_band5": ("fingerprint_version", "band5"),
+    "idx_question_fingerprints_band6": ("fingerprint_version", "band6"),
+    "idx_question_fingerprints_band7": ("fingerprint_version", "band7"),
+}
+
+QUESTION_FINGERPRINT_INDEXES = {
+    "idx_question_fingerprints_exact": ("fingerprint_version", "exact_hash"),
+    "idx_question_fingerprints_band0": (
+        "fingerprint_version",
+        "band0",
+        "token_count",
+    ),
+    "idx_question_fingerprints_band1": (
+        "fingerprint_version",
+        "band1",
+        "token_count",
+    ),
+    "idx_question_fingerprints_band2": (
+        "fingerprint_version",
+        "band2",
+        "token_count",
+    ),
+    "idx_question_fingerprints_band3": (
+        "fingerprint_version",
+        "band3",
+        "token_count",
+    ),
+    "idx_question_fingerprints_band4": (
+        "fingerprint_version",
+        "band4",
+        "token_count",
+    ),
+    "idx_question_fingerprints_band5": (
+        "fingerprint_version",
+        "band5",
+        "token_count",
+    ),
+    "idx_question_fingerprints_band6": (
+        "fingerprint_version",
+        "band6",
+        "token_count",
+    ),
+    "idx_question_fingerprints_band7": (
+        "fingerprint_version",
+        "band7",
+        "token_count",
+    ),
+}
 
 
 def _database_path(engine: Engine) -> Path | None:
@@ -110,6 +197,145 @@ def _ensure_tikz_asset_columns(connection) -> dict[str, int]:
             )
         stats[f"added_{column}"] = int(added)
     return stats
+
+
+def _validate_question_fingerprint_schema(
+    connection,
+    *,
+    expected_indexes: dict[str, tuple[str, ...]] | None = None,
+) -> None:
+    """Fail closed when a versioned fingerprint table is structurally damaged."""
+
+    expected_indexes = (
+        QUESTION_FINGERPRINT_INDEXES
+        if expected_indexes is None
+        else expected_indexes
+    )
+
+    table_names = {
+        row[0]
+        for row in connection.exec_driver_sql(
+            "SELECT name FROM sqlite_master WHERE type='table'"
+        ).fetchall()
+    }
+    if "question_fingerprints" not in table_names:
+        raise RuntimeError(
+            "数据库结构不完整，缺少必要数据表: question_fingerprints"
+        )
+
+    table_info = connection.exec_driver_sql(
+        'PRAGMA table_info("question_fingerprints")'
+    ).fetchall()
+    columns = {row[1] for row in table_info}
+    missing_columns = QUESTION_FINGERPRINT_COLUMNS - columns
+    if missing_columns:
+        raise RuntimeError(
+            "数据库表 question_fingerprints 缺少核心字段: "
+            + ", ".join(sorted(missing_columns))
+        )
+
+    primary_key = [
+        row[1]
+        for row in sorted(table_info, key=lambda item: item[5])
+        if row[5]
+    ]
+    if primary_key != ["question_id", "fingerprint_version"]:
+        raise RuntimeError("question_fingerprints 复合主键结构异常")
+
+    foreign_keys = connection.exec_driver_sql(
+        'PRAGMA foreign_key_list("question_fingerprints")'
+    ).fetchall()
+    has_question_cascade = any(
+        row[2] == "questions"
+        and row[3] == "question_id"
+        and row[4] == "id"
+        and str(row[6]).upper() == "CASCADE"
+        for row in foreign_keys
+    )
+    if not has_question_cascade:
+        raise RuntimeError("question_fingerprints 缺少 questions 级联删除外键")
+
+    index_rows = {
+        row[1]: row
+        for row in connection.exec_driver_sql(
+            'PRAGMA index_list("question_fingerprints")'
+        ).fetchall()
+    }
+    missing_indexes = set(expected_indexes) - set(index_rows)
+    if missing_indexes:
+        raise RuntimeError(
+            "question_fingerprints 缺少查重索引: "
+            + ", ".join(sorted(missing_indexes))
+        )
+    for index_name, expected_columns in expected_indexes.items():
+        actual_columns = tuple(
+            row[2]
+            for row in connection.exec_driver_sql(
+                f'PRAGMA index_info("{index_name}")'
+            ).fetchall()
+        )
+        if actual_columns != expected_columns:
+            raise RuntimeError(f"question_fingerprints 索引结构异常: {index_name}")
+        index_row = index_rows[index_name]
+        if int(index_row[2]) != 0:
+            raise RuntimeError(
+                f"question_fingerprints 查重索引不得设为唯一: {index_name}"
+            )
+        if len(index_row) < 5 or int(index_row[4]) != 0:
+            raise RuntimeError(
+                f"question_fingerprints 查重索引不得设为部分索引: {index_name}"
+            )
+
+
+def _ensure_question_fingerprint_table(connection) -> int:
+    """Create the rebuildable fingerprint table with current lookup indexes."""
+
+    table_exists = bool(
+        connection.exec_driver_sql(
+            "SELECT 1 FROM sqlite_master "
+            "WHERE type='table' AND name='question_fingerprints'"
+        ).first()
+    )
+    if not table_exists:
+        connection.exec_driver_sql(
+            """
+            CREATE TABLE question_fingerprints (
+                question_id INTEGER NOT NULL,
+                fingerprint_version INTEGER NOT NULL,
+                content_revision_hash VARCHAR(64) NOT NULL DEFAULT '',
+                exact_hash VARCHAR(64) NOT NULL DEFAULT '',
+                critical_math_hash VARCHAR(64) NOT NULL DEFAULT '',
+                answer_hash VARCHAR(64) NOT NULL DEFAULT '',
+                simhash_hex VARCHAR(32) NOT NULL DEFAULT '',
+                token_count INTEGER NOT NULL DEFAULT 0,
+                choice_count INTEGER NOT NULL DEFAULT 0,
+                figure_count INTEGER NOT NULL DEFAULT 0,
+                visible_image_hashes TEXT NOT NULL DEFAULT '[]',
+                tikz_hashes TEXT NOT NULL DEFAULT '[]',
+                band0 INTEGER NOT NULL DEFAULT 0,
+                band1 INTEGER NOT NULL DEFAULT 0,
+                band2 INTEGER NOT NULL DEFAULT 0,
+                band3 INTEGER NOT NULL DEFAULT 0,
+                band4 INTEGER NOT NULL DEFAULT 0,
+                band5 INTEGER NOT NULL DEFAULT 0,
+                band6 INTEGER NOT NULL DEFAULT 0,
+                band7 INTEGER NOT NULL DEFAULT 0,
+                status VARCHAR(20) NOT NULL DEFAULT 'pending',
+                updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                PRIMARY KEY (question_id, fingerprint_version),
+                CONSTRAINT fk_question_fingerprints_question
+                    FOREIGN KEY(question_id) REFERENCES questions(id) ON DELETE CASCADE
+            )
+            """
+        )
+        for index_name, columns in QUESTION_FINGERPRINT_INDEXES.items():
+            connection.exec_driver_sql(
+                f"CREATE INDEX {index_name} ON question_fingerprints "
+                f"({', '.join(columns)})"
+            )
+
+    _validate_question_fingerprint_schema(connection)
+    return int(not table_exists)
 
 
 def _rebuild_relationship_tables(engine: Engine) -> dict[str, int]:
@@ -241,11 +467,12 @@ def _rebuild_relationship_tables(engine: Engine) -> dict[str, int]:
             remaining_paper_questions = int(
                 connection.exec_driver_sql("SELECT COUNT(*) FROM paper_questions").scalar_one()
             )
+            tikz_column_stats = _ensure_tikz_asset_columns(connection)
+            added_question_fingerprints = _ensure_question_fingerprint_table(connection)
+
             violations = connection.exec_driver_sql("PRAGMA foreign_key_check").fetchall()
             if violations:
                 raise RuntimeError(f"迁移后仍存在外键异常: {violations[:5]}")
-
-            tikz_column_stats = _ensure_tikz_asset_columns(connection)
 
             connection.exec_driver_sql(f"PRAGMA user_version={LATEST_SCHEMA_VERSION}")
             connection.exec_driver_sql("COMMIT")
@@ -253,6 +480,7 @@ def _rebuild_relationship_tables(engine: Engine) -> dict[str, int]:
             stats = {
                 "removed_question_curriculums": before_curriculums - remaining_curriculums,
                 "removed_paper_questions": before_paper_questions - remaining_paper_questions,
+                "added_question_fingerprints": added_question_fingerprints,
                 **tikz_column_stats,
             }
         except Exception:
@@ -267,8 +495,8 @@ def _rebuild_relationship_tables(engine: Engine) -> dict[str, int]:
     return stats
 
 
-def _add_tikz_asset_columns(engine: Engine) -> dict[str, int]:
-    """Upgrade older question tables with the editable TikZ asset fields."""
+def _upgrade_derived_schema(engine: Engine) -> dict[str, int]:
+    """Upgrade v2-v5 databases with TikZ fields and the current derived table."""
 
     with engine.connect().execution_options(isolation_level="AUTOCOMMIT") as connection:
         transaction_started = False
@@ -276,10 +504,46 @@ def _add_tikz_asset_columns(engine: Engine) -> dict[str, int]:
             connection.exec_driver_sql("BEGIN IMMEDIATE")
             transaction_started = True
             stats = _ensure_tikz_asset_columns(connection)
+            stats["added_question_fingerprints"] = (
+                _ensure_question_fingerprint_table(connection)
+            )
             connection.exec_driver_sql(f"PRAGMA user_version={LATEST_SCHEMA_VERSION}")
             connection.exec_driver_sql("COMMIT")
             transaction_started = False
             return stats
+        except Exception:
+            if transaction_started:
+                connection.exec_driver_sql("ROLLBACK")
+            raise
+
+
+def _upgrade_v6_fingerprint_indexes(engine: Engine) -> dict[str, int]:
+    """Upgrade v6 band indexes to include token_count without rebuilding data."""
+
+    with engine.connect().execution_options(isolation_level="AUTOCOMMIT") as connection:
+        transaction_started = False
+        try:
+            connection.exec_driver_sql("BEGIN IMMEDIATE")
+            transaction_started = True
+            _validate_question_fingerprint_schema(
+                connection,
+                expected_indexes=V6_QUESTION_FINGERPRINT_INDEXES,
+            )
+            rebuilt_indexes = 0
+            for index_name, columns in QUESTION_FINGERPRINT_INDEXES.items():
+                if index_name == "idx_question_fingerprints_exact":
+                    continue
+                connection.exec_driver_sql(f'DROP INDEX "{index_name}"')
+                connection.exec_driver_sql(
+                    f'CREATE INDEX "{index_name}" ON question_fingerprints '
+                    f"({', '.join(columns)})"
+                )
+                rebuilt_indexes += 1
+            _validate_question_fingerprint_schema(connection)
+            connection.exec_driver_sql(f"PRAGMA user_version={LATEST_SCHEMA_VERSION}")
+            connection.exec_driver_sql("COMMIT")
+            transaction_started = False
+            return {"rebuilt_question_fingerprint_indexes": rebuilt_indexes}
         except Exception:
             if transaction_started:
                 connection.exec_driver_sql("ROLLBACK")
@@ -298,18 +562,23 @@ def migrate_database(
         raise RuntimeError(
             f"数据库版本 {current} 高于程序支持版本 {LATEST_SCHEMA_VERSION}，请升级程序。"
         )
+    table_names = set(inspect(engine).get_table_names())
     if current == LATEST_SCHEMA_VERSION:
+        if not REQUIRED_TABLES.issubset(table_names):
+            missing = ", ".join(sorted(REQUIRED_TABLES - table_names))
+            raise RuntimeError(f"数据库结构不完整，缺少必要数据表: {missing}")
+        with engine.connect() as connection:
+            _validate_question_fingerprint_schema(connection)
         return {"from_version": current, "to_version": current, "backup": None}
 
-    table_names = set(inspect(engine).get_table_names())
     if not table_names:
         # A caller may version an empty database immediately before creating the
         # current ORM metadata.
         with engine.begin() as connection:
             connection.exec_driver_sql(f"PRAGMA user_version={LATEST_SCHEMA_VERSION}")
         return {"from_version": current, "to_version": LATEST_SCHEMA_VERSION, "backup": None}
-    if not REQUIRED_TABLES.issubset(table_names):
-        missing = ", ".join(sorted(REQUIRED_TABLES - table_names))
+    if not LEGACY_REQUIRED_TABLES.issubset(table_names):
+        missing = ", ".join(sorted(LEGACY_REQUIRED_TABLES - table_names))
         raise RuntimeError(f"数据库结构不完整，缺少必要数据表: {missing}")
 
     backup = pre_migration_backup or create_pre_migration_backup(
@@ -317,8 +586,10 @@ def migrate_database(
     )
     if current < 2:
         stats = _rebuild_relationship_tables(engine)
+    elif current == 6:
+        stats = _upgrade_v6_fingerprint_indexes(engine)
     else:
-        stats = _add_tikz_asset_columns(engine)
+        stats = _upgrade_derived_schema(engine)
     return {
         "from_version": current,
         "to_version": LATEST_SCHEMA_VERSION,

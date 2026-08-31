@@ -699,7 +699,7 @@
                 const source = document.getElementById('editSource').value;
                 const answerMarkdown = document.getElementById('editAnswerMarkdown').value;
                 const review = document.getElementById('editReview').value;
-                const relatedQuestionId = document.getElementById('editRelatedQuestion').value;
+                let relatedQuestionId = document.getElementById('editRelatedQuestion').value;
                 const contentTikzAssets = Array.isArray(TikzState.contentAssets)
                     ? TikzState.contentAssets
                     : [];
@@ -708,7 +708,8 @@
                 const tikzReferencePath = firstContentTikzAsset
                     ? (window.MathBankSafe.safeImageUrl(firstContentTikzAsset.reference_image_path) || '')
                     : '';
-                const tags = document.getElementById('editTags') ? document.getElementById('editTags').value.trim() : '';
+                const rawTags = document.getElementById('editTags') ? document.getElementById('editTags').value : '';
+                const tags = rawTags.trim();
                 
                 if (!content.trim()) {
                     showToast('保存失败：题干内容不能为空！', 'error');
@@ -754,6 +755,21 @@
                     return false;
                 }
 
+                let duplicateDecision = {
+                    allowed: true,
+                    duplicateOverride: '',
+                    duplicateSnapshotHash: ''
+                };
+                if (typeof checkEditorDuplicateBeforeSave === 'function') {
+                    duplicateDecision = await checkEditorDuplicateBeforeSave(editorSession);
+                    if (!duplicateDecision.allowed) return false;
+                    if (!EditorState.isCurrent(editorSession)) {
+                        showToast('题目编辑会话已变化，本次保存已取消。', 'info');
+                        return false;
+                    }
+                }
+                relatedQuestionId = document.getElementById('editRelatedQuestion').value;
+
                 const requestBackupSnapshot = Object.freeze({
                     content: content,
                     answer_markdown: answerMarkdown,
@@ -764,13 +780,19 @@
                     category_compulsory: compulsory,
                     category_chapter: chapter,
                     category_knowledge: knowledge,
+                    related_question_id: relatedQuestionId,
                     image_paths: JSON.stringify(Array.from(uploadedImages)),
                     tikz_code: tikzCode,
                     tikz_reference_image_path: tikzReferencePath,
                     content_tikz_assets: JSON.stringify(contentTikzAssets),
                     answer_tikz_assets: JSON.stringify(TikzState.answerAssets),
-                    tags: tags
+                    tags: rawTags
                 });
+                if (typeof window.editorMatchesBackupSnapshot === 'function' &&
+                    !window.editorMatchesBackupSnapshot(requestBackupSnapshot)) {
+                    showToast('题目在查重期间已发生变化，请重新保存。', 'info');
+                    return false;
+                }
                 
                 const formData = new FormData();
                 formData.append('content', content);
@@ -794,6 +816,12 @@
                     ...TikzState.referencePaths()
                 ].map(path => window.MathBankSafe.safeImageUrl(path)).filter(Boolean)));
                 formData.append('image_paths', JSON.stringify(combinedImages));
+                if (duplicateDecision.duplicateSnapshotHash) {
+                    formData.append('duplicate_snapshot_hash', duplicateDecision.duplicateSnapshotHash);
+                }
+                if (duplicateDecision.duplicateOverride === 'independent') {
+                    formData.append('duplicate_override', 'independent');
+                }
                 
                 let url = '/api/questions';
                 let method = 'POST';
@@ -804,24 +832,65 @@
                 }
 
                 try {
-                    const response = await fetch(url, {
+                    let response = await fetch(url, {
                         method: method,
                         body: formData
                     });
+                    let responseData = null;
+                    try {
+                        responseData = await response.json();
+                    } catch (parseError) {
+                        responseData = null;
+                    }
+                    if (response.status === 409 && responseData &&
+                        responseData.code === 'duplicate_review_required' &&
+                        Array.isArray(responseData.candidates) && responseData.candidates.length > 0) {
+                        const conflictResult = {
+                            level: 'exact',
+                            snapshot_hash: String(responseData.snapshot_hash || ''),
+                            candidates: Array.isArray(responseData.candidates)
+                                ? responseData.candidates.map(candidate => ({
+                                    ...candidate,
+                                    level: 'exact',
+                                    score: 1,
+                                    reasons: ['EXACT_TEXT'],
+                                    needs_visual_review: true
+                                }))
+                                : [],
+                            batch_matches: [],
+                            needs_visual_review: true
+                        };
+                        const action = await openParsedDuplicateReviewModal([{
+                            label: editorSession.questionId ? '当前编辑题目' : '当前待录入题目',
+                            result: conflictResult
+                        }], 'single');
+                        if (action !== 'independent') return false;
+                        if (!window.editorMatchesBackupSnapshot(requestBackupSnapshot)) {
+                            showToast('题目在复核期间已发生变化，请重新保存。', 'info');
+                            return false;
+                        }
+                        formData.set('duplicate_snapshot_hash', String(responseData.snapshot_hash || ''));
+                        formData.set('duplicate_override', 'independent');
+                        response = await fetch(url, { method: method, body: formData });
+                        try {
+                            responseData = await response.json();
+                        } catch (parseError) {
+                            responseData = null;
+                        }
+                    }
                     if (!response.ok) {
                         let message = `服务器返回错误 HTTP ${response.status}`;
-                        try {
-                            const errorData = await response.json();
-                            message = errorData.detail || errorData.message || message;
-                        } catch (parseError) {
-                            // Keep the HTTP fallback when the error body is not JSON.
-                        }
+                        message = responseData && (responseData.detail || responseData.message) || message;
                         throw new Error(message);
                     }
 
-                    const data = await response.json();
+                    const data = responseData;
                     if (data.status === 'success') {
-                        showToast(editorSession.questionId ? '题目已成功更新！' : '题目已成功保存！');
+                        if (data.warning) {
+                            showToast(String(data.warning), 'warning');
+                        } else {
+                            showToast(editorSession.questionId ? '题目已成功更新！' : '题目已成功保存！');
+                        }
                         const editorSessionStillCurrent = EditorState.isCurrent(editorSession);
                         const requestStillVisible = editorSessionStillCurrent &&
                             window.editorMatchesBackupSnapshot(requestBackupSnapshot);
@@ -847,7 +916,7 @@
                         // Reload list, dropdown, and autocomplete selectors
                         loadQuestions();
                         loadCategories();
-                        refreshRelatedDropdown();
+                        refreshRelatedDropdown(relatedQuestionId);
 
                         if (!editorSession.questionId && editorSessionStillCurrent) {
                             // The POST response already contains the complete saved
@@ -1125,11 +1194,23 @@
         let parsedQuestionsData = [];
         let parsedQuestionsGeneration = 0;
         const parsedQuestionSaveInFlight = new Map();
+        let parsedBatchSaveInFlight = null;
+        const parsedDuplicateResults = new Map();
+        const parsedDuplicateSnapshots = new Map();
+        let parsedDuplicateCheckSerial = 0;
+        let parsedDuplicateCheckStatus = 'idle';
+        let parsedDuplicateIndexStatus = null;
+        let parsedDuplicateSummaryVisible = false;
+        let parsedDuplicateActiveIndices = [];
+        let parsedDuplicateReviewResolver = null;
         let allSourcesList = [];
 
         function replaceParsedQuestions(nextQuestions) {
             parsedQuestionsGeneration += 1;
             parsedQuestionsData = Array.isArray(nextQuestions) ? nextQuestions : [];
+            if (typeof resetParsedDuplicateCheckState === 'function') {
+                resetParsedDuplicateCheckState();
+            }
             return parsedQuestionsGeneration;
         }
 
@@ -1139,8 +1220,9 @@
         }
 
         function blockImportResetWhileSaving() {
-            if (parsedQuestionSaveInFlight.size === 0) return false;
-            showToast(`仍有 ${parsedQuestionSaveInFlight.size} 道题正在入库，请等待完成后再重置或关闭`, 'info');
+            if (parsedQuestionSaveInFlight.size === 0 && !parsedBatchSaveInFlight) return false;
+            const activeCount = Math.max(parsedQuestionSaveInFlight.size, parsedBatchSaveInFlight ? 1 : 0);
+            showToast(`仍有 ${activeCount} 个导入任务正在处理，请等待完成后再重置或关闭`, 'info');
             return true;
         }
 
@@ -2600,6 +2682,785 @@
             container.appendChild(badge);
         }
 
+        function safeDuplicateImagePaths(paths) {
+            if (!Array.isArray(paths)) return [];
+            return Array.from(new Set(
+                paths.map(path => window.MathBankSafe.safeImageUrl(path)).filter(Boolean)
+            ));
+        }
+
+        function safeDuplicateTikzAssets(assets) {
+            if (!Array.isArray(assets)) return [];
+            return assets.map(asset => {
+                if (!asset || typeof asset !== 'object') return null;
+                return {
+                    id: String(asset.id || ''),
+                    tikz_code: String(asset.tikz_code || ''),
+                    image_path: window.MathBankSafe.safeImageUrl(asset.image_path) || '',
+                    reference_image_path: window.MathBankSafe.safeImageUrl(asset.reference_image_path) || ''
+                };
+            }).filter(Boolean);
+        }
+
+        function safePersistedTikzAssets(assets) {
+            if (!Array.isArray(assets)) return [];
+            return assets.map(asset => {
+                if (!asset || typeof asset !== 'object') return null;
+                return {
+                    id: String(asset.id || ''),
+                    tikz_code: String(asset.tikz_code || ''),
+                    instruction: String(asset.instruction || ''),
+                    image_path: window.MathBankSafe.safeImageUrl(asset.image_path) || '',
+                    reference_image_path: window.MathBankSafe.safeImageUrl(asset.reference_image_path) || ''
+                };
+            }).filter(Boolean);
+        }
+
+        function collectTikzAssetImagePaths(...assetGroups) {
+            const paths = [];
+            assetGroups.forEach(assets => {
+                if (!Array.isArray(assets)) return;
+                assets.forEach(asset => {
+                    if (!asset || typeof asset !== 'object') return;
+                    paths.push(asset.image_path, asset.reference_image_path);
+                });
+            });
+            return safeDuplicateImagePaths(paths);
+        }
+
+        function serializeQuestionDuplicateItem(item) {
+            return JSON.stringify({
+                content: String(item && item.content || ''),
+                answer_markdown: String(item && item.answer_markdown || ''),
+                question_type: String(item && item.question_type || ''),
+                image_paths: Array.isArray(item && item.image_paths) ? item.image_paths : [],
+                content_tikz_assets: Array.isArray(item && item.content_tikz_assets)
+                    ? item.content_tikz_assets
+                    : [],
+                answer_tikz_assets: Array.isArray(item && item.answer_tikz_assets)
+                    ? item.answer_tikz_assets
+                    : [],
+                tikz_code: String(item && item.tikz_code || ''),
+                tikz_reference_image_path: String(item && item.tikz_reference_image_path || ''),
+                exclude_id: item && item.exclude_id ? Number(item.exclude_id) : null
+            });
+        }
+
+        function buildParsedQuestionDuplicateItem(index, generation = parsedQuestionsGeneration) {
+            const q = parsedQuestionsData[index];
+            const card = document.getElementById(`parsed-card-${index}`);
+            if (!q || !card) return null;
+            const contentInput = card.querySelector('.card-content-textarea');
+            const answerInput = card.querySelector('.card-answer-textarea');
+            const typeInput = card.querySelector('.card-qtype');
+            const contentAssets = safeDuplicateTikzAssets(q.content_tikz_assets);
+            const answerAssets = safeDuplicateTikzAssets(q.answer_tikz_assets);
+            const legacyReference = window.MathBankSafe.safeImageUrl(q.tikz_reference_image_path) || '';
+            return {
+                client_key: `parsed-${generation}-${index}`,
+                content: contentInput ? contentInput.value : String(q.content || ''),
+                answer_markdown: answerInput ? answerInput.value : String(q.answer_markdown || ''),
+                question_type: typeInput ? typeInput.value : String(q.question_type || ''),
+                image_paths: safeDuplicateImagePaths([
+                    ...(Array.isArray(q.image_paths) ? q.image_paths : []),
+                    ...collectTikzAssetImagePaths(contentAssets, answerAssets),
+                    legacyReference
+                ]),
+                content_tikz_assets: contentAssets,
+                answer_tikz_assets: answerAssets,
+                tikz_code: String(q.tikz_code || ''),
+                tikz_reference_image_path: legacyReference,
+                // Parsed paper items are always new drafts.  An AI-provided
+                // numeric `id` may be a paper question number, never a local DB id.
+                exclude_id: null
+            };
+        }
+
+        function buildEditorQuestionDuplicateItem(editorSession) {
+            const contentInput = document.getElementById('editContent');
+            const answerInput = document.getElementById('editAnswerMarkdown');
+            const typeInput = document.getElementById('editQType');
+            const contentAssets = typeof TikzState !== 'undefined' && Array.isArray(TikzState.contentAssets)
+                ? TikzState.contentAssets
+                : [];
+            const answerAssets = typeof TikzState !== 'undefined' && Array.isArray(TikzState.answerAssets)
+                ? TikzState.answerAssets
+                : [];
+            return {
+                client_key: 'editor-question',
+                content: contentInput ? contentInput.value : '',
+                answer_markdown: answerInput ? answerInput.value : '',
+                question_type: typeInput ? typeInput.value : '',
+                image_paths: safeDuplicateImagePaths([
+                    ...(typeof uploadedImages !== 'undefined' ? uploadedImages : []),
+                    ...(typeof uploadedAnswerImages !== 'undefined' ? uploadedAnswerImages : []),
+                    ...(typeof TikzState !== 'undefined' ? TikzState.referencePaths() : []),
+                    ...collectTikzAssetImagePaths(contentAssets, answerAssets)
+                ]),
+                content_tikz_assets: safeDuplicateTikzAssets(contentAssets),
+                answer_tikz_assets: safeDuplicateTikzAssets(
+                    answerAssets
+                ),
+                tikz_code: contentAssets[0] ? String(contentAssets[0].tikz_code || '') : '',
+                tikz_reference_image_path: contentAssets[0]
+                    ? (window.MathBankSafe.safeImageUrl(contentAssets[0].reference_image_path) || '')
+                    : '',
+                exclude_id: editorSession && editorSession.questionId ? editorSession.questionId : null
+            };
+        }
+
+        async function requestQuestionDuplicateCheck(items) {
+            const controller = new AbortController();
+            const timeoutId = setTimeout(() => controller.abort(), 12000);
+            let response;
+            try {
+                response = await fetch('/api/questions/check-duplicates', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'X-Local-Token': localStorage.getItem('local_token') || ''
+                    },
+                    body: JSON.stringify({ items: items, max_candidates: 5 }),
+                    signal: controller.signal
+                });
+            } catch (error) {
+                if (error && error.name === 'AbortError') {
+                    throw new Error('查重超时（12 秒）');
+                }
+                throw error;
+            } finally {
+                clearTimeout(timeoutId);
+            }
+            if (response.ok === false) {
+                let message = `HTTP ${response.status}`;
+                try {
+                    const errorData = await response.json();
+                    message = errorData.detail || errorData.message || message;
+                } catch (error) { }
+                const requestError = new Error(message);
+                requestError.httpStatus = response.status;
+                requestError.isValidationError = response.status >= 400 && response.status < 500;
+                throw requestError;
+            }
+            const data = await response.json();
+            if (!data || (data.status && data.status !== 'success')) {
+                throw new Error((data && (data.detail || data.message)) || '查重服务返回了无效结果');
+            }
+            if (!Array.isArray(data.items)) {
+                throw new Error('查重服务未返回题目结果');
+            }
+            return data;
+        }
+
+        function duplicateBatchMatchCount(result) {
+            if (!result) return 0;
+            if (Array.isArray(result.batch_matches)) return result.batch_matches.length;
+            const count = Number(result.batch_matches || 0);
+            return Number.isFinite(count) ? Math.max(0, count) : 0;
+        }
+
+        function duplicateResultHasSignal(result) {
+            if (!result) return false;
+            const level = String(result.level || '').toLowerCase();
+            const clearLevels = new Set(['', 'none', 'clear', 'unique', 'no_match']);
+            return !clearLevels.has(level) ||
+                (Array.isArray(result.candidates) && result.candidates.length > 0) ||
+                duplicateBatchMatchCount(result) > 0 ||
+                result.needs_visual_review === true;
+        }
+
+        function duplicateResultIsExact(result) {
+            const level = String(result && result.level || '').toLowerCase();
+            return level.includes('exact') || level === 'duplicate' || level === 'same';
+        }
+
+        function duplicateResultBadge(result) {
+            if (!duplicateResultHasSignal(result)) {
+                return {
+                    text: '未发现重复',
+                    className: 'card-duplicate-badge hidden min-h-11 px-3 text-[9px] font-semibold rounded border focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-400'
+                };
+            }
+            if (duplicateResultIsExact(result)) {
+                return {
+                    text: '疑似已收录',
+                    className: 'card-duplicate-badge min-h-11 px-3 text-[9px] font-semibold rounded border border-rose-200 bg-rose-50 text-rose-700 hover:bg-rose-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-rose-400 dark:border-rose-500/40 dark:bg-rose-500/15 dark:text-rose-200 dark:hover:bg-rose-500/25'
+                };
+            }
+            if (result && result.needs_visual_review) {
+                return {
+                    text: '配图待核对',
+                    className: 'card-duplicate-badge min-h-11 px-3 text-[9px] font-semibold rounded border border-amber-200 bg-amber-50 text-amber-700 hover:bg-amber-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-400 dark:border-amber-500/40 dark:bg-amber-500/15 dark:text-amber-200 dark:hover:bg-amber-500/25'
+                };
+            }
+            return {
+                text: '可能重复',
+                className: 'card-duplicate-badge min-h-11 px-3 text-[9px] font-semibold rounded border border-amber-200 bg-amber-50 text-amber-700 hover:bg-amber-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-400 dark:border-amber-500/40 dark:bg-amber-500/15 dark:text-amber-200 dark:hover:bg-amber-500/25'
+            };
+        }
+
+        function updateParsedDuplicateBadge(index) {
+            const card = document.getElementById(`parsed-card-${index}`);
+            if (!card) return;
+            const badge = card.querySelector('.card-duplicate-badge');
+            if (!badge) return;
+            const result = parsedDuplicateResults.get(index);
+            if (!result) {
+                const isChecking = parsedDuplicateCheckStatus === 'checking';
+                badge.textContent = isChecking ? '查重中' : '';
+                badge.className = isChecking
+                    ? 'card-duplicate-badge min-h-11 px-3 text-[9px] font-semibold rounded border border-slate-200 bg-slate-50 text-slate-500 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-300'
+                    : 'card-duplicate-badge hidden min-h-11 px-3 text-[9px] font-semibold rounded border focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-400';
+                badge.disabled = isChecking;
+                badge.setAttribute('aria-busy', isChecking ? 'true' : 'false');
+                badge.setAttribute('aria-label', isChecking ? '正在查重' : '');
+                return;
+            }
+            const presentation = duplicateResultBadge(result);
+            badge.textContent = presentation.text;
+            badge.className = presentation.className;
+            badge.disabled = false;
+            badge.setAttribute('aria-busy', 'false');
+            badge.setAttribute('aria-label', `${presentation.text}，点击查看查重依据`);
+        }
+
+        function updateParsedDuplicateSummary() {
+            const summary = document.getElementById('parsedDuplicateSummary');
+            const textNode = document.getElementById('parsedDuplicateSummaryText');
+            const icon = document.getElementById('parsedDuplicateSummaryIcon');
+            if (!summary || !textNode || !icon) return;
+
+            if (!parsedDuplicateSummaryVisible) {
+                summary.classList.add('hidden');
+                summary.classList.remove('flex');
+                return;
+            }
+
+            summary.classList.remove('hidden');
+            summary.classList.add('flex');
+            if (parsedQuestionsData.length === 0) {
+                summary.classList.add('hidden');
+                summary.classList.remove('flex');
+                return;
+            }
+            if (parsedDuplicateCheckStatus === 'checking') {
+                textNode.textContent = '正在为本批题目查重…';
+                icon.className = 'fa-solid fa-spinner animate-spin text-slate-500';
+                return;
+            }
+            if (parsedDuplicateCheckStatus === 'error') {
+                textNode.textContent = '本次查重未完成；如继续保存，请稍后人工核对。';
+                icon.className = 'fa-solid fa-triangle-exclamation text-amber-600';
+                return;
+            }
+            if (parsedDuplicateCheckStatus === 'idle' || parsedDuplicateCheckStatus === 'stale') {
+                textNode.textContent = parsedDuplicateCheckStatus === 'stale'
+                    ? '题目已编辑，查重结果已失效；导入前将重新检查。'
+                    : '等待查重。';
+                icon.className = 'fa-solid fa-magnifying-glass text-slate-500';
+                return;
+            }
+
+            let exactCount = 0;
+            let possibleCount = 0;
+            let clearCount = 0;
+            parsedDuplicateResults.forEach(result => {
+                if (!duplicateResultHasSignal(result)) clearCount += 1;
+                else if (duplicateResultIsExact(result)) exactCount += 1;
+                else possibleCount += 1;
+            });
+            let coverageNote = '';
+            let completionLabel = '查重完成';
+            let clearLabel = '未发现重复';
+            if (parsedDuplicateIndexStatus && parsedDuplicateIndexStatus.ready === false) {
+                const coverage = Number(parsedDuplicateIndexStatus.coverage || 0);
+                const warning = String(parsedDuplicateIndexStatus.warning || '');
+                const coveragePercent = Math.min(99, Math.floor(coverage * (coverage <= 1 ? 100 : 1)));
+                coverageNote = warning
+                    ? ` · ${warning}`
+                    : ` · 索引覆盖 ${coveragePercent}%`;
+                completionLabel = '查重完成（结果可能不完整）';
+                clearLabel = '当前覆盖内未发现重复';
+            }
+            textNode.textContent = `${completionLabel}：疑似已收录 ${exactCount} 题，可能重复 ${possibleCount} 题，${clearLabel} ${clearCount} 题${coverageNote}`;
+            icon.className = exactCount || possibleCount
+                ? 'fa-solid fa-code-compare text-amber-600'
+                : 'fa-solid fa-circle-check text-emerald-600';
+        }
+
+        function resetParsedDuplicateCheckState() {
+            parsedDuplicateCheckSerial += 1;
+            parsedDuplicateResults.clear();
+            parsedDuplicateSnapshots.clear();
+            parsedDuplicateCheckStatus = 'idle';
+            parsedDuplicateIndexStatus = null;
+            parsedDuplicateSummaryVisible = false;
+            parsedDuplicateActiveIndices = [];
+            const summary = document.getElementById('parsedDuplicateSummary');
+            if (summary) {
+                summary.classList.add('hidden');
+                summary.classList.remove('flex');
+            }
+        }
+
+        function invalidateParsedDuplicateCheck(index) {
+            const hadVisibleCheck = parsedDuplicateCheckStatus !== 'idle' ||
+                parsedDuplicateResults.size > 0 || parsedDuplicateSnapshots.size > 0;
+            if (!hadVisibleCheck) return;
+            parsedDuplicateCheckSerial += 1;
+            parsedDuplicateResults.delete(index);
+            parsedDuplicateSnapshots.delete(index);
+            parsedDuplicateCheckStatus = 'stale';
+            const affectedIndices = parsedDuplicateActiveIndices.length
+                ? parsedDuplicateActiveIndices.slice()
+                : [index];
+            parsedDuplicateActiveIndices = [];
+            affectedIndices.forEach(updateParsedDuplicateBadge);
+            updateParsedDuplicateSummary();
+        }
+
+        async function precheckParsedQuestionDuplicates(options = {}) {
+            const generation = parsedQuestionsGeneration;
+            const showSummary = options.showSummary !== false;
+            const indices = Array.isArray(options.indices)
+                ? options.indices.slice()
+                : parsedQuestionsData.map((q, index) => q && !q.saved ? index : -1).filter(index => index >= 0);
+            const items = [];
+            const localSnapshots = new Map();
+            indices.forEach(index => {
+                const item = buildParsedQuestionDuplicateItem(index, generation);
+                if (!item) return;
+                items.push(item);
+                localSnapshots.set(index, serializeQuestionDuplicateItem(item));
+            });
+            if (items.length === 0) {
+                return { ok: true, generation: generation, results: new Map() };
+            }
+            if (items.length > 500) {
+                const error = new Error('单次最多查重 500 道题，请分批勾选');
+                error.isValidationError = true;
+                if (options.notifyFailure !== false) showToast(error.message, 'warning');
+                return { ok: false, invalid: true, error: error, generation: generation };
+            }
+
+            const checkedIndexSet = new Set(indices);
+            Array.from(parsedDuplicateResults.keys()).forEach(previousIndex => {
+                if (checkedIndexSet.has(previousIndex)) return;
+                const previousCard = document.getElementById(`parsed-card-${previousIndex}`);
+                const previousBadge = previousCard && previousCard.querySelector('.card-duplicate-badge');
+                if (previousBadge) {
+                    previousBadge.textContent = '';
+                    previousBadge.className = 'card-duplicate-badge hidden min-h-11 px-3 text-[9px] font-semibold rounded border focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-400';
+                    previousBadge.disabled = false;
+                    previousBadge.setAttribute('aria-busy', 'false');
+                    previousBadge.setAttribute('aria-label', '');
+                }
+            });
+            parsedDuplicateResults.clear();
+            parsedDuplicateSnapshots.clear();
+            const requestSerial = ++parsedDuplicateCheckSerial;
+            parsedDuplicateCheckStatus = 'checking';
+            parsedDuplicateSummaryVisible = showSummary;
+            parsedDuplicateActiveIndices = indices.slice();
+            indices.forEach(updateParsedDuplicateBadge);
+            updateParsedDuplicateSummary();
+
+            try {
+                const data = await requestQuestionDuplicateCheck(items);
+                if (generation !== parsedQuestionsGeneration || requestSerial !== parsedDuplicateCheckSerial) {
+                    return { ok: false, stale: true, generation: generation };
+                }
+                const currentItems = new Map();
+                indices.forEach(index => {
+                    const current = buildParsedQuestionDuplicateItem(index, generation);
+                    if (current) currentItems.set(index, serializeQuestionDuplicateItem(current));
+                });
+                const snapshotsAreCurrent = indices.every(index =>
+                    currentItems.get(index) === localSnapshots.get(index)
+                );
+                if (!snapshotsAreCurrent) {
+                    parsedDuplicateCheckStatus = 'stale';
+                    parsedDuplicateActiveIndices = [];
+                    indices.forEach(updateParsedDuplicateBadge);
+                    if (showSummary) updateParsedDuplicateSummary();
+                    return { ok: false, stale: true, generation: generation };
+                }
+
+                const responseByKey = new Map(data.items.map(item => [String(item.client_key), item]));
+                if (items.some(item => !responseByKey.has(String(item.client_key)))) {
+                    throw new Error('查重结果与本批题目无法一一对应');
+                }
+                const currentResults = new Map();
+                items.forEach(item => {
+                    const index = Number(String(item.client_key).split('-').pop());
+                    const result = responseByKey.get(String(item.client_key));
+                    parsedDuplicateResults.set(index, result);
+                    parsedDuplicateSnapshots.set(index, localSnapshots.get(index));
+                    currentResults.set(index, result);
+                    updateParsedDuplicateBadge(index);
+                });
+                parsedDuplicateCheckStatus = 'ready';
+                parsedDuplicateIndexStatus = data.index || null;
+                parsedDuplicateActiveIndices = [];
+                if (showSummary) updateParsedDuplicateSummary();
+                if (!showSummary && data.index && data.index.ready === false) {
+                    const coverage = Math.min(99, Math.floor(Number(data.index.coverage || 0) * 100));
+                    const warning = String(data.index.warning || '');
+                    showToast(warning || `查重索引仍在构建，当前覆盖约 ${coverage}% 题库。`, 'warning');
+                }
+                return { ok: true, generation: generation, results: currentResults, index: data.index || null };
+            } catch (error) {
+                if (generation !== parsedQuestionsGeneration || requestSerial !== parsedDuplicateCheckSerial) {
+                    return { ok: false, stale: true, generation: generation };
+                }
+                parsedDuplicateCheckStatus = 'error';
+                parsedDuplicateActiveIndices = [];
+                indices.forEach(updateParsedDuplicateBadge);
+                if (showSummary) updateParsedDuplicateSummary();
+                if (options.notifyFailure !== false) {
+                    const message = error && error.isValidationError
+                        ? `查重请求内容无效：${error.message}。请修正后重试。`
+                        : `查重暂不可用：${error.message}。本次仍可继续导入。`;
+                    showToast(message, 'warning');
+                }
+                return {
+                    ok: false,
+                    invalid: Boolean(error && error.isValidationError),
+                    error: error,
+                    generation: generation
+                };
+            }
+        }
+
+        function duplicateReasonLabel(reason) {
+            const labels = {
+                EXACT_CONTENT: '题干规范化后完全一致',
+                EXACT_TEXT: '题干规范化后完全一致',
+                SAFE_NORMALIZATION_ONLY: '差异仅来自空格或排版写法',
+                HIGH_TEXT_SIMILARITY: '题干文本高度相似',
+                SAME_MATH_STRUCTURE: '数学结构高度相似',
+                SAME_IMAGES: '可见配图一致',
+                IMAGE_REVIEW_REQUIRED: '配图仍需人工核对',
+                VISUAL_SIGNATURE_PENDING: '配图指纹尚未完整，需人工核对',
+                FIGURE_EXACT: '可见配图一致',
+                FIGURE_DIFF: '题干相似，但可见配图不同',
+                TIKZ_DIFF: '题干相似，但 TikZ 图形不同',
+                TYPE_DIFF: '题型不同',
+                OPTION_ORDER_CHANGED: '选项顺序已变化',
+                CRITICAL_MATH_DIFF: '数字、符号或数学条件不同',
+                CRITICAL_MATH_MATCH: '关键数学条件一致',
+                NUMBER_CHANGED: '数字或区间端点不同，可能是变式题',
+                RELATION_CHANGED: '等号或不等号等关系符不同',
+                QUANTIFIER_CHANGED: '任意、存在等量词条件不同',
+                VARIABLE_CHANGED: '变量或几何对象名称不同',
+                OPERATOR_CHANGED: '运算符或幂、下标结构不同',
+                MATH_STRUCTURE_CHANGED: '关键数学结构不同',
+                OPTION_COUNT_DIFF: '选项数量不同',
+                FIGURE_MISSING: '其中一题缺少可见配图',
+                FIGURE_COUNT_DIFF: '可见配图数量不同',
+                ANSWER_DIFF: '题干疑似相同，但答案或解析不同',
+                BATCH_EXACT: '与本批其他题目完全一致',
+                BATCH_SIMILAR: '与本批其他题目高度相似'
+            };
+            return labels[String(reason || '')] || window.MathBankSafe.sanitizePlainText(String(reason || ''));
+        }
+
+        function appendDuplicateCandidate(container, candidate) {
+            if (!candidate || typeof candidate !== 'object') return;
+            const row = document.createElement('div');
+            row.className = 'rounded-xl border border-slate-200 bg-white p-3 dark:border-slate-700 dark:bg-slate-900/80';
+            const title = document.createElement('div');
+            title.className = 'flex flex-wrap items-center gap-2 text-[10px] font-bold text-slate-600 dark:text-slate-200';
+            const seq = candidate.seq_num || candidate.id || '?';
+            const source = window.MathBankSafe.sanitizePlainText(String(candidate.source || '来源未标注'));
+            title.textContent = `已收录 #${seq} · ${source} · 相似度 ${Math.round(Number(candidate.score || 0) * 100)}%`;
+            const content = document.createElement('p');
+            content.className = 'mt-2 whitespace-pre-wrap break-words text-[11px] leading-5 text-slate-700 dark:text-slate-200';
+            const plainContent = window.MathBankSafe.sanitizePlainText(String(candidate.content || ''));
+            content.textContent = plainContent.length > 220 ? `${plainContent.slice(0, 220)}…` : plainContent;
+            row.append(title, content);
+            if (plainContent) {
+                const details = document.createElement('details');
+                details.className = 'mt-2 rounded-lg border border-slate-200 p-2 dark:border-slate-700';
+                const summary = document.createElement('summary');
+                summary.className = 'min-h-11 cursor-pointer py-3 text-[10px] font-bold text-brand-600 dark:text-brand-200';
+                summary.textContent = '查看完整题干与公式';
+                const fullContent = document.createElement('div');
+                fullContent.className = 'mt-2 break-words text-[11px] leading-5 text-slate-700 dark:text-slate-200';
+                fullContent.textContent = candidate.content_truncated
+                    ? '展开后加载完整题干…'
+                    : plainContent;
+                let mathRendered = false;
+                details.addEventListener('toggle', async () => {
+                    if (!details.open || mathRendered) return;
+                    mathRendered = true;
+                    let completeContent = plainContent;
+                    if (candidate.content_truncated && candidate.id) {
+                        try {
+                            const response = await fetch(`/api/questions/${Number(candidate.id)}`);
+                            if (!response.ok) throw new Error(`HTTP ${response.status}`);
+                            const fullQuestion = await response.json();
+                            completeContent = String(fullQuestion.content || plainContent);
+                        } catch (error) {
+                            mathRendered = false;
+                            fullContent.textContent = '完整题干加载失败，请稍后重试。';
+                            return;
+                        }
+                    }
+                    fullContent.textContent = completeContent;
+                    try {
+                        renderMathInElement(fullContent, {
+                            delimiters: [
+                                {left: '$$', right: '$$', display: true},
+                                {left: '$', right: '$', display: false},
+                                {left: '\\(', right: '\\)', display: false},
+                                {left: '\\[', right: '\\]', display: true}
+                            ],
+                            throwOnError: false
+                        });
+                    } catch (error) {
+                        fullContent.textContent = completeContent;
+                    }
+                });
+                details.append(summary, fullContent);
+                row.appendChild(details);
+            }
+            const imagePaths = Array.isArray(candidate.image_paths)
+                ? candidate.image_paths.map(path => window.MathBankSafe.safeImageUrl(path)).filter(Boolean)
+                : [];
+            if (imagePaths.length) {
+                const imageStrip = document.createElement('div');
+                imageStrip.className = 'mt-3 flex flex-wrap gap-2';
+                imagePaths.slice(0, 4).forEach((path, imageIndex) => {
+                    const imageButton = document.createElement('button');
+                    imageButton.type = 'button';
+                    imageButton.className = 'flex min-h-11 min-w-11 items-center justify-center rounded-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500';
+                    imageButton.setAttribute('aria-label', `放大查看已收录候选题配图 ${imageIndex + 1}`);
+                    const image = document.createElement('img');
+                    image.src = path;
+                    image.alt = '已收录候选题配图';
+                    image.loading = 'lazy';
+                    image.decoding = 'async';
+                    image.setAttribute('data-safe-image-open', 'true');
+                    image.className = 'h-20 w-24 rounded-lg border border-slate-200 bg-white object-contain dark:border-slate-700 dark:bg-slate-950';
+                    imageButton.appendChild(image);
+                    imageButton.addEventListener('click', event => {
+                        if (event.target === imageButton) image.click();
+                    });
+                    imageStrip.appendChild(imageButton);
+                });
+                row.appendChild(imageStrip);
+            }
+            const reasons = Array.isArray(candidate.reasons) ? candidate.reasons.filter(Boolean) : [];
+            if (reasons.length) {
+                const reasonText = document.createElement('p');
+                reasonText.className = 'mt-2 text-[9px] font-semibold text-amber-700 dark:text-amber-200';
+                reasonText.textContent = reasons.map(duplicateReasonLabel).join(' · ');
+                row.appendChild(reasonText);
+            }
+            container.appendChild(row);
+        }
+
+        function renderParsedDuplicateReview(entries) {
+            const list = document.getElementById('parsedDuplicateReviewList');
+            if (!list) return;
+            list.textContent = '';
+            entries.forEach(entry => {
+                const section = document.createElement('section');
+                section.className = 'rounded-2xl border border-amber-200/80 bg-amber-50/50 p-4 dark:border-amber-500/35 dark:bg-amber-500/10';
+                const heading = document.createElement('h4');
+                heading.className = 'text-xs font-bold text-slate-800 dark:text-slate-100';
+                heading.textContent = entry.label;
+                section.appendChild(heading);
+
+                const result = entry.result || {};
+                const candidates = Array.isArray(result.candidates) ? result.candidates : [];
+                const batchMatches = Array.isArray(result.batch_matches) ? result.batch_matches : [];
+                const meta = document.createElement('p');
+                meta.className = 'mt-1 text-[10px] leading-5 text-slate-600 dark:text-slate-300';
+                const visualNote = result.needs_visual_review ? '；配图需人工核对' : '';
+                meta.textContent = `题库候选 ${candidates.length} 道，本批重复 ${batchMatches.length || duplicateBatchMatchCount(result)} 道${visualNote}`;
+                section.appendChild(meta);
+
+                candidates.forEach(candidate => appendDuplicateCandidate(section, candidate));
+                batchMatches.forEach(match => {
+                    const note = document.createElement('p');
+                    note.className = 'mt-2 rounded-lg border border-indigo-100 bg-indigo-50 px-3 py-2 text-[10px] font-semibold text-indigo-700 dark:border-indigo-500/30 dark:bg-indigo-500/10 dark:text-indigo-200';
+                    let targetLabel = '本批另一道题';
+                    const targetKey = typeof match === 'string'
+                        ? match
+                        : String(match.client_key || match.other_client_key || '');
+                    const targetIndex = Number(targetKey.split('-').pop());
+                    if (Number.isInteger(targetIndex) && targetIndex >= 0) {
+                        targetLabel = `本批第 ${targetIndex + 1} 题`;
+                    }
+                    note.textContent = `与${targetLabel}疑似重复，请一并核对。`;
+                    section.appendChild(note);
+                });
+                list.appendChild(section);
+            });
+        }
+
+        function openParsedDuplicateReviewModal(entries, mode = 'batch') {
+            const modal = document.getElementById('parsedDuplicateReviewModal');
+            if (!modal) return Promise.resolve('review');
+            if (parsedDuplicateReviewResolver) {
+                parsedDuplicateReviewResolver('review');
+                parsedDuplicateReviewResolver = null;
+            }
+            renderParsedDuplicateReview(entries);
+            const title = document.getElementById('parsedDuplicateReviewTitle');
+            const returnBtn = document.getElementById('duplicateReviewReturnBtn');
+            const skipBtn = document.getElementById('duplicateReviewSkipBtn');
+            const independentBtn = document.getElementById('duplicateReviewIndependentBtn');
+            if (title) title.textContent = mode === 'inspect' ? '查重依据' : '发现疑似已收录题目';
+            if (returnBtn) returnBtn.textContent = mode === 'inspect' ? '关闭' : '返回审查';
+            if (skipBtn) skipBtn.classList.toggle('hidden', mode !== 'batch');
+            if (independentBtn) {
+                independentBtn.classList.toggle('hidden', mode === 'inspect');
+                independentBtn.textContent = mode === 'single' ? '仍作为独立题保存' : '全部独立保存';
+            }
+
+            modal.classList.remove('hidden');
+            modal.classList.add('flex');
+            modal.setAttribute('aria-hidden', 'false');
+            window.MathBankModal.open(modal, {
+                onEscape: () => closeParsedDuplicateReviewModal('review')
+            });
+            setTimeout(() => {
+                modal.classList.remove('opacity-0');
+                const surface = modal.querySelector('[data-modal-surface]');
+                if (surface) {
+                    surface.classList.remove('scale-95');
+                    surface.classList.add('scale-100');
+                }
+            }, 20);
+            return new Promise(resolve => {
+                parsedDuplicateReviewResolver = resolve;
+            });
+        }
+
+        function closeParsedDuplicateReviewModal(action = 'review') {
+            const modal = document.getElementById('parsedDuplicateReviewModal');
+            if (modal && !modal.classList.contains('hidden')) {
+                window.MathBankModal.close(modal);
+                modal.classList.add('opacity-0');
+                modal.setAttribute('aria-hidden', 'true');
+                const surface = modal.querySelector('[data-modal-surface]');
+                if (surface) {
+                    surface.classList.remove('scale-100');
+                    surface.classList.add('scale-95');
+                }
+                setTimeout(() => {
+                    modal.classList.add('hidden');
+                    modal.classList.remove('flex');
+                }, 200);
+            }
+            const resolve = parsedDuplicateReviewResolver;
+            parsedDuplicateReviewResolver = null;
+            if (resolve) resolve(action);
+        }
+
+        function parsedDuplicateReviewEntries(indices, results = parsedDuplicateResults) {
+            return indices.map(index => ({
+                label: `拆解结果第 ${index + 1} 题`,
+                result: results.get(index) || parsedDuplicateResults.get(index) || {}
+            }));
+        }
+
+        function openParsedDuplicateReview(index) {
+            const result = parsedDuplicateResults.get(index);
+            if (!result) return;
+            openParsedDuplicateReviewModal(parsedDuplicateReviewEntries([index]), 'inspect');
+        }
+
+        function applySaveTimeDuplicateConflict(index, data) {
+            const candidates = Array.isArray(data && data.candidates)
+                ? data.candidates.map(candidate => ({
+                    ...candidate,
+                    level: 'exact',
+                    score: 1,
+                    reasons: ['EXACT_TEXT'],
+                    needs_visual_review: true
+                }))
+                : [];
+            const result = {
+                client_key: `save-conflict-${index}`,
+                snapshot_hash: String(data && data.snapshot_hash || ''),
+                level: 'exact',
+                candidates: candidates,
+                batch_matches: [],
+                needs_visual_review: true
+            };
+            parsedDuplicateResults.set(index, result);
+            const currentItem = buildParsedQuestionDuplicateItem(index, parsedQuestionsGeneration);
+            if (currentItem) {
+                parsedDuplicateSnapshots.set(index, serializeQuestionDuplicateItem(currentItem));
+            }
+            parsedDuplicateCheckStatus = 'ready';
+            parsedDuplicateSummaryVisible = true;
+            updateParsedDuplicateBadge(index);
+            updateParsedDuplicateSummary();
+            return result;
+        }
+
+        function focusFirstParsedDuplicate(indices) {
+            const firstIndex = indices[0];
+            const card = document.getElementById(`parsed-card-${firstIndex}`);
+            if (!card) return;
+            card.scrollIntoView({ behavior: 'smooth', block: 'center' });
+            card.classList.add('ring-2', 'ring-amber-400');
+            setTimeout(() => card.classList.remove('ring-2', 'ring-amber-400'), 2200);
+            const badge = card.querySelector('.card-duplicate-badge');
+            if (badge) badge.focus({ preventScroll: true });
+        }
+
+        async function checkEditorDuplicateBeforeSave(editorSession) {
+            const item = buildEditorQuestionDuplicateItem(editorSession);
+            const localSnapshot = serializeQuestionDuplicateItem(item);
+            try {
+                const data = await requestQuestionDuplicateCheck([item]);
+                const result = data.items.find(entry => String(entry.client_key) === item.client_key);
+                if (!result) throw new Error('查重结果与当前题目无法对应');
+                if (data.index && data.index.ready === false) {
+                    const coverage = Math.min(99, Math.floor(Number(data.index.coverage || 0) * 100));
+                    const warning = String(data.index.warning || '');
+                    showToast(warning || `查重索引仍在构建，当前覆盖约 ${coverage}% 题库。`, 'warning');
+                }
+                let duplicateOverride = '';
+                if (duplicateResultHasSignal(result)) {
+                    const action = await openParsedDuplicateReviewModal([{
+                        label: editorSession && editorSession.questionId ? '当前编辑题目' : '当前待录入题目',
+                        result: result
+                    }], 'single');
+                    if (action !== 'independent') {
+                        return { allowed: false, localSnapshot: localSnapshot };
+                    }
+                    duplicateOverride = 'independent';
+                }
+                const currentSnapshot = serializeQuestionDuplicateItem(
+                    buildEditorQuestionDuplicateItem(editorSession)
+                );
+                if (currentSnapshot !== localSnapshot) {
+                    showToast('题目在查重期间已发生变化，请重新保存以再次查重。', 'info');
+                    return { allowed: false, localSnapshot: localSnapshot };
+                }
+                return {
+                    allowed: true,
+                    localSnapshot: localSnapshot,
+                    duplicateOverride: duplicateOverride,
+                    duplicateSnapshotHash: String(result.snapshot_hash || '')
+                };
+            } catch (error) {
+                if (error && error.isValidationError) {
+                    showToast(`查重请求内容无效：${error.message}。请修正后重试。`, 'warning');
+                    return { allowed: false, checkFailed: true, localSnapshot: localSnapshot };
+                }
+                showToast(`查重暂不可用：${error.message}。本次将继续保存，请稍后人工核对。`, 'warning');
+                return { allowed: true, checkFailed: true, localSnapshot: localSnapshot };
+            }
+        }
+
         function renderParsedQuestionsList(questions) {
             const container = document.getElementById('parsedCardsContainer');
             container.innerHTML = '';
@@ -2660,7 +3521,8 @@
                         </select>
                         <input type="text" class="card-source glass-input px-2.5 py-1.5 rounded-lg text-[10px] font-semibold" placeholder="题目来源">
                         <!-- Success / Saved indicator -->
-                        <div class="flex items-center justify-end">
+                        <div class="flex flex-wrap items-center justify-end gap-1.5">
+                            <button type="button" onclick="openParsedDuplicateReview(${index})" class="card-duplicate-badge hidden min-h-11 px-3 text-[9px] font-semibold rounded border focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-400"></button>
                             <span class="card-status-badge text-[10px] font-bold px-2 py-0.5 rounded ${q.saved ? 'bg-green-50 text-green-700 border border-green-200' : 'bg-slate-100 text-slate-500'}">${q.saved ? '已导入' : '待导入'}</span>
                         </div>
                     </div>
@@ -2755,9 +3617,20 @@
                 const triggerPreview = () => {
                     renderParsedCardPreview(card, textInput.value, ansInput.value);
                 };
+                const debouncedPreview = debounce(triggerPreview, 200);
 
-                textInput.addEventListener('input', debounce(triggerPreview, 200));
-                ansInput.addEventListener('input', debounce(triggerPreview, 200));
+                textInput.addEventListener('input', () => {
+                    invalidateParsedDuplicateCheck(index);
+                    debouncedPreview();
+                });
+                ansInput.addEventListener('input', () => {
+                    invalidateParsedDuplicateCheck(index);
+                    debouncedPreview();
+                });
+                const typeInput = card.querySelector('.card-qtype');
+                if (typeInput) {
+                    typeInput.addEventListener('change', () => invalidateParsedDuplicateCheck(index));
+                }
 
                 triggerPreview();
             });
@@ -2910,121 +3783,242 @@
             }
         }
 
+        function validateParsedQuestionBeforeImport(index, options = {}) {
+            const card = document.getElementById(`parsed-card-${index}`);
+            const q = parsedQuestionsData[index];
+            if (!card || !q) return false;
+            const content = card.querySelector('.card-content-textarea')?.value.trim() || '';
+            const questionType = card.querySelector('.card-qtype')?.value || '';
+            const compulsory = card.querySelector('.card-compulsory')?.value || '';
+            const chapter = card.querySelector('.card-chapter')?.value || '';
+            let message = '';
+            let target = null;
+            if (!content) {
+                message = `第 ${index + 1} 题的题干内容不能为空！`;
+                target = card.querySelector('.card-content-textarea');
+            } else if (!questionType) {
+                message = `请确认第 ${index + 1} 题的题型！`;
+                target = card.querySelector('.card-qtype');
+            } else if (!compulsory || !chapter) {
+                message = `请选择第 ${index + 1} 题的学段与所属章节！`;
+                target = !compulsory
+                    ? card.querySelector('.card-compulsory')
+                    : card.querySelector('.card-chapter');
+            }
+            if (!message) return true;
+            if (options.notify !== false) showToast(message, 'warning');
+            if (options.focus !== false && target) {
+                target.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                target.focus();
+            }
+            return false;
+        }
+
         function saveParsedQuestion(index) {
             const q = parsedQuestionsData[index];
             if (!q) return Promise.resolve(true);
+            const options = arguments.length > 1 && arguments[1] ? arguments[1] : {};
+            if (parsedBatchSaveInFlight && options.fromBatch !== true) {
+                showToast('批量入库正在进行，请等待完成后再单独导入。', 'info');
+                return Promise.resolve(false);
+            }
             const existingSave = parsedQuestionSaveInFlight.get(q);
             if (existingSave) return existingSave;
 
             const saveGeneration = parsedQuestionsGeneration;
-
             const card = document.getElementById(`parsed-card-${index}`);
             if (!card) return Promise.reject(new Error('Card element not found'));
-
-            const content = card.querySelector('.card-content-textarea').value.trim();
-            const answer_markdown = card.querySelector('.card-answer-textarea').value.trim();
-            const question_type = card.querySelector('.card-qtype').value;
-            const difficulty = card.querySelector('.card-difficulty').value;
-            const source = card.querySelector('.card-source').value.trim();
-            
-            const category_compulsory = card.querySelector('.card-compulsory').value;
-            const category_chapter = card.querySelector('.card-chapter').value;
-            const category_knowledge = card.querySelector('.card-knowledge').value;
-
-            if (!content) {
-                showToast(`第 ${index + 1} 题的题干内容不能为空！`, 'warning');
-                return Promise.reject(new Error('Content empty'));
-            }
-            if (!category_compulsory || !category_chapter) {
-                showToast(`请选择第 ${index + 1} 题的学段与所属章节！`, 'warning');
-                
-                // Auto-scroll to the missing classification select inside this specific parsed card!
-                const compSelect = card.querySelector('.card-compulsory');
-                const chapSelect = card.querySelector('.card-chapter');
-                const targetSelect = !category_compulsory ? compSelect : chapSelect;
-                
-                if (targetSelect) {
-                    targetSelect.scrollIntoView({ behavior: 'smooth', block: 'center' });
-                    targetSelect.classList.remove('border-slate-200');
-                    targetSelect.classList.add('ring-2', 'ring-red-400', 'border-red-400');
-                    setTimeout(() => {
-                        targetSelect.classList.remove('ring-2', 'ring-red-400', 'border-red-400');
-                        targetSelect.classList.add('border-slate-200');
-                    }, 2500);
-                    targetSelect.focus();
-                }
-                
-                return Promise.reject(new Error('Curriculum empty'));
-            }
-
             const saveBtn = card.querySelector('.card-save-btn');
-            saveBtn.disabled = true;
-            saveBtn.innerHTML = '<i class="fa-solid fa-spinner animate-spin"></i> <span>保存中...</span>';
 
-            const formData = new FormData();
-            formData.append('content', content);
-            formData.append('question_type', question_type);
-            formData.append('category_compulsory', category_compulsory);
-            formData.append('category_chapter', category_chapter);
-            formData.append('category_knowledge', category_knowledge);
-            formData.append('difficulty', difficulty);
-            formData.append('source', source);
-            formData.append('answer_markdown', answer_markdown);
-            const safeImagePaths = Array.isArray(q.image_paths)
-                ? q.image_paths.map(path => window.MathBankSafe.safeImageUrl(path)).filter(Boolean)
-                : [];
-            formData.append('image_paths', JSON.stringify(Array.from(new Set(safeImagePaths))));
+            const restoreButton = () => {
+                if (!isParsedQuestionSaveContextCurrent(saveGeneration, index, q) || !saveBtn) return;
+                saveBtn.disabled = Boolean(parsedBatchSaveInFlight);
+                saveBtn.innerHTML = q.saved
+                    ? '<i class="fa-solid fa-rotate-right"></i> <span>再次导入</span>'
+                    : '<i class="fa-solid fa-file-arrow-up"></i> <span>导入此题</span>';
+            };
 
-            const saveOperation = fetch('/api/questions', {
-                method: 'POST',
-                body: formData
-            })
-            .then(r => r.json())
-            .then(data => {
-                if (data.status === 'success') {
-                    // The request may finish after a new paper has replaced this
-                    // index. The backend save remains valid, but stale callbacks
-                    // must never mutate the new import session or its card.
-                    if (!isParsedQuestionSaveContextCurrent(saveGeneration, index, q)) {
-                        return true;
-                    }
-                    q.saved = true;
-                    
-                    const statusBadge = card.querySelector('.card-status-badge');
-                    statusBadge.textContent = '已导入';
-                    statusBadge.className = 'card-status-badge text-[10px] font-bold px-2 py-0.5 rounded bg-green-50 text-green-700 border border-green-200 animate-pulse';
-                    
-                    saveBtn.className = 'card-save-btn px-4 py-1.5 rounded-lg bg-emerald-50 text-emerald-700 font-bold text-[10px] border border-emerald-300 hover:bg-emerald-100 transition-colors';
-                    saveBtn.innerHTML = '<i class="fa-solid fa-rotate-right"></i> <span>再次导入</span>';
-                    saveBtn.disabled = false;
-                    
-                    const cb = card.querySelector('.card-select-checkbox');
-                    if (cb) {
-                        cb.disabled = true;
-                        cb.checked = false;
-                        cb.classList.add('opacity-50');
-                    }
-                    if (typeof updateSelectedCount === 'function') {
-                        updateSelectedCount();
-                    }
+            const saveOperation = (async () => {
+                if (!validateParsedQuestionBeforeImport(index)) return false;
+                let duplicateOverride = options.duplicateOverride || '';
+                let duplicateSnapshotHash = options.duplicateSnapshotHash || '';
+                let expectedLocalSnapshot = options.localSnapshot || '';
 
-                    showToast(`第 ${index + 1} 题导入成功！`);
-                    
+                if (!options.duplicateDecisionResolved && typeof precheckParsedQuestionDuplicates === 'function') {
+                    if (saveBtn) {
+                        saveBtn.disabled = true;
+                        saveBtn.innerHTML = '<i class="fa-solid fa-spinner animate-spin"></i> <span>查重中...</span>';
+                    }
+                    const outcome = await precheckParsedQuestionDuplicates({
+                        indices: [index],
+                        showSummary: false,
+                        notifyFailure: true
+                    });
+                    if (!isParsedQuestionSaveContextCurrent(saveGeneration, index, q)) return false;
+                    if (outcome.stale) {
+                        showToast(`第 ${index + 1} 题在查重期间已修改，请再次点击导入。`, 'info');
+                        return false;
+                    }
+                    if (outcome.invalid) return false;
+                    if (outcome.ok) {
+                        const result = outcome.results.get(index);
+                        expectedLocalSnapshot = parsedDuplicateSnapshots.get(index) || '';
+                        duplicateSnapshotHash = String(result && result.snapshot_hash || '');
+                        if (duplicateResultHasSignal(result)) {
+                            const action = await openParsedDuplicateReviewModal(
+                                parsedDuplicateReviewEntries([index], outcome.results),
+                                'single'
+                            );
+                            if (action !== 'independent') {
+                                focusFirstParsedDuplicate([index]);
+                                return false;
+                            }
+                            duplicateOverride = 'independent';
+                        }
+                    }
+                    // A failed check is explicitly allowed to continue without a
+                    // fabricated snapshot or an implicit duplicate override.
+                }
+
+                if (!isParsedQuestionSaveContextCurrent(saveGeneration, index, q)) return false;
+                if (expectedLocalSnapshot) {
+                    const currentItem = buildParsedQuestionDuplicateItem(index, saveGeneration);
+                    if (!currentItem || serializeQuestionDuplicateItem(currentItem) !== expectedLocalSnapshot) {
+                        showToast(`第 ${index + 1} 题的内容已变化，本次未保存，请重新导入。`, 'info');
+                        return false;
+                    }
+                }
+
+                const content = card.querySelector('.card-content-textarea').value.trim();
+                const answer_markdown = card.querySelector('.card-answer-textarea').value.trim();
+                const question_type = card.querySelector('.card-qtype').value;
+                const difficulty = card.querySelector('.card-difficulty').value;
+                const source = card.querySelector('.card-source').value.trim();
+                const category_compulsory = card.querySelector('.card-compulsory').value;
+                const category_chapter = card.querySelector('.card-chapter').value;
+                const category_knowledge = card.querySelector('.card-knowledge').value;
+
+                if (!content) {
+                    showToast(`第 ${index + 1} 题的题干内容不能为空！`, 'warning');
+                    throw new Error('Content empty');
+                }
+                if (!category_compulsory || !category_chapter) {
+                    showToast(`请选择第 ${index + 1} 题的学段与所属章节！`, 'warning');
+                    const compSelect = card.querySelector('.card-compulsory');
+                    const chapSelect = card.querySelector('.card-chapter');
+                    const targetSelect = !category_compulsory ? compSelect : chapSelect;
+                    if (targetSelect) {
+                        targetSelect.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                        targetSelect.classList.remove('border-slate-200');
+                        targetSelect.classList.add('ring-2', 'ring-red-400', 'border-red-400');
+                        setTimeout(() => {
+                            targetSelect.classList.remove('ring-2', 'ring-red-400', 'border-red-400');
+                            targetSelect.classList.add('border-slate-200');
+                        }, 2500);
+                        targetSelect.focus();
+                    }
+                    throw new Error('Curriculum empty');
+                }
+
+                if (saveBtn) {
+                    saveBtn.disabled = true;
+                    saveBtn.innerHTML = '<i class="fa-solid fa-spinner animate-spin"></i> <span>保存中...</span>';
+                }
+                const formData = new FormData();
+                formData.append('content', content);
+                formData.append('question_type', question_type);
+                formData.append('category_compulsory', category_compulsory);
+                formData.append('category_chapter', category_chapter);
+                formData.append('category_knowledge', category_knowledge);
+                formData.append('difficulty', difficulty);
+                formData.append('source', source);
+                formData.append('answer_markdown', answer_markdown);
+                const parsedContentTikzAssets = safePersistedTikzAssets(q.content_tikz_assets);
+                const parsedAnswerTikzAssets = safePersistedTikzAssets(q.answer_tikz_assets);
+                const firstContentTikzAsset = parsedContentTikzAssets[0] || null;
+                if (parsedContentTikzAssets.length > 0) {
+                    formData.append('content_tikz_assets', JSON.stringify(parsedContentTikzAssets));
+                }
+                formData.append('answer_tikz_assets', JSON.stringify(parsedAnswerTikzAssets));
+                formData.append('tikz_code', firstContentTikzAsset
+                    ? String(firstContentTikzAsset.tikz_code || '')
+                    : String(q.tikz_code || ''));
+                formData.append('tikz_reference_image_path', firstContentTikzAsset
+                    ? String(firstContentTikzAsset.reference_image_path || '')
+                    : String(q.tikz_reference_image_path || ''));
+                const currentDuplicatePayload = buildParsedQuestionDuplicateItem(index, saveGeneration);
+                const safeImagePaths = currentDuplicatePayload
+                    ? currentDuplicatePayload.image_paths
+                    : safeDuplicateImagePaths(q.image_paths);
+                formData.append('image_paths', JSON.stringify(safeImagePaths));
+                if (duplicateSnapshotHash) {
+                    formData.append('duplicate_snapshot_hash', duplicateSnapshotHash);
+                }
+                if (duplicateOverride === 'independent') {
+                    formData.append('duplicate_override', 'independent');
+                }
+
+                const response = await fetch('/api/questions', {
+                    method: 'POST',
+                    body: formData
+                });
+                let data;
+                try {
+                    data = await response.json();
+                } catch (error) {
+                    throw new Error(`服务器返回错误 HTTP ${response.status || ''}`.trim());
+                }
+                if (response.ok === false) {
+                    if (response.status === 409 && data && data.code === 'duplicate_review_required' &&
+                        Array.isArray(data.candidates) && data.candidates.length > 0) {
+                        applySaveTimeDuplicateConflict(index, data);
+                        focusFirstParsedDuplicate([index]);
+                    }
+                    throw new Error(data.detail || data.message || `HTTP ${response.status}`);
+                }
+                if (data.status !== 'success') {
+                    throw new Error(data.message || data.detail || '保存失败');
+                }
+
+                // The request may finish after a new paper has replaced this
+                // index. The backend save remains valid, but stale callbacks
+                // must never mutate the new import session or its card.
+                if (!isParsedQuestionSaveContextCurrent(saveGeneration, index, q)) return true;
+                q.saved = true;
+                q.duplicateIndexWarning = String(data.warning || '');
+                const statusBadge = card.querySelector('.card-status-badge');
+                statusBadge.textContent = '已导入';
+                statusBadge.className = 'card-status-badge text-[10px] font-bold px-2 py-0.5 rounded bg-green-50 text-green-700 border border-green-200 animate-pulse';
+                saveBtn.className = 'card-save-btn px-4 py-1.5 rounded-lg bg-emerald-50 text-emerald-700 font-bold text-[10px] border border-emerald-300 hover:bg-emerald-100 transition-colors';
+                saveBtn.innerHTML = '<i class="fa-solid fa-rotate-right"></i> <span>再次导入</span>';
+                saveBtn.disabled = false;
+                const cb = card.querySelector('.card-select-checkbox');
+                if (cb) {
+                    cb.disabled = true;
+                    cb.checked = false;
+                    cb.classList.add('opacity-50');
+                }
+                if (typeof updateSelectedCount === 'function') updateSelectedCount();
+                if (options.suppressToast !== true) {
+                    if (data.warning) {
+                        showToast(String(data.warning), 'warning');
+                    } else {
+                        showToast(`第 ${index + 1} 题导入成功！`);
+                    }
+                }
+                if (options.suppressRefresh !== true) {
                     loadCategories();
                     loadQuestions();
-                    return true;
-                } else {
-                    throw new Error(data.message || '保存失败');
                 }
-            })
-            .catch(err => {
+                return true;
+            })().catch(err => {
                 if (isParsedQuestionSaveContextCurrent(saveGeneration, index, q)) {
-                    showToast(`第 ${index + 1} 题保存出错: ${err.message}`, 'error');
-                    saveBtn.disabled = false;
-                    saveBtn.innerHTML = '<i class="fa-solid fa-file-arrow-up"></i> <span>导入此题</span>';
+                    if (err.message !== 'Content empty' && err.message !== 'Curriculum empty') {
+                        showToast(`第 ${index + 1} 题保存出错: ${err.message}`, 'error');
+                    }
                 }
                 throw err;
-            });
+            }).finally(restoreButton);
 
             const trackedSave = saveOperation.finally(() => {
                 if (parsedQuestionSaveInFlight.get(q) === trackedSave) {
@@ -3123,7 +4117,7 @@
 
             const saveAllBtn = document.getElementById('saveAllParsedBtn');
             if (saveAllBtn) {
-                if (checkedCount === 0) {
+                if (checkedCount === 0 || parsedBatchSaveInFlight) {
                     saveAllBtn.disabled = true;
                     saveAllBtn.className = "flex items-center space-x-1.5 px-4 py-2 rounded-xl bg-slate-100 text-slate-400 font-bold text-xs border border-slate-200 shadow-sm cursor-not-allowed transition-all";
                 } else {
@@ -3153,7 +4147,30 @@
             updateSelectedCount();
         }
 
+        async function runParsedSavePool(indices, worker, concurrency = 3) {
+            const results = new Array(indices.length).fill(null);
+            let pointer = 0;
+            const workerCount = Math.min(Math.max(1, concurrency), indices.length);
+            const workers = Array.from({ length: workerCount }, async () => {
+                while (pointer < indices.length) {
+                    const position = pointer++;
+                    try {
+                        results[position] = await worker(indices[position]);
+                    } catch (error) {
+                        results[position] = null;
+                    }
+                }
+            });
+            await Promise.all(workers);
+            return results;
+        }
+
         function saveAllParsedQuestions() {
+            if (parsedBatchSaveInFlight) return parsedBatchSaveInFlight;
+            if (parsedQuestionSaveInFlight.size > 0) {
+                showToast('仍有单题正在入库，请等待完成后再启动批量导入。', 'info');
+                return Promise.resolve(false);
+            }
             const selectedIndices = getCheckedUnsavedIndices();
             const batchGeneration = parsedQuestionsGeneration;
 
@@ -3164,77 +4181,148 @@
                 } else {
                     showToast('请先勾选需要导入的题目！', 'warning');
                 }
-                return;
+                return Promise.resolve(false);
+            }
+            if (selectedIndices.length > 500) {
+                showToast('单次最多查重并导入 500 道题，请分批勾选。', 'warning');
+                return Promise.resolve(false);
+            }
+            const invalidIndex = selectedIndices.find(index =>
+                !validateParsedQuestionBeforeImport(index, { notify: false, focus: false })
+            );
+            if (invalidIndex !== undefined) {
+                validateParsedQuestionBeforeImport(invalidIndex);
+                return Promise.resolve(false);
             }
 
             const mainBtn = document.getElementById('saveAllParsedBtn');
-            if (!mainBtn) return;
-            
-            mainBtn.disabled = true;
-            
+            if (!mainBtn) return Promise.resolve(false);
             const btnText = document.getElementById('saveAllParsedBtnText');
             const originalText = btnText ? btnText.textContent : '导入选中题目';
-            if (btnText) {
-                btnText.textContent = '批量入库中...';
-            }
-            
             const icon = mainBtn.querySelector('i');
             const originalIconClass = icon ? icon.className : 'fa-solid fa-cloud-arrow-up';
-            if (icon) {
-                icon.className = 'fa-solid fa-spinner animate-spin';
-            }
 
-            showToast(`正在批量导入 ${selectedIndices.length} 道勾选题目，请稍候...`);
-
-            const promises = selectedIndices.map(idx => saveParsedQuestion(idx).catch(() => null));
-
-            Promise.all(promises)
-                .then(results => {
-                    if (batchGeneration !== parsedQuestionsGeneration) {
-                        return;
-                    }
-                    const successCount = results.filter(r => r === true).length;
-                    
-                    updateSelectedCount();
-                    const remainingUnsavedCount = parsedQuestionsData.filter(q => !q.saved).length;
-                    
-                    if (remainingUnsavedCount === 0) {
-                        showToast(`批量导入完成！共 ${successCount} 道题目已全部成功导入本地库！`, 'success');
-                        
-                        setTimeout(() => {
-                            if (batchGeneration !== parsedQuestionsGeneration) {
-                                return;
-                            }
-                            if (blockImportResetWhileSaving()) {
-                                return;
-                            }
-                            clearAllImportInputs();
-                            resetImportState(false); 
-                            closeImportModal();      
-                        }, 1500);
-                    } else {
-                        showToast(`批量导入已完成！成功: ${successCount}/${selectedIndices.length}。剩余未导入的题目已保留，请确认。`, 'warning');
-                    }
-                })
-                .catch(err => {
-                    if (batchGeneration !== parsedQuestionsGeneration) {
-                        return;
-                    }
-                    showToast(`批量导入时发生严重错误: ${err.message}`, 'error');
-                })
-                .finally(() => {
-                    if (batchGeneration !== parsedQuestionsGeneration) {
-                        return;
-                    }
-                    mainBtn.disabled = false;
-                    if (icon) {
-                        icon.className = originalIconClass;
-                    }
-                    if (btnText) {
-                        btnText.textContent = originalText;
-                    }
-                    updateSelectedCount();
+            const operation = (async () => {
+                mainBtn.disabled = true;
+                document.querySelectorAll('.card-save-btn').forEach(button => {
+                    button.disabled = true;
                 });
+                if (btnText) btnText.textContent = '整批查重中...';
+                if (icon) icon.className = 'fa-solid fa-spinner animate-spin';
+
+                // Every batch click performs one fresh, current-DOM check before
+                // any question-save POST is allowed to start.
+                const outcome = await precheckParsedQuestionDuplicates({
+                    indices: selectedIndices,
+                    notifyFailure: true
+                });
+                if (batchGeneration !== parsedQuestionsGeneration) return false;
+                if (outcome.stale) {
+                    showToast('题目在整批查重期间已修改，请重新点击导入。', 'info');
+                    return false;
+                }
+                if (outcome.invalid) return false;
+
+                let indicesToSave = selectedIndices.slice();
+                const independentOverrideIndices = new Set();
+                if (outcome.ok) {
+                    const suspectIndices = selectedIndices.filter(index =>
+                        duplicateResultHasSignal(outcome.results.get(index))
+                    );
+                    if (suspectIndices.length > 0) {
+                        const action = await openParsedDuplicateReviewModal(
+                            parsedDuplicateReviewEntries(suspectIndices, outcome.results),
+                            'batch'
+                        );
+                        if (batchGeneration !== parsedQuestionsGeneration) return false;
+                        if (action === 'review') {
+                            focusFirstParsedDuplicate(suspectIndices);
+                            return false;
+                        }
+                        if (action === 'skip') {
+                            const suspectSet = new Set(suspectIndices);
+                            indicesToSave = selectedIndices.filter(index => !suspectSet.has(index));
+                            if (indicesToSave.length === 0) {
+                                showToast('所选题目均需要审查，本次没有执行导入。', 'info');
+                                focusFirstParsedDuplicate(suspectIndices);
+                                return false;
+                            }
+                        } else if (action === 'independent') {
+                            suspectIndices.forEach(index => independentOverrideIndices.add(index));
+                        }
+                    }
+                }
+                // When the check endpoint fails, outcome.ok is false and the
+                // operation deliberately continues without claiming uniqueness.
+
+                if (btnText) btnText.textContent = `批量入库中 (0/${indicesToSave.length})...`;
+                showToast(`正在以最多 3 个并发任务导入 ${indicesToSave.length} 道题目，请稍候...`);
+                let completedCount = 0;
+                const results = await runParsedSavePool(indicesToSave, async index => {
+                    if (batchGeneration !== parsedQuestionsGeneration) return false;
+                    const result = outcome.ok ? outcome.results.get(index) : null;
+                    const saved = await saveParsedQuestion(index, {
+                        fromBatch: true,
+                        suppressRefresh: true,
+                        suppressToast: true,
+                        duplicateDecisionResolved: true,
+                        duplicateOverride: independentOverrideIndices.has(index) ? 'independent' : '',
+                        duplicateSnapshotHash: String(result && result.snapshot_hash || ''),
+                        localSnapshot: outcome.ok ? (parsedDuplicateSnapshots.get(index) || '') : ''
+                    });
+                    completedCount += 1;
+                    if (btnText && batchGeneration === parsedQuestionsGeneration) {
+                        btnText.textContent = `批量入库中 (${completedCount}/${indicesToSave.length})...`;
+                    }
+                    return saved;
+                }, 3);
+
+                if (batchGeneration !== parsedQuestionsGeneration) return false;
+                const successCount = results.filter(result => result === true).length;
+                const fingerprintWarningCount = indicesToSave.filter(index =>
+                    parsedQuestionsData[index] && parsedQuestionsData[index].duplicateIndexWarning
+                ).length;
+                const fingerprintWarningNote = fingerprintWarningCount > 0
+                    ? `；其中 ${fingerprintWarningCount} 道题的查重指纹待后台补建`
+                    : '';
+                if (successCount > 0) {
+                    loadCategories();
+                    loadQuestions();
+                }
+                updateSelectedCount();
+                const remainingUnsavedCount = parsedQuestionsData.filter(q => !q.saved).length;
+                if (remainingUnsavedCount === 0) {
+                    showToast(`批量导入完成！共 ${successCount} 道题目已全部成功导入本地库${fingerprintWarningNote}！`, fingerprintWarningCount ? 'warning' : 'success');
+                    setTimeout(() => {
+                        if (batchGeneration !== parsedQuestionsGeneration) return;
+                        if (blockImportResetWhileSaving()) return;
+                        clearAllImportInputs();
+                        resetImportState(false);
+                        closeImportModal();
+                    }, 1500);
+                } else {
+                    showToast(`批量导入已完成！成功: ${successCount}/${indicesToSave.length}${fingerprintWarningNote}。疑似题或失败题已保留供继续审查。`, 'warning');
+                }
+                return true;
+            })().catch(error => {
+                if (batchGeneration === parsedQuestionsGeneration) {
+                    showToast(`批量导入时发生错误: ${error.message}`, 'error');
+                }
+                return false;
+            }).finally(() => {
+                if (parsedBatchSaveInFlight === operation) parsedBatchSaveInFlight = null;
+                if (batchGeneration !== parsedQuestionsGeneration) return;
+                mainBtn.disabled = false;
+                document.querySelectorAll('.card-save-btn').forEach(button => {
+                    button.disabled = false;
+                });
+                if (icon) icon.className = originalIconClass;
+                if (btnText) btnText.textContent = originalText;
+                updateSelectedCount();
+            });
+            parsedBatchSaveInFlight = operation;
+            updateSelectedCount();
+            return operation;
         }
 
 
@@ -4367,6 +5455,7 @@
                 if (data.status === 'success' && data.solution) {
                     q.answer_markdown = data.solution;
                     if (answerTextarea) answerTextarea.value = data.solution;
+                    invalidateParsedDuplicateCheck(index);
                     renderParsedCardPreview(card, q.content || '', q.answer_markdown);
                     showToast(`第 ${index + 1} 题 AI 解析生成成功！`, 'success');
                 } else {
@@ -4459,6 +5548,7 @@
                             if (!requestIsCurrent()) return;
                             if (data.status === 'success' && data.solution) {
                                 q.answer_markdown = data.solution;
+                                invalidateParsedDuplicateCheck(taskIdx);
                                 finishedCount++;
                                 appendImportLog(`[解答进度 ${finishedCount}/${needAnswersIndices.length}] 第 ${taskIdx + 1} 题 AI 解析生成完毕。`, 'success');
                                 if (card) {
@@ -4491,5 +5581,7 @@
 
         window.generateSingleAnswer = generateSingleAnswer;
         window.processAsyncAnswerGeneration = processAsyncAnswerGeneration;
+        window.openParsedDuplicateReview = openParsedDuplicateReview;
+        window.closeParsedDuplicateReviewModal = closeParsedDuplicateReviewModal;
         window.associateRelatedQuestion = associateRelatedQuestion;
         window.clearRelatedQuestion = clearRelatedQuestion;

@@ -9,7 +9,7 @@ migrate_fillin.py - 历史题库填空题下划线批量升级为 \\fillin 宏�
 
 import sys
 
-from mathbank.database import SessionLocal, Question
+from mathbank.database import SessionLocal, Question, QuestionFingerprint
 from main import normalize_fillin_macro
 from mathbank.sync_helper import export_database_to_files
 
@@ -23,6 +23,7 @@ def migrate_database_fillin():
         questions = db.query(Question).all()
         total_questions = len(questions)
         migrated_count = 0
+        changed_question_ids = []
 
         for q in questions:
             if not q.content:
@@ -37,8 +38,12 @@ def migrate_database_fillin():
                 print(f"    - 原格式: {old_content[:70]}...")
                 print(f"    - 新格式: {new_content[:70]}...\n")
                 q.content = new_content
+                changed_question_ids.append(q.id)
 
         if migrated_count > 0:
+            db.query(QuestionFingerprint).filter(
+                QuestionFingerprint.question_id.in_(changed_question_ids)
+            ).delete(synchronize_session=False)
             db.commit()
             print(f"✅ 成功升级 {migrated_count} / {total_questions} 道题目的下划线为纯净 \\fillin 宏！")
             

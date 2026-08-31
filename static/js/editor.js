@@ -162,6 +162,7 @@ let bankQuestionsRetryTimer = null;
                 category_compulsory: document.getElementById('editCompulsory').value,
                 category_chapter: document.getElementById('editChapter').value,
                 category_knowledge: document.getElementById('editKnowledge').value,
+                related_question_id: document.getElementById('editRelatedQuestion').value,
                 image_paths: JSON.stringify(uploadedImages),
                 tikz_code: TikzState.contentAssets[0] ? TikzState.contentAssets[0].tikz_code : '',
                 tikz_reference_image_path: TikzState.contentAssets[0]
@@ -183,6 +184,7 @@ let bankQuestionsRetryTimer = null;
                 category_compulsory: snapshot.category_compulsory,
                 category_chapter: snapshot.category_chapter,
                 category_knowledge: snapshot.category_knowledge,
+                related_question_id: snapshot.related_question_id || '',
                 image_paths: snapshot.image_paths,
                 tikz_code: snapshot.tikz_code || '',
                 tikz_reference_image_path: snapshot.tikz_reference_image_path || '',
@@ -204,6 +206,7 @@ let bankQuestionsRetryTimer = null;
             const currentComp = document.getElementById('editCompulsory').value;
             const currentChap = document.getElementById('editChapter').value;
             const currentKnow = document.getElementById('editKnowledge').value;
+            const currentRelatedQuestionId = document.getElementById('editRelatedQuestion').value;
             const currentImages = JSON.stringify(uploadedImages);
             const currentTikzCode = TikzState.contentAssets[0]
                 ? TikzState.contentAssets[0].tikz_code
@@ -224,6 +227,7 @@ let bankQuestionsRetryTimer = null;
                    currentComp === snapshot.category_compulsory &&
                    currentChap === snapshot.category_chapter &&
                    currentKnow === snapshot.category_knowledge &&
+                   currentRelatedQuestionId === (snapshot.related_question_id || '') &&
                    currentImages === snapshot.image_paths &&
                    currentTikzCode === (snapshot.tikz_code || '') &&
                    currentTikzReferencePath === (snapshot.tikz_reference_image_path || '') &&
