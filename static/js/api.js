@@ -1110,13 +1110,32 @@
                 }, 50);
 
                 // Send shutdown request to backend
-                fetch('/api/shutdown', { method: 'POST' })
-                    .then(r => r.json())
+                fetch('/api/shutdown', {
+                    method: 'POST',
+                    headers: {
+                        'X-MathBank-Launch-ID': window.__serverInstanceId || ''
+                    }
+                })
+                    .then(async response => {
+                        const data = await response.json();
+                        if (!response.ok) {
+                            overlay.remove();
+                            showToast("当前页面属于已重启前的旧实例，请刷新页面后再关闭。", "error");
+                            const error = new Error(data.detail || data.message || 'Shutdown rejected');
+                            error.shutdownRejected = true;
+                            throw error;
+                        }
+                        return data;
+                    })
                     .then(data => {
                         console.log("Server shutdown command sent:", data);
                     })
                     .catch(err => {
-                        console.log("Server socket closed as expected during exit:", err);
+                        if (err && err.shutdownRejected) {
+                            console.warn("Server shutdown rejected:", err);
+                        } else {
+                            console.log("Server socket closed as expected during exit:", err);
+                        }
                     });
             }
         }

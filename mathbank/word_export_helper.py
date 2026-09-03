@@ -116,6 +116,20 @@ class BlankToken:
     """A Word-native underlined answer blank, kept outside OMML."""
 
 
+@dataclass(frozen=True)
+class TableCellSpec:
+    text: str
+    colspan: int = 1
+    rowspan: int = 1
+    alignment: str | None = None
+
+
+@dataclass(frozen=True)
+class TableCellPlacement:
+    cell: TableCellSpec
+    start_col: int
+
+
 @dataclass
 class PreparedQuestion:
     question: dict
@@ -125,6 +139,112 @@ class PreparedQuestion:
     answer: str
     images: list[Path]
     solution_space: float
+
+
+def _should_preserve_inline_image_positions(content: str) -> bool:
+    text = str(content or "")
+    matches = list(IMAGE_PATTERN.finditer(text))
+    if not matches:
+        return False
+    trailing = IMAGE_PATTERN.sub("", text[matches[0].start():]).strip()
+    return bool(trailing)
+
+
+def _split_content_segments(content: str) -> list[tuple[str, str, str]]:
+    """Split prose on blank lines without cutting complete tabular blocks."""
+
+    source = str(content or "")
+    segments: list[tuple[str, str, str]] = []
+
+    def add_text(value: str) -> None:
+        for paragraph in re.split(r"\n\s*\n", value):
+            if paragraph.strip():
+                segments.append(("text", paragraph.strip(), ""))
+
+    cursor = 0
+    for match in TABULAR_PATTERN.finditer(source):
+        add_text(source[cursor:match.start()])
+        segments.append(("table", match.group(1), match.group(2)))
+        cursor = match.end()
+    add_text(source[cursor:])
+    return segments
+
+
+def _read_latex_group(source: str, start: int) -> tuple[str, int] | None:
+    if start >= len(source) or source[start] != "{":
+        return None
+    depth = 0
+    index = start
+    while index < len(source):
+        if source[index] == "\\" and index + 1 < len(source):
+            index += 2
+            continue
+        if source[index] == "{":
+            depth += 1
+        elif source[index] == "}":
+            depth -= 1
+            if depth == 0:
+                return source[start + 1:index], index + 1
+        index += 1
+    return None
+
+
+def _parse_leading_table_command(
+    source: str,
+    command: str,
+    group_count: int,
+) -> tuple[list[str], str] | None:
+    value = source.strip()
+    prefix = "\\" + command
+    if not value.startswith(prefix):
+        return None
+    cursor = len(prefix)
+    groups: list[str] = []
+    for _ in range(group_count):
+        while cursor < len(value) and value[cursor].isspace():
+            cursor += 1
+        group = _read_latex_group(value, cursor)
+        if group is None:
+            return None
+        groups.append(group[0])
+        cursor = group[1]
+    return groups, value[cursor:].strip()
+
+
+def _parse_table_cell(value: str) -> TableCellSpec:
+    text = value.strip()
+    colspan = 1
+    rowspan = 1
+    alignment = None
+    for _ in range(2):
+        multicolumn = _parse_leading_table_command(text, "multicolumn", 3)
+        if multicolumn is not None:
+            groups, remainder = multicolumn
+            try:
+                colspan = max(1, int(groups[0]))
+            except ValueError:
+                colspan = 1
+            spec = groups[1].lower()
+            alignment = "l" if "l" in spec else "r" if "r" in spec else "c"
+            text = (groups[2] + remainder).strip()
+            continue
+        multirow = _parse_leading_table_command(text, "multirow", 3)
+        if multirow is not None:
+            groups, remainder = multirow
+            try:
+                parsed_rowspan = int(groups[0])
+                rowspan = parsed_rowspan if parsed_rowspan > 0 else 1
+            except ValueError:
+                rowspan = 1
+            text = (groups[2] + remainder).strip()
+            continue
+        break
+    return TableCellSpec(
+        text=text,
+        colspan=colspan,
+        rowspan=rowspan,
+        alignment=alignment,
+    )
 
 
 def _find_pandoc() -> str | None:
@@ -342,10 +462,50 @@ def _set_cell_width(cell, width_twips: int) -> None:
     tc_w.set(qn("w:type"), "dxa")
 
 
+def _set_table_geometry(table, column_widths: list[int]) -> None:
+    """Apply matching fixed DXA geometry to the table, grid, and cells."""
+
+    total_width = sum(column_widths)
+    tbl_pr = table._tbl.tblPr
+    tbl_w = tbl_pr.first_child_found_in("w:tblW")
+    if tbl_w is None:
+        tbl_w = OxmlElement("w:tblW")
+        tbl_pr.append(tbl_w)
+    tbl_w.set(qn("w:w"), str(total_width))
+    tbl_w.set(qn("w:type"), "dxa")
+
+    layout = tbl_pr.first_child_found_in("w:tblLayout")
+    if layout is None:
+        layout = OxmlElement("w:tblLayout")
+        tbl_pr.append(layout)
+    layout.set(qn("w:type"), "fixed")
+
+    grid = table._tbl.tblGrid
+    for child in list(grid):
+        grid.remove(child)
+    for width in column_widths:
+        grid_col = OxmlElement("w:gridCol")
+        grid_col.set(qn("w:w"), str(width))
+        grid.append(grid_col)
+
+    for row in table.rows:
+        for index, cell in enumerate(row.cells):
+            _set_cell_width(cell, column_widths[min(index, len(column_widths) - 1)])
+
+
 def _prevent_row_split(row) -> None:
     tr_pr = row._tr.get_or_add_trPr()
     if tr_pr.find(qn("w:cantSplit")) is None:
         tr_pr.append(OxmlElement("w:cantSplit"))
+
+
+def _repeat_table_header(row) -> None:
+    tr_pr = row._tr.get_or_add_trPr()
+    header = tr_pr.find(qn("w:tblHeader"))
+    if header is None:
+        header = OxmlElement("w:tblHeader")
+        tr_pr.append(header)
+    header.set(qn("w:val"), "true")
 
 
 def _set_rfonts(r_pr, cjk_font: str, latin_font: str) -> None:
@@ -635,51 +795,82 @@ class WordExamBuilder:
             run.append(node)
             paragraph._p.append(run)
 
-    def add_mixed(self, paragraph, text: str, size: float = BODY_FONT_SIZE) -> None:
-        for token in tokenize_mixed_content(text):
-            if isinstance(token, BlankToken):
-                run = paragraph.add_run("\u00a0" * WORD_FILLIN_BLANK_SPACES)
-                _set_run_font(run, size)
-                run.underline = True
-                continue
-            if isinstance(token, str):
-                plain = _clean_plain_text(token)
-                # 只有当包含小问换行时才保留 \n 软换行，普通单 \n 替换为空格，保持文本紧贴插图流动 (禁用后行断言)
-                plain_clean = re.sub(r"\n(?!\s*(?:[\(\（][0-9a-zA-Z一二三四五六七八九十]+\s*[\)\）]|[①-⑩]))", " ", plain)
-                chunks = plain_clean.split("\n")
-                for index, chunk in enumerate(chunks):
-                    if chunk:
-                        run = paragraph.add_run(chunk)
-                        _set_run_font(run, size)
-                    if index < len(chunks) - 1:
-                        paragraph.add_run().add_break()
-                continue
-            formula = token.latex
-            xml_bytes = self.omml_map.get(formula)
-            if xml_bytes:
-                _append_omml(paragraph, xml_bytes)
-                self.diagnostics.native_formulas += 1
-                continue
-            if formula not in self.fallback_cache:
-                self.fallback_cache[formula] = _formula_fallback_png(formula)
-            image_bytes = self.fallback_cache[formula]
-            if image_bytes:
-                run = paragraph.add_run()
-                try:
-                    from PIL import Image
+    def add_mixed(
+        self,
+        paragraph,
+        text: str,
+        size: float = BODY_FONT_SIZE,
+        *,
+        images: list[Path] | None = None,
+        max_image_width: float = 4.8,
+        max_image_height: float = 2.8,
+    ) -> None:
+        image_by_name = {path.name: path for path in (images or []) if path.exists()}
 
-                    image = Image.open(BytesIO(image_bytes))
-                    ratio = image.width / max(image.height, 1)
-                    height = 0.24 if not token.display else 0.34
-                    width = min(6.1, max(0.3, ratio * height))
-                    run.add_picture(BytesIO(image_bytes), width=Inches(width), height=Inches(height))
-                    self.diagnostics.fallback_formulas += 1
+        def add_text(value: str) -> None:
+            for token in tokenize_mixed_content(value):
+                if isinstance(token, BlankToken):
+                    run = paragraph.add_run("\u00a0" * WORD_FILLIN_BLANK_SPACES)
+                    _set_run_font(run, size)
+                    run.underline = True
                     continue
-                except Exception:
-                    pass
-            run = paragraph.add_run(f"[公式待核对：{formula}]")
-            _set_run_font(run, size, color=RGBColor(192, 0, 0))
-            self.diagnostics.failed_formulas += 1
+                if isinstance(token, str):
+                    plain = _clean_plain_text(token)
+                    # 只有当包含小问换行时才保留 \n 软换行，普通单 \n 替换为空格，保持文本紧贴插图流动 (禁用后行断言)
+                    plain_clean = re.sub(r"\n(?!\s*(?:[\(\（][0-9a-zA-Z一二三四五六七八九十]+\s*[\)\）]|[①-⑩]))", " ", plain)
+                    chunks = plain_clean.split("\n")
+                    for index, chunk in enumerate(chunks):
+                        if chunk:
+                            run = paragraph.add_run(chunk)
+                            _set_run_font(run, size)
+                        if index < len(chunks) - 1:
+                            paragraph.add_run().add_break()
+                    continue
+                formula = token.latex
+                xml_bytes = self.omml_map.get(formula)
+                if xml_bytes:
+                    _append_omml(paragraph, xml_bytes)
+                    self.diagnostics.native_formulas += 1
+                    continue
+                if formula not in self.fallback_cache:
+                    self.fallback_cache[formula] = _formula_fallback_png(formula)
+                image_bytes = self.fallback_cache[formula]
+                if image_bytes:
+                    run = paragraph.add_run()
+                    try:
+                        from PIL import Image
+
+                        image = Image.open(BytesIO(image_bytes))
+                        ratio = image.width / max(image.height, 1)
+                        height = 0.24 if not token.display else 0.34
+                        width = min(6.1, max(0.3, ratio * height))
+                        run.add_picture(BytesIO(image_bytes), width=Inches(width), height=Inches(height))
+                        self.diagnostics.fallback_formulas += 1
+                        continue
+                    except Exception:
+                        pass
+                run = paragraph.add_run(f"[公式待核对：{formula}]")
+                _set_run_font(run, size, color=RGBColor(192, 0, 0))
+                self.diagnostics.failed_formulas += 1
+
+        cursor = 0
+        for match in IMAGE_PATTERN.finditer(text or ""):
+            add_text((text or "")[cursor:match.start()])
+            image_path = image_by_name.get(Path(match.group(1)).name)
+            if image_path is not None:
+                self._add_image(
+                    paragraph,
+                    image_path,
+                    max_width=max_image_width,
+                    max_height=max_image_height,
+                )
+            else:
+                self.diagnostics.missing_images += 1
+                self.diagnostics.warnings.append(
+                    f"插图无法写入：{Path(match.group(1)).name}"
+                )
+            cursor = match.end()
+        add_text((text or "")[cursor:])
 
     def add_title_block(
         self,
@@ -825,22 +1016,29 @@ class WordExamBuilder:
     def add_question(self, item: PreparedQuestion, number: int) -> None:
         align = item.question.get("figure_align") or "right"
         usable_images = [path for path in item.images if path.exists()]
-        if usable_images and align == "right" and len(usable_images) == 1:
+        preserve_inline_images = _should_preserve_inline_image_positions(item.stem)
+        anchored_names = {
+            Path(match.group(1)).name
+            for match in IMAGE_PATTERN.finditer(item.stem)
+        } if preserve_inline_images else set()
+        inline_images = [path for path in usable_images if path.name in anchored_names]
+        detached_images = [path for path in usable_images if path.name not in anchored_names]
+        if detached_images and align == "right" and len(detached_images) == 1:
             p = self.doc.add_paragraph()
             self._format_question_paragraph(p, number)
             # 在题干段落首行嵌入四周型右侧文字环绕插图，彻底取消表格容器
-            self._add_floating_right_image(p, usable_images[0], max_width=1.55)
+            self._add_floating_right_image(p, detached_images[0], max_width=1.55)
             # single_paragraph=True 确保全文在同一个 Word 段落中，使文字平滑紧贴图片四周型环绕！
             self._add_content_blocks(p, item.stem, single_paragraph=True)
         else:
             p = self.doc.add_paragraph()
             self._format_question_paragraph(p, number)
-            self._add_content_blocks(p, item.stem)
-            if usable_images:
+            self._add_content_blocks(p, item.stem, images=inline_images)
+            if detached_images:
                 fig_p = self.doc.add_paragraph()
                 fig_p.alignment = WD_ALIGN_PARAGRAPH.RIGHT if align == "bottom_right" else WD_ALIGN_PARAGRAPH.CENTER
-                for path in usable_images:
-                    self._add_image(fig_p, path, max_width=2.35 if len(usable_images) == 1 else 1.85)
+                for path in detached_images:
+                    self._add_image(fig_p, path, max_width=2.35 if len(detached_images) == 1 else 1.85)
 
         if item.choices:
             self.add_choices(item.choices)
@@ -858,34 +1056,63 @@ class WordExamBuilder:
         run = paragraph.add_run(f"{number}. ")
         _set_run_font(run, BODY_FONT_SIZE, bold=True)
 
-    def _add_content_blocks(self, first_paragraph, content: str, parent=None, single_paragraph: bool = False) -> None:
-        parts = re.split(r"\n\s*\n", content.strip()) if content.strip() else [""]
+    def _add_content_blocks(
+        self,
+        first_paragraph,
+        content: str,
+        parent=None,
+        single_paragraph: bool = False,
+        images: list[Path] | None = None,
+    ) -> None:
+        segments = _split_content_segments(content)
         paragraph = first_paragraph
-        for index, part in enumerate(parts):
-            if index:
+        has_output = False
+        for kind, first_value, second_value in segments:
+            if kind == "table":
+                self.add_tabular(
+                    first_value,
+                    second_value,
+                    parent=parent,
+                    images=images,
+                )
+                has_output = True
+                continue
+
+            part = first_value
+            if has_output:
                 if single_paragraph:
                     paragraph.add_run().add_break()
                 else:
                     paragraph = parent.add_paragraph() if parent is not None else self.doc.add_paragraph()
                     paragraph.paragraph_format.first_line_indent = Cm(0.74)
                     paragraph.paragraph_format.space_after = Pt(2)
-            tabular_match = TABULAR_PATTERN.search(part)
-            if tabular_match:
-                before = _clean_plain_text(part[: tabular_match.start()]).strip()
-                after = _clean_plain_text(part[tabular_match.end() :]).strip()
-                if before:
-                    self.add_mixed(paragraph, before)
-                self.add_tabular(tabular_match.group(1), tabular_match.group(2), parent=parent)
-                if after:
-                    following = paragraph if single_paragraph else (parent.add_paragraph() if parent is not None else self.doc.add_paragraph())
-                    self.add_mixed(following, after)
-            else:
-                self.add_mixed(paragraph, part)
+            if IMAGE_PATTERN.fullmatch(part.strip()):
+                paragraph.alignment = WD_ALIGN_PARAGRAPH.CENTER
+            self.add_mixed(paragraph, part, images=images)
+            has_output = True
 
-    def _add_image(self, paragraph, path: Path, max_width: float) -> None:
+    def _add_image(
+        self,
+        paragraph,
+        path: Path,
+        max_width: float,
+        max_height: float | None = None,
+    ) -> None:
         try:
             run = paragraph.add_run()
-            run.add_picture(str(path), width=Inches(max_width))
+            width = max_width
+            height = None
+            if max_height is not None:
+                from PIL import Image
+
+                with Image.open(path) as image:
+                    ratio = image.width / max(image.height, 1)
+                width = min(max_width, max_height * ratio)
+                height = width / max(ratio, 0.01)
+            if height is None:
+                run.add_picture(str(path), width=Inches(width))
+            else:
+                run.add_picture(str(path), width=Inches(width), height=Inches(height))
         except Exception:
             self.diagnostics.missing_images += 1
             self.diagnostics.warnings.append(f"插图无法写入：{path.name}")
@@ -918,14 +1145,54 @@ class WordExamBuilder:
         after = self.doc.add_paragraph()
         after.paragraph_format.space_after = Pt(1)
 
-    def add_tabular(self, column_spec: str, body: str, parent=None) -> None:
+    def add_tabular(
+        self,
+        column_spec: str,
+        body: str,
+        parent=None,
+        images: list[Path] | None = None,
+    ) -> None:
         alignments = [char for char in column_spec if char in "lcr"] or ["c"]
         cleaned = re.sub(r"\\(?:toprule|midrule|bottomrule|hline)\b", "", body)
+        cleaned = re.sub(
+            r"\\(?:cline|cmidrule)(?:\([^)]*\))?\s*\{[^{}]*\}",
+            "",
+            cleaned,
+        )
         raw_rows = [row.strip() for row in re.split(r"\\\\(?:\[[^]]*\])?", cleaned) if row.strip()]
-        parsed_rows = [_split_table_cells(row) for row in raw_rows]
-        if not parsed_rows:
+        source_rows = [
+            [_parse_table_cell(value) for value in _split_table_cells(row)]
+            for row in raw_rows
+        ]
+        if not source_rows:
             return
-        column_count = max(len(alignments), max(len(row) for row in parsed_rows))
+        column_count = min(max(1, len(alignments)), 32)
+        parsed_rows: list[list[TableCellPlacement]] = []
+        for row_index, source_row in enumerate(source_rows):
+            placements: list[TableCellPlacement] = []
+            start_col = 0
+            for source_cell in source_row:
+                if start_col >= column_count:
+                    if source_cell.text:
+                        self.diagnostics.warnings.append(
+                            f"表格第 {row_index + 1} 行超出声明列数，末尾内容未写入。"
+                        )
+                    continue
+                colspan = min(source_cell.colspan, column_count - start_col)
+                rowspan = min(source_cell.rowspan, len(source_rows) - row_index)
+                if colspan != source_cell.colspan or rowspan != source_cell.rowspan:
+                    self.diagnostics.warnings.append(
+                        f"表格第 {row_index + 1} 行合并范围超界，已限制在表格内。"
+                    )
+                safe_cell = TableCellSpec(
+                    text=source_cell.text,
+                    colspan=max(1, colspan),
+                    rowspan=max(1, rowspan),
+                    alignment=source_cell.alignment,
+                )
+                placements.append(TableCellPlacement(safe_cell, start_col))
+                start_col += safe_cell.colspan
+            parsed_rows.append(placements)
         table = (
             parent.add_table(rows=len(parsed_rows), cols=column_count, width=Inches(4.5))
             if parent is not None
@@ -934,19 +1201,98 @@ class WordExamBuilder:
         table.alignment = WD_TABLE_ALIGNMENT.CENTER
         table.autofit = False
         _set_table_borders(table, "7F7F7F", 5)
-        width = 9000 // column_count
+        if column_count == 3:
+            first_column_lengths = [
+                len(_clean_plain_text(placement.cell.text))
+                for row in parsed_rows
+                for placement in row
+                if placement.start_col == 0 and placement.cell.colspan == 1
+            ]
+            later_column_lengths = [
+                len(_clean_plain_text(placement.cell.text))
+                for row in parsed_rows
+                for placement in row
+                if placement.start_col > 0
+            ]
+            use_narrow_first = (
+                max(first_column_lengths, default=0) <= 8
+                and max(later_column_lengths, default=0) > 8
+            )
+        else:
+            use_narrow_first = False
+        column_widths = (
+            [1080, 3960, 3960]
+            if use_narrow_first
+            else [9000 // column_count] * column_count
+        )
+        _set_table_geometry(table, column_widths)
+        if all(placement.cell.rowspan == 1 for placement in parsed_rows[0]):
+            _repeat_table_header(table.rows[0])
+        covered: dict[tuple[int, int], tuple[int, int]] = {}
         for row_index, values in enumerate(parsed_rows):
             row = table.rows[row_index]
             _prevent_row_split(row)
-            for col_index, cell in enumerate(row.cells):
-                _set_cell_width(cell, width)
+            for cell in row.cells:
+                cell.vertical_alignment = WD_CELL_VERTICAL_ALIGNMENT.CENTER
                 _set_cell_margins(cell, 65, 85, 65, 85)
-                if col_index >= len(values):
+
+            for placement in values:
+                value = placement.cell
+                start_col = placement.start_col
+                end_col = start_col + value.colspan - 1
+                end_row = row_index + value.rowspan - 1
+                rectangle = {
+                    (target_row, target_col)
+                    for target_row in range(row_index, end_row + 1)
+                    for target_col in range(start_col, end_col + 1)
+                }
+                conflicts = rectangle.intersection(covered)
+                if conflicts:
+                    if not value.text and rectangle.issubset(covered):
+                        continue
+                    anchor = covered[next(iter(conflicts))]
+                    conflict_cell = table.cell(*anchor)
+                    conflict_paragraph = conflict_cell.paragraphs[0]
+                    if value.text:
+                        conflict_paragraph.add_run().add_break()
+                        self.add_mixed(
+                            conflict_paragraph,
+                            value.text,
+                            SMALL_FONT_SIZE,
+                            images=images,
+                            max_image_width=max(
+                                0.5,
+                                sum(column_widths[start_col:end_col + 1]) / 1440 - 0.2,
+                            ),
+                            max_image_height=1.65,
+                        )
+                        self.diagnostics.warnings.append(
+                            f"表格第 {row_index + 1} 行合并区域冲突，内容已保留在相邻合并格。"
+                        )
                     continue
+                cell = table.cell(row_index, start_col)
+                if end_col > start_col or end_row > row_index:
+                    cell = cell.merge(table.cell(end_row, end_col))
+                    for coordinate in rectangle:
+                        if coordinate != (row_index, start_col):
+                            covered[coordinate] = (row_index, start_col)
+
+                cell.vertical_alignment = WD_CELL_VERTICAL_ALIGNMENT.CENTER
+                _set_cell_margins(cell, 65, 85, 65, 85)
                 p = cell.paragraphs[0]
-                alignment = alignments[min(col_index, len(alignments) - 1)]
+                alignment = value.alignment or alignments[min(start_col, len(alignments) - 1)]
                 p.alignment = {"l": WD_ALIGN_PARAGRAPH.LEFT, "c": WD_ALIGN_PARAGRAPH.CENTER, "r": WD_ALIGN_PARAGRAPH.RIGHT}[alignment]
-                self.add_mixed(p, values[col_index].strip(), SMALL_FONT_SIZE)
+                self.add_mixed(
+                    p,
+                    value.text,
+                    SMALL_FONT_SIZE,
+                    images=images,
+                    max_image_width=max(
+                        0.5,
+                        sum(column_widths[start_col:end_col + 1]) / 1440 - 0.2,
+                    ),
+                    max_image_height=1.65,
+                )
         spacer = parent.add_paragraph() if parent is not None else self.doc.add_paragraph()
         spacer.paragraph_format.space_after = Pt(1)
 
@@ -1052,7 +1398,8 @@ def _prepare_question(item: dict, uploads_dir: str | Path | None) -> PreparedQue
             else:
                 stem_lines.append(line)
         stem = "\n".join(stem_lines).strip()
-    stem = IMAGE_PATTERN.sub("", stem)
+    if not _should_preserve_inline_image_positions(stem):
+        stem = IMAGE_PATTERN.sub("", stem)
     stem = re.sub(r"\\begin\{tikzpicture\}[\s\S]*?\\end\{tikzpicture\}", "", stem).strip()
     answer = question.get("answer_markdown", "") or ""
     answer_clean = IMAGE_PATTERN.sub("", answer)

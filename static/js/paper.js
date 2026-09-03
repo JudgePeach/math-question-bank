@@ -1404,29 +1404,30 @@
                         : (isZero ? 'min-height: 20px;' : `height: ${spacePx}px;`);
 
                     solutionBlankHtml = `
-                        <div class="solution-space-zone relative ${isZero ? 'py-1 my-1 border-b border-dashed border-slate-200 hover:border-sky-300' : 'mt-2 mb-1 rounded-lg border border-dashed border-sky-300/80 bg-sky-50/20'} group/blank transition-all" style="${minHeightStyle}">
+                        <div class="solution-space-zone group/blank relative mt-2 mb-1 ${isZero ? 'py-1 border-b border-dashed border-slate-200 hover:border-sky-300' : 'rounded-lg border border-dashed border-sky-300/80 bg-sky-50/20'} transition-all" data-solution-space-zone-qid="${q ? q.id : 0}" style="${minHeightStyle}">
                             ${embeddedImgContainer}
+                            <!-- Anchor controls to the zone's top edge. They stay out
+                                 of document flow, so preview pagination remains stable. -->
+                            <div class="solution-space-controls absolute right-2 top-2 opacity-0 group-hover/blank:opacity-100 focus-within:opacity-100 transition-opacity flex items-center space-x-1 whitespace-nowrap bg-white/95 backdrop-blur-sm px-2 py-0.5 rounded-lg border border-slate-200 shadow-sm text-[10px] font-sans select-none z-20" data-solution-space-controls-qid="${q ? q.id : 0}">
+                                <span class="text-slate-400 mr-1 font-medium">留白微调:</span>
+                                <button type="button" data-solution-space-delta="-1" onclick="event.stopPropagation(); window.updateQuestionSolutionSpace(${q ? q.id : 0}, -1.0)" class="px-1.5 py-0.5 rounded bg-slate-100 text-slate-700 hover:bg-brand-100 hover:text-brand-700 font-bold transition-all" title="减少 1cm 留白">
+                                    - 1cm
+                                </button>
+                                <button type="button" data-solution-space-delta="-0.5" onclick="event.stopPropagation(); window.updateQuestionSolutionSpace(${q ? q.id : 0}, -0.5)" class="px-1.5 py-0.5 rounded bg-slate-100 text-slate-700 hover:bg-brand-100 hover:text-brand-700 font-bold transition-all" title="减少 0.5cm 留白">
+                                    - 0.5
+                                </button>
+                                <span class="inline-flex w-14 justify-center px-1 font-bold text-brand-600" data-solution-space-value="${q ? q.id : 0}">${solSpaceCm.toFixed(1)} cm</span>
+                                <button type="button" data-solution-space-delta="0.5" onclick="event.stopPropagation(); window.updateQuestionSolutionSpace(${q ? q.id : 0}, 0.5)" class="px-1.5 py-0.5 rounded bg-slate-100 text-slate-700 hover:bg-brand-100 hover:text-brand-700 font-bold transition-all" title="增加 0.5cm 留白">
+                                    + 0.5
+                                </button>
+                                <button type="button" data-solution-space-delta="1" onclick="event.stopPropagation(); window.updateQuestionSolutionSpace(${q ? q.id : 0}, 1.0)" class="px-1.5 py-0.5 rounded bg-slate-100 text-slate-700 hover:bg-brand-100 hover:text-brand-700 font-bold transition-all" title="增加 1cm 留白">
+                                    + 1cm
+                                </button>
+                            </div>
                             <div class="absolute inset-0 flex items-center justify-center pointer-events-none ${isZero ? 'opacity-0 group-hover/blank:opacity-70' : 'opacity-40 group-hover/blank:opacity-80'} transition-opacity">
                                 <span class="text-[10px] font-sans text-sky-700 font-medium tracking-wider select-none">
                                     <i class="fa-solid fa-pen-ruler mr-1"></i> 解答题留白区域 (${solSpaceCm.toFixed(1)} cm)
                                 </span>
-                            </div>
-                            <!-- Inline Controls -->
-                            <div class="absolute right-2 ${isZero ? '-top-1' : 'bottom-2'} opacity-0 group-hover/blank:opacity-100 transition-opacity flex items-center space-x-1 bg-white/95 backdrop-blur-sm px-2 py-0.5 rounded-lg border border-slate-200 shadow-sm text-[10px] font-sans select-none z-20">
-                                <span class="text-slate-400 mr-1 font-medium">留白微调:</span>
-                                <button onclick="event.stopPropagation(); window.updateQuestionSolutionSpace(${q ? q.id : 0}, -1.0)" class="px-1.5 py-0.5 rounded bg-slate-100 text-slate-700 hover:bg-brand-100 hover:text-brand-700 font-bold transition-all" title="减少 1cm 留白">
-                                    - 1cm
-                                </button>
-                                <button onclick="event.stopPropagation(); window.updateQuestionSolutionSpace(${q ? q.id : 0}, -0.5)" class="px-1.5 py-0.5 rounded bg-slate-100 text-slate-700 hover:bg-brand-100 hover:text-brand-700 font-bold transition-all" title="减少 0.5cm 留白">
-                                    - 0.5
-                                </button>
-                                <span class="px-1.5 font-bold text-brand-600">${solSpaceCm.toFixed(1)} cm</span>
-                                <button onclick="event.stopPropagation(); window.updateQuestionSolutionSpace(${q ? q.id : 0}, 0.5)" class="px-1.5 py-0.5 rounded bg-slate-100 text-slate-700 hover:bg-brand-100 hover:text-brand-700 font-bold transition-all" title="增加 0.5cm 留白">
-                                    + 0.5
-                                </button>
-                                <button onclick="event.stopPropagation(); window.updateQuestionSolutionSpace(${q ? q.id : 0}, 1.0)" class="px-1.5 py-0.5 rounded bg-slate-100 text-slate-700 hover:bg-brand-100 hover:text-brand-700 font-bold transition-all" title="增加 1cm 留白">
-                                    + 1cm
-                                </button>
                             </div>
                         </div>
                     `;
@@ -1704,10 +1705,59 @@
     };
 
     // Solution Space Handlers
+    function restoreSolutionSpaceControlViewport(qid, anchorTop, activeDelta) {
+        if (!Number.isFinite(anchorTop)) return;
+
+        const restoreAnchor = () => {
+            const nextControl = document.querySelector(`[data-solution-space-controls-qid="${qid}"]`);
+            if (!nextControl) return;
+            const shift = nextControl.getBoundingClientRect().top - anchorTop;
+            if (Math.abs(shift) > 0.5) {
+                let scrollParent = nextControl.parentElement;
+                while (scrollParent) {
+                    const style = window.getComputedStyle(scrollParent);
+                    const canScroll = /(auto|scroll)/.test(style.overflowY || '') &&
+                        scrollParent.scrollHeight > scrollParent.clientHeight + 1;
+                    if (canScroll) {
+                        scrollParent.scrollTop += shift;
+                        break;
+                    }
+                    scrollParent = scrollParent.parentElement;
+                }
+            }
+            if (activeDelta !== null && activeDelta !== undefined) {
+                const nextButton = Array.from(
+                    nextControl.querySelectorAll('[data-solution-space-delta]')
+                ).find(button => button.getAttribute('data-solution-space-delta') === String(activeDelta));
+                if (nextButton) nextButton.focus({ preventScroll: true });
+            }
+        };
+
+        // renderPaperCanvas schedules its own scroll restoration. Queue this
+        // anchor correction afterwards, then repeat once for late layout.
+        if (typeof requestAnimationFrame === 'function') {
+            requestAnimationFrame(() => {
+                restoreAnchor();
+                requestAnimationFrame(restoreAnchor);
+            });
+        } else {
+            restoreAnchor();
+        }
+    }
+
     window.updateQuestionSolutionSpace = function (qid, delta) {
         qid = parseInt(qid, 10);
         const item = window.PaperStore.cart.find(it => it.id === qid);
         if (!item) return;
+        const currentControl = document.querySelector(
+            `[data-solution-space-controls-qid="${qid}"]`
+        );
+        const anchorTop = currentControl
+            ? currentControl.getBoundingClientRect().top
+            : Number.NaN;
+        const activeDelta = currentControl && currentControl.contains(document.activeElement)
+            ? document.activeElement.getAttribute('data-solution-space-delta')
+            : null;
         const defaultSpace = parseFloat(window.PaperStore.meta.solution_space_default || '7.0');
         let currentSpace = parseFloat(item.solution_space !== undefined ? item.solution_space : defaultSpace);
         if (isNaN(currentSpace)) currentSpace = 7.0;
@@ -1716,6 +1766,7 @@
         item.solution_space = newSpace.toFixed(1);
         saveCartToStorage();
         window.renderPaperCanvas();
+        restoreSolutionSpaceControlViewport(qid, anchorTop, activeDelta);
         const q = window.PaperStore.questionsMap[qid];
         const seqNum = (q && q.seq_num !== undefined) ? q.seq_num : qid;
         if (window.showToast) window.showToast(`题目 #${seqNum} 留白高度设为 ${newSpace.toFixed(1)} cm`, 'info');
@@ -2785,6 +2836,24 @@
         };
     }
 
+    function shouldPreserveInlinePaperImages(raw) {
+        const source = String(raw || '');
+        const imagePattern = /!\[.*?\]\(([^)]+)\)/g;
+        const matches = [...source.matchAll(imagePattern)];
+        if (matches.length === 0) return false;
+
+        // A trailing image (or a trailing cluster of images) is the legacy
+        // detachable figure layout controlled by figure_align.  As soon as
+        // authored content continues after the first image, the image is an
+        // inline document anchor.  This includes images inside tabular cells,
+        // between sub-questions, and before captions or explanatory text.
+        const firstImageIndex = matches[0].index || 0;
+        const trailingContent = source.slice(firstImageIndex)
+            .replace(imagePattern, '')
+            .trim();
+        return trailingContent.length > 0;
+    }
+
     function formatQuestionContentHtml(raw, qid = null, figAlign = 'right', embedInSolSpace = false, showControls = true) {
         if (!raw) return embedInSolSpace ? { stemHtml: '', imgHtml: null } : '';
         let html = String(raw).trim();
@@ -2798,6 +2867,20 @@
             } else {
                 html = window.cleanChoiceStemParentheses(html);
             }
+        }
+
+        if (shouldPreserveInlinePaperImages(html)) {
+            const inlineHtml = typeof window.parseMarkdownWithMath === 'function'
+                ? window.parseMarkdownWithMath(html)
+                : window.MathBankSafe.sanitizeRichHtml(html);
+            if (embedInSolSpace) {
+                return {
+                    stemHtml: `<div>${inlineHtml}</div>`,
+                    imgHtml: null,
+                    figAlign: figAlign
+                };
+            }
+            return inlineHtml;
         }
 
         // 1. Extract ALL Markdown image syntaxes ![](/static/uploads/xxx.png) BEFORE KaTeX processing

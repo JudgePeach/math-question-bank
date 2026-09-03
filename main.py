@@ -158,8 +158,17 @@ from mathbank.asset_security import (
 load_dotenv(ENV_FILE)
 harden_private_path(ENV_FILE)
 
-# Unique server instance ID generated per process launch/restart
-SERVER_INSTANCE_ID = str(uuid.uuid4())
+# The Windows launcher injects an unguessable UUID hex value and binds its
+# health/shutdown checks to the exact child it created.  Reject arbitrary
+# environment text because this value is also embedded into the local HTML.
+_ENV_LAUNCH_ID = os.environ.get("MATHBANK_LAUNCH_ID", "").strip().lower()
+SERVER_INSTANCE_ID = (
+    _ENV_LAUNCH_ID
+    if re.fullmatch(r"[0-9a-f]{32}", _ENV_LAUNCH_ID)
+    else uuid.uuid4().hex
+)
+_SHUTDOWN_SCHEDULED = threading.Event()
+_SHUTDOWN_SCHEDULE_LOCK = threading.Lock()
 
 # Hold an OS-backed project lock before the first database access.  The restore
 # CLI takes the same lock, so a manually started uvicorn process is protected
@@ -444,8 +453,8 @@ def watchdog_loop():
         elapsed = time.time() - LAST_ACTIVE_TIME
         if elapsed > TIMEOUT_LIMIT:
             print(f"[Watchdog] 检测到网页已关闭且超过 1 小时无任何动作 (已静默 {int(elapsed)} 秒)，正在自动安全关闭题库程序...")
-            # 优雅向自身发送 SIGINT 信号退出
-            os.kill(os.getpid(), signal.SIGINT)
+            # 进程内触发 SIGINT，让 uvicorn 执行正常 lifespan 关闭。
+            signal.raise_signal(signal.SIGINT)
             break
 
 # 启动看门狗后台守护线程 (daemon=True 确保主线程消亡时其也随之释放)
@@ -617,6 +626,7 @@ def get_seq_mapping(db: Session, question_ids=None):
 @app.get("/healthz", include_in_schema=False)
 def healthz():
     report = readiness_report(engine)
+    report["server_instance_id"] = SERVER_INSTANCE_ID
     return JSONResponse(report, status_code=200 if report["ready"] else 503)
 
 @app.get("/")
@@ -1676,7 +1686,8 @@ def get_version_info():
     return {
         "current_version": __version__,
         "repo": GITHUB_REPO,
-        "is_git_repo": is_git_repo
+        "is_git_repo": is_git_repo,
+        "server_instance_id": SERVER_INSTANCE_ID,
     }
 
 @app.get("/api/version/check-update")
@@ -4286,15 +4297,41 @@ def get_sources(db: Session = Depends(get_db)):
     return sources
 
 @app.post("/api/shutdown")
-def shutdown_server():
-    import signal
-    def stop_server():
-        import time
-        time.sleep(0.5)
-        os.kill(os.getpid(), signal.SIGINT)
+def shutdown_server(
+    x_mathbank_launch_id: str | None = Header(
+        None, alias="X-MathBank-Launch-ID"
+    ),
+):
+    if not x_mathbank_launch_id or not secrets.compare_digest(
+        x_mathbank_launch_id, SERVER_INSTANCE_ID
+    ):
+        raise HTTPException(status_code=409, detail="Server instance changed")
 
-    import threading
-    threading.Thread(target=stop_server).start()
+    def stop_server():
+        time.sleep(0.5)
+        # Raising SIGINT inside this process lets uvicorn's installed handler
+        # run its normal lifespan shutdown.  On Windows, os.kill(SIGINT) would
+        # call TerminateProcess instead of delivering a cooperative console
+        # control event.
+        try:
+            signal.raise_signal(signal.SIGINT)
+        except Exception as exc:
+            _SHUTDOWN_SCHEDULED.clear()
+            print(f"[shutdown] Failed to raise cooperative SIGINT: {exc}")
+
+    with _SHUTDOWN_SCHEDULE_LOCK:
+        if _SHUTDOWN_SCHEDULED.is_set():
+            return {
+                "status": "already_stopping",
+                "message": "题库系统已在关闭中...",
+            }
+        _SHUTDOWN_SCHEDULED.set()
+        worker = threading.Thread(target=stop_server, daemon=True)
+        try:
+            worker.start()
+        except Exception:
+            _SHUTDOWN_SCHEDULED.clear()
+            raise
     
     return {"status": "success", "message": "题库系统正在关闭中..."}
 

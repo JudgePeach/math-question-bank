@@ -889,6 +889,22 @@ def test_parsed_question_imports_use_question_identity_and_generation():
     assert "parsedQuestionSaveInFlight.delete(q)" in save_source
 
 
+def test_shutdown_request_is_bound_to_the_rendered_server_instance():
+    api_source = _read(STATIC_JS_DIR / "api.js")
+    shutdown_start = api_source.index("function confirmShutdown()")
+    shutdown_end = api_source.index(
+        "// --- TIKU DATABASE STATISTICS PANEL CONTROLLERS ---",
+        shutdown_start,
+    )
+    shutdown_source = api_source[shutdown_start:shutdown_end]
+
+    assert "'/api/shutdown'" in shutdown_source
+    assert "'X-MathBank-Launch-ID'" in shutdown_source
+    assert "window.__serverInstanceId || ''" in shutdown_source
+    assert "if (!response.ok)" in shutdown_source
+    assert "overlay.remove()" in shutdown_source
+
+
 def test_duplicate_checks_are_click_triggered_snapshot_bound_and_explicitly_overridden():
     import_source = _read(STATIC_JS_DIR / "import.js")
 

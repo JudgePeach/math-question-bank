@@ -196,7 +196,10 @@ def test_configure_sqlite_wal_fails_when_delete_fallback_also_fails(tmp_path):
 
 
 def test_healthz_endpoint_is_lightweight_and_ready(client):
+    from main import SERVER_INSTANCE_ID
+
     response = client.get("/healthz")
 
     assert response.status_code == 200
     assert response.json()["status"] == "ready"
+    assert response.json()["server_instance_id"] == SERVER_INSTANCE_ID

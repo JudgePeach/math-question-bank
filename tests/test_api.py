@@ -1,11 +1,12 @@
 import base64
 import os
 import json
+import signal
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import pytest
-from main import LOCAL_TOKEN
+from main import LOCAL_TOKEN, SERVER_INSTANCE_ID
 from mathbank.database import Question
 
 def test_api_forbidden_without_token(client):
@@ -14,6 +15,66 @@ def test_api_forbidden_without_token(client):
     assert response.status_code == 403
     assert response.json()["status"] == "error"
     assert "Forbidden" in response.json()["message"]
+
+
+def test_shutdown_rejects_a_different_server_instance(client):
+    response = client.post(
+        "/api/shutdown",
+        headers={
+            "X-Local-Token": LOCAL_TOKEN,
+            "X-MathBank-Launch-ID": "different-instance",
+        },
+    )
+
+    assert response.status_code == 409
+    assert response.json()["detail"] == "Server instance changed"
+
+
+def test_shutdown_requires_a_server_instance_header(client):
+    response = client.post(
+        "/api/shutdown",
+        headers={"X-Local-Token": LOCAL_TOKEN},
+    )
+
+    assert response.status_code == 409
+    assert response.json()["detail"] == "Server instance changed"
+
+
+def test_shutdown_accepts_current_instance_and_schedules_daemon_thread(client):
+    from main import _SHUTDOWN_SCHEDULED
+
+    _SHUTDOWN_SCHEDULED.clear()
+    try:
+        with patch("main.threading.Thread") as thread_class:
+            response = client.post(
+                "/api/shutdown",
+                headers={
+                    "X-Local-Token": LOCAL_TOKEN,
+                    "X-MathBank-Launch-ID": SERVER_INSTANCE_ID,
+                },
+            )
+
+            repeated = client.post(
+                "/api/shutdown",
+                headers={
+                    "X-Local-Token": LOCAL_TOKEN,
+                    "X-MathBank-Launch-ID": SERVER_INSTANCE_ID,
+                },
+            )
+    finally:
+        _SHUTDOWN_SCHEDULED.clear()
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "success"
+    assert repeated.status_code == 200
+    assert repeated.json()["status"] == "already_stopping"
+    thread_class.assert_called_once()
+    assert thread_class.call_args.kwargs["daemon"] is True
+    thread_class.return_value.start.assert_called_once_with()
+    scheduled_target = thread_class.call_args.kwargs["target"]
+    with patch("main.time.sleep"), patch("main.signal.raise_signal") as raise_signal:
+        scheduled_target()
+    raise_signal.assert_called_once_with(signal.SIGINT)
 
 
 def test_api_settings_get(client):
@@ -664,6 +725,7 @@ def test_version_and_update_check_api(client):
     data_ver = res_ver.json()
     assert "current_version" in data_ver
     assert data_ver["repo"] == "JudgePeach/math-question-bank"
+    assert data_ver["server_instance_id"] == SERVER_INSTANCE_ID
 
     # 3. Test GET /api/version/check-update with mocked GitHub response
     mock_resp = MagicMock()

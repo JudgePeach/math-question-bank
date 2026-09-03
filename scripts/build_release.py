@@ -175,6 +175,7 @@ OVERLAY_MANAGED_ROOTS = (
     "templates",
 )
 WINDOWS_LAUNCHER_NAME = "启动题库系统.bat"
+WINDOWS_LAUNCHER_HELPER = "scripts/windows_launcher.py"
 
 
 def sha256_file(path):
@@ -643,12 +644,13 @@ def create_launcher():
     launcher_destination = Path(BUILD_DIR, launcher_source.name)
     if not launcher_source.is_file():
         raise RuntimeError(f"missing Windows launcher: {launcher_source}")
-    try:
-        launcher_text = launcher_source.read_text(encoding="utf-8")
-    except UnicodeDecodeError as exc:
-        raise RuntimeError("Windows launcher must be UTF-8 text") from exc
-    if launcher_text.startswith("\ufeff"):
+    launcher_payload = launcher_source.read_bytes()
+    if launcher_payload.startswith(b"\xef\xbb\xbf"):
         raise RuntimeError("Windows launcher must not contain a UTF-8 BOM")
+    try:
+        launcher_text = launcher_payload.decode("ascii")
+    except UnicodeDecodeError as exc:
+        raise RuntimeError("Windows launcher must contain ASCII bytes only") from exc
     launcher_destination.parent.mkdir(parents=True, exist_ok=True)
     normalized_text = launcher_text.replace("\r\n", "\n").replace("\r", "\n")
     launcher_destination.write_bytes(
@@ -663,10 +665,8 @@ def _validate_windows_launcher_bytes(payload, label):
         raise RuntimeError(f"{label} is empty")
     if payload.startswith(b"\xef\xbb\xbf"):
         raise RuntimeError(f"{label} must not contain a UTF-8 BOM")
-    try:
-        payload.decode("utf-8")
-    except UnicodeDecodeError as exc:
-        raise RuntimeError(f"{label} must be UTF-8 text") from exc
+    if not payload.isascii():
+        raise RuntimeError(f"{label} must contain ASCII bytes only")
     remaining = payload.replace(b"\r\n", b"")
     if b"\r" in remaining or b"\n" in remaining or not payload.endswith(b"\r\n"):
         raise RuntimeError(f"{label} must use CRLF line endings only")
@@ -706,6 +706,7 @@ def assert_release_tree_clean(root, platform_name):
                 *(f"python/{name}" for name in MSVC_RUNTIME_DLLS),
                 f"python/{MSVC_RUNTIME_NOTICE_NAME}",
                 "启动题库系统.bat",
+                WINDOWS_LAUNCHER_HELPER,
             }
         )
     elif platform_name == "macos":
@@ -958,6 +959,11 @@ def verify_zip_archive(zip_path, required_members):
             if launcher_info.create_system == 3 and not unix_mode & 0o111:
                 raise RuntimeError("finished macOS launcher is not executable")
         else:
+            if WINDOWS_LAUNCHER_HELPER not in names:
+                raise RuntimeError(
+                    "finished Windows release has no launcher helper: "
+                    + WINDOWS_LAUNCHER_HELPER
+                )
             runtime_members = {
                 *(f"python/{name}" for name in MSVC_RUNTIME_DLLS),
                 f"python/{MSVC_RUNTIME_NOTICE_NAME}",
@@ -1080,6 +1086,7 @@ def _build_archive(staging_root, archive_stem, platform_name, launcher_name):
             "覆盖升级说明.txt",
         }
         if platform_name == "windows-x64":
+            required_members.add(WINDOWS_LAUNCHER_HELPER)
             required_members.update(
                 f"python/{name}" for name in MSVC_RUNTIME_DLLS
             )

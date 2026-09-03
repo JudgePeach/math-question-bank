@@ -294,6 +294,105 @@ if (!result.choicesRaw.startsWith(String.raw`\begin{choices}`) || !result.choice
     assert ".paper-choice-options-row" in css_source
 
 
+def test_paper_preview_preserves_images_at_authored_complex_content_positions():
+    paper_source = _read(STATIC_JS_DIR / "paper.js")
+    helper_start = paper_source.index(
+        "function shouldPreserveInlinePaperImages(raw)"
+    )
+    helper_end = paper_source.index("// Init on DOMContentLoaded", helper_start)
+    helper_source = paper_source[helper_start:helper_end]
+
+    node = shutil.which("node")
+    assert node, "Node.js is required for the frontend executable regression"
+    script = helper_source + r'''
+global.window = {
+  parseMarkdownWithMath: value => value,
+  MathBankSafe: {
+    safeImageUrl: value => value,
+    escapeAttribute: value => value,
+    sanitizeRichHtml: value => value
+  }
+};
+
+const complex = String.raw`【课本回顾】
+![](/static/uploads/fig12.png)
+
+【知识探究】
+\begin{tabular}{|c|c|c|}
+ & 思路一 & 思路二 \\
+\multirow{2}{*}{第一步} & 证明一 & 证明二 \\
+ & 推导一 & 推导二 \\
+图形表达 & ![](/static/uploads/fig3.png) & ![](/static/uploads/fig4.png) \\
+\end{tabular}`;
+const rendered = formatQuestionContentHtml(complex, 42, 'right', false, true);
+const first = rendered.indexOf('/static/uploads/fig12.png');
+const table = rendered.indexOf(String.raw`\begin{tabular}`);
+const third = rendered.indexOf('/static/uploads/fig3.png');
+const fourth = rendered.indexOf('/static/uploads/fig4.png');
+const tableEnd = rendered.indexOf(String.raw`\end{tabular}`);
+if (!(first >= 0 && first < table && table < third && third < fourth && fourth < tableEnd)) {
+  throw new Error(`complex image anchors changed: ${rendered}`);
+}
+if (rendered.includes('data-figure-align-qid')) {
+  throw new Error(`inline images were converted into a detached figure group: ${rendered}`);
+}
+
+const simple = String.raw`普通右图题
+
+![](/static/uploads/graph.png)`;
+const simpleRendered = formatQuestionContentHtml(simple, 43, 'right', false, true);
+if (!simpleRendered.includes('data-figure-align-qid="43"')) {
+  throw new Error(`legacy trailing figure layout was not preserved: ${simpleRendered}`);
+}
+'''
+    result = subprocess.run(
+        [node, "-e", script],
+        cwd=PROJECT_ROOT,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
+
+
+def test_solution_space_controls_stay_at_the_resizable_zone_top():
+    paper_source = _read(STATIC_JS_DIR / "paper.js")
+    block_start = paper_source.index("solutionBlankHtml = `")
+    block_end = paper_source.index("const itemHtml = `", block_start)
+    block_source = paper_source[block_start:block_end]
+
+    zone_position = block_source.index("solution-space-zone")
+    controls_position = block_source.index("solution-space-controls", zone_position)
+    assert zone_position < controls_position
+    assert 'data-solution-space-controls-qid=' in block_source
+    assert 'data-solution-space-zone-qid=' in block_source
+    assert 'data-solution-space-delta="-1"' in block_source
+    assert 'data-solution-space-delta="-0.5"' in block_source
+    assert 'data-solution-space-delta="0.5"' in block_source
+    assert 'data-solution-space-delta="1"' in block_source
+    assert 'inline-flex w-14 justify-center' in block_source
+
+    controls_source = block_source[controls_position:]
+    assert "absolute right-2 top-2" in controls_source
+    assert "bottom-2" not in controls_source
+    assert "min-h-[32px]" not in block_source
+
+    handler_start = paper_source.index(
+        "function restoreSolutionSpaceControlViewport(qid, anchorTop, activeDelta)"
+    )
+    handler_end = paper_source.index(
+        "window.updateGlobalSolutionSpace", handler_start
+    )
+    handler_source = paper_source[handler_start:handler_end]
+    assert "getBoundingClientRect().top" in handler_source
+    assert "scrollParent.scrollTop += shift" in handler_source
+    assert "requestAnimationFrame(restoreAnchor)" in handler_source
+    assert "nextButton.focus({ preventScroll: true })" in handler_source
+    assert handler_source.index("window.renderPaperCanvas()") < handler_source.rindex(
+        "restoreSolutionSpaceControlViewport(qid, anchorTop, activeDelta)"
+    )
+
+
 def test_static_dialogs_expose_modal_semantics_and_accessible_names():
     elements = _index_elements()
     labelled_dialogs = {

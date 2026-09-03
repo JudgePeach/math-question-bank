@@ -59,12 +59,206 @@ jobs:
       - name: Install guard-test runner
         run: python -m pip install --disable-pip-version-check pytest==9.0.3
       - name: Run Release and launcher guard tests without app conftest
-        run: python -m pytest --noconftest tests/test_release_hardening.py
-      - name: Build and import-smoke the embedded Windows runtime
+        run: python -m pytest --noconftest tests/test_release_hardening.py tests/test_windows_launcher.py
+      - name: Build, package, and import-smoke the embedded Windows runtime
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
-          python -c "from scripts import build_release as b; b.clean_directories(); b.download_python(); b.download_and_extract_sqlite(); b.download_and_extract_msvc_runtime(); b.configure_python_path(); b.download_and_extract_wheels(); b.copy_app_files(b.BUILD_DIR, b.WINDOWS_LAUNCHER_NAME); b.create_launcher(); b.validate_windows_runtime(b.BUILD_DIR)"
+          python -c "from scripts import build_release as b; b.clean_directories(); b.download_python(); b.download_and_extract_sqlite(); b.download_and_extract_msvc_runtime(); b.configure_python_path(); b.download_and_extract_wheels(); b.copy_app_files(b.BUILD_DIR, b.WINDOWS_LAUNCHER_NAME); b.create_launcher(); b.validate_windows_runtime(b.BUILD_DIR); b.zip_release()"
+      - name: Run the packaged BAT stale-state regression in a Unicode path
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $archive = Join-Path $PWD 'dist\MathBank-Windows-x64.zip'
+          if (-not (Test-Path -LiteralPath $archive -PathType Leaf)) {
+            throw "Missing packaged Windows archive: $archive"
+          }
+
+          $testRoot = Join-Path $env:RUNNER_TEMP (
+            'MathBank 中文 空格 回归-' + [Guid]::NewGuid().ToString('N')
+          )
+          New-Item -ItemType Directory -Path $testRoot | Out-Null
+          Expand-Archive -LiteralPath $archive -DestinationPath $testRoot
+
+          $sleeper = Start-Process `
+            -FilePath "$env:WINDIR\System32\WindowsPowerShell\v1.0\powershell.exe" `
+            -ArgumentList @(
+              '-NoLogo',
+              '-NoProfile',
+              '-NonInteractive',
+              '-Command',
+              'Start-Sleep -Seconds 300'
+            ) `
+            -PassThru
+          try {
+            $process = Get-CimInstance Win32_Process -Filter "ProcessId=$($sleeper.Id)"
+            if ($null -eq $process) {
+              throw 'The harmless sleeper process was not available to CIM.'
+            }
+            $actualCreationTicks = $process.CreationDate.ToUniversalTime().Ticks
+
+            $stateDirectory = Join-Path $testRoot '.system_generated'
+            New-Item -ItemType Directory -Path $stateDirectory | Out-Null
+            $statePath = Join-Path $stateDirectory 'server-state.json'
+            $state = [ordered]@{
+              schema = 1
+              pid = $sleeper.Id
+              creation_ticks = $actualCreationTicks + [Int64]10000000
+              root = $testRoot
+              executable = (Join-Path $testRoot 'python\python.exe')
+              command = @(
+                (Join-Path $testRoot 'python\python.exe'),
+                '-u', '-m', 'uvicorn', 'main:app',
+                '--host', '127.0.0.1', '--port', '8000'
+              )
+              launch_id = [Guid]::NewGuid().ToString('N')
+            }
+            $utf8WithoutBom = New-Object System.Text.UTF8Encoding($false)
+            [IO.File]::WriteAllText(
+              $statePath,
+              ($state | ConvertTo-Json -Depth 4),
+              $utf8WithoutBom
+            )
+
+            $launcher = Join-Path $testRoot '启动题库系统.bat'
+            $env:MATHBANK_NO_PAUSE = '1'
+            $output = & $env:ComSpec /d /s /c `
+              ('""{0}" --self-test-stale-state"' -f $launcher) 2>&1 | Out-String
+            $launcherExitCode = $LASTEXITCODE
+            Write-Host $output
+
+            if ($launcherExitCode -ne 0) {
+              throw "Packaged BAT stale-state regression failed with exit code $launcherExitCode."
+            }
+            if ($output.Contains("��")) {
+              throw 'Packaged BAT output contains Unicode replacement characters.'
+            }
+            if ($output -match '(?i)is not recognized as an internal or external command') {
+              throw 'cmd.exe parsed part of the packaged BAT output as a command.'
+            }
+
+            $sleeper.Refresh()
+            if ($sleeper.HasExited) {
+              throw 'The launcher terminated the unrelated sleeper process.'
+            }
+            if (Test-Path -LiteralPath $statePath) {
+              throw 'The proven-stale state was not isolated.'
+            }
+            $isolatedStates = @(
+              Get-ChildItem -LiteralPath $stateDirectory `
+                -Filter 'stale-launcher-state-*.json' `
+                -File
+            )
+            if ($isolatedStates.Count -ne 1) {
+              throw "Expected one isolated stale state, found $($isolatedStates.Count)."
+            }
+          }
+          finally {
+            $sleeper.Refresh()
+            if (-not $sleeper.HasExited) {
+              $sleeper.Kill()
+              $sleeper.WaitForExit()
+            }
+          }
+      - name: Start, health-check, and restart the packaged Windows service
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $archive = Join-Path $PWD 'dist\MathBank-Windows-x64.zip'
+          $testRoot = Join-Path $env:RUNNER_TEMP (
+            'MathBank 中文 空格 启动-' + [Guid]::NewGuid().ToString('N')
+          )
+          New-Item -ItemType Directory -Path $testRoot | Out-Null
+          Expand-Archive -LiteralPath $archive -DestinationPath $testRoot
+          $launcher = Join-Path $testRoot '启动题库系统.bat'
+          $statePath = Join-Path $testRoot '.system_generated\server-state.json'
+          $env:MATHBANK_NO_PAUSE = '1'
+          $env:MATHBANK_NO_BROWSER = '1'
+
+          function Invoke-PackagedLauncher {
+            $output = & $env:ComSpec /d /s /c ('""{0}""' -f $launcher) `
+              2>&1 | Out-String
+            $exitCode = $LASTEXITCODE
+            Write-Host $output
+            if ($exitCode -ne 0) {
+              throw "Packaged launcher failed with exit code $exitCode."
+            }
+            if ($output.Contains("��")) {
+              throw 'Packaged launcher output contains Unicode replacement characters.'
+            }
+            if ($output -match '(?i)is not recognized as an internal or external command') {
+              throw 'cmd.exe parsed part of the packaged launcher output as a command.'
+            }
+          }
+
+          try {
+            Invoke-PackagedLauncher
+            $first = Get-Content -LiteralPath $statePath -Raw | ConvertFrom-Json
+            if ($null -eq (Get-Process -Id ([int]$first.pid) -ErrorAction SilentlyContinue)) {
+              throw 'The first packaged service process is not running.'
+            }
+
+            Invoke-PackagedLauncher
+            $second = Get-Content -LiteralPath $statePath -Raw | ConvertFrom-Json
+            if ([int]$second.pid -eq [int]$first.pid) {
+              throw 'The packaged restart did not create a new process instance.'
+            }
+            if ($null -ne (Get-Process -Id ([int]$first.pid) -ErrorAction SilentlyContinue)) {
+              throw 'The first packaged service did not exit cooperatively.'
+            }
+            if ($null -eq (Get-Process -Id ([int]$second.pid) -ErrorAction SilentlyContinue)) {
+              throw 'The restarted packaged service is not running.'
+            }
+
+            $request = [Net.HttpWebRequest]::Create('http://127.0.0.1:8000/healthz')
+            $request.Proxy = $null
+            $request.KeepAlive = $false
+            $request.Timeout = 2000
+            $response = $request.GetResponse()
+            $reader = New-Object IO.StreamReader($response.GetResponseStream())
+            $health = ($reader.ReadToEnd() | ConvertFrom-Json)
+            $response.Close()
+            if ([string]$health.server_instance_id -ne [string]$second.launch_id) {
+              throw 'Health response is not bound to the restarted launch ID.'
+            }
+          }
+          finally {
+            if (Test-Path -LiteralPath $statePath -PathType Leaf) {
+              try {
+                $state = Get-Content -LiteralPath $statePath -Raw | ConvertFrom-Json
+                $token = (Get-Content -LiteralPath (
+                  Join-Path $testRoot '.system_generated\local_token'
+                ) -Raw).Trim()
+                $request = [Net.HttpWebRequest]::Create(
+                  'http://127.0.0.1:8000/api/shutdown'
+                )
+                $request.Proxy = $null
+                $request.KeepAlive = $false
+                $request.Timeout = 2000
+                $request.Method = 'POST'
+                $request.Headers.Add('X-Local-Token', $token)
+                $request.Headers.Add('X-MathBank-Launch-ID', [string]$state.launch_id)
+                $request.ContentLength = 0
+                $shutdownResponse = $request.GetResponse()
+                $shutdownResponse.Close()
+                for ($attempt = 0; $attempt -lt 20; $attempt++) {
+                  Start-Sleep -Milliseconds 250
+                  if ($null -eq (Get-Process -Id ([int]$state.pid) -ErrorAction SilentlyContinue)) {
+                    break
+                  }
+                }
+                if ($null -ne (Get-Process -Id ([int]$state.pid) -ErrorAction SilentlyContinue)) {
+                  throw 'The restarted service did not exit cooperatively during cleanup.'
+                }
+              }
+              catch {
+                Write-Error "Cooperative CI cleanup failed: $($_.Exception.Message)"
+              }
+            }
+            Remove-Item -LiteralPath $testRoot -Recurse -Force -ErrorAction SilentlyContinue
+          }
       - name: Parse macOS launcher
         if: runner.os == 'macOS'
         shell: bash

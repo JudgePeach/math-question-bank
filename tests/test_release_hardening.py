@@ -371,15 +371,31 @@ def test_windows_launcher_builder_forces_crlf_on_every_host(tmp_path, monkeypatc
     build_release.validate_windows_launcher(built_launcher)
 
 
+def test_windows_launcher_builder_rejects_non_ascii_source(tmp_path, monkeypatch):
+    source_root = tmp_path / "source"
+    source_root.mkdir()
+    (source_root / build_release.WINDOWS_LAUNCHER_NAME).write_bytes(
+        "@echo off\necho 启动\n".encode("utf-8")
+    )
+    monkeypatch.setattr(build_release, "BASE_DIR", str(source_root))
+    monkeypatch.setattr(build_release, "BUILD_DIR", str(tmp_path / "build"))
+
+    with pytest.raises(RuntimeError, match="ASCII bytes only"):
+        build_release.create_launcher()
+
+
 @pytest.mark.parametrize(
     "payload",
     [
         b"@echo off\nexit /b 0\n",
         b"@echo off\r\nexit /b 0\n",
         b"\xef\xbb\xbf@echo off\r\nexit /b 0\r\n",
+        "@echo off\r\necho 启动\r\n".encode("utf-8"),
     ],
 )
-def test_windows_launcher_guard_rejects_lf_mixed_and_bom(tmp_path, payload):
+def test_windows_launcher_guard_rejects_lf_mixed_bom_and_non_ascii(
+    tmp_path, payload
+):
     launcher = tmp_path / build_release.WINDOWS_LAUNCHER_NAME
     launcher.write_bytes(payload)
     with pytest.raises(RuntimeError):
@@ -392,6 +408,31 @@ def test_windows_launcher_source_is_crlf_and_gitattributes_preserves_it():
     build_release.validate_windows_launcher(
         PROJECT_ROOT / build_release.WINDOWS_LAUNCHER_NAME
     )
+
+
+def test_windows_launcher_is_ascii_thin_wrapper():
+    payload = (PROJECT_ROOT / build_release.WINDOWS_LAUNCHER_NAME).read_bytes()
+
+    assert not payload.startswith(b"\xef\xbb\xbf")
+    assert payload.isascii()
+    assert payload.endswith(b"\r\n")
+    assert b"\r" not in payload.replace(b"\r\n", b"")
+    assert b"\n" not in payload.replace(b"\r\n", b"")
+    assert b"-B -m scripts.windows_launcher" in payload
+
+
+def test_windows_launcher_helper_exists_and_imports():
+    helper = PROJECT_ROOT / "scripts" / "windows_launcher.py"
+    assert helper.is_file()
+
+    result = subprocess.run(
+        [sys.executable, "-B", "-c", "import scripts.windows_launcher"],
+        cwd=PROJECT_ROOT,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
 
 
 def test_paper_helper_direct_import_is_safe_with_legacy_windows_stdio():
@@ -445,7 +486,7 @@ import mathbank.paper_helper
     assert result.stdout == b""
 
 
-def _make_minimal_windows_tree(root):
+def _make_minimal_windows_tree(root, *, include_launcher_helper=True):
     for relative_path in (
         "main.py",
         "requirements.txt",
@@ -465,6 +506,8 @@ def _make_minimal_windows_tree(root):
     (root / build_release.WINDOWS_LAUNCHER_NAME).write_bytes(
         b"@echo off\r\nexit /b 0\r\n"
     )
+    if include_launcher_helper:
+        (root / build_release.WINDOWS_LAUNCHER_HELPER).write_bytes(b"pass\n")
 
 
 def test_finished_windows_archive_revalidates_crlf_launcher(tmp_path):
@@ -480,7 +523,12 @@ def test_finished_windows_archive_revalidates_crlf_launcher(tmp_path):
 
     with zipfile.ZipFile(archive_path, "r") as archive:
         payload = archive.read(build_release.WINDOWS_LAUNCHER_NAME)
+        manifest = json.loads(archive.read("RELEASE-MANIFEST.json"))
     assert payload == b"@echo off\r\nexit /b 0\r\n"
+    assert build_release.WINDOWS_LAUNCHER_HELPER in {
+        entry["path"] for entry in manifest["files"]
+    }
+    assert build_release.WINDOWS_LAUNCHER_HELPER in archive.namelist()
 
 
 def test_windows_release_tree_requires_app_local_msvc_runtime(tmp_path):
@@ -488,6 +536,13 @@ def test_windows_release_tree_requires_app_local_msvc_runtime(tmp_path):
     (tmp_path / "python" / "msvcp140.dll").unlink()
 
     with pytest.raises(RuntimeError, match="msvcp140.dll"):
+        build_release.assert_release_tree_clean(tmp_path, "windows-x64")
+
+
+def test_windows_release_tree_requires_launcher_helper(tmp_path):
+    _make_minimal_windows_tree(tmp_path, include_launcher_helper=False)
+
+    with pytest.raises(RuntimeError, match="scripts/windows_launcher.py"):
         build_release.assert_release_tree_clean(tmp_path, "windows-x64")
 
 
@@ -837,6 +892,9 @@ def test_launchers_require_python_310_and_only_stop_verified_mathbank_processes(
     windows_launcher = (PROJECT_ROOT / "启动题库系统.bat").read_text(
         encoding="utf-8"
     )
+    windows_helper = (PROJECT_ROOT / "scripts" / "windows_launcher.py").read_text(
+        encoding="utf-8"
+    )
 
     assert "--reload" not in mac_launcher
     assert "kill -9" not in mac_launcher
@@ -880,80 +938,35 @@ def test_launchers_require_python_310_and_only_stop_verified_mathbank_processes(
 
     assert "--reload" not in windows_launcher
     assert "taskkill" not in windows_launcher.lower()
-    assert "server.identity" in windows_launcher
-    assert "Get-CimInstance Win32_Process" in windows_launcher
-    assert "Stop-Process" in windows_launcher
-    assert "$portableExe=Join-Path $savedRoot 'python\\python.exe'" in windows_launcher
-    assert "$venvExe=Join-Path $savedRoot 'venv\\Scripts\\python.exe'" in windows_launcher
-    assert "sys.version_info >= (3, 10)" in windows_launcher
-    assert "浏览器不会打开" in windows_launcher
-    assert "requirements.sha256" in windows_launcher
-    assert "hashlib.sha256" in windows_launcher
-    assert "-m pip check" in windows_launcher
-    assert "import pymupdf as fitz" in windows_launcher
-    assert ", fitz," not in windows_launcher
+    assert "-B -m scripts.windows_launcher %*" in windows_launcher
+    assert "MATHBANK_NO_PAUSE" in windows_launcher
+    assert "sys.version_info >= (3,10)" in windows_launcher
     assert "msvcp140.dll" in windows_launcher
     assert "python\\%%d" in windows_launcher
-    assert "ctypes.WinDLL(str(runtime / 'msvcp140.dll'))" in windows_launcher
-    portable_check = windows_launcher[
-        windows_launcher.index(":verify_portable_dependencies"):
-        windows_launcher.index(":dependencies_ready")
-    ]
-    assert ">nul 2>&1" not in portable_check
-    assert "便携包依赖不完整或已损坏" not in portable_check
-    assert "/healthz" in windows_launcher
     assert "/api/questions" not in windows_launcher
-    assert "@('-u','-m','uvicorn','main:app'" in windows_launcher
-    assert "probe.log" in windows_launcher
-    windows_health = windows_launcher[
-        windows_launcher.index("正在探测后台服务启动状态"):
-        windows_launcher.index(":health_complete")
-    ]
-    assert "[Diagnostics.Stopwatch]::StartNew()" in windows_health
-    assert "Elapsed.TotalSeconds -lt 60" in windows_health
-    assert "$request.Proxy=$null" in windows_health
-    assert "$request.KeepAlive=$false" in windows_health
-    assert "$webEx=$_.Exception" in windows_health
-    assert "$webEx=$_;" not in windows_health
-    assert "[Math]::Min(2000" in windows_health
-    assert "[Math]::Min(500" in windows_health
-    assert "ping " not in windows_health.lower()
-    assert "-B -m scripts.release_overlay --platform windows-x64" in windows_launcher
-    assert ":stop_verified_legacy_server" in windows_launcher
-    assert "'python\\python.exe'" in windows_launcher
-    assert "$sameExe -or !$sameCommand" in windows_launcher
-    legacy_start = windows_launcher.index("\n:stop_verified_legacy_server")
-    legacy_stop = windows_launcher[
-        legacy_start:windows_launcher.index("\n:stop_owned_server", legacy_start)
-    ]
-    assert "http://127.0.0.1:8000/api/version" in legacy_stop
-    assert "JudgePeach/math-question-bank" in legacy_stop
-    assert "http://127.0.0.1:8000/api/shutdown" in legacy_stop
-    assert ".system_generated\\local_token" in legacy_stop
-    assert "Stop-Process" not in legacy_stop
-    assert windows_launcher.index("call :stop_verified_legacy_server") < windows_launcher.index(
-        "-B -m scripts.release_overlay --platform windows-x64"
-    )
-    windows_start = windows_launcher[
-        windows_launcher.index("echo 正在启动服务"):
-        windows_launcher.index("正在探测后台服务启动状态")
-    ]
-    assert windows_start.index("MATHBANK_IDENTITY_FILE") < windows_start.index(
-        "MATHBANK_PID_FILE"
-    )
-    assert "$process.Kill()" in windows_start
-    assert "$process.WaitForExit(5000)" in windows_start
-    assert "if ($process -and !$process.HasExited)" in windows_start
-    assert "Remove-Item -LiteralPath $env:MATHBANK_PID_FILE" in windows_start
-    health_failure = windows_launcher[
-        windows_launcher.index(":health_complete"):
-        windows_launcher.index(":start_browser")
-    ]
-    assert "状态文件已保留" in health_failure
-    assert "if errorlevel 1" in health_failure
-    assert windows_launcher.index("call :stop_owned_server") < windows_launcher.index(
-        "-B -m scripts.release_overlay --platform windows-x64"
-    ) < windows_launcher.index("正在检查运行环境依赖是否完整")
+    assert "Stop-Process" not in windows_helper
+    assert "taskkill" not in windows_helper.lower()
+    assert "from mathbank" not in windows_helper
+    assert "Path(__file__).resolve().parents[1]" in windows_helper
+    assert "server-state.json" in windows_helper
+    assert "creation_ticks" in windows_helper
+    assert "os.replace" in windows_helper
+    assert "launcher.lock" in windows_helper
+    assert "runtime.lock" in windows_helper
+    assert "stale-launcher-state-" in windows_helper
+    assert "scripts.release_overlay" in windows_helper
+    assert "requirements.sha256" in windows_helper
+    assert "pip\", \"check" in windows_helper
+    assert "ctypes.WinDLL" in windows_helper
+    assert "pymupdf as fitz" in windows_helper
+    assert "ProxyHandler({})" in windows_helper
+    assert "http://127.0.0.1:{PORT}/healthz" in windows_helper
+    assert "http://127.0.0.1:{PORT}/api/shutdown" in windows_helper
+    assert "X-Local-Token" in windows_helper
+    assert "X-MathBank-Launch-ID" in windows_helper
+    assert "MATHBANK_LAUNCH_ID" in windows_helper
+    assert "child.terminate()" not in windows_helper
+    assert "Stop-Process" not in windows_helper
 
 
 def test_release_builder_uses_invoking_interpreter_for_pip():
@@ -970,6 +983,12 @@ def test_windows_ci_builds_and_import_smokes_embedded_runtime():
     )
     assert "download_and_extract_msvc_runtime()" in workflow
     assert "validate_windows_runtime(b.BUILD_DIR)" in workflow
+    assert "b.zip_release()" in workflow
+    assert "--self-test-stale-state" in workflow
+    assert "Start, health-check, and restart the packaged Windows service" in workflow
+    assert "server_instance_id" in workflow
+    assert "X-MathBank-Launch-ID" in workflow
+    assert "tests/test_windows_launcher.py" in workflow
 
 
 def test_release_builder_never_runs_during_unit_import(monkeypatch):

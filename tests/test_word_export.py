@@ -4,6 +4,7 @@ import zipfile
 
 import pytest
 from lxml import etree
+from PIL import Image
 
 from main import LOCAL_TOKEN
 from mathbank import word_export_helper
@@ -182,6 +183,171 @@ def test_word_export_contains_choice_grid_and_marks_exam_19_answer_card_omission
     assert "不包含答题卡" in "".join(diagnostics["warnings"])
     assert xml.count("<w:tbl") >= 2
     assert "A." in xml and "D." in xml
+
+
+def test_word_export_preserves_complex_table_and_inline_image_positions(tmp_path):
+    image_names = ("fig12.png", "fig3.png", "fig4.png", "fig234.png")
+    image_sizes = ((307, 153), (130, 149), (217, 161), (400, 169))
+    for name, size in zip(image_names, image_sizes):
+        Image.new("RGB", size, "white").save(tmp_path / name, format="PNG")
+
+    content = (
+        "【课本回顾】图示如下。\n\n"
+        "![图1和图2](/static/uploads/fig12.png)\n\n"
+        "【知识探究】比较下面两种思路。\n\n"
+        r"\begin{tabular}{|c|c|c|}" "\n"
+        r"\hline & 思路一 & 思路二 \\" "\n"
+        r"\hline 第一步 & 连接中点并利用相似三角形证明数量关系 & 作平行线并利用全等三角形证明数量关系 \\" "\n"
+        r"\hline 第二步 & 利用相似三角形的性质及中位线的性质完成推导 & 利用全等三角形及相似三角形的性质完成推导 \\" "\n"
+        "\\hline 第三步 &\n\n"
+        "![图3](/static/uploads/fig3.png)\n\n"
+        "&\n\n"
+        "![图4](/static/uploads/fig4.png)\n\n"
+        r"\\ \hline\end{tabular}" "\n\n"
+        "【问题解决】继续研究。\n\n"
+        "![图II至图IV](/static/uploads/fig234.png)"
+    )
+    data, diagnostics = build_word_document(
+        "复杂表格导出",
+        "",
+        "exam",
+        [{
+            "question": {
+                "id": 53,
+                "question_type": "detailed_answer",
+                "content": content,
+                "image_paths": [f"/static/uploads/{name}" for name in image_names],
+                "figure_align": "right",
+            },
+            "score": 12,
+        }],
+        uploads_dir=tmp_path,
+    )
+
+    document = etree.fromstring(_document_xml(data))
+    namespaces = {
+        "w": "http://schemas.openxmlformats.org/wordprocessingml/2006/main",
+        "a": "http://schemas.openxmlformats.org/drawingml/2006/main",
+    }
+    visible_text = "".join(document.xpath(".//w:t/text()", namespaces=namespaces))
+    tables = document.xpath(".//w:tbl", namespaces=namespaces)
+
+    assert r"\begin{tabular}" not in visible_text
+    assert r"\end{tabular}" not in visible_text
+    assert len(tables) == 1
+    table = tables[0]
+    rows = table.xpath("./w:tr", namespaces=namespaces)
+    assert len(rows) == 4
+    assert len(rows[-1].xpath("./w:tc[2]//w:drawing", namespaces=namespaces)) == 1
+    assert len(rows[-1].xpath("./w:tc[3]//w:drawing", namespaces=namespaces)) == 1
+    assert len(document.xpath(".//w:drawing", namespaces=namespaces)) == 4
+    assert table.xpath("./w:tblPr/w:tblW/@w:w", namespaces=namespaces) == ["9000"]
+    assert table.xpath("./w:tblGrid/w:gridCol/@w:w", namespaces=namespaces) == [
+        "1080", "3960", "3960"
+    ]
+    assert table.xpath("./w:tr[1]/w:trPr/w:tblHeader/@w:val", namespaces=namespaces) == ["true"]
+    assert len(table.xpath("./w:tr/w:trPr/w:cantSplit", namespaces=namespaces)) == 4
+    assert len(table.xpath("./w:tr/w:tc/w:tcPr/w:vAlign[@w:val='center']", namespaces=namespaces)) == 12
+    assert diagnostics["missing_images"] == 0
+
+
+def test_word_export_converts_multicolumn_and_multirow_to_native_merges(
+    tmp_path,
+    monkeypatch,
+):
+    sample_omml = (
+        b'<m:oMath xmlns:m="http://schemas.openxmlformats.org/officeDocument/2006/math">'
+        b"<m:r><m:t>AP=2PD</m:t></m:r></m:oMath>"
+    )
+    monkeypatch.setattr(
+        word_export_helper.PandocOmmlConverter,
+        "convert_many",
+        lambda self, formulas: {formula: sample_omml for formula in formulas},
+    )
+    image_path = tmp_path / "merged-cell.png"
+    Image.new("RGB", (240, 140), "white").save(image_path, format="PNG")
+    content = (
+        r"\begin{tabular}{|c|c|c|}" "\n"
+        r"\hline \multicolumn{3}{|c|}{综合探究 $AP=2PD$} \\" "\n"
+        r"\hline \multirow{2}{*}{步骤} & 第一种完整证明思路 & 第二种完整证明思路 \\" "\n"
+        r"\cline{2-3} & ![示意图](/static/uploads/merged-cell.png) & 完成证明 \\" "\n"
+        r"\hline\end{tabular}"
+    )
+    data, diagnostics = build_word_document(
+        "合并单元格导出",
+        "",
+        "exam",
+        [{
+            "question": {
+                "id": 54,
+                "question_type": "detailed_answer",
+                "content": content,
+                "image_paths": ["/static/uploads/merged-cell.png"],
+            },
+            "score": 12,
+        }],
+        uploads_dir=tmp_path,
+    )
+
+    document = etree.fromstring(_document_xml(data))
+    namespaces = {
+        "w": "http://schemas.openxmlformats.org/wordprocessingml/2006/main",
+        "m": "http://schemas.openxmlformats.org/officeDocument/2006/math",
+    }
+    visible_text = "".join(document.xpath(".//w:t/text()", namespaces=namespaces))
+    table = document.xpath(".//w:tbl", namespaces=namespaces)[0]
+
+    assert r"\multicolumn" not in visible_text
+    assert r"\multirow" not in visible_text
+    assert r"\cline" not in visible_text
+    assert "综合探究" in visible_text
+    rows = table.xpath("./w:tr", namespaces=namespaces)
+    assert len(rows[0].xpath("./w:tc", namespaces=namespaces)) == 1
+    assert rows[0].xpath("./w:tc/w:tcPr/w:gridSpan/@w:val", namespaces=namespaces) == ["3"]
+    assert rows[0].xpath("./w:tc/w:tcPr/w:tcW/@w:w", namespaces=namespaces) == ["9000"]
+    assert rows[1].xpath("./w:tc[1]/w:tcPr/w:vMerge/@w:val", namespaces=namespaces) == ["restart"]
+    assert len(rows[2].xpath("./w:tc[1]/w:tcPr/w:vMerge[not(@w:val)]", namespaces=namespaces)) == 1
+    assert rows[2].xpath("./w:tc[1]//w:t/text()", namespaces=namespaces) == []
+    assert len(rows[2].xpath("./w:tc[2]//w:drawing", namespaces=namespaces)) == 1
+    assert table.xpath("count(.//m:oMath)", namespaces=namespaces) == 1
+    assert table.xpath("./w:tblGrid/w:gridCol/@w:w", namespaces=namespaces) == [
+        "1080", "3960", "3960"
+    ]
+    assert diagnostics["native_formulas"] == 1
+    assert diagnostics["failed_formulas"] == 0
+    assert diagnostics["missing_images"] == 0
+
+
+def test_word_export_bounds_invalid_table_spans():
+    content = (
+        r"\begin{tabular}{|c|c|c|}" "\n"
+        r"\multicolumn{999999}{c}{越界标题} \\" "\n"
+        r"\multirow{-2}{*}{负跨度} & A & B \\" "\n"
+        r"\end{tabular}"
+    )
+
+    data, diagnostics = build_word_document(
+        "异常合并范围",
+        "",
+        "exam",
+        [{
+            "question": {
+                "id": 55,
+                "question_type": "detailed_answer",
+                "content": content,
+                "image_paths": [],
+            },
+            "score": 12,
+        }],
+    )
+
+    document = etree.fromstring(_document_xml(data))
+    namespaces = {"w": "http://schemas.openxmlformats.org/wordprocessingml/2006/main"}
+    table = document.xpath(".//w:tbl", namespaces=namespaces)[0]
+    assert len(table.xpath("./w:tblGrid/w:gridCol", namespaces=namespaces)) == 3
+    assert table.xpath("./w:tr[1]/w:tc/w:tcPr/w:gridSpan/@w:val", namespaces=namespaces) == ["3"]
+    assert not table.xpath(".//w:vMerge", namespaces=namespaces)
+    assert any("合并范围超界" in warning for warning in diagnostics["warnings"])
 
 
 def test_word_export_uses_exam_typography_and_one_inch_margins(monkeypatch):

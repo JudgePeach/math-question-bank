@@ -132,7 +132,148 @@ def format_stem_paragraphs(stem_text: str) -> str:
 
     return "\n\n".join(paragraphs)
 
-def clean_content_for_latex(content: str, q_type: str = "", is_answer: bool = False) -> str:
+_MARKDOWN_IMAGE_RE = re.compile(
+    r'!\[.*?\]\((?:/static/uploads/|static/uploads/|/uploads/|uploads/)?([^)]+)\)'
+)
+
+
+def _should_preserve_inline_image_positions(content: str) -> bool:
+    """Keep images anchored when authored content continues after the first one.
+
+    A trailing image or trailing cluster remains eligible for the historical
+    ``figure_align`` layout.  Images inside tables, between sub-questions, or
+    before later explanatory text must stay where the author inserted them.
+    """
+
+    text = str(content or "")
+    matches = list(_MARKDOWN_IMAGE_RE.finditer(text))
+    if not matches:
+        return False
+    trailing = _MARKDOWN_IMAGE_RE.sub("", text[matches[0].start():]).strip()
+    return bool(trailing)
+
+
+def _image_is_inside_table_environment(content: str, position: int) -> bool:
+    prefix = content[:position]
+    table_environments = (
+        "tabular",
+        "tabular*",
+        "tabularx",
+        "longtable",
+        "tblr",
+        "longtblr",
+        "talltblr",
+    )
+    return any(
+        prefix.rfind(rf"\begin{{{environment}}}")
+        > prefix.rfind(rf"\end{{{environment}}}")
+        for environment in table_environments
+    )
+
+
+def _read_balanced_latex_group(source: str, start: int) -> tuple[str, int] | None:
+    if start >= len(source) or source[start] != "{":
+        return None
+    depth = 0
+    index = start
+    while index < len(source):
+        if source[index] == "\\" and index + 1 < len(source):
+            index += 2
+            continue
+        if source[index] == "{":
+            depth += 1
+        elif source[index] == "}":
+            depth -= 1
+            if depth == 0:
+                return source[start + 1:index], index + 1
+        index += 1
+    return None
+
+
+def _bound_full_width_multicolumns(body: str) -> str:
+    source = str(body or "")
+    command = r"\multicolumn"
+    output: list[str] = []
+    cursor = 0
+    while True:
+        start = source.find(command, cursor)
+        if start < 0:
+            output.append(source[cursor:])
+            break
+        output.append(source[cursor:start])
+        group_cursor = start + len(command)
+        groups: list[tuple[str, int]] = []
+        valid = True
+        for _ in range(3):
+            while group_cursor < len(source) and source[group_cursor].isspace():
+                group_cursor += 1
+            group = _read_balanced_latex_group(source, group_cursor)
+            if group is None:
+                valid = False
+                break
+            groups.append(group)
+            group_cursor = group[1]
+        if not valid or groups[0][0].strip() != "3":
+            output.append(command)
+            cursor = start + len(command)
+            continue
+
+        original_spec = groups[1][0].strip()
+        alignment = (
+            r"\raggedright\arraybackslash"
+            if "l" in original_spec.lower()
+            else r"\raggedleft\arraybackslash"
+            if "r" in original_spec.lower()
+            else r"\centering\arraybackslash"
+        )
+        left_rule = "|" if original_spec.startswith("|") else ""
+        right_rule = "|" if original_spec.endswith("|") else ""
+        bounded_spec = (
+            left_rule
+            + rf">{{{alignment}}}p{{\dimexpr\linewidth-2\tabcolsep-2\arrayrulewidth\relax}}"
+            + right_rule
+        )
+        output.append(
+            rf"\multicolumn{{3}}{{{bounded_spec}}}{{{groups[2][0]}}}"
+        )
+        cursor = groups[2][1]
+    return "".join(output)
+
+
+def _normalize_simple_three_column_tables(content: str) -> str:
+    """Give OCR-style three-column comparison tables bounded wrapping columns."""
+
+    pattern = re.compile(
+        r"\\begin\{tabular\}\s*\{(?P<spec>[^{}]*)\}"
+        r"(?P<body>[\s\S]*?)\\end\{tabular\}",
+        re.IGNORECASE,
+    )
+
+    def replace(match: re.Match) -> str:
+        normalized_spec = re.sub(r"\s+", "", match.group("spec"))
+        if normalized_spec != "|c|c|c|":
+            return match.group(0)
+        column_spec = (
+            r"|>{\centering\arraybackslash}m{4em}"
+            r"|>{\centering\arraybackslash}X"
+            r"|>{\centering\arraybackslash}X|"
+        )
+        body = _bound_full_width_multicolumns(match.group("body"))
+        return (
+            rf"\noindent\begin{{tabularx}}{{\linewidth}}{{{column_spec}}}"
+            f"{body}"
+            r"\end{tabularx}"
+        )
+
+    return pattern.sub(replace, content)
+
+
+def clean_content_for_latex(
+    content: str,
+    q_type: str = "",
+    is_answer: bool = False,
+    preserve_image_positions: bool = False,
+) -> str:
     r"""
     Clean markdown/LaTeX question content for exam-zh LaTeX document export based on 试卷类模板.tex.
     Preserves math delimiters $...$ and $$...$$, tikz code, and handles choices & \paren environments.
@@ -147,16 +288,29 @@ def clean_content_for_latex(content: str, q_type: str = "", is_answer: bool = Fa
         text = clean_choice_stem_parentheses(text)
     
     # If TikZ code is present in text, remove ANY markdown image tags ![](...) to avoid duplicate image rendering
-    if r"\begin{tikzpicture}" in text:
+    if r"\begin{tikzpicture}" in text and not preserve_image_positions:
         text = re.sub(r'!\[.*?\]\([^)]+\)', '', text)
 
     # Convert Markdown images ![](/static/uploads/xxx.png) or ![](uploads/xxx.png) to \includegraphics{...}
     def replace_img(match):
-        img_path = match.group(1) or match.group(2)
+        img_path = match.group(1)
         base_name = os.path.basename(img_path)
+        if _image_is_inside_table_environment(text, match.start()):
+            return (
+                r"\adjustbox{valign=m,margin=0pt 3pt}{"
+                rf"\includegraphics[max width=\linewidth,max height=4.0cm,keepaspectratio]{{{base_name}}}"
+                r"}"
+            )
+        if preserve_image_positions:
+            return (
+                "\n\\begin{center}\n"
+                rf"\includegraphics[max width=9.0cm,max height=6.0cm,keepaspectratio]{{{base_name}}}"
+                "\n\\end{center}\n"
+            )
         return f"\n\\begin{{center}}\n\\includegraphics[max width=0.85\\linewidth]{{{base_name}}}\n\\end{{center}}\n"
     
-    text = re.sub(r'!\[.*?\]\((?:/static/uploads/|static/uploads/|/uploads/|uploads/)?([^)]+)\)', replace_img, text)
+    text = _MARKDOWN_IMAGE_RE.sub(replace_img, text)
+    text = _normalize_simple_three_column_tables(text)
     
     # Check choices formatting: if markdown list like - A. xx - B. xx, convert to \begin{choices}
     if r"\begin{choices}" not in text and re.search(r'^\s*[-*]?\s*[A-D][\.、\s]', text, re.MULTILINE):
@@ -363,6 +517,9 @@ def build_latex_document(
             q = item.get("question", {})
             raw_content = q.get("content", "")
             q_score = item.get("score", 5)
+            preserve_inline_images = _should_preserve_inline_image_positions(
+                raw_content
+            )
             content_tikz_assets = q.get("content_tikz_assets", [])
             if not isinstance(content_tikz_assets, list):
                 content_tikz_assets = []
@@ -383,38 +540,42 @@ def build_latex_document(
 
             fig_body = ""
             cleaned_raw = raw_content
-
-            if tikz_codes or r"\begin{tikzpicture}" in raw_content:
-                if not tikz_codes and r"\begin{tikzpicture}" in raw_content:
-                    m = re.search(r'(\\begin\{tikzpicture\}[\s\S]*?\\end\{tikzpicture\})', raw_content)
-                    if m:
-                        tikz_codes = [m.group(1)]
-                        cleaned_raw = cleaned_raw.replace(tikz_codes[0], '').strip()
-                
-                cleaned_raw = re.sub(r'!\[.*?\]\([^)]+\)', '', cleaned_raw).strip()
             fig_elements = []
-            for tikz_code in tikz_codes:
-                if r"\begin{tikzpicture}" not in tikz_code:
-                    tikz_code = f"\\begin{{tikzpicture}}\n{tikz_code}\n\\end{{tikzpicture}}"
-                fig_elements.append(f"\\resizebox{{4.5cm}}{{!}}{{{tikz_code}}}")
+            if not preserve_inline_images:
+                if tikz_codes or r"\begin{tikzpicture}" in raw_content:
+                    if not tikz_codes and r"\begin{tikzpicture}" in raw_content:
+                        m = re.search(r'(\\begin\{tikzpicture\}[\s\S]*?\\end\{tikzpicture\})', raw_content)
+                        if m:
+                            tikz_codes = [m.group(1)]
+                            cleaned_raw = cleaned_raw.replace(tikz_codes[0], '').strip()
 
-            img_matches = re.findall(r'!\[.*?\]\((?:/static/uploads/|static/uploads/|/uploads/|uploads/)?([^)]+)\)', raw_content)
-            if img_matches:
-                for img_path in img_matches:
-                    img_filename = os.path.basename(img_path)
-                    # 每幅已有可编辑源码的 TikZ 图输出矢量代码，跳过其对应 PNG。
-                    if img_filename in tikz_image_names:
-                        continue
-                    if not content_tikz_assets and tikz_codes and img_filename.startswith("tikz_"):
-                        continue
-                    img_w = "3.8cm" if len(img_matches) > 1 or tikz_codes else "5.0cm"
-                    fig_elements.append(f"\\includegraphics[width={img_w}]{{{img_filename}}}")
-                cleaned_raw = re.sub(r'!\[.*?\]\([^)]+\)', '', cleaned_raw).strip()
+                    cleaned_raw = re.sub(r'!\[.*?\]\([^)]+\)', '', cleaned_raw).strip()
+                for tikz_code in tikz_codes:
+                    if r"\begin{tikzpicture}" not in tikz_code:
+                        tikz_code = f"\\begin{{tikzpicture}}\n{tikz_code}\n\\end{{tikzpicture}}"
+                    fig_elements.append(f"\\resizebox{{4.5cm}}{{!}}{{{tikz_code}}}")
+
+                img_matches = _MARKDOWN_IMAGE_RE.findall(raw_content)
+                if img_matches:
+                    for img_path in img_matches:
+                        img_filename = os.path.basename(img_path)
+                        # 每幅已有可编辑源码的 TikZ 图输出矢量代码，跳过其对应 PNG。
+                        if img_filename in tikz_image_names:
+                            continue
+                        if not content_tikz_assets and tikz_codes and img_filename.startswith("tikz_"):
+                            continue
+                        img_w = "3.8cm" if len(img_matches) > 1 or tikz_codes else "5.0cm"
+                        fig_elements.append(f"\\includegraphics[width={img_w}]{{{img_filename}}}")
+                    cleaned_raw = re.sub(r'!\[.*?\]\([^)]+\)', '', cleaned_raw).strip()
 
             if fig_elements:
                 fig_body = "\n\\vspace{2pt}\n".join(fig_elements)
 
-            cleaned_content = clean_content_for_latex(cleaned_raw, q_type=q_type)
+            cleaned_content = clean_content_for_latex(
+                cleaned_raw,
+                q_type=q_type,
+                preserve_image_positions=preserve_inline_images,
+            )
             env_name = "problem" if q_type == "detailed_answer" else "question"
             points_arg = f"[points = {q_score}]" if q_type == "detailed_answer" else ""
 

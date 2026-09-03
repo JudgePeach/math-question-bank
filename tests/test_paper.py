@@ -321,6 +321,128 @@ def test_latex_export_renders_every_editable_content_tikz_asset_once():
     assert r"\includegraphics[width=3.8cm]{photo.png}" in tex
 
 
+def test_latex_export_preserves_complex_inline_and_tabular_image_positions():
+    from mathbank.paper_helper import build_latex_document
+
+    content = (
+        "【课本回顾】如图 1，在三角形中研究中线。\n\n"
+        "![图1和图2](/static/uploads/fig12.png)\n\n"
+        "【知识探究】比较下面两种思路。\n\n"
+        r"\begin{tabular}{|c|c|c|}" "\n"
+        r" & 思路一 & 思路二 \\" "\n"
+        r"\multirow{2}{*}{第一步} & 证明一 & 证明二 \\" "\n"
+        r" & 推导一 & 推导二 \\" "\n"
+        r"图形表达 & ![图3](/static/uploads/fig3.png) & "
+        r"![图4](/static/uploads/fig4.png) \\" "\n"
+        r"\end{tabular}"
+    )
+    questions = [{
+        "question": {
+            "id": 102,
+            "question_type": "detailed_answer",
+            "content": content,
+            "figure_align": "right",
+        },
+        "score": 12,
+        "solution_space": "0.0",
+    }]
+
+    tex = build_latex_document("复杂图文题", "", "exam", questions)
+
+    first = tex.index("fig12.png")
+    knowledge = tex.index("【知识探究】")
+    table_start = tex.index(r"\begin{tabularx}")
+    third = tex.index("fig3.png")
+    fourth = tex.index("fig4.png")
+    table_end = tex.index(r"\end{tabularx}")
+    assert first < knowledge < table_start < third < fourth < table_end
+    table_tex = tex[table_start:table_end]
+    assert r"\multirow{2}{*}{第一步}" in table_tex
+    assert table_tex.count(r"\adjustbox{valign=m,margin=0pt 3pt}{") == 2
+    assert r"\includegraphics[max width=\linewidth,max height=4.0cm,keepaspectratio]{fig3.png}" in table_tex
+    assert r"\includegraphics[max width=\linewidth,max height=4.0cm,keepaspectratio]{fig4.png}" in table_tex
+    assert r"\noindent\begin{tabularx}{\linewidth}" in tex
+    assert r">{\centering\arraybackslash}m{4em}" in tex
+    assert tex.count(r">{\centering\arraybackslash}X") == 2
+    assert r"\end{tabularx}" in tex
+
+
+def test_latex_export_keeps_single_trailing_figure_alignment_layout():
+    from mathbank.paper_helper import build_latex_document
+
+    questions = [{
+        "question": {
+            "id": 103,
+            "question_type": "detailed_answer",
+            "content": "普通右图题\n\n![](/static/uploads/graph.png)",
+            "figure_align": "right",
+        },
+        "score": 12,
+        "solution_space": "0.0",
+    }]
+
+    tex = build_latex_document("普通右图题", "", "exam", questions)
+
+    assert r"\begin{minipage}[t]{\dimexpr\linewidth-5.8cm\relax}" in tex
+    assert r"\includegraphics[width=5.0cm]{graph.png}" in tex
+
+
+def test_latex_export_bounds_full_width_multicolumn_and_keeps_multirow():
+    from mathbank.paper_helper import build_latex_document
+
+    long_title = "综合探究表格总标题需要在页面正文宽度内自动换行显示"
+    content = (
+        r"\begin{tabular}{|c|c|c|}" "\n"
+        rf"\hline \multicolumn{{3}}{{|c|}}{{{long_title}}} \\" "\n"
+        r"\hline \multirow{2}{*}{步骤} & 思路一 & 思路二 \\" "\n"
+        r"\cline{2-3} & 完成证明一 & 完成证明二 \\" "\n"
+        r"\hline\end{tabular}"
+    )
+    questions = [{
+        "question": {
+            "id": 104,
+            "question_type": "detailed_answer",
+            "content": content,
+        },
+        "score": 12,
+        "solution_space": "0.0",
+    }]
+
+    tex = build_latex_document("合并表格题", "", "exam", questions)
+
+    assert r"\noindent\begin{tabularx}{\linewidth}" in tex
+    assert r"\multicolumn{3}{|>{\centering\arraybackslash}p{\dimexpr\linewidth-2\tabcolsep-2\arrayrulewidth\relax}|}" in tex
+    assert long_title in tex
+    assert r"\multirow{2}{*}{步骤}" in tex
+    assert r"\cline{2-3}" in tex
+
+
+@pytest.mark.parametrize(
+    "environment",
+    ["tabular", "tabular*", "tabularx", "longtable", "tblr", "longtblr", "talltblr"],
+)
+def test_latex_table_environments_keep_images_in_lr_safe_cells(environment):
+    from mathbank.paper_helper import clean_content_for_latex
+
+    source = (
+        rf"\begin{{{environment}}}{{cc}}"
+        r"图形表达 & ![](/static/uploads/cell.png) \\"
+        rf"\end{{{environment}}}"
+    )
+
+    cleaned = clean_content_for_latex(
+        source,
+        preserve_image_positions=True,
+    )
+
+    image_position = cleaned.index("cell.png")
+    begin_position = cleaned.index(rf"\begin{{{environment}}}")
+    end_position = cleaned.index(rf"\end{{{environment}}}")
+    assert begin_position < image_position < end_position
+    assert r"\adjustbox{valign=m,margin=0pt 3pt}{" in cleaned
+    assert r"\begin{center}" not in cleaned[begin_position:end_position]
+
+
 def test_right_figure_choice_stem_has_no_extra_first_line_indent():
     from mathbank.paper_helper import build_latex_document
 

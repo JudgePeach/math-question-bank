@@ -41,8 +41,8 @@
 - **插图管理**：提供图片上传与 TikZ 绘图代码输入。图片保存在本地文件系统（`static/uploads/`），数据库存储相对路径。
 - **插图排版位置联动与多图复合渲染**：
   - **多模式与多插图支持**：插图在后端存储 `figure_align` 属性（支持 `right` 题干右侧、`center` 下方居中、`bottom_right` 下方居右）。
-  - **全量插图抓取与预览同步**：前端与后端统一使用全量正则匹配捕获插图，多图横向弹性排列组合输出。
-  - **交互弹窗切换**：在 A4 试卷预览框中点击或右击插图可弹出气泡菜单切换排版位置，并通过 `POST /api/questions/{qid}/figure_align` 持久化。
+  - **插图锚点与预览同步**：题末单图或连续图片簇继续由 `figure_align` 控制右侧、居中或居右排版；图片后仍有正文、表格闭合结构、标题或说明时，前端组卷预览与 LaTeX/PDF 导出必须保留全部 Markdown 图片的原始正文锚点。`tabular`、`tabular*`、`tabularx`、`longtable`、`tblr`、`longtblr`、`talltblr` 单元格内图片不得抽取到题末，多图复杂题的网页与 PDF 顺序必须和题库详情一致。
+  - **交互弹窗切换**：在 A4 试卷预览框中点击或右击题末可分离插图可弹出气泡菜单切换排版位置，并通过 `POST /api/questions/{qid}/figure_align` 持久化；正文或表格内锚定图片不显示整题插图位置控件，避免移动后破坏语义结构。
   - **解答题留白调控**：解答题支持留白高度调控。若插图设为 `bottom_right` 或 `center`，插图包含在留白空间顶侧，避免垂直叠加过长。切换为 `exam_19`（高考卷）时自动恢复紧凑布局。
 - **选择题与填空题环境规范**：
   - 选择题选项统一格式化为 LaTeX `choices` 环境（`\begin{choices}` 和 `\item`），剥离原本的 A., B., C., D. 标号前缀。
@@ -52,6 +52,7 @@
   - **填空题 \fillin 宏规范**：下划线统一生成与清洗规范化为 `\fillin` 宏。前端负责数学环境感知与句末标点位置自愈。
   - **HTML 解析器小于号转义**：前端预处理 KaTeX 公式时将数学环境内的 `<` 与 `>` 安全替换为 `\lt ` 与 `\gt `（禁用后行断言），防止浏览器 `innerHTML` 解析时切割 DOM 树。
   - **LaTeX tabular 表格网格渲染**：`\begin{tabular}` 自动解析转换为现代居中、带微边框的响应式 HTML5 表格，保留 LaTeX 原生源码导出。
+  - **三列比较表导出约束**：OCR 常见的简单 `|c|c|c|` 比较表在 PDF 导出时必须转换为 `\noindent tabularx`，第一列使用窄 `m{4em}`，两列正文使用等宽 `X` 自动换行；表内图片宽度受单元格 `\linewidth` 限制，并保留上下各 3pt 内边距，避免白底图片覆盖横线。不得用整表 `resizebox` 将长文本压成过小字号。
   - **LaTeX 段落与换行规范**：双回车（`\n\n+`）代表起新段落（`<br><br>`）；显式双反斜杠（`\\\\`）代表硬换行（`<br>`）；单回车仅视为空格不打断自然段。解答题小问标号（如 `(1)`、`①`）自动前置插入段落换行。
 - **教材大纲多版本预设与共存**：
   - 快捷切换人教 A 版、人教 B 版、苏教版、沪教版标准大纲预设（`mathbank/resources/curriculums/`）。
@@ -74,7 +75,7 @@
 - **TikZ 几何绘图**：编辑 TikZ 代码可调用 `/api/render_tikz` 生成 PNG 预览；结合修改意见可调用 `/api/correct_tikz` 进行 AI 闭环纠错。
 - **题干/解答统一多模态 TikZ 工作台**：题干与终审解答编辑器都只常驻“新增绘图”轻入口和已插入绘图卡片；“新增绘图”必须始终打开空白工作台并追加一幅新图，已有或 OCR 自动生成的绘图只能通过对应卡片的铅笔入口携带资产 ID 修改，修改时只更新该图，禁止让新增入口隐式覆盖旧图。新增/修改共用同一按需弹出工作台，支持纯文字生成、参考图重绘、图文组合约束和基于已有源码修改。`POST /api/ai/draw_tikz` 使用 multipart 接收 `instruction` / `context` / `existing_tikz` / 可选上传 `reference_image` 或已安全登记的 `reference_image_path`；新上传参考图必须经统一图片安全转码，AI 生成失败时清理服务端临时副本但保留浏览器已选文件供重试，成功时返回唯一 `reference_image_path` 并绑定到当前绘图。每幅绘图最多保留一张参考图；替换或移除参考图后，旧文件只能在题目保存事务成功后经“无其他题目引用”复核再删除；取消未保存的新参考图由孤儿清理回收。生成源码须先经 `/api/render_tikz` 编译预览后才能新增或更新。题干与解答多幅绘图的 `id` / 渲染图路径 / TikZ 源码 / 绘图要求 / 可选参考图分别保存在 `questions.content_tikz_assets` 与 `questions.answer_tikz_assets` JSON 数组；旧 `tikz_code` / `tikz_reference_image_path` 仅作为首幅题干绘图兼容字段。题干 OCR 自动绘图必须作为一条题干资产登记，并把原题图绑定为该资产的参考图；编辑时弹窗必须自动预载对应原题参考图。渲染图与持久参考图都必须纳入数据库 `image_paths` 的生命周期管理，但题干与解答的参考图均不得进入前端 `uploadedImages`、正文 Markdown、题干普通插图列表或 Word/PDF/AI 题库导出；`Question.to_dict()` / `to_summary_dict()` 的 `image_paths` 必须过滤这些 AI 专用参考路径。这些可编辑源与参考路径仅在题目详情中返回，列表摘要不得返回。
 - **TikZ 前端状态单一来源**：`api.js` 的 `TikzState` 统一以 `contentAssets` / `answerAssets` 两个数组持有题干与解答的多幅可编辑绘图及参考图路径；OCR 注册、题目/草稿载入、保存、新增、替换及删除都必须读写该状态。禁止重新引入隐藏的题干/解答 TikZ 面板、隐藏源码 textarea 或 `lastOcrOriginalImagePath` / `contentLastCompiledTikzPath` 等平行全局状态；所有可见生成、修改、编译与新增操作都走统一工作台。
-- **双阶段多模态识图**：单题 OCR 识别到插图时注入 `[ILLUSTRATION_BOX: ...]` 标记，后端自动擦除标记并调用高级绘图模型（`PREFER_DRAW_MODEL`）重绘 TikZ 矢量代码并编译为 PNG 静态图片追加引用。
+- **双阶段多模态识图**：单题 OCR 仅在全图恰有一幅位于表格外的独立几何/函数图时注入 `[ILLUSTRATION_BOX: ...]`，后端擦除标记并调用 `PREFER_DRAW_MODEL` 重绘 TikZ。多图或表格内插图必须在各图原位置保留 `[插图待补: 图1]`（无图号按阅读顺序编号），表格内占位留在对应单元格，且不得触发整页自动 TikZ。
 
 ### 3.3 JSON 同步导出、完整备份与 AI 只读题库
 - **JSON 同步导出 (`data_backup/questions_backup.json`)**：后台异步导出题目字段，便于检索与兼容旧流程；它不含数据库约束和完整上传目录，**不是灾难恢复用完整备份**。
@@ -99,13 +100,13 @@
 
 ### 3.7 启动就绪与网络容错
 - **启动器环境与身份自愈**：macOS 包不内置 Python，运行前要求本机已安装 Python 3.10+；macOS 必须依次探测可用的 `python3` / 具名 Python 3.10+ 解释器，使用项目隔离的 `venv` 并通过 `python -m pip` 补齐锁定依赖；旧 `venv` 不兼容时先保留临时备份、自动重建，并仅在新服务通过健康检查后清理备份。Windows 便携包面向 Windows 10/11 x64，内置完整 Python 及应用本地 VC++ 运行时，无需本机另行安装。生产式双击启动不得携带 `--reload`。
-- **Windows 批处理换行硬约束**：所有 `.bat` 必须是无 BOM 的 UTF-8，并且每一行只允许使用 CRLF（`\r\n`）。仓库必须用 `.gitattributes` 固定 `*.bat text eol=crlf`；Release 构建器仍须在复制后主动规范化 CRLF，并对暂存文件和最终 ZIP 内原始字节分别复验。禁止只用 `read_text()` 或普通字符串断言代替原始换行检查，因为通用换行转换会掩盖 LF 回归。
+- **Windows 批处理薄壳与换行硬约束**：正式 `.bat` 只能是无 BOM 的 7-bit ASCII 薄壳，负责确定项目根目录、核对包内 `python\python.exe` 与三枚应用本地 VC++ DLL、执行 `python -B -m scripts.windows_launcher` 并原样返回退出码；正式入口不得创建/修改 venv，也不得回退到系统 Python。源码开发者应按第 7 节开发命令自行准备环境。BAT 不得承载中文提示、进程检查、状态管理、端口、覆盖升级或健康探测逻辑；上述复杂逻辑统一放入可在 Release overlay 和三方依赖修复前安全导入、只使用 Python 标准库且直接从自身文件位置锚定项目根的 `scripts/windows_launcher.py`。每一行只允许使用 CRLF（`\r\n`），仓库必须用 `.gitattributes` 固定 `*.bat text eol=crlf`；Release 构建器仍须在复制后主动规范化 CRLF，并对暂存文件和最终 ZIP 内原始字节分别复验。禁止只用 `read_text()` 或普通字符串断言代替 ASCII/BOM/原始换行检查，因为文本解码和通用换行转换会掩盖字节级回归。
 - **跨平台私有文件写入**：`os.fchmod` 等仅 Unix 可用的接口必须通过 `getattr` / 能力探测后调用，并保证任何失败路径都会关闭文件描述符、清理临时文件；不得只捕获 `OSError` 来假设接口在 Windows 上存在。涉及平台专用 API 的代码必须增加“接口缺失”模拟测试。
 - **Windows 日志编码安全**：`main.py` 必须在导入可能输出日志的业务模块前将 stdout/stderr 设为 UTF-8；被导入模块不得在模块顶层打印 Emoji 或其他依赖终端编码的装饰字符，启动与后台日志优先使用 ASCII/GBK 均可表示的文本。必须保留一次 CP936 严格输出环境下的直接导入回归测试，防止重定向日志时触发 `UnicodeEncodeError`。
-- **端口与进程所有权**：启动器可停止两类已验证进程：一是同时通过 PID、当前项目根路径、Python 基础运行时的真实进程映像与 `uvicorn main:app` 命令校验的本项目旧服务；macOS Framework Python 必须从 `sys.base_prefix` 推导 `Resources/Python.app/.../Python`，不得假设 `ps` 命令行保留 `venv/bin/python` 软链接路径。二是端口 8000 监听进程或其有限层级祖先进程同时通过 MathBank 项目文件指纹、工作目录与精确 `-m uvicorn main:app` 命令校验的旧目录/旧版本 MathBank；Windows 可额外自动停止“监听 PID 的真实映像等于当前根目录 `python\\python.exe` 且命令精确含 `-m uvicorn main:app`”的 2.1.0/2.1.1 正式便携服务，系统 Python 或无法验明根路径的监听者仍必须拒绝终止。两类进程均只允许 `TERM` 优雅退出并限时等待。端口被真正陌生的进程占用、任一监听 PID 无法完整验明身份或状态文件身份不明时必须报错退出，严禁按端口无条件 `kill -9` / `taskkill` 或终止未经验证的父进程。
+- **端口、状态与进程所有权**：Windows 启动核心进入任何状态、覆盖或服务操作前必须持有独占 launcher lock，防止两个启动流程同时检查或改写状态；launcher lock 只用于互斥，绝不能作为某个服务进程仍存活或可以被终止的证据。权威运行状态为同目录临时文件、刷新落盘后 `os.replace` 的 `server-state.json`，至少记录 schema、PID、Windows `CreationDate` 的 .NET ticks、项目根、真实解释器、逐项精确启动命令和随机 `launch_id`；旧 `server.pid/server.identity` 仅作兼容镜像。只有 PID 已不存在，或当前进程的 `CreationDate` 与权威 JSON 明确不同，才可证明新格式状态陈旧并将其隔离；旧格式状态没有保存 `CreationDate`，只要对应 PID 仍存活就必须失败关闭，无论其可见命令是否看似无关，PID 已不存在时才可隔离迁移。CIM 查询失败、访问拒绝、字段缺失/损坏、时间无法规范化及其他未知情况一律失败关闭并保留诊断证据。启动器只允许关闭同时通过 PID、`CreationDate`、当前项目根、真实解释器、精确 argv、唯一 8000 listener、仓库身份与 `launch_id` 复核的本项目服务；真正旧版本没有实例字段时仅保留仓库/token/进程/端口兼容验证。关闭只能经带本地 Token 与可用 `X-MathBank-Launch-ID` 的 `/api/shutdown` 协作完成，检查与请求前后都必须重新核对身份；严禁仅凭 PID、状态文件、launcher/runtime lock、端口或父子关系执行 `taskkill`、`Stop-Process`、发送强制终止信号或结束未经验证的进程。端口被陌生进程占用、任一监听 PID 无法完整验明身份、旧格式状态对应 PID 仍存活或检查结果未知时必须报错退出。
 - **Release 覆盖升级契约**：启动器建立状态目录后，必须先安全停止已验明身份的当前或旧版 MathBank 服务，再自愈并确认受支持的 Python 环境，最后才能进行任何项目依赖导入。根目录存在 `RELEASE-MANIFEST.json` 时，必须运行 `python -B -m scripts.release_overlay --platform macos|windows-x64`，对账当前文件并仅删除旧清单中、新清单已移除的发布管理文件；失败必须拒绝启动。必须保护根目录数据库及 WAL/SHM、`.env`、`data_backup/`、`static/uploads/`、`.system_generated/` 与 `venv/`。无 Release 清单的源码工作区不得触发此对账。便携升级文档必须要求用户先做完整备份、通过网页电源键关闭并确认服务已停，将新 ZIP 解压到临时目录后再复制其“内容”到原目录；macOS Finder 禁止整体替换旧文件夹，Windows 必须替换所有同名文件。
 - **依赖锁变更检测**：源码启动器必须记录锁文件摘要；`requirements.txt` 内容变化时，即使旧环境仍可 import，也要重新按精确版本安装并执行 `pip check`，成功后才更新摘要。
-- **自适应健康检查**：后台拉起服务统一使用 `-u` 参数强制无缓冲输出标准流；启动脚本每 0.5 秒探测 `/healthz`（最长 60 秒，单次请求不超过 2 秒），为首次旧库快照、迁移和安全软件冷扫描保留启动时间；健康检查探针必须显式禁用代理（Windows PowerShell 注入 `$request.Proxy = $null` 与 `$request.KeepAlive = $false`，macOS 使用 `ProxyHandler({})`）强制直连本地 `127.0.0.1`，避免用户系统代理或梯子拦截探测，同时完全保留主服务（Python 进程）的全局代理环境以供 AI 接口正常调用；探针捕获 HTTP 状态码、503 响应体与网络异常，并在失败时将最后一次诊断写入 `.system_generated/probe.log`后连同标准流日志输出；该接口验证数据库连接、外键、结构版本、必要目录与可接受的 `wal`/`delete` 日志模式，仅在返回 200 后拉起浏览器。进程提前退出时立即失败，超时后只停止刚启动且身份已验证的项目进程；停止失败时必须保留 PID/身份状态以供下次核验，不得删除证据。
+- **自适应健康检查与实例关闭协议**：后台拉起服务统一使用 `-u` 参数强制无缓冲输出标准流；Windows 启动器为每个 child 生成 `launch_id`，通过 `MATHBANK_LAUNCH_ID` 注入，应用将它作为 `SERVER_INSTANCE_ID` 同时返回于 `/healthz` 与 `/api/version`。启动脚本每 0.5 秒探测 `/healthz`（最长 60 秒，单次请求不超过 2 秒），并显式使用标准库 `ProxyHandler({})` 直连 `127.0.0.1`，完全保留主服务的全局代理环境；只有 Popen child handle 仍存活、PID/`CreationDate` 未变、唯一 8000 listener 等于 child、HTTP 200 且 `server_instance_id == launch_id` 时才可打开浏览器。探针捕获 503 响应体与网络异常并写入 `.system_generated/probe.log`。`/api/shutdown` 必须同时校验本地 Token 与 `X-MathBank-Launch-ID`，用进程内 `signal.raise_signal(SIGINT)` 交给 uvicorn 正常执行 lifespan，并以进程级 Event/Lock 保证多次关闭请求只安排一次信号；旧标签页实例 ID 不匹配时返回 409。进程提前退出时立即失败；超时、状态登记或健康失败后若协作关闭不可用，不得强制终止，必须保留状态和诊断证据。
 - **前端静默重试与 UI 兜底**：首屏抓取异常时自动重试（间隔 1.5 秒，上限 3 次），多次失败展现带有 `[重新加载]` 按钮的错误提示面板。分类填充入口设置 DOM 空值防护。
 
 ### 3.8 PDF 试卷多模态拆解与双轨探测
@@ -126,6 +127,7 @@
 
 ### 3.10 组卷排版工作台
 - **A4 Live Preview 渲染引擎**：结合 KaTeX + 动态 DOM 模拟 A4 试卷（210mm x 297mm）。支持密封线 (`\secret`)、大/副标题双向 WYSIWYG 编辑、注意事项 (`notice`) 显隐控制与解答题留白调控。
+- **留白连续微调**：单题留白微调控制条必须绝对锚定在可伸缩留白区域顶部且不参与文档流；增减留白优先只改变区域底边，不得让纯 UI 控件改变网页预览分页预算。重绘前后按题目 ID 恢复控制条的视口锚点与原按钮焦点，以覆盖嵌图在 0 cm 切换位置或临界换页；数值槽和四个增减按钮宽度保持稳定，支持鼠标原位连续点击。
 - **面板架构**：右侧控制面板静态固定，下方 A4 画布具备独立滚动条，避免重叠。
 - **拖拽与管理**：支持 HTML5 原拖拽试题卡片排序，具备侧边栏折叠及已保存试卷的数据库存档与载入管理。
 - **按题查看答案**：题库卡片默认隐藏答案，通过 `has_answer` 轻量标志区分空答案；首次展开时调用 `GET /api/questions/{id}` 按需获取完整 `answer_markdown`，在当前会话内缓存并经 `MathBankSafe` + KaTeX 安全渲染。展开状态不进入 LocalStorage，也不得影响右侧试卷正文、PDF 或导出结果。
@@ -144,6 +146,7 @@
 
 ### 3.12 可编辑 Word 试卷导出
 - **解耦与原生 OMML**：`mathbank.word_export_helper` 使用 python-docx 生成试卷结构，公式批量由 Pandoc 转为 Word 原生 OMML (`m:oMath`)，导出默认返回包含试卷正文与含答案解析两份文档的 `.zip` 打包。
+- **复杂表格与图片锚点**：Word 导出必须先在完整题干中提取 `tabular`，再拆分普通段落，禁止因单元格图片周围空行而泄漏原始 LaTeX。正文与表格内 Markdown 图片按原锚点写入；只有题末可分离图片簇使用 `figure_align`。三列比较表总宽固定为 9000 DXA，短标签首列窄于两列正文，`tblW`、`tblGrid` 与 `tcW` 必须一致，单元格图片同时受最大宽高约束。`\multicolumn` 与 `\multirow` 必须分别生成原生 Word 横向和纵向合并，不得以源码文字或重复空单元格代替。
 - **Pandoc 按需运行组件**：Word 导出前先复用通过启动校验的用户指定、MathBank 管理或系统 Pandoc；缺失时须由用户一次确认后，由 `mathbank.runtime_components` 按 Windows x64 / macOS arm64 / macOS x86_64 下载固定版本。下载顺序为 Pandoc 官方 GitHub Release 后 SourceForge 备用镜像，两者必须通过同一份固定 SHA-256、大小、安全解压、`pandoc --version` 与真实 OMML DOCX smoke 后才能原子安装到 `.system_generated/runtime/pandoc/`；安装完成后必须自动续接原 Word 导出，不得要求用户选路径、配 PATH 或重启服务。
 - **降级机制**：Pandoc 缺失或转换失败时调用 XeLaTeX 栅格化为 PNG 兜底，失败显示红色 `[公式待核对：...]`。
 - **字体与版面规范**：
@@ -168,7 +171,7 @@
 
 ## 5. 启动诊断与双平台 Release 构建
 - **启动诊断**：服务启动打印 Python 环境、PDF Inspector、PyMuPDF、XeLaTeX、Pandoc 及数据库状态。
-- **打包脚本 (`scripts/build_release.py`)**：构建 Windows (`MathBank-Windows-x64.zip`，内嵌 Python 3.10 + 依赖 + `.bat`) 与 macOS (`MathBank-macOS.zip`，含 `.command`) 发布包。Python 嵌入运行时、官方 CPython NuGet 包与 Microsoft VC++ 运行库 VSIX 必须使用默认 TLS、固定可信 SHA-256 和原子下载，缓存每次复验；VC++ 运行库固定为 Visual Studio 2026 Stable `Microsoft.VC.14.51.CRT.Redist.X64.base` 14.51.36247，仅允许从正式 `VC\\Redist` x64 目录提取未修改的 `msvcp140.dll`、`vcruntime140.dll` 与 `vcruntime140_1.dll`，禁止 `debug_nonredist`/preview 文件进包，并须遵守 Microsoft Visual Studio 再分发许可。三枚 DLL 的包级/文件级 SHA-256、x64 架构、暂存目录及最终 ZIP 缺一不可，Windows CI 须用内嵌 `python.exe` 实际导入 `greenlet`、PyMuPDF 与 `pdf_inspector`。Windows 的 `python310._pth` 必须同时显式包含应用根目录 `..`、`site-packages` 与 `import site`。Windows 启动器必须由构建器跨平台规范化为无 BOM UTF-8 CRLF，并在暂存目录和 ZIP 内各校验一次；应用文件采用显式白名单，禁止测试、隐藏、数据库、日志和上传残留。打包前必须解析 Release 关键函数的类型注解，构建后执行源码/运行时 smoke，写入 `RELEASE-MANIFEST.json`，完成 ZIP CRC、清单内文件 SHA-256 与外部 `.zip.sha256` 校验。任何异常必须以非零状态退出并删除部分产物。
+- **打包脚本 (`scripts/build_release.py`)**：构建 Windows (`MathBank-Windows-x64.zip`，内嵌 Python 3.10 + 依赖 + `.bat`) 与 macOS (`MathBank-macOS.zip`，含 `.command`) 发布包。Python 嵌入运行时、官方 CPython NuGet 包与 Microsoft VC++ 运行库 VSIX 必须使用默认 TLS、固定可信 SHA-256 和原子下载，缓存每次复验；VC++ 运行库固定为 Visual Studio 2026 Stable `Microsoft.VC.14.51.CRT.Redist.X64.base` 14.51.36247，仅允许从正式 `VC\\Redist` x64 目录提取未修改的 `msvcp140.dll`、`vcruntime140.dll` 与 `vcruntime140_1.dll`，禁止 `debug_nonredist`/preview 文件进包，并须遵守 Microsoft Visual Studio 再分发许可。三枚 DLL 的包级/文件级 SHA-256、x64 架构、暂存目录及最终 ZIP 缺一不可，Windows CI 须用内嵌 `python.exe` 实际导入 `greenlet`、PyMuPDF 与 `pdf_inspector`。Windows 的 `python310._pth` 必须同时显式包含应用根目录 `..`、`site-packages` 与 `import site`。Windows 启动器必须由构建器跨平台规范化为无 BOM 的 7-bit ASCII CRLF，并在暂存目录和 ZIP 内各校验一次；`scripts/windows_launcher.py` 必须进入应用白名单和最终清单。应用文件采用显式白名单，禁止测试、隐藏、数据库、日志和上传残留。打包前必须解析 Release 关键函数的类型注解，构建后执行源码/运行时 smoke，写入 `RELEASE-MANIFEST.json`，完成 ZIP CRC、清单内文件 SHA-256 与外部 `.zip.sha256` 校验。任何异常必须以非零状态退出并删除部分产物。
 - **依赖运行时净化**：Release 构建仅按 `scripts/build_release.py` 中的显式审查清单移除固定依赖 wheel 携带的非运行时测试/代理文档目录（如 `certifi`、`colorama`、`fastapi`、`greenlet`）；Word 模板所需的 `.rels` 关系元数据必须保留并纳入清单校验。
 - **依赖与目标平台**：`requirements.txt` 与 `requirements-dev.txt` 使用精确版本；Windows 交叉构建额外读取 `requirements-windows.txt`，目标平台依赖必须在共享运行时锁或 Windows 锁中显式固定，禁止依赖构建主机的 `sys_platform` marker。构建下载 wheel 必须使用 `sys.executable -m pip`。
 
@@ -184,4 +187,4 @@
 ## 7. 开发与运行指令
 - **Python 版本**：最低 Python 3.10。
 - **本地启动**：`uvicorn main:app --reload`
-- **验证**：运行 `python3 -m pytest tests/`（必须限定在 `tests/` 目录下）、`python3 -m pip check`、`for file in static/js/*.js; do node --check "$file"; done`；macOS 启动器另运行 `bash -n 启动题库系统.command`。Windows Release 守卫必须检查 `.bat` 原始字节为纯 CRLF、模拟 `os.fchmod` 缺失并在 CP936 严格输出环境直接导入后台模块；CI 在 Python 3.10 与当前版本上执行上述检查，并在 macOS/Windows 单独运行 Release 守卫测试。Mac 上的交叉构建静态检查不能替代真实 Windows 启动验证。
+- **验证**：运行 `python3 -m pytest tests/`（必须限定在 `tests/` 目录下）、`python3 -m pip check`、`for file in static/js/*.js; do node --check "$file"; done`；macOS 启动器另运行 `bash -n 启动题库系统.command`。Windows Release 守卫必须检查 `.bat` 原始字节为 7-bit ASCII、无 BOM 且纯 CRLF，模拟 `os.fchmod` 缺失并在 CP936 严格输出环境直接导入后台模块；CI 在 Python 3.10 与当前版本上执行上述检查，并在 macOS/Windows 单独运行 Release 守卫测试。Windows CI 还必须构建最终 ZIP、解压到含中文和空格的路径、启动一个无害 sleeper，将其 PID 与错误 `CreationDate` 写入正式状态后通过最终包内 BAT 执行陈旧状态回归，并同时断言 sleeper 仍存活、状态只被隔离、输出不含 `��` 或 `is not recognized`。Mac 上的交叉构建静态检查不能替代真实 Windows 启动验证，Windows CI 通过也不能替代 Windows 10/11 用户机的最终首启复核。

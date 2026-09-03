@@ -20,7 +20,7 @@ def _manifest_bytes(root: Path, platform: str, paths: list[str], version: str) -
     required = ["main.py", "scripts/release_overlay.py"]
     required.append("启动题库系统.command" if platform == "macos" else "启动题库系统.bat")
     if platform == "windows-x64":
-        required.append("python/python.exe")
+        required.extend(("python/python.exe", "scripts/windows_launcher.py"))
     paths = list(dict.fromkeys([*paths, *required]))
     for relative in required:
         path = root.joinpath(*relative.split("/"))
@@ -339,6 +339,30 @@ def test_broken_or_unsafe_manifest_is_rejected(tmp_path, manifest_content):
 def test_missing_release_manifest_is_rejected(tmp_path):
     with pytest.raises(release_overlay.ReleaseOverlayError, match="is missing"):
         release_overlay.apply_release_overlay(tmp_path, "macos")
+
+
+def test_windows_overlay_requires_launcher_helper():
+    assert "scripts/windows_launcher.py" in release_overlay.REQUIRED_FILES["windows-x64"]
+
+
+def test_windows_overlay_rejects_manifest_without_launcher_helper(tmp_path):
+    manifest = json.loads(
+        _manifest_bytes(tmp_path, "windows-x64", ["main.py"], "1.0.0")
+    )
+    manifest["files"] = [
+        entry
+        for entry in manifest["files"]
+        if entry["path"] != "scripts/windows_launcher.py"
+    ]
+    (tmp_path / release_overlay.MANIFEST_NAME).write_text(
+        json.dumps(manifest, ensure_ascii=False), encoding="utf-8"
+    )
+
+    with pytest.raises(
+        release_overlay.ReleaseOverlayError,
+        match="omits a required application file",
+    ):
+        release_overlay.apply_release_overlay(tmp_path, "windows-x64")
 
 
 def test_installed_manifest_and_digest_are_saved_and_repeat_is_noop(tmp_path):

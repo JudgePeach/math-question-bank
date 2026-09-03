@@ -34,7 +34,8 @@ HISTORICAL_TOMBSTONES = frozenset({
 REQUIRED_FILES = {
     "macos": {"main.py", "scripts/release_overlay.py", "启动题库系统.command"},
     "windows-x64": {
-        "main.py", "scripts/release_overlay.py", "启动题库系统.bat", "python/python.exe",
+        "main.py", "scripts/release_overlay.py", "scripts/windows_launcher.py",
+        "启动题库系统.bat", "python/python.exe",
     },
 }
 DATABASE_SUFFIXES = (
