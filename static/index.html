@@ -26,10 +26,12 @@
             try {
                 var curId = window.__serverInstanceId || '';
                 var savedId = localStorage.getItem('mathbank_server_instance_id') || '';
-                var savedWs = localStorage.getItem('mathbank_active_workspace') || 'bank';
+                var savedWs = localStorage.getItem('mathbank_active_workspace') || 'dashboard';
                 if (curId && savedId === curId && savedWs === 'paper') {
                     document.documentElement.classList.add('init-ws-paper');
                     window.__initWsIsPaper = true;
+                } else if (savedWs === 'dashboard' || !savedWs) {
+                    document.documentElement.classList.add('init-ws-dashboard');
                 }
             } catch(e) {}
         })();
@@ -76,7 +78,69 @@
 
     <link rel="stylesheet" href="/static/css/app.css">
 </head>
-<body class="h-screen overflow-hidden text-slate-800 font-sans antialiased flex flex-col">
+<body class="h-screen overflow-hidden text-slate-800 font-sans antialiased flex">
+
+    <!-- Persistent application navigation. Core actions continue to call the
+         existing workspace and modal functions; this is a UI shell only. -->
+    <aside id="appNavigation" class="app-navigation" aria-label="MathBank 主导航">
+        <div class="app-nav-brand">
+            <span class="app-nav-logo" aria-hidden="true">
+                <img src="/static/favicon.png" alt="">
+            </span>
+            <span class="app-nav-brand-copy">
+                <strong>MathBank</strong>
+                <small>本地教研工作台</small>
+            </span>
+        </div>
+
+        <div class="app-nav-section-label">工作区</div>
+        <nav id="appNavPrimary" class="app-nav-primary" aria-label="主要工作区">
+            <button type="button" id="appNavDashboard" class="app-nav-item" data-app-nav-target="dashboard" aria-current="page" onclick="selectWorkspace('dashboard', '工作台')">
+                <i class="fa-solid fa-house" aria-hidden="true"></i>
+                <span>工作台</span>
+            </button>
+            <button type="button" id="appNavBank" class="app-nav-item" data-app-nav-target="bank" onclick="selectWorkspace('bank', '题库管理')">
+                <i class="fa-solid fa-database" aria-hidden="true"></i>
+                <span>题库管理</span>
+            </button>
+            <button type="button" id="appNavImport" class="app-nav-item" data-app-nav-target="import" onclick="selectWorkspace('import', '导入中心')">
+                <i class="fa-solid fa-file-import" aria-hidden="true"></i>
+                <span>导入中心</span>
+            </button>
+            <button type="button" id="appNavPaper" class="app-nav-item" data-app-nav-target="paper" onclick="selectWorkspace('paper', '智能组卷')">
+                <i class="fa-solid fa-file-lines" aria-hidden="true"></i>
+                <span>智能组卷</span>
+                <span class="paper-cart-badge app-nav-badge hidden" aria-label="已选题目数">0</span>
+            </button>
+            <button type="button" id="appNavRecords" class="app-nav-item" data-app-nav-target="records" onclick="openSavedPapersModal()">
+                <i class="fa-solid fa-clock-rotate-left" aria-hidden="true"></i>
+                <span>试卷记录</span>
+            </button>
+        </nav>
+
+        <div class="app-nav-spacer"></div>
+        <div class="app-nav-section-label app-nav-utility-label">工具</div>
+        <div class="app-nav-utilities">
+            <button type="button" class="app-nav-item app-nav-utility" onclick="openStatsModal()">
+                <i class="fa-solid fa-chart-pie" aria-hidden="true"></i>
+                <span>数据统计</span>
+            </button>
+            <button type="button" class="app-nav-item app-nav-utility" onclick="openSettingsModal()">
+                <i class="fa-solid fa-gear" aria-hidden="true"></i>
+                <span>系统设置</span>
+            </button>
+            <button type="button" class="app-nav-item app-nav-utility" onclick="toggleDarkMode()">
+                <i class="fa-solid fa-circle-half-stroke" aria-hidden="true"></i>
+                <span>明暗模式</span>
+            </button>
+            <button type="button" class="app-nav-item app-nav-utility app-nav-danger" onclick="confirmShutdown()">
+                <i class="fa-solid fa-power-off" aria-hidden="true"></i>
+                <span>关闭题库</span>
+            </button>
+        </div>
+    </aside>
+
+    <div id="appContentShell" class="app-content-shell">
 
     <!-- Header / Navbar - Apple Glass Style -->
     <header class="glass-panel sticky top-0 z-40 w-full h-16 flex items-center justify-between px-6">
@@ -89,12 +153,16 @@
                 <div onclick="toggleWorkspaceDropdown(event)" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();toggleWorkspaceDropdown(event)}" id="workspaceDropdownBtn" role="button" tabindex="0" aria-label="切换工作台" aria-haspopup="menu" aria-expanded="false" class="group cursor-pointer rounded-xl px-2 py-1 -mx-2 hover:bg-slate-200/50 dark:hover:bg-slate-800/60 active:scale-95 transition-all" title="点击切换工作台">
                     <span class="font-semibold text-lg tracking-tight font-['Outfit'] brand-title block">MathBank</span>
                     <div class="flex items-center space-x-1 -mt-1">
-                        <span id="currentWorkspaceName" class="text-sm font-medium text-slate-700 dark:text-slate-200">题库研讨工作台</span>
+                        <span id="currentWorkspaceName" class="text-sm font-medium text-slate-700 dark:text-slate-200">工作台</span>
                         <i class="fa-solid fa-chevron-down text-[9px] text-slate-400 group-hover:text-slate-600 dark:group-hover:text-slate-300 transition-transform duration-200" id="workspaceDropdownArrow"></i>
                     </div>
                 </div>
                 <!-- Workspace Dropdown Menu -->
                 <div id="workspaceDropdownMenu" role="menu" class="glass-dropdown absolute left-0 mt-2 w-52 py-1.5 rounded-2xl border border-slate-200/70 bg-white/95 backdrop-blur-xl shadow-xl transition-all duration-200 scale-90 opacity-0 pointer-events-none origin-top-left z-50">
+                    <button onclick="selectWorkspace('dashboard', '工作台')" class="glass-dropdown-item w-full px-3.5 py-2.5 text-xs text-left flex items-center justify-between font-medium rounded-xl" id="ws-btn-dashboard">
+                        <span>工作台</span>
+                        <i class="fa-solid fa-check text-[10px] text-brand-600 dark:text-brand-500" id="ws-check-dashboard"></i>
+                    </button>
                     <button onclick="selectWorkspace('bank', '题库研讨工作台')" class="glass-dropdown-item w-full px-3.5 py-2.5 text-xs text-left flex items-center justify-between font-medium rounded-xl" id="ws-btn-bank">
                         <span>题库研讨工作台</span>
                         <i class="fa-solid fa-check text-[10px] text-brand-600 dark:text-brand-500" id="ws-check-bank"></i>
@@ -107,12 +175,12 @@
             </div>
 
             <!-- 2. Sidebar Toggle Button (Placed right after Title) -->
-            <button onclick="toggleSidebarCollapse()" id="toggleSidebarBtn" aria-label="收起或展开左侧题库栏" class="ml-2 p-2 rounded-xl text-slate-500 hover:text-brand-600 hover:bg-slate-100/60 active:scale-95 transition-all focus:outline-none dark:text-slate-300 dark:hover:bg-slate-800/60 border border-slate-200/50 dark:border-slate-700/50" title="收起左侧题库栏">
+            <button onclick="toggleSidebarCollapse()" id="toggleSidebarBtn" aria-label="收起或展开左侧题库栏" class="hidden ml-2 p-2 rounded-xl text-slate-500 hover:text-brand-600 hover:bg-slate-100/60 active:scale-95 transition-all focus:outline-none dark:text-slate-300 dark:hover:bg-slate-800/60 border border-slate-200/50 dark:border-slate-700/50" title="收起左侧题库栏">
                 <i class="fa-solid fa-angles-left text-xs transition-transform duration-200" id="toggleSidebarIcon"></i>
             </button>
         </div>
 
-        <div class="flex items-center space-x-4">
+        <div id="headerUtilityActions" class="flex items-center space-x-4">
             <!-- Connection Status -->
             <div id="apiStatusIndicator" class="flex items-center space-x-1.5 px-3 py-1.5 rounded-full text-xs font-medium bg-slate-100 text-slate-600">
                 <span class="h-2 w-2 rounded-full bg-slate-400"></span>
@@ -177,7 +245,7 @@
             </button>
 
             <!-- Settings Button - Apple Glass Style -->
-            <button onclick="openSettingsModal()" aria-label="打开系统设置" class="glass-btn relative flex items-center space-x-2 px-4 py-2 rounded-xl text-xs font-medium text-slate-600">
+            <button onclick="openSettingsModal()" id="settingsOpenBtn" aria-label="打开系统设置" class="glass-btn relative flex items-center space-x-2 px-4 py-2 rounded-xl text-xs font-medium text-slate-600">
                 <i class="fa-solid fa-gear"></i>
                 <span>设置</span>
                 <!-- Update Notification Badge (hidden by default) -->
@@ -188,7 +256,7 @@
             </button>
 
             <!-- Shutdown Button - Apple Glass Danger Style -->
-            <button onclick="confirmShutdown()" aria-label="安全关闭题库" class="glass-btn-danger flex items-center space-x-2 px-4 py-2 rounded-xl text-xs font-semibold" title="安全关闭本地题库后端服务">
+            <button onclick="confirmShutdown()" id="shutdownBtn" aria-label="安全关闭题库" class="glass-btn-danger flex items-center space-x-2 px-4 py-2 rounded-xl text-xs font-semibold" title="安全关闭本地题库后端服务">
                 <i class="fa-solid fa-power-off"></i>
                 <span>关闭题库</span>
             </button>
@@ -197,97 +265,176 @@
 
     <!-- Main Content Container -->
     <main class="flex-1 flex overflow-hidden h-[calc(100vh-4rem)]">
-        
-        <!-- Workspace 1: Bank研讨工作台 (3-Column Layout) -->
-        <div id="bankWorkspaceSection" class="w-full h-full flex overflow-hidden">
-            <!-- Left Panel: Sidebar & Questions List - Apple Glass Style -->
-            <section id="sidebarSection" class="glass-sidebar flex flex-col h-full shrink-0 overflow-hidden" style="width: 320px; min-width: 0px;">
-            <!-- Sidebar Top Panel: Search, Buttons, Tabs -->
-            <div id="sidebarTopPanel" class="flex flex-col shrink-0 overflow-y-auto overflow-x-hidden custom-scrollbar">
-                <!-- Search & Filters -->
-                <div class="p-3 border-b border-slate-100 space-y-2">
-                    <div class="relative mx-2">
-                        <span class="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
-                            <i class="fa-solid fa-magnifying-glass text-slate-400 text-xs"></i>
-                        </span>
-                        <input type="text" id="searchInput" placeholder="搜索题目内容..."
-                               class="glass-input w-full pl-8 pr-4 py-1.5 text-xs rounded-xl">
-                    </div>
 
-                    <div class="grid grid-cols-2 gap-2">
-                        <select id="filterType" class="glass-select text-xs px-2.5 py-2.5 rounded-xl">
-                            <option value="">所有题型</option>
-                            <option value="single_choice">单选题</option>
-                            <option value="multi_choice">多选题</option>
-                            <option value="fill_in_blank">填空题</option>
-                            <option value="detailed_answer">解答题</option>
-                        </select>
-                        <select id="filterDifficulty" class="glass-select text-xs px-2.5 py-2.5 rounded-xl">
-                            <option value="">所有级别</option>
-                            <option value="easy_error">易错题</option>
-                            <option value="challenge">挑战题</option>
-                            <option value="qiangji">强基题</option>
-                        </select>
-                    </div>
-
-                    <!-- Custom Cascading Filter - Apple Glass Style -->
-                    <div class="space-y-1.5">
-                        <select id="filterCompulsory" class="glass-select w-full text-xs px-2.5 py-2.5 rounded-xl">
-                            <option value="">所有学段</option>
-                        </select>
-                        <select id="filterChapter" class="glass-select w-full text-xs px-2.5 py-2.5 rounded-xl hidden">
-                            <option value="">所有章节</option>
-                        </select>
-                    </div>
-
-                    <!-- Searchable Source Filter - Apple Glass Style -->
-                    <div class="flex items-center space-x-2 relative" id="filterSourceContainer">
-                        <span class="text-slate-400 text-[10px] font-bold shrink-0">
-                            <span>来源</span>
-                        </span>
-                        <div class="relative flex-1">
-                            <input type="text" id="filterSource" placeholder="输入题目来源..."
-                                   class="glass-input w-full pl-3 pr-7 py-1.5 text-xs rounded-xl bg-white/40"
-                                   autocomplete="off">
-                            <span class="absolute inset-y-0 right-0 pr-2.5 flex items-center cursor-pointer text-slate-400 hover:text-slate-600" id="toggleFilterSourceBtn">
-                                <i class="fa-solid fa-chevron-down text-[9px] transition-transform duration-200" id="chevronFilterSourceIcon"></i>
-                            </span>
-                            <span class="absolute inset-y-0 right-6 pr-1 flex items-center cursor-pointer text-slate-400 hover:text-slate-600 hidden" id="clearFilterSourceBtn">
-                                <i class="fa-solid fa-circle-xmark text-[10px]"></i>
-                            </span>
-                            <!-- Custom Suggestions Dropdown - Apple Glass Style -->
-                            <div id="filterSourceSuggestions" class="glass-dropdown absolute left-0 right-0 mt-1 max-h-48 overflow-y-auto z-30 hidden custom-scrollbar">
-                                <!-- Options will be injected here -->
-                            </div>
+        <!-- Workspace 0: Teaching preparation dashboard -->
+        <section id="dashboardWorkspaceSection" class="dashboard-workspace w-full h-full overflow-hidden" aria-labelledby="dashboardTitle">
+            <div class="dashboard-shell custom-scrollbar">
+                <header class="dashboard-header">
+                    <div class="dashboard-heading">
+                        <span class="dashboard-heading-icon" aria-hidden="true"><i class="fa-solid fa-wand-magic-sparkles"></i></span>
+                        <div>
+                            <h1 id="dashboardTitle">下午好，继续完成今天的教学准备</h1>
+                            <p>从最近任务继续，或快速创建新的题目与试卷。</p>
                         </div>
                     </div>
-
-                    <!-- Time Sorting Dropdown - Apple Glass Style -->
-                    <div class="flex items-center space-x-2 pt-1 border-t border-slate-100/50">
-                        <span class="text-slate-400 text-[10px] font-bold shrink-0">
-                            <span>排序</span>
-                        </span>
-                        <select id="filterSort" class="glass-select flex-1 text-xs px-2.5 py-1.5 rounded-xl bg-white/40">
-                            <option value="desc" selected>时间倒序 (最新优先)</option>
-                            <option value="asc">时间正序 (最早优先)</option>
-                        </select>
-                    </div>
-                </div>
-
-                <!-- Create New Buttons Group - Apple Glass Style -->
-                <div class="px-4 py-2 grid grid-cols-2 gap-2 shrink-0">
-                    <button onclick="checkAndSwitch(() => startNewQuestion())" class="glass-btn-primary flex items-center justify-center space-x-1.5 py-2.5 rounded-xl font-medium text-xs">
-                        <i class="fa-solid fa-plus text-[10px]"></i>
-                        <span>录入单题</span>
+                    <button type="button" class="dashboard-primary-action" onclick="selectWorkspace('import', '导入中心')">
+                        <i class="fa-solid fa-plus" aria-hidden="true"></i><span>新建任务</span>
                     </button>
-                    <button onclick="openImportModal()" class="glass-btn flex items-center justify-center space-x-1.5 py-2.5 rounded-xl font-medium text-xs text-slate-600">
+                </header>
+
+                <section class="dashboard-stat-grid" aria-label="题库概览">
+                    <article class="dashboard-stat-card dashboard-stat-card-primary">
+                        <span class="dashboard-stat-label">题库总量</span>
+                        <strong id="dashboardQuestionTotal">--</strong>
+                        <small id="dashboardQuestionTotalMeta">正在读取题库</small>
+                    </article>
+                    <article class="dashboard-stat-card dashboard-stat-card-warning">
+                        <span class="dashboard-stat-label">易错题待复核</span>
+                        <strong id="dashboardReviewCount">--</strong>
+                        <small id="dashboardReviewMeta">按题库统计更新</small>
+                    </article>
+                    <article class="dashboard-stat-card dashboard-stat-card-blue">
+                        <span class="dashboard-stat-label">已保存试卷</span>
+                        <strong id="dashboardPaperCount">--</strong>
+                        <small id="dashboardPaperMeta">可从试卷记录继续编排</small>
+                    </article>
+                    <article class="dashboard-stat-card dashboard-stat-card-success">
+                        <span class="dashboard-stat-label">本月新增</span>
+                        <strong id="dashboardMonthAdditions">--</strong>
+                        <small id="dashboardMonthMeta">正在读取本月数据</small>
+                    </article>
+                </section>
+
+                <div class="dashboard-main-grid">
+                    <section class="dashboard-task-panel" aria-labelledby="dashboardTasksTitle">
+                        <div class="dashboard-panel-heading">
+                            <div>
+                                <h2 id="dashboardTasksTitle">进行中的任务</h2>
+                                <p>从最近的工作继续，不会改变原有题库和组卷流程。</p>
+                            </div>
+                            <button type="button" class="dashboard-link-action" onclick="selectWorkspace('records', '试卷记录')">查看全部 <i class="fa-solid fa-arrow-right" aria-hidden="true"></i></button>
+                        </div>
+                        <div id="dashboardTaskList" class="dashboard-task-list">
+                            <div class="ui-state ui-state-loading" role="status" aria-live="polite">
+                                <span class="ui-state-icon" aria-hidden="true"><i class="fa-solid fa-spinner fa-spin"></i></span>
+                                <strong class="ui-state-title">正在整理最近任务</strong>
+                                <span class="ui-state-description">题库和试卷记录加载完成后会显示在这里。</span>
+                            </div>
+                        </div>
+                    </section>
+
+                    <aside class="dashboard-side-column" aria-label="工作台快捷入口和最近动态">
+                        <section class="dashboard-quick-panel" aria-labelledby="dashboardQuickTitle">
+                            <div class="dashboard-panel-heading dashboard-panel-heading-light">
+                                <div>
+                                    <h2 id="dashboardQuickTitle">快速开始</h2>
+                                    <p>常用工作流直接进入下一步</p>
+                                </div>
+                            </div>
+                            <div class="dashboard-quick-actions">
+                                <button type="button" onclick="selectWorkspace('import', '导入中心')"><i class="fa-solid fa-file-import" aria-hidden="true"></i><span>导入 PDF 试卷</span></button>
+                                <button type="button" onclick="startManualQuestion()"><i class="fa-solid fa-plus" aria-hidden="true"></i><span>手动新建题目</span></button>
+                                <button type="button" onclick="selectWorkspace('paper', '智能组卷')"><i class="fa-solid fa-file-lines" aria-hidden="true"></i><span>创建试卷草稿</span></button>
+                            </div>
+                        </section>
+
+                        <section class="dashboard-activity-panel" aria-labelledby="dashboardActivityTitle">
+                            <div class="dashboard-panel-heading">
+                                <div>
+                                    <h2 id="dashboardActivityTitle">最近动态</h2>
+                                    <p>题库与试卷记录的最新变化</p>
+                                </div>
+                            </div>
+                            <div id="dashboardActivityList" class="dashboard-activity-list">
+                                <div class="ui-state ui-state-loading" role="status" aria-live="polite">
+                                    <span class="ui-state-icon" aria-hidden="true"><i class="fa-solid fa-spinner fa-spin"></i></span>
+                                    <span class="ui-state-description">正在读取最近动态</span>
+                                </div>
+                            </div>
+                        </section>
+                    </aside>
+                </div>
+            </div>
+        </section>
+        <!-- End of Teaching Preparation Dashboard -->
+        
+        <!-- Workspace 1: Bank management workspace -->
+        <div id="bankWorkspaceSection" class="bank-workspace bank-browser w-full h-full overflow-hidden hidden">
+            <header class="bank-management-header">
+                <div class="bank-library-heading">
+                    <span class="bank-library-heading-icon" aria-hidden="true">
+                        <i class="fa-solid fa-layer-group"></i>
+                    </span>
+                    <span class="bank-library-heading-copy">
+                        <strong>题库管理</strong>
+                        <small>集中检索、校对和维护题目资源，修改不会影响历史试卷</small>
+                    </span>
+                </div>
+                <div class="bank-management-actions">
+                    <button onclick="selectWorkspace('import', '导入中心')" class="glass-btn bank-import-btn flex items-center justify-center space-x-1.5 rounded-xl font-medium text-xs text-slate-600">
                         <i class="fa-solid fa-file-import text-[10px]"></i>
                         <span>导入试卷</span>
                     </button>
+                    <button onclick="openNewQuestionEditor()" class="glass-btn-primary bank-create-btn flex items-center justify-center space-x-1.5 rounded-xl font-medium text-xs">
+                        <i class="fa-solid fa-plus text-[10px]"></i>
+                        <span>新建题目</span>
+                    </button>
+                </div>
+            </header>
+
+            <section class="bank-filter-toolbar" aria-label="题库检索与筛选">
+                <div class="bank-search-row relative">
+                    <span class="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+                        <i class="fa-solid fa-magnifying-glass text-slate-400 text-xs"></i>
+                    </span>
+                    <input type="text" id="searchInput" placeholder="搜索题干、知识点或来源..."
+                           class="glass-input w-full pl-8 pr-4 py-1.5 text-xs rounded-xl">
                 </div>
 
+                <select id="filterCompulsory" class="glass-select text-xs px-2.5 py-2.5 rounded-xl">
+                    <option value="">所有学段</option>
+                </select>
+                <select id="filterChapter" class="glass-select text-xs px-2.5 py-2.5 rounded-xl hidden">
+                    <option value="">所有章节</option>
+                </select>
+                <select id="filterType" class="glass-select text-xs px-2.5 py-2.5 rounded-xl">
+                    <option value="">所有题型</option>
+                    <option value="single_choice">单选题</option>
+                    <option value="multi_choice">多选题</option>
+                    <option value="fill_in_blank">填空题</option>
+                    <option value="detailed_answer">解答题</option>
+                </select>
+                <select id="filterDifficulty" class="glass-select text-xs px-2.5 py-2.5 rounded-xl">
+                    <option value="">所有级别</option>
+                    <option value="easy_error">易错题</option>
+                    <option value="challenge">挑战题</option>
+                    <option value="qiangji">强基题</option>
+                </select>
+
+                <div class="bank-filter-row relative" id="filterSourceContainer">
+                    <span class="bank-filter-label">来源</span>
+                    <div class="relative flex-1">
+                        <input type="text" id="filterSource" placeholder="输入题目来源..."
+                               class="glass-input w-full pl-3 pr-7 py-1.5 text-xs rounded-xl bg-white/40"
+                               autocomplete="off">
+                        <span class="absolute inset-y-0 right-0 pr-2.5 flex items-center cursor-pointer text-slate-400 hover:text-slate-600" id="toggleFilterSourceBtn">
+                            <i class="fa-solid fa-chevron-down text-[9px] transition-transform duration-200" id="chevronFilterSourceIcon"></i>
+                        </span>
+                        <span class="absolute inset-y-0 right-6 pr-1 flex items-center cursor-pointer text-slate-400 hover:text-slate-600 hidden" id="clearFilterSourceBtn">
+                            <i class="fa-solid fa-circle-xmark text-[10px]"></i>
+                        </span>
+                        <div id="filterSourceSuggestions" class="glass-dropdown absolute left-0 right-0 mt-1 max-h-48 overflow-y-auto z-30 hidden custom-scrollbar">
+                            <!-- Options will be injected here -->
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Lower left: question resources -->
+            <section id="sidebarSection" class="bank-library-panel bank-question-pane glass-sidebar flex flex-col h-full overflow-hidden">
+            <div id="sidebarTopPanel" class="flex flex-col shrink-0 overflow-hidden">
                 <!-- Sidebar Navigation Tabs - Apple Glass Style -->
-                <div class="px-4 pt-1.5 pb-0 shrink-0">
+                <div class="bank-sidebar-tabs px-4 pt-1.5 pb-0 shrink-0">
                     <div class="glass-tab flex space-x-1">
                         <button onclick="switchSidebarTab('bank')" id="sidebarTab-bank" class="glass-tab-item active flex-1 py-2.5 rounded-lg text-[11px] font-semibold text-center flex items-center justify-center space-x-1.5">
                             <i class="fa-solid fa-database text-[10px]"></i>
@@ -304,12 +451,27 @@
             <!-- Vertical Resizer inside Sidebar -->
             <div id="sidebar-resizer-v" class="h-[3px] hover:h-[5px] bg-slate-200/80 hover:bg-brand-500 cursor-row-resize w-full transition-all duration-150 shrink-0 z-20"></div>
 
+            <div class="bank-list-toolbar">
+                <div>
+                    <strong id="questionResultSummary">正在加载题库…</strong>
+                    <small>点击题目，在右侧查看完整详情</small>
+                </div>
+                <label class="bank-sort-control" for="filterSort">
+                    <i class="fa-solid fa-arrow-down-wide-short" aria-hidden="true"></i>
+                    <select id="filterSort" aria-label="题目排序方式">
+                        <option value="desc" selected>最近更新</option>
+                        <option value="asc">最早更新</option>
+                    </select>
+                </label>
+            </div>
+
             <!-- Questions List Scroll -->
-            <div class="flex-1 overflow-y-auto px-2 pb-6 space-y-2" id="questionsList">
+            <div class="bank-question-list flex-1 overflow-y-auto px-2 pb-6 space-y-2" id="questionsList">
                 <!-- Question Cards injection -->
-                <div class="p-6 text-center text-slate-400 text-sm">
-                    <i class="fa-solid fa-circle-notch animate-spin mb-2 text-brand-500"></i>
-                    <p>正在获取题库...</p>
+                <div class="ui-state ui-state-loading bank-list-state" role="status" aria-live="polite">
+                    <span class="ui-state-icon" aria-hidden="true"><i class="fa-solid fa-circle-notch fa-spin"></i></span>
+                    <strong class="ui-state-title">正在获取题库</strong>
+                    <span class="ui-state-description">题目列表加载完成后会自动显示在这里。</span>
                 </div>
             </div>
 
@@ -319,17 +481,25 @@
             </div>
         </section>
 
-        <!-- Resizer Left -->
-        <div id="resizer-1" class="w-[3px] hover:w-[5px] bg-slate-200/80 hover:bg-brand-500 cursor-col-resize h-full transition-all duration-150 shrink-0 z-20"></div>
+        <!-- Shared resizer: adjusts the question list and detail panes together. -->
+        <div id="resizer-1" class="bank-split-resizer" role="separator" tabindex="0"
+             aria-label="调整题目列表和题目详情的宽度"
+             aria-orientation="vertical" aria-valuemin="34" aria-valuemax="72" aria-valuenow="58">
+            <span class="bank-split-resizer-grip" aria-hidden="true"></span>
+        </div>
 
-        <!-- Center Panel: Question Editor & Workflow - Apple Glass Style -->
-        <section class="flex flex-col h-full overflow-y-auto" style="flex: 1 1 0%; min-width: 0px; background: var(--apple-bg);" id="editorSection">
+        <!-- Question editor dialog: hidden until opened from a detail action. -->
+        <section class="question-editor-dialog hidden" id="editorSection" role="dialog" aria-modal="true" aria-hidden="true" aria-labelledby="editorTitle" onclick="if(event.target===this) closeQuestionEditorModal()">
+          <div class="question-editor-modal-surface" data-modal-surface>
             <!-- Sticky Title bar - Apple Glass Style -->
-            <div class="sticky top-0 glass-panel px-6 py-4 flex items-center justify-between z-10">
-                <h2 class="font-semibold text-lg text-slate-800 flex items-center space-x-2">
-                    <i class="fa-solid fa-pen-nib text-brand-500 text-sm"></i>
-                    <span id="editorTitle">录入新数学题</span>
-                </h2>
+            <div class="bank-editor-toolbar question-editor-modal-header glass-panel px-6 py-4 flex items-center justify-between z-10">
+                <div class="bank-editor-heading">
+                    <span class="bank-editor-heading-icon" aria-hidden="true"><i class="fa-solid fa-pen-nib"></i></span>
+                    <div class="bank-editor-heading-copy">
+                        <h2 class="font-semibold text-lg text-slate-800" id="editorTitle">录入新数学题</h2>
+                        <small>分步骤维护分类、题干与解析内容</small>
+                    </div>
+                </div>
                 <div class="flex items-center space-x-3">
                     <button onclick="clearEditor()" class="text-xs text-slate-400 hover:text-red-500 transition-colors px-2 py-1 rounded-lg hover:bg-red-50">
                         清空草稿
@@ -338,13 +508,28 @@
                         <i class="fa-solid fa-floppy-disk"></i>
                         <span>保存</span>
                     </button>
+                    <button type="button" data-modal-close onclick="closeQuestionEditorModal()" aria-label="关闭题目编辑窗口" class="question-editor-close glass-btn rounded-xl">
+                        <i class="fa-solid fa-xmark" aria-hidden="true"></i>
+                    </button>
                 </div>
             </div>
 
-            <div class="p-6 space-y-6 max-w-4xl mx-auto w-full">
+            <nav class="question-editor-steps" aria-label="题目编辑板块">
+                <button type="button" class="question-editor-step active" data-editor-panel-target="classification" aria-current="step" onclick="switchQuestionEditorPanel('classification')">
+                    <span>1</span><strong>分类信息</strong><small>题型与知识归属</small>
+                </button>
+                <button type="button" class="question-editor-step" data-editor-panel-target="content" onclick="switchQuestionEditorPanel('content')">
+                    <span>2</span><strong>题干编辑</strong><small>OCR、正文与插图</small>
+                </button>
+                <button type="button" class="question-editor-step" data-editor-panel-target="answer" onclick="switchQuestionEditorPanel('answer')">
+                    <span>3</span><strong>解析编辑</strong><small>答案、解析与关联</small>
+                </button>
+            </nav>
+
+            <div class="question-editor-modal-body bank-editor-content p-6 max-w-4xl mx-auto w-full">
 
                 <!-- 1. Metadata / Classification Info - Compact Layout -->
-                <div class="glass-panel p-4 rounded-2xl space-y-3">
+                <div class="bank-editor-panel bank-meta-panel glass-panel p-4 rounded-2xl space-y-3 active" data-editor-panel="classification">
                     <h3 class="text-sm font-semibold text-slate-500 flex items-center space-x-2">
                         <i class="fa-solid fa-tags text-slate-400"></i>
                         <span>分类信息</span>
@@ -410,7 +595,7 @@
                 </div>
 
                 <!-- 2. Question Content Editor & Drag Illustration Upload - Apple Glass Style -->
-                <div id="questionContentPanel" class="glass-panel p-5 rounded-2xl space-y-4">
+                <div id="questionContentPanel" class="bank-editor-panel glass-panel p-5 rounded-2xl space-y-4 hidden" data-editor-panel="content">
                     <div class="flex justify-between items-center">
                         <h3 class="text-sm font-semibold text-slate-500 flex items-center space-x-2">
                             <i class="fa-solid fa-file-signature text-slate-400"></i>
@@ -561,7 +746,7 @@
                 </div>
 
                 <!-- 3. Answer & Solution -->
-                <div id="answerExplanationPanel" class="bg-white border border-slate-200 p-5 rounded-2xl space-y-4">
+                <div id="answerExplanationPanel" class="bank-editor-panel bg-white border border-slate-200 p-5 rounded-2xl space-y-4 hidden" data-editor-panel="answer">
                     <h3 class="text-sm font-semibold text-slate-500 flex items-center space-x-2">
                         <i class="fa-solid fa-list-check text-slate-400"></i>
                         <span>解析录入</span>
@@ -810,23 +995,28 @@
                 </div>
 
             </div>
+          </div>
         </section>
 
         <!-- Resizer Right -->
-        <div id="resizer-2" class="w-[3px] hover:w-[5px] bg-slate-200/80 hover:bg-brand-500 cursor-col-resize h-full transition-all duration-150 shrink-0 z-20"></div>
+        <div id="resizer-2" class="bank-resizer hidden w-[3px] hover:w-[5px] bg-slate-200/80 hover:bg-brand-500 cursor-col-resize h-full transition-all duration-150 shrink-0 z-20"></div>
 
         <!-- Right Panel: Full Premium Live Preview (Paper View) - Apple Glass Style -->
-        <section class="glass-sidebar flex flex-col h-full shrink-0 overflow-y-auto" style="width: 450px; min-width: 0px;" id="previewSection">
+        <section class="bank-preview-panel bank-detail-panel glass-sidebar flex flex-col h-full overflow-y-auto" style="flex: 0 1 42%; min-width: 360px;" id="previewSection">
             <!-- Title Bar - Apple Glass Style -->
-            <div class="sticky top-0 glass-panel px-5 py-4 flex justify-between items-center z-10">
+            <div class="bank-preview-toolbar sticky top-0 glass-panel px-5 py-4 flex justify-between items-center z-10">
                 <span class="font-bold text-sm tracking-wide text-slate-600 flex items-center space-x-1.5">
                     <i class="fa-solid fa-file-invoice text-indigo-500"></i>
-                    <span>题目预览</span>
+                    <span>题目详情</span>
                 </span>
+                <button type="button" id="editQuestionFromPreviewBtn" disabled onclick="openQuestionEditorModal('classification')" class="bank-detail-edit-btn glass-btn-primary rounded-xl" aria-label="编辑当前题目">
+                    <i class="fa-solid fa-pen" aria-hidden="true"></i>
+                    <span>编辑</span>
+                </button>
             </div>
 
             <!-- Beautiful Paper View Card -->
-            <div class="p-6">
+            <div class="bank-preview-content p-6">
                 <div class="border border-slate-300 rounded-2xl shadow-lg paper-card overflow-hidden min-h-[500px] flex flex-col select-text">
                     <!-- Accent color bar -->
                     <div class="h-2 bg-brand-600 w-full shrink-0"></div>
@@ -912,40 +1102,133 @@
                     </div>
                 </div>
             </div>
+        </section>
         </div>
         <!-- End of Bank Workspace Section -->
 
-        <!-- Workspace 2: Standalone 4-Part Paper Studio Workspace Section -->
-        <div id="paperWorkspaceSection" class="w-full h-full flex overflow-hidden hidden bg-slate-50 dark:bg-slate-950">
-            <!-- Left Side: Parts ② & ③ (60% width) -->
-            <div class="w-[60%] flex flex-col h-full border-r border-slate-200/80 dark:border-slate-800 shrink-0 bg-slate-50/50 dark:bg-slate-900/50">
-                <!-- Part ②: Collapsible Control Bar -->
-                <div id="paperFilterSection" class="p-2.5 sm:p-3 transition-all duration-300 shrink-0">
-                    <!-- Rendered by paper.js -->
-                </div>
+        <!-- Workspace 2: Smart paper studio -->
+        <div id="paperWorkspaceSection" class="paper-studio w-full h-full overflow-hidden hidden">
+            <div class="paper-studio-frame">
+                <header class="paper-studio-header">
+                    <div class="paper-studio-heading">
+                        <span class="paper-studio-heading-icon" aria-hidden="true"><i class="fa-solid fa-file-circle-plus"></i></span>
+                        <div>
+                            <h2>智能组卷</h2>
+                            <p>筛选题库、编排试题并实时检查 A4 卷面，原有保存与导出流程保持不变</p>
+                        </div>
+                    </div>
+                    <span class="paper-studio-mode-badge"><i class="fa-solid fa-wand-magic-sparkles" aria-hidden="true"></i> 题库选题与实时排版</span>
+                </header>
 
-                <!-- Part ② & ③ Boundary Collapse Toggle Bar -->
-                <div class="px-3 py-1 bg-slate-100/40 dark:bg-slate-900/60 border-y border-slate-200/50 dark:border-slate-800/80 flex items-center justify-between shrink-0">
-                    <button onclick="togglePaperFilterBar()" id="togglePaperFilterBtn" class="text-[10px] font-semibold text-slate-500 hover:text-brand-600 dark:text-slate-400 dark:hover:text-brand-200 flex items-center space-x-1.5 transition-colors">
-                        <i id="paperFilterToggleIcon" class="fa-solid fa-chevron-up text-[10px]"></i>
-                        <span id="paperFilterToggleTxt">收起组卷配置栏</span>
-                    </button>
-                </div>
+                <div class="paper-studio-body">
+                    <!-- Left: configuration and question stream -->
+                    <section class="paper-library-column" aria-label="组卷配置与题目资源">
+                        <div class="paper-config-panel">
+                            <div class="paper-panel-heading">
+                                <div>
+                                    <strong><i class="fa-solid fa-sliders" aria-hidden="true"></i> 组卷配置</strong>
+                                    <small>设置卷面信息，并按教材、题型和难度筛选题目</small>
+                                </div>
+                                <button onclick="togglePaperFilterBar()" id="togglePaperFilterBtn" class="paper-panel-toggle">
+                                    <i id="paperFilterToggleIcon" class="fa-solid fa-chevron-up text-[10px]"></i>
+                                    <span id="paperFilterToggleTxt">收起组卷配置栏</span>
+                                </button>
+                            </div>
+                            <div id="paperFilterSection" class="paper-filter-content transition-all duration-300">
+                                <!-- Rendered by paper.js -->
+                            </div>
+                        </div>
 
-                <!-- Part ③: Full-Width Question Stream -->
-                <div id="paperQuestionStream" class="flex-1 p-4 overflow-y-auto custom-scrollbar">
-                    <!-- Rendered by paper.js -->
-                </div>
-            </div>
+                        <div class="paper-question-panel">
+                            <div class="paper-panel-heading paper-question-heading">
+                                <div>
+                                    <strong><i class="fa-solid fa-layer-group" aria-hidden="true"></i> 题目资源</strong>
+                                    <small>在全库题目与已选题目之间切换，逐题查看并调整卷面顺序</small>
+                                </div>
+                            </div>
+                            <div id="paperQuestionStream" class="flex-1 overflow-y-auto custom-scrollbar">
+                                <!-- Rendered by paper.js -->
+                            </div>
+                        </div>
+                    </section>
 
-            <!-- Right Side: Part ④ (40% width) -->
-            <div class="w-[40%] flex flex-col h-full bg-slate-100/60 dark:bg-slate-950 p-4 overflow-hidden shrink-0" id="paperCanvasSection">
-                <!-- Rendered by paper.js -->
+                    <div id="paperSplitResizer" class="paper-split-resizer" role="separator" tabindex="0"
+                         aria-label="调整题目资源和试卷预览的宽度"
+                         aria-orientation="vertical" aria-valuemin="36" aria-valuemax="66" aria-valuenow="58">
+                        <span class="paper-split-resizer-grip" aria-hidden="true"></span>
+                    </div>
+
+                    <!-- Right: live paper preview and existing management actions -->
+                    <aside class="paper-preview-column" aria-label="试卷预览与导出">
+                        <div class="paper-panel-heading paper-preview-heading">
+                            <div>
+                                <strong><i class="fa-solid fa-file-lines" aria-hidden="true"></i> 试卷预览</strong>
+                                <small>实时 A4 分页、卷面管理与导出</small>
+                            </div>
+                            <span class="paper-live-badge"><span aria-hidden="true"></span> 实时预览</span>
+                        </div>
+                        <div class="flex-1 flex flex-col overflow-hidden" id="paperCanvasSection">
+                            <!-- Rendered by paper.js -->
+                        </div>
+                    </aside>
+                </div>
             </div>
         </div>
         <!-- End of Paper Workspace Section -->
 
+        <!-- Workspace 3: Saved paper records -->
+        <section id="recordsWorkspaceSection" class="records-workspace hidden w-full h-full overflow-hidden" aria-labelledby="recordsWorkspaceTitle">
+            <div class="records-workspace-shell">
+                <header class="records-workspace-header">
+                    <div class="records-workspace-heading">
+                        <span class="records-workspace-heading-icon" aria-hidden="true"><i class="fa-solid fa-clock-rotate-left"></i></span>
+                        <div>
+                            <h2 id="recordsWorkspaceTitle">试卷记录</h2>
+                            <p>集中查看、载入和导出已保存的历史试卷，记录操作继续使用原有数据接口</p>
+                        </div>
+                    </div>
+                    <div class="records-workspace-actions">
+                        <button type="button" class="records-secondary-action" onclick="openSavedPapersModal()">
+                            <i class="fa-solid fa-rotate" aria-hidden="true"></i><span>刷新记录</span>
+                        </button>
+                        <button type="button" class="records-primary-action" onclick="selectWorkspace('paper', '智能组卷')">
+                            <i class="fa-solid fa-plus" aria-hidden="true"></i><span>新建试卷</span>
+                        </button>
+                    </div>
+                </header>
+
+                <div class="records-overview" aria-live="polite">
+                    <div class="records-overview-card records-overview-card-primary">
+                        <span class="records-overview-icon" aria-hidden="true"><i class="fa-solid fa-box-archive"></i></span>
+                        <div><small>已保存试卷</small><strong><span id="savedPaperTotalCount">0</span> 份</strong></div>
+                    </div>
+                    <div class="records-overview-card">
+                        <span class="records-overview-icon" aria-hidden="true"><i class="fa-solid fa-shield-halved"></i></span>
+                        <div><small>数据说明</small><strong>删除记录不会影响题库题目</strong></div>
+                    </div>
+                </div>
+
+                <section class="records-list-panel" aria-labelledby="recordsListTitle">
+                    <div class="records-list-heading">
+                        <div>
+                            <h3 id="recordsListTitle">历史试卷归档</h3>
+                            <p>载入后可继续编排，或直接生成原有 PDF 文件</p>
+                        </div>
+                    </div>
+                    <div id="savedPapersListContainer" class="records-list-container custom-scrollbar">
+                        <div class="records-loading-state ui-state ui-state-loading" role="status" aria-live="polite">
+                            <span class="ui-state-icon" aria-hidden="true"><i class="fa-solid fa-spinner fa-spin"></i></span>
+                            <strong class="ui-state-title">正在获取历史试卷</strong>
+                            <span class="ui-state-description">已保存的试卷记录加载完成后会显示在这里。</span>
+                        </div>
+                    </div>
+                </section>
+            </div>
+        </section>
+        <!-- End of Saved Paper Records Workspace -->
+
     </main>
+    </div>
 
     <!-- AI CLASSIFICATION MODAL - Apple Glass Style -->
     <div id="aiClassifyModal" role="dialog" aria-modal="true" aria-hidden="true" aria-labelledby="aiClassifyModalTitle" class="fixed inset-0 glass-modal-overlay z-50 flex items-center justify-center hidden opacity-0 transition-opacity duration-300">
@@ -1647,33 +1930,40 @@
         </div>
     </div>
 
-    <!-- LATEX BATCH IMPORT MODAL - Apple Glass Style -->
-    <div id="latexImportModal" role="dialog" aria-modal="true" aria-hidden="true" aria-labelledby="latexImportModalTitle" class="fixed inset-0 glass-modal-overlay z-50 flex items-center justify-center hidden opacity-0 transition-opacity duration-300">
-        <div class="glass-modal rounded-2xl w-full max-w-6xl h-[90vh] flex flex-col transform scale-95 transition-transform duration-300 overflow-hidden">
-            <!-- Modal Header -->
-            <div class="flex justify-between items-center border-b border-slate-200/50 px-6 py-4 shrink-0">
-                <h3 id="latexImportModalTitle" class="font-bold text-lg text-slate-800 flex items-center space-x-2">
-                    <i class="fa-solid fa-file-import text-brand-600"></i>
-                    <span>LaTeX 试卷智能拆解导入与配图自动关联</span>
-                </h3>
-                <button type="button" data-modal-close onclick="closeImportModal()" aria-label="关闭试卷智能拆解弹窗" class="glass-btn w-9 h-9 flex items-center justify-center rounded-xl text-slate-400 hover:text-slate-600 transition-all">
-                    <i class="fa-solid fa-xmark text-lg"></i>
-                </button>
+    <!-- IMPORT CENTER WORKSPACE: moved beside the bank and paper workspaces at runtime. -->
+    <section id="importWorkspaceSection" aria-labelledby="importWorkspaceTitle" class="import-workspace-section hidden w-full h-full overflow-hidden">
+        <div class="import-workspace-shell flex w-full flex-col overflow-hidden">
+            <!-- Workspace Header -->
+            <div class="import-workspace-header flex justify-between items-center border-b border-slate-200/50 px-6 py-4 shrink-0">
+                <div class="import-workspace-heading">
+                    <span class="import-workspace-heading-icon" aria-hidden="true"><i class="fa-solid fa-file-import"></i></span>
+                    <div>
+                        <h3 id="importWorkspaceTitle" class="font-bold text-lg text-slate-800">导入中心</h3>
+                        <p>PDF、Word 与 LaTeX 试卷的拆解、审查和批量入库</p>
+                    </div>
+                </div>
             </div>
 
-            <!-- Modal Content (Split Pane) -->
-            <div id="latexImportModalContent" class="flex-1 flex overflow-hidden">
+            <ol class="import-workspace-steps" aria-label="试卷导入流程">
+                <li class="is-current"><span>1</span><div><strong>选择试卷</strong><small>上传或粘贴原始内容</small></div></li>
+                <li><span>2</span><div><strong>解析配置</strong><small>范围、策略与配图</small></div></li>
+                <li><span>3</span><div><strong>AI 拆解</strong><small>切分题目并匹配属性</small></div></li>
+                <li><span>4</span><div><strong>审查入库</strong><small>校对后批量保存</small></div></li>
+            </ol>
+
+            <!-- Workspace Content (Split Pane) -->
+            <div id="importWorkspaceContent" class="import-workspace-content flex-1 flex overflow-hidden">
                 <!-- Left Pane: Inputs (LaTeX and Images) -->
-                <div id="importInputPane" class="w-5/12 border-r border-slate-200 p-6 overflow-y-auto space-y-4 bg-white/50 flex flex-col">
+                <div id="importInputPane" class="import-source-pane w-5/12 border-r border-slate-200 p-6 overflow-y-auto space-y-4 bg-white/50 flex flex-col">
                     <!-- Step 1: Title -->
-                    <div class="space-y-1.5 shrink-0">
+                    <div class="import-config-card space-y-1.5 shrink-0">
                         <label class="block text-xs font-bold text-slate-500">第一步：试卷标题（作为题目来源，可空）</label>
                         <input type="text" id="importPaperTitle" placeholder="请输入试卷标题，例如：XX中学2025-2026高一期中" 
                                class="w-full px-3.5 py-2 border border-slate-200 rounded-xl outline-none focus:border-brand-500 focus:ring-1 focus:ring-brand-500 transition-all text-xs">
                     </div>
 
                     <!-- Step 2: LaTeX code drag & drop / text area -->
-                    <div class="space-y-1.5 flex-1 flex flex-col min-h-[220px]">
+                    <div class="import-config-card space-y-1.5 flex-1 flex flex-col min-h-[220px]">
                         <label class="block text-xs font-bold text-slate-500 shrink-0">第二步：试卷 LaTeX 源码 / PDF / Word 文件</label>
                         <div id="texDropzone" class="border-2 border-dashed border-slate-200 hover:border-brand-500/80 rounded-xl p-3.5 text-center cursor-pointer transition-all duration-200 bg-white hover:bg-brand-50/20 flex flex-col justify-center items-center shrink-0 mb-2">
                             <i class="fa-solid fa-file-lines text-slate-400 text-xl mb-1.5" id="texFileIcon"></i>
@@ -1685,7 +1975,7 @@
                     </div>
 
                     <!-- Step 3: Optional assets referenced by single-file TeX -->
-                    <div class="space-y-1.5 shrink-0" id="texImagesSection">
+                    <div class="import-config-card space-y-1.5 shrink-0" id="texImagesSection">
                         <label class="block text-xs font-bold text-slate-500">第三步：TeX 配套图片（可选）</label>
                         <div id="imagesDropzone" class="border-2 border-dashed border-slate-200 hover:border-brand-500/80 rounded-xl p-3 text-center cursor-pointer transition-all duration-200 bg-white hover:bg-brand-50/20 flex flex-col justify-center items-center">
                             <i class="fa-solid fa-images text-slate-400 text-xl mb-1.5" id="imagesFileIcon"></i>
@@ -1696,7 +1986,7 @@
                         <div id="importImagesList" class="hidden flex flex-wrap gap-1.5"></div>
                     </div>
 
-                    <div class="flex items-start space-x-3 p-3 bg-slate-50/80 border border-slate-200/60 rounded-xl shrink-0">
+                    <div class="import-config-card import-ai-option flex items-start space-x-3 p-3 bg-slate-50/80 border border-slate-200/60 rounded-xl shrink-0">
                         <input type="checkbox" id="importGenerateAnswers" class="w-4 h-4 text-brand-600 border-slate-300 rounded focus:ring-brand-500 cursor-pointer mt-0.5">
                         <div class="flex-1">
                             <label for="importGenerateAnswers" class="block text-xs font-bold text-slate-700 cursor-pointer">自动生成 AI 解答与详细解析</label>
@@ -1705,7 +1995,7 @@
                     </div>
 
                     <!-- PDF Advanced Parsing Options (Visible only when PDF selected) -->
-                    <div id="pdfPageRangeContainer" class="hidden space-y-2.5 p-3 bg-indigo-50/40 border border-indigo-100 rounded-xl shrink-0">
+                    <div id="pdfPageRangeContainer" class="import-config-card hidden space-y-2.5 p-3 bg-indigo-50/40 border border-indigo-100 rounded-xl shrink-0">
                         <div class="flex items-center justify-between">
                             <label class="block text-xs font-bold text-indigo-950 flex items-center space-x-1.5">
                                 <i class="fa-solid fa-microchip text-brand-600"></i>
@@ -1737,7 +2027,7 @@
                     </div>
 
                     <!-- Step 4: Run AI Parse & Reset buttons -->
-                    <div class="flex items-center space-x-2.5 shrink-0 pt-1">
+                    <div class="import-primary-actions flex items-center space-x-2.5 shrink-0 pt-1">
                         <button onclick="runAIPaperParse()" id="runParseBtn" class="flex-1 glass-btn-primary flex items-center justify-center space-x-2 py-3 rounded-xl font-bold text-sm">
                             <i class="fa-solid fa-wand-magic-sparkles"></i>
                             <span>一键 AI 智能拆解并关联</span>
@@ -1750,27 +2040,27 @@
                 </div>
 
                 <!-- Right Pane: AI Review Lists -->
-                <div class="w-7/12 p-6 overflow-y-auto space-y-4 flex flex-col bg-slate-100/50 relative" id="importReviewPane">
+                <div class="import-result-pane w-7/12 p-6 overflow-y-auto space-y-4 flex flex-col bg-slate-100/50 relative" id="importReviewPane">
                     <!-- Default state / Placeholder -->
-                    <div id="importPlaceholder" class="flex-1 flex flex-col items-center justify-center text-center space-y-3 p-12">
-                        <div class="h-16 w-16 bg-white border border-slate-200 rounded-2xl shadow-sm flex items-center justify-center text-brand-600 text-2xl">
+                    <div id="importPlaceholder" class="import-result-placeholder ui-state ui-state-empty flex-1 flex flex-col items-center justify-center text-center space-y-3 p-12">
+                        <div class="ui-state-icon h-16 w-16 bg-white border border-slate-200 rounded-2xl shadow-sm flex items-center justify-center text-brand-600 text-2xl">
                             <i class="fa-solid fa-robot animate-bounce"></i>
                         </div>
                         <div>
-                            <h4 class="font-bold text-slate-700 text-sm">等待拆解...</h4>
-                            <p class="text-xs text-slate-500 max-w-sm mt-1.5 leading-relaxed">
+                            <h4 class="ui-state-title font-bold text-slate-700 text-sm">等待拆解</h4>
+                            <p class="ui-state-description text-xs text-slate-500 max-w-sm mt-1.5 leading-relaxed">
                                 请在左侧输入试卷标题、拖入或粘贴 LaTeX 源码与配套插图文件，然后点击“一键 AI 智能拆解”按钮。AI 将为您智能分析分割题目并绑定插图！
                             </p>
                         </div>
                     </div>
 
                     <!-- Loading / Skeleton state -->
-                    <div id="importLoadingState" role="status" aria-live="polite" class="flex-1 flex flex-col items-center justify-center text-center space-y-4 hidden p-12">
-                        <div class="h-16 w-16 bg-white border border-brand-200/80 rounded-2xl shadow-sm flex items-center justify-center text-brand-600 text-2xl mb-1">
+                    <div id="importLoadingState" role="status" aria-live="polite" class="ui-state ui-state-loading flex-1 flex flex-col items-center justify-center text-center space-y-4 hidden p-12">
+                        <div class="ui-state-icon h-16 w-16 bg-white border border-brand-200/80 rounded-2xl shadow-sm flex items-center justify-center text-brand-600 text-2xl mb-1">
                             <i class="fa-solid fa-circle-notch fa-spin text-brand-600 text-3xl inline-block"></i>
                         </div>
                         <div class="space-y-1.5 w-full max-w-xs flex flex-col items-center">
-                            <h4 class="font-bold text-slate-700 text-sm" id="importLoadingText">正在整理插图映射并预备上传...</h4>
+                            <h4 class="ui-state-title font-bold text-slate-700 text-sm" id="importLoadingText">正在整理插图映射并预备上传...</h4>
                             <!-- Progress bar -->
                             <div class="w-full bg-slate-200 rounded-full h-1.5 mt-2 hidden" id="importProgressBarContainer">
                                 <div class="bg-brand-600 h-1.5 rounded-full transition-all duration-300" style="width: 0%" id="importProgressBar"></div>
@@ -1842,7 +2132,7 @@
                 </div>
             </div>
         </div>
-    </div>
+    </section>
 
     <!-- Duplicate review before importing a single question or a parsed paper batch -->
     <div id="parsedDuplicateReviewModal" role="dialog" aria-modal="true" aria-hidden="true" aria-labelledby="parsedDuplicateReviewTitle" aria-describedby="parsedDuplicateReviewDescription" class="fixed inset-0 z-[95] hidden items-center justify-center bg-slate-950/55 p-4 opacity-0 backdrop-blur-sm transition-opacity duration-200">
@@ -1923,10 +2213,11 @@
 
     <!-- MAIN APP JAVASCRIPT -->
     <script src="/static/js/api.js?v=1.0.1"></script>
-    <script src="/static/js/editor.js?v=1.0.1"></script>
+    <script src="/static/js/editor.js?v=1.0.3"></script>
     <script src="/static/js/ocr.js?v=1.0.1"></script>
-    <script src="/static/js/import.js?v=1.0.1"></script>
-    <script src="/static/js/paper.js?v=1.0.1"></script>
+    <script src="/static/js/import.js?v=1.0.3"></script>
+    <script src="/static/js/paper.js?v=1.0.7"></script>
+    <script src="/static/js/dashboard.js?v=1.0.2"></script>
 
     <!-- On-demand multimodal TikZ workbench -->
     <div id="answerTikzWorkbenchModal" role="dialog" aria-modal="true" aria-hidden="true" aria-labelledby="answerTikzWorkbenchTitle" class="fixed inset-0 z-[80] hidden items-center justify-center bg-slate-950/65 p-2 opacity-0 backdrop-blur-sm transition-opacity duration-200 sm:p-4">

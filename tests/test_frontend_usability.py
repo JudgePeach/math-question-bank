@@ -1188,7 +1188,6 @@ def test_static_dialogs_expose_modal_semantics_and_accessible_names():
         "settingsModal": "settingsModalTitle",
         "updateModal": "updateModalTitle",
         "statsModal": "statsModalTitle",
-        "latexImportModal": "latexImportModalTitle",
         "parsedDuplicateReviewModal": "parsedDuplicateReviewTitle",
         "pdfCropModal": "pdfCropModalTitle",
         "answerTikzWorkbenchModal": "answerTikzWorkbenchTitle",
@@ -1330,7 +1329,7 @@ def test_mobile_layout_touch_targets_and_dialog_panes_have_regression_guards():
         "#bankWorkspaceSection",
         "#paperWorkspaceSection",
         "#previewSection",
-        "#latexImportModalContent",
+        ".import-workspace-content",
         "#pdfCropModalContent",
         "#pdfPagesThumbnailsContainer",
         '.question-card button[aria-label="删除题目"]',
@@ -1345,7 +1344,346 @@ def test_mobile_layout_touch_targets_and_dialog_panes_have_regression_guards():
         assert marker in css_source
 
     assert "html.init-ws-paper #paperWorkspaceSection { display: flex !important; }" in css_source
+    assert "#bankWorkspaceSection.bank-browser.hidden" in css_source
+    assert "#importWorkspaceSection.hidden" in css_source
+    assert "#recordsWorkspaceSection.hidden" in css_source
     assert "sidebar-pagination-controls" in _read(STATIC_JS_DIR / "editor.js")
+
+
+def test_application_shell_navigation_reuses_peer_workspaces():
+    elements = _index_elements()
+    index_source = _read(INDEX_PATH)
+    css_source = _read(CSS_PATH)
+    api_source = _read(STATIC_JS_DIR / "api.js")
+    import_source = _read(STATIC_JS_DIR / "import.js")
+    paper_source = _read(STATIC_JS_DIR / "paper.js")
+
+    assert elements["appNavigation"]["aria-label"] == "MathBank 主导航"
+    assert elements["appNavPrimary"]["aria-label"] == "主要工作区"
+    assert elements["appNavDashboard"]["data-app-nav-target"] == "dashboard"
+    assert elements["appNavDashboard"]["aria-current"] == "page"
+    assert elements["appNavBank"]["data-app-nav-target"] == "bank"
+    assert elements["appNavImport"]["data-app-nav-target"] == "import"
+    assert elements["appNavPaper"]["data-app-nav-target"] == "paper"
+    assert elements["appNavRecords"]["data-app-nav-target"] == "records"
+
+    assert "selectWorkspace('dashboard', '工作台')" in index_source
+    assert "selectWorkspace('bank', '题库管理')" in index_source
+    assert "selectWorkspace('import', '导入中心')" in index_source
+    assert "selectWorkspace('paper', '智能组卷')" in index_source
+    assert "openSavedPapersModal()" in index_source
+    assert 'id="appContentShell"' in index_source
+
+    assert "window.setAppNavigationActive = function(targetId)" in api_source
+    assert "button.setAttribute('aria-current', 'page')" in api_source
+    assert "window.setAppNavigationActive(workspaceId)" in api_source
+    assert "function openImportModal()" in import_source
+    assert "window.selectWorkspace('import', '导入中心')" in import_source
+    assert "const importWorkspaceSection = document.getElementById('importWorkspaceSection')" in paper_source
+    assert "mainWorkspaceContainer.insertBefore(importWorkspaceSection, paperWorkspaceSection)" in paper_source
+    assert "workspaceId === 'import'" in paper_source
+    assert "importSec.classList.remove('hidden')" in paper_source
+    assert "workspaceId === 'records'" in paper_source
+    assert "recordsSec.classList.remove('hidden')" in paper_source
+    assert "workspaceId === 'dashboard'" in paper_source
+    assert "dashboardSec.classList.remove('hidden')" in paper_source
+
+    for marker in (
+        ".app-navigation",
+        ".app-content-shell",
+        '.app-nav-item[aria-current="page"]',
+        "grid-template-columns: repeat(5, minmax(0, 1fr))",
+        "padding-bottom: 64px",
+    ):
+        assert marker in css_source
+
+
+def test_dashboard_workspace_reuses_read_only_metrics_and_existing_workflows():
+    elements = _index_elements()
+    index_source = _read(INDEX_PATH)
+    css_source = _read(CSS_PATH)
+    dashboard_source = _read(STATIC_JS_DIR / "dashboard.js")
+    editor_source = _read(STATIC_JS_DIR / "editor.js")
+    paper_source = _read(STATIC_JS_DIR / "paper.js")
+
+    for element_id in (
+        "dashboardWorkspaceSection",
+        "dashboardTitle",
+        "dashboardQuestionTotal",
+        "dashboardReviewCount",
+        "dashboardPaperCount",
+        "dashboardMonthAdditions",
+        "dashboardTaskList",
+        "dashboardActivityList",
+    ):
+        assert element_id in elements
+
+    for marker in (
+        "fetch('/api/stats')",
+        "fetch('/api/papers')",
+        "window.loadDashboardData = loadDashboardData",
+        "selectWorkspace('import', '导入中心')",
+        "window.startManualQuestion = startManualQuestion",
+        "window.resumeSavedPaper = resumeSavedPaper",
+        "window.openNewQuestionEditor",
+        "window.loadSavedPaper",
+    ):
+        assert marker in dashboard_source or marker in index_source
+
+    assert 'id="appNavDashboard"' in index_source
+    assert 'onclick="startManualQuestion()"' in index_source
+    assert "onclick=\"resumeSavedPaper(" in dashboard_source
+    assert "html.init-ws-dashboard #dashboardWorkspaceSection" in css_source
+    assert ".dashboard-stat-grid" in css_source
+    assert ".dashboard-quick-actions" in css_source
+    assert ".dashboard-main-grid" in css_source
+    assert "align-items: stretch" in css_source
+    assert ".dashboard-task-panel" in css_source
+    assert "__preserveNewQuestionEditor" in editor_source
+    assert "classList.remove('init-ws-dashboard', 'init-ws-paper')" in paper_source
+
+
+def test_saved_paper_records_reuses_existing_actions_in_a_dedicated_workspace():
+    elements = _index_elements()
+    index_source = _read(INDEX_PATH)
+    css_source = _read(CSS_PATH)
+    paper_source = _read(STATIC_JS_DIR / "paper.js")
+
+    for element_id in (
+        "recordsWorkspaceSection",
+        "recordsWorkspaceTitle",
+        "savedPaperTotalCount",
+        "recordsListTitle",
+        "savedPapersListContainer",
+    ):
+        assert element_id in elements
+
+    assert elements["recordsWorkspaceSection"]["aria-labelledby"] == "recordsWorkspaceTitle"
+    for marker in (
+        "records-workspace-shell",
+        "records-workspace-header",
+        "records-overview",
+        "records-list-panel",
+        "records-list-container",
+        "records-paper-grid",
+        "saved-paper-card",
+        "saved-paper-card-actions",
+    ):
+        assert marker in index_source or marker in paper_source
+        assert f".{marker}" in css_source
+
+    for marker in (
+        "async function renderSavedPapersWorkspace()",
+        "fetch('/api/papers')",
+        "loadSavedPaper(${paperId})",
+        "quickExportPaperPdf(${paperId})",
+        "deleteSavedPaper(${paperId})",
+        "window.selectWorkspace('records', '试卷记录')",
+        "window.selectWorkspace('paper', '智能组卷')",
+    ):
+        assert marker in paper_source
+
+
+def test_import_center_reuses_existing_pipeline_in_a_dedicated_workspace():
+    elements = _index_elements()
+    index_source = _read(INDEX_PATH)
+    css_source = _read(CSS_PATH)
+    import_source = _read(STATIC_JS_DIR / "import.js")
+
+    for element_id in (
+        "importWorkspaceSection",
+        "importWorkspaceTitle",
+        "importWorkspaceContent",
+        "importInputPane",
+        "importPaperTitle",
+        "texDropzone",
+        "texFileInput",
+        "importLatexContent",
+        "texImagesSection",
+        "imagesDropzone",
+        "imagesFileInput",
+        "importGenerateAnswers",
+        "pdfPageRangeContainer",
+        "pdfPageRange",
+        "runParseBtn",
+        "resetAllImportBtn",
+        "importReviewPane",
+        "importPlaceholder",
+        "importLoadingState",
+        "importLogsConsole",
+        "btnCancelImport",
+        "parsedQuestionsWrapper",
+        "parsedCardsContainer",
+        "saveAllParsedBtn",
+    ):
+        assert element_id in elements
+
+    for marker in (
+        "import-workspace-section",
+        "import-workspace-shell",
+        "import-workspace-header",
+        "import-workspace-heading",
+        "import-workspace-steps",
+        "import-workspace-content",
+        "import-source-pane",
+        "import-result-pane",
+        "import-config-card",
+        "import-primary-actions",
+        "import-result-placeholder",
+    ):
+        assert marker in index_source
+
+    assert "PDF、Word 与 LaTeX 试卷的拆解、审查和批量入库" in index_source
+    assert "runAIPaperParse()" in index_source
+    assert "confirmClearAllParsed()" in index_source
+    assert "saveAllParsedQuestions()" in index_source
+    assert "function openImportModal()" in import_source
+    assert "function closeImportModal()" in import_source
+    assert "Import center workspace" in css_source
+    assert ".import-workspace-section" in css_source
+    assert "#importInputPane.import-source-pane" in css_source
+    assert "#importReviewPane.import-result-pane" in css_source
+
+    workspace = elements["importWorkspaceSection"]
+    assert "role" not in workspace
+    assert "aria-modal" not in workspace
+    assert workspace["aria-labelledby"] == "importWorkspaceTitle"
+
+
+def test_smart_paper_studio_uses_clear_peer_panels_without_replacing_workflows():
+    elements = _index_elements()
+    index_source = _read(INDEX_PATH)
+    css_source = _read(CSS_PATH)
+    paper_source = _read(STATIC_JS_DIR / "paper.js")
+
+    for element_id in (
+        "paperWorkspaceSection",
+        "paperFilterSection",
+        "togglePaperFilterBtn",
+        "paperFilterToggleIcon",
+        "paperFilterToggleTxt",
+        "paperQuestionStream",
+        "paperSplitResizer",
+        "paperCanvasSection",
+    ):
+        assert element_id in elements
+
+    for marker in (
+        "paper-studio-frame",
+        "paper-studio-header",
+        "paper-studio-body",
+        "paper-library-column",
+        "paper-config-panel",
+        "paper-question-panel",
+        "paper-preview-column",
+        "paper-filter-content",
+        "paper-panel-heading",
+        "paper-live-badge",
+        "paper-split-resizer",
+        "paper-split-resizer-grip",
+    ):
+        assert marker in index_source
+        assert f".{marker}" in css_source
+
+    assert 'aria-label="组卷配置与题目资源"' in index_source
+    assert 'aria-label="试卷预览与导出"' in index_source
+    assert 'aria-label="调整题目资源和试卷预览的宽度"' in index_source
+    assert 'aria-orientation="vertical"' in index_source
+    assert "window.togglePaperFilterBar = function ()" in paper_source
+    assert "function initPaperSplitResizer()" in paper_source
+    assert "function setPaperSplitRatio(value" in paper_source
+    assert "ratioFromPointer(event.clientX)" in paper_source
+    assert "window.setPaperSplitRatio = setPaperSplitRatio" in paper_source
+    assert "function renderPart2FilterSection()" in paper_source
+    assert "function renderPart3QuestionStream()" in paper_source
+    assert "window.renderPaperCanvas = function ()" in paper_source
+    assert "savePaperToDb()" in paper_source
+    assert "exportPaperPdf('paper')" in paper_source
+    assert "exportPaperWord()" in paper_source
+
+
+def test_bank_browser_uses_detail_first_layout_and_card_based_editor_dialog():
+    elements = _index_elements()
+    index_source = _read(INDEX_PATH)
+    css_source = _read(CSS_PATH)
+    editor_source = _read(STATIC_JS_DIR / "editor.js")
+    import_source = _read(STATIC_JS_DIR / "import.js")
+
+    for element_id in (
+        "bankWorkspaceSection",
+        "sidebarSection",
+        "sidebarTopPanel",
+        "searchInput",
+        "filterType",
+        "filterDifficulty",
+        "filterCompulsory",
+        "filterChapter",
+        "filterSource",
+        "filterSort",
+        "questionsList",
+        "sidebarPagination",
+        "resizer-1",
+        "editorSection",
+        "saveQuestionBtn",
+        "questionContentPanel",
+        "answerExplanationPanel",
+        "resizer-2",
+        "previewSection",
+        "editQuestionFromPreviewBtn",
+        "questionResultSummary",
+    ):
+        assert element_id in elements
+
+    for marker in (
+        "bank-browser",
+        "bank-management-header",
+        "bank-management-actions",
+        "bank-filter-toolbar",
+        "bank-library-panel",
+        "bank-library-heading",
+        "bank-question-pane",
+        "bank-split-resizer",
+        "bank-list-toolbar",
+        "bank-sort-control",
+        "bank-question-list",
+        "bank-detail-panel",
+        "question-editor-dialog",
+        "question-editor-modal-surface",
+        "question-editor-steps",
+        'data-editor-panel="classification"',
+        'data-editor-panel="content"',
+        'data-editor-panel="answer"',
+    ):
+        assert marker in index_source
+
+    assert 'id="filterSource"' in index_source
+    assert '<option value="desc" selected>最近更新</option>' in index_source
+    assert 'onclick="openNewQuestionEditor()"' in index_source
+    assert 'onclick="selectWorkspace(\'import\', \'导入中心\')"' in index_source
+    assert 'role="separator"' in index_source
+    assert 'aria-orientation="vertical"' in index_source
+    assert "openQuestionEditorModal('classification')" in index_source
+    assert index_source.index('class="bank-management-header"') < index_source.index('class="bank-filter-toolbar"')
+    assert index_source.index('class="bank-filter-toolbar"') < index_source.index('id="sidebarSection"')
+    assert "bank-question-card" in editor_source
+    assert "bank-question-excerpt" in editor_source
+    assert "bank-question-meta" in editor_source
+    assert "function switchQuestionEditorPanel(panelId)" in editor_source
+    assert "function openQuestionEditorModal(panelId = 'classification')" in editor_source
+    assert "function closeQuestionEditorModal()" in editor_source
+    assert "function openNewQuestionEditor()" in editor_source
+    assert "function setBankSplitRatio(value" in editor_source
+    assert "ratioFromPointer(event.clientX)" in editor_source
+    assert "window.setBankSplitRatio = setBankSplitRatio" in editor_source
+    assert "summary.textContent = `共 ${totalItems} 道题`" in editor_source
+    assert "shouldAutoSelectFirstQuestion" in editor_source
+    assert "setQuestionDetailEditAvailability(true)" in editor_source
+    assert "setQuestionDetailEditAvailability(true)" in import_source
+    assert "Bank browser and card-based editor dialog" in css_source
+    assert "--bank-list-track" in css_source
+    assert "#resizer-1.bank-split-resizer" in css_source
+    assert "#previewSection.bank-detail-panel" in css_source
+    assert "#editorSection.question-editor-dialog" in css_source
 
 
 def test_shared_tikz_workbench_is_multimodal_contextual_and_persistent():
@@ -1458,6 +1796,39 @@ def test_paper_question_answers_are_collapsible_and_loaded_on_demand():
         assert marker in paper_source
 
 
+def test_final_ui_polish_shares_rhythm_feedback_and_dark_surfaces():
+    css_source = _read(CSS_PATH)
+    index_source = _read(INDEX_PATH)
+    editor_source = _read(STATIC_JS_DIR / "editor.js")
+    paper_source = _read(STATIC_JS_DIR / "paper.js")
+    rendered_sources = "\n".join((index_source, editor_source, paper_source))
+
+    for token in (
+        "--workspace-padding",
+        "--workspace-gap",
+        "--workspace-radius",
+        "--workspace-card-radius",
+        "--workspace-border",
+        "--control-transition",
+    ):
+        assert token in css_source
+
+    for state_class in ("ui-state-loading", "ui-state-empty", "ui-state-error"):
+        assert state_class in rendered_sources
+
+    for state_class in ("ui-state-icon", "ui-state-title", "ui-state-description"):
+        assert state_class in rendered_sources
+        assert f".{state_class}" in css_source
+
+    assert ".ui-state.hidden" in css_source
+    assert ".dark #paperQuestionStream > .space-y-4" in css_source
+    assert ".dark .records-primary-action" in css_source
+    assert ".dark .saved-paper-pdf-action" in css_source
+    assert ".dark .import-workspace-heading h3" in css_source
+    assert "min-height: min(520px, calc(100dvh - 180px))" in css_source
+    assert 'role="status" aria-live="polite"' in index_source
+
+
 def test_reduced_motion_dark_contrast_and_busy_feedback_are_explicit():
     css_source = _read(CSS_PATH)
     index_source = _read(INDEX_PATH)
@@ -1497,6 +1868,7 @@ def test_reduced_motion_dark_contrast_and_busy_feedback_are_explicit():
 
 def test_sidebar_uses_server_pagination_and_latest_request_wins():
     editor_source = _read(STATIC_JS_DIR / "editor.js")
+    import_source = _read(STATIC_JS_DIR / "import.js")
     load_start = editor_source.index("function loadQuestions(retryCount = 0)")
     load_end = editor_source.index("//       SIDEBAR PAGINATION SYSTEM HELPERS", load_start)
     load_source = editor_source[load_start:load_end]
@@ -1520,6 +1892,10 @@ def test_sidebar_uses_server_pagination_and_latest_request_wins():
 
     assert "questions.sort(" not in load_source
     assert "questions.slice(" not in load_source
+    assert "selectQuestion(questions[0], { silent: true })" in load_source
+    assert "function selectQuestion(item, options = {})" in import_source
+    assert "if (!silent)" in import_source
+    assert "showToast(`题目 #${fullItem.seq_num} 载入成功`)" in import_source
 
 
 def test_paper_bank_stream_uses_server_pagination_and_latest_request_wins():

@@ -641,7 +641,7 @@ def read_index():
             html_content = f.read()
         
         # Inject dynamic cache-busting version parameter based on file mtime
-        js_files = ["api.js", "editor.js", "ocr.js", "import.js", "paper.js"]
+        js_files = ["api.js", "editor.js", "ocr.js", "import.js", "paper.js", "dashboard.js"]
         for js in js_files:
             js_path = str(STATIC_JS_DIR / js)
             mtime = int(os.path.getmtime(js_path)) if os.path.exists(js_path) else 0

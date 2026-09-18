@@ -726,7 +726,7 @@ def test_fetch_token_is_limited_to_same_origin_api_writes_and_supports_request()
 def test_question_selection_and_save_are_transactional():
     import_source = _read(STATIC_JS_DIR / "import.js")
     editor_source = _read(STATIC_JS_DIR / "editor.js")
-    select_start = import_source.index("function selectQuestion(item)")
+    select_start = import_source.index("function selectQuestion(item, options = {})")
     select_end = import_source.index("window.reloadCurrentQuestionSilently", select_start)
     select_source = import_source[select_start:select_end]
     save_start = import_source.index("function saveQuestion(skipCheck = false)")

@@ -90,6 +90,9 @@
                 window.invalidatePendingQuestionDetailLoad();
             }
             EditorState.reset();
+            if (typeof window.setQuestionDetailEditAvailability === 'function') {
+                window.setQuestionDetailEditAvailability(false);
+            }
             document.getElementById('editorTitle').textContent = '录入新数学题';
             
             document.getElementById('editContent').value = '';
@@ -225,6 +228,9 @@
                 window.invalidatePendingQuestionDetailLoad();
             }
             EditorState.reset();
+            if (typeof window.setQuestionDetailEditAvailability === 'function') {
+                window.setQuestionDetailEditAvailability(false);
+            }
             document.getElementById('editorTitle').textContent = '录入新数学题';
 
             document.getElementById('editContent').value = '';
@@ -578,7 +584,8 @@
 
         // Select a question to Edit & Preview. The editor identity is committed
         // only after the requested detail payload has arrived successfully.
-        function selectQuestion(item) {
+        function selectQuestion(item, options = {}) {
+            const silent = options && options.silent === true;
             if (blockEditorSessionChangeWhileSaving()) {
                 return;
             }
@@ -595,6 +602,9 @@
             const figureLayoutPendingAtRequest = typeof window.hasPendingFigureLayoutWrite === 'function'
                 && window.hasPendingFigureLayoutWrite(requestedQuestionId);
             questionDetailLoading = true;
+            if (typeof window.setQuestionDetailEditAvailability === 'function') {
+                window.setQuestionDetailEditAvailability(false);
+            }
             updateQuestionSaveButtonState();
 
             // Lazy-load details asynchronously
@@ -728,15 +738,23 @@
                     document.getElementById('editorSection').scrollTop = 0;
                     
                     // Scroll to card active or highlight in current view
-                    showToast(`题目 #${fullItem.seq_num} 载入成功`);
+                    if (!silent) {
+                        showToast(`题目 #${fullItem.seq_num} 载入成功`);
+                    }
          
                     // Backup the original loaded question state directly from the DOM!
                     backupEditorState(fullItem.id, null);
+                    if (typeof window.setQuestionDetailEditAvailability === 'function') {
+                        window.setQuestionDetailEditAvailability(true);
+                    }
                 })
                 .catch(err => {
                     if (loadSequence !== questionDetailLoadSequence) return;
                     console.error('Failed to load full question details:', err);
                     showToast('获取题目详情失败: ' + err.message, 'error');
+                    if (typeof window.setQuestionDetailEditAvailability === 'function') {
+                        window.setQuestionDetailEditAvailability(false);
+                    }
                 })
                 .finally(() => {
                     if (loadSequence !== questionDetailLoadSequence) return;
@@ -1034,6 +1052,14 @@
                         }
                         if (editorSessionStillCurrent) {
                             refreshRelatedDropdown(relatedQuestionId, { expectedValue: relatedQuestionId });
+                            if (typeof window.setQuestionDetailEditAvailability === 'function') {
+                                window.setQuestionDetailEditAvailability(true);
+                            }
+                            const editorDialog = document.getElementById('editorSection');
+                            if (editorDialog) {
+                                delete editorDialog.dataset.newQuestionMode;
+                                delete editorDialog.dataset.returnQuestionId;
+                            }
                         }
                         return true;
                     } else {
@@ -1335,19 +1361,9 @@
         }
 
         function openImportModal() {
-            const modal = document.getElementById('latexImportModal');
-            modal.classList.remove('hidden');
-            window.MathBankModal.open(modal, {
-                onEscape: () => {
-                    if (window.currentPdfTaskId) cancelCurrentImportTask();
-                    else closeImportModal();
-                }
-            });
-            setTimeout(() => {
-                modal.classList.remove('opacity-0');
-                modal.querySelector('div').classList.remove('scale-95');
-                modal.querySelector('div').classList.add('scale-100');
-            }, 50);
+            if (typeof window.selectWorkspace === 'function') {
+                window.selectWorkspace('import', '导入中心');
+            }
         }
 
         function closeImportModal() {
@@ -1357,14 +1373,17 @@
             if (typeof performOrphanedTempCropsCleanup === 'function') {
                 performOrphanedTempCropsCleanup();
             }
-            const modal = document.getElementById('latexImportModal');
-            window.MathBankModal.close(modal);
-            modal.classList.add('opacity-0');
-            modal.querySelector('div').classList.remove('scale-100');
-            modal.querySelector('div').classList.add('scale-95');
-            setTimeout(() => {
-                modal.classList.add('hidden');
-            }, 300);
+            const workspace = document.getElementById('importWorkspaceSection');
+            const returnNavTarget = workspace && workspace.dataset.returnNavTarget
+                ? workspace.dataset.returnNavTarget
+                : 'bank';
+            if (workspace) delete workspace.dataset.returnNavTarget;
+            if (typeof window.selectWorkspace === 'function') {
+                const workspaceName = returnNavTarget === 'paper'
+                    ? '智能组卷'
+                    : (returnNavTarget === 'dashboard' ? '工作台' : '题库管理');
+                window.selectWorkspace(returnNavTarget, workspaceName);
+            }
         }
 
         // PDF & Crop Global States

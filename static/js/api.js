@@ -2077,7 +2077,19 @@
             closeWorkspaceDropdown();
         }
 
+        window.setAppNavigationActive = function(targetId) {
+            document.querySelectorAll('[data-app-nav-target]').forEach((button) => {
+                const isActive = button.dataset.appNavTarget === targetId;
+                if (isActive) {
+                    button.setAttribute('aria-current', 'page');
+                } else {
+                    button.removeAttribute('aria-current');
+                }
+            });
+        };
+
         window.selectWorkspace = function(workspaceId, workspaceName) {
+            window.setAppNavigationActive(workspaceId);
             const currentWorkspaceName = document.getElementById('currentWorkspaceName');
             if (currentWorkspaceName) {
                 currentWorkspaceName.textContent = workspaceName;
@@ -2085,29 +2097,49 @@
 
             const toggleSidebarBtn = document.getElementById('toggleSidebarBtn');
             if (toggleSidebarBtn) {
-                if (workspaceId === 'paper') {
-                    toggleSidebarBtn.classList.add('hidden');
-                } else {
+                if (workspaceId === 'bank') {
                     toggleSidebarBtn.classList.remove('hidden');
+                } else {
+                    toggleSidebarBtn.classList.add('hidden');
                 }
             }
 
+            const checkDashboard = document.getElementById('ws-check-dashboard');
             const checkBank = document.getElementById('ws-check-bank');
             const checkPaper = document.getElementById('ws-check-paper');
+            const btnDashboard = document.getElementById('ws-btn-dashboard');
             const btnBank = document.getElementById('ws-btn-bank');
             const btnPaper = document.getElementById('ws-btn-paper');
 
-            if (checkBank && checkPaper) {
-                if (workspaceId === 'bank') {
+            if (checkDashboard && checkBank && checkPaper) {
+                if (workspaceId === 'dashboard') {
+                    checkDashboard.classList.remove('hidden');
+                    checkBank.classList.add('hidden');
+                    checkPaper.classList.add('hidden');
+                    if (btnDashboard) btnDashboard.classList.add('font-medium');
+                    if (btnBank) btnBank.classList.remove('font-medium');
+                    if (btnPaper) btnPaper.classList.remove('font-medium');
+                } else if (workspaceId === 'bank') {
+                    checkDashboard.classList.add('hidden');
                     checkBank.classList.remove('hidden');
                     checkPaper.classList.add('hidden');
+                    if (btnDashboard) btnDashboard.classList.remove('font-medium');
                     if (btnBank) btnBank.classList.add('font-medium');
                     if (btnPaper) btnPaper.classList.remove('font-medium');
-                } else {
+                } else if (workspaceId === 'paper') {
+                    checkDashboard.classList.add('hidden');
                     checkBank.classList.add('hidden');
                     checkPaper.classList.remove('hidden');
+                    if (btnDashboard) btnDashboard.classList.remove('font-medium');
                     if (btnBank) btnBank.classList.remove('font-medium');
                     if (btnPaper) btnPaper.classList.add('font-medium');
+                } else {
+                    checkDashboard.classList.add('hidden');
+                    checkBank.classList.add('hidden');
+                    checkPaper.classList.add('hidden');
+                    if (btnDashboard) btnDashboard.classList.remove('font-medium');
+                    if (btnBank) btnBank.classList.remove('font-medium');
+                    if (btnPaper) btnPaper.classList.remove('font-medium');
                 }
             }
 
