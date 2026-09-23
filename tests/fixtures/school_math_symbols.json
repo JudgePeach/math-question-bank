@@ -1,0 +1,1203 @@
+{
+  "schema_version": 1,
+  "audit": {
+    "date": "2026-09-23",
+    "renderer": "KaTeX",
+    "version": "0.16.8",
+    "baseline_extensions": [
+      "registerParallelogramSymbol"
+    ],
+    "settings": {
+      "throwOnError": true,
+      "strict": "error",
+      "trust": false
+    },
+    "scope": "Representative school mathematics formulas and common package spellings, plus explicitly separate custom shorthand controls.",
+    "limits": "Parse success does not prove glyph geometry or browser/PDF/Word layout. Baseline is frozen before the wideparen changes; re-run all samples after integration.",
+    "references": [
+      "https://katex.org/docs/support_table.html",
+      "https://katex.org/docs/supported.html"
+    ],
+    "counts": {
+      "samples": 120,
+      "baseline_supported": 104,
+      "baseline_unsupported": 16,
+      "by_scope": {
+        "core": 105,
+        "package_variant": 11,
+        "custom_shorthand": 4
+      },
+      "distinct_control_words": 118,
+      "baseline_supported_by_scope": {
+        "core": 104
+      },
+      "baseline_unsupported_by_scope": {
+        "package_variant": 11,
+        "core": 1,
+        "custom_shorthand": 4
+      }
+    },
+    "local_package_evidence": {
+      "yhmath.sty": "\\DeclareMathAccent{\\wideparen}{\\mathord}{yhlargesymbols}{\"F3}",
+      "fourier.sty": "\\DeclareMathAccent{\\wideparen} and \\DeclareMathAccent{\\widearc}",
+      "unicode-math-table.tex": "\\overparen is U+23DC, mathover",
+      "arcs.sty": "\\newcommand{\\overarc}[2][1]",
+      "ts1enc.def": "\\DeclareTextSymbol{\\textperthousand}{TS1}{135}"
+    }
+  },
+  "samples": [
+    {
+      "id": "angle",
+      "category": "geometry",
+      "scope": "core",
+      "latex": "\\angle ABC",
+      "meaning": "角ABC",
+      "baseline_supported": true,
+      "baseline_font_fallback": false
+    },
+    {
+      "id": "measured_angle",
+      "category": "geometry",
+      "scope": "core",
+      "latex": "\\measuredangle ABC",
+      "meaning": "有向角记号，不能无条件替换普通角",
+      "baseline_supported": true,
+      "baseline_font_fallback": false
+    },
+    {
+      "id": "triangle",
+      "category": "geometry",
+      "scope": "core",
+      "latex": "\\triangle ABC",
+      "meaning": "三角形ABC",
+      "baseline_supported": true,
+      "baseline_font_fallback": false
+    },
+    {
+      "id": "triangle_congruence",
+      "category": "geometry",
+      "scope": "core",
+      "latex": "\\triangle ABC\\cong\\triangle DEF",
+      "meaning": "三角形全等",
+      "baseline_supported": true,
+      "baseline_font_fallback": false
+    },
+    {
+      "id": "triangle_similarity",
+      "category": "geometry",
+      "scope": "core",
+      "latex": "\\triangle ABC\\sim\\triangle DEF",
+      "meaning": "三角形相似",
+      "baseline_supported": true,
+      "baseline_font_fallback": false
+    },
+    {
+      "id": "parallel",
+      "category": "geometry",
+      "scope": "core",
+      "latex": "AB\\parallel CD",
+      "meaning": "两直线平行",
+      "baseline_supported": true,
+      "baseline_font_fallback": false
+    },
+    {
+      "id": "not_parallel",
+      "category": "geometry",
+      "scope": "core",
+      "latex": "AB\\nparallel CD",
+      "meaning": "两直线不平行",
+      "baseline_supported": true,
+      "baseline_font_fallback": false
+    },
+    {
+      "id": "perpendicular",
+      "category": "geometry",
+      "scope": "core",
+      "latex": "AB\\perp CD",
+      "meaning": "两直线垂直",
+      "baseline_supported": true,
+      "baseline_font_fallback": false
+    },
+    {
+      "id": "circle",
+      "category": "geometry",
+      "scope": "core",
+      "latex": "\\odot O",
+      "meaning": "圆O",
+      "baseline_supported": true,
+      "baseline_font_fallback": false
+    },
+    {
+      "id": "degree_power",
+      "category": "geometry",
+      "scope": "core",
+      "latex": "30^\\circ",
+      "meaning": "角度30度",
+      "baseline_supported": true,
+      "baseline_font_fallback": false
+    },
+    {
+      "id": "degree_command",
+      "category": "geometry",
+      "scope": "core",
+      "latex": "30\\degree",
+      "meaning": "度数宏",
+      "baseline_supported": true,
+      "baseline_font_fallback": false
+    },
+    {
+      "id": "degree_unicode",
+      "category": "geometry",
+      "scope": "core",
+      "latex": "30°",
+      "meaning": "Unicode度号",
+      "baseline_supported": true,
+      "baseline_font_fallback": false
+    },
+    {
+      "id": "degrees_minutes_seconds",
+      "category": "geometry",
+      "scope": "core",
+      "latex": "30^\\circ15'20''",
+      "meaning": "度、角分与角秒",
+      "baseline_supported": true,
+      "baseline_font_fallback": false
+    },
+    {
+      "id": "line_segment",
+      "category": "geometry",
+      "scope": "core",
+      "latex": "\\overline{AB}",
+      "meaning": "线段或线段长度上的横线",
+      "baseline_supported": true,
+      "baseline_font_fallback": false
+    },
+    {
+      "id": "ray",
+      "category": "geometry",
+      "scope": "core",
+      "latex": "\\overrightarrow{AB}",
+      "meaning": "从A经B延伸的射线记法，也可表示向量",
+      "baseline_supported": true,
+      "baseline_font_fallback": false
+    },
+    {
+      "id": "straight_line",
+      "category": "geometry",
+      "scope": "core",
+      "latex": "\\overleftrightarrow{AB}",
+      "meaning": "经过A、B的直线",
+      "baseline_supported": true,
+      "baseline_font_fallback": false
+    },
+    {
+      "id": "wide_hat",
+      "category": "geometry",
+      "scope": "core",
+      "latex": "\\widehat{ABC}",
+      "meaning": "宽角帽，不是圆弧形状",
+      "baseline_supported": true,
+      "baseline_font_fallback": false
+    },
+    {
+      "id": "parallelogram_command",
+      "category": "geometry",
+      "scope": "core",
+      "latex": "\\parallelogram ABCD",
+      "meaning": "平行四边形",
+      "baseline_supported": true,
+      "baseline_font_fallback": false
+    },
+    {
+      "id": "parallelogram_unicode",
+      "category": "geometry",
+      "scope": "core",
+      "latex": "▱ABCD",
+      "meaning": "平行四边形Unicode输入",
+      "baseline_supported": true,
+      "baseline_font_fallback": false
+    },
+    {
+      "id": "square",
+      "category": "geometry",
+      "scope": "core",
+      "latex": "\\square ABCD",
+      "meaning": "正方形或方形标志，不能当平行四边形",
+      "baseline_supported": true,
+      "baseline_font_fallback": false
+    },
+    {
+      "id": "therefore",
+      "category": "geometry",
+      "scope": "core",
+      "latex": "a=b\\therefore a+c=b+c",
+      "meaning": "因此",
+      "baseline_supported": true,
+      "baseline_font_fallback": false
+    },
+    {
+      "id": "because",
+      "category": "geometry",
+      "scope": "core",
+      "latex": "\\because AB=AC",
+      "meaning": "因为",
+      "baseline_supported": true,
+      "baseline_font_fallback": false
+    },
+    {
+      "id": "arc_wideparen",
+      "category": "geometry",
+      "scope": "package_variant",
+      "latex": "\\wideparen{AB}",
+      "meaning": "圆弧AB",
+      "alternative": "\\overset{\\frown}{AB}",
+      "note": "备选只是近似排版，不能随任意长度正确伸缩",
+      "baseline_supported": false,
+      "baseline_error": "KaTeX parse error: Undefined control sequence: \\wideparen at position 1: \\̲w̲i̲d̲e̲p̲a̲r̲e̲n̲{AB}",
+      "alternative_parses": true,
+      "origin": "yhmath; Fourier",
+      "reference": "https://ctan.org/pkg/yhmath"
+    },
+    {
+      "id": "arc_overarc",
+      "category": "geometry",
+      "scope": "package_variant",
+      "latex": "\\overarc{AB}",
+      "meaning": "圆弧AB",
+      "alternative": "\\overset{\\frown}{AB}",
+      "note": "arcs包宏；有可选形状参数，近似备选不等于原样版式",
+      "baseline_supported": false,
+      "baseline_error": "KaTeX parse error: Undefined control sequence: \\overarc at position 1: \\̲o̲v̲e̲r̲a̲r̲c̲{AB}",
+      "alternative_parses": true,
+      "origin": "arcs",
+      "reference": "https://ctan.org/pkg/arcs"
+    },
+    {
+      "id": "arc_overparen",
+      "category": "geometry",
+      "scope": "package_variant",
+      "latex": "\\overparen{AB}",
+      "meaning": "上方弧形修饰符，可用于圆弧AB",
+      "alternative": "\\overset{\\frown}{AB}",
+      "note": "unicode-math等包的上弧修饰符",
+      "baseline_supported": false,
+      "baseline_error": "KaTeX parse error: Undefined control sequence: \\overparen at position 1: \\̲o̲v̲e̲r̲p̲a̲r̲e̲n̲{AB}",
+      "alternative_parses": true,
+      "origin": "unicode-math",
+      "reference": "https://ctan.org/pkg/unicode-math"
+    },
+    {
+      "id": "arc_widearc",
+      "category": "geometry",
+      "scope": "package_variant",
+      "latex": "\\widearc{AB}",
+      "meaning": "加宽圆弧AB",
+      "alternative": "\\overset{\\frown}{AB}",
+      "note": "Fourier包正式定义的加宽弧形修饰符",
+      "baseline_supported": false,
+      "baseline_error": "KaTeX parse error: Undefined control sequence: \\widearc at position 1: \\̲w̲i̲d̲e̲a̲r̲c̲{AB}",
+      "alternative_parses": true,
+      "origin": "Fourier",
+      "reference": "https://ctan.org/pkg/fourier"
+    },
+    {
+      "id": "angle_siunitx",
+      "category": "geometry",
+      "scope": "package_variant",
+      "latex": "\\ang{30}",
+      "meaning": "siunitx角度输入",
+      "alternative": "30^\\circ",
+      "note": "宏还可能接收度分秒或选项，不能把整个接口简化成一个度号",
+      "baseline_supported": false,
+      "baseline_error": "KaTeX parse error: Undefined control sequence: \\ang at position 1: \\̲a̲n̲g̲{30}",
+      "alternative_parses": true,
+      "origin": "siunitx",
+      "reference": "https://ctan.org/pkg/siunitx"
+    },
+    {
+      "id": "number_sets",
+      "category": "sets_logic",
+      "scope": "core",
+      "latex": "\\mathbb{N},\\mathbb{Z},\\mathbb{Q},\\mathbb{R},\\mathbb{C}",
+      "meaning": "常用数集",
+      "baseline_supported": true,
+      "baseline_font_fallback": false
+    },
+    {
+      "id": "belongs",
+      "category": "sets_logic",
+      "scope": "core",
+      "latex": "x\\in A",
+      "meaning": "元素属于集合",
+      "baseline_supported": true,
+      "baseline_font_fallback": false
+    },
+    {
+      "id": "not_belongs",
+      "category": "sets_logic",
+      "scope": "core",
+      "latex": "x\\notin A",
+      "meaning": "元素不属于集合",
+      "baseline_supported": true,
+      "baseline_font_fallback": false
+    },
+    {
+      "id": "subset",
+      "category": "sets_logic",
+      "scope": "core",
+      "latex": "A\\subset B",
+      "meaning": "子集记号，严格性依教材约定",
+      "baseline_supported": true,
+      "baseline_font_fallback": false
+    },
+    {
+      "id": "subset_or_equal",
+      "category": "sets_logic",
+      "scope": "core",
+      "latex": "A\\subseteq B",
+      "meaning": "子集或相等",
+      "baseline_supported": true,
+      "baseline_font_fallback": false
+    },
+    {
+      "id": "proper_subset",
+      "category": "sets_logic",
+      "scope": "core",
+      "latex": "A\\subsetneq B",
+      "meaning": "真子集",
+      "baseline_supported": true,
+      "baseline_font_fallback": false
+    },
+    {
+      "id": "superset",
+      "category": "sets_logic",
+      "scope": "core",
+      "latex": "B\\supseteq A",
+      "meaning": "包含或相等",
+      "baseline_supported": true,
+      "baseline_font_fallback": false
+    },
+    {
+      "id": "union",
+      "category": "sets_logic",
+      "scope": "core",
+      "latex": "A\\cup B",
+      "meaning": "并集",
+      "baseline_supported": true,
+      "baseline_font_fallback": false
+    },
+    {
+      "id": "intersection",
+      "category": "sets_logic",
+      "scope": "core",
+      "latex": "A\\cap B",
+      "meaning": "交集",
+      "baseline_supported": true,
+      "baseline_font_fallback": false
+    },
+    {
+      "id": "complement",
+      "category": "sets_logic",
+      "scope": "core",
+      "latex": "\\complement_U A",
+      "meaning": "全集U中A的补集",
+      "baseline_supported": true,
+      "baseline_font_fallback": false
+    },
+    {
+      "id": "complement_script",
+      "category": "sets_logic",
+      "scope": "core",
+      "latex": "\\mathscr{C}_U A",
+      "meaning": "教材常见花体C补集记法",
+      "baseline_supported": true,
+      "baseline_font_fallback": false
+    },
+    {
+      "id": "set_difference",
+      "category": "sets_logic",
+      "scope": "core",
+      "latex": "A\\setminus B",
+      "meaning": "集合差",
+      "baseline_supported": true,
+      "baseline_font_fallback": false
+    },
+    {
+      "id": "empty_set",
+      "category": "sets_logic",
+      "scope": "core",
+      "latex": "\\varnothing=\\emptyset",
+      "meaning": "空集的两种常见写法",
+      "baseline_supported": true,
+      "baseline_font_fallback": false
+    },
+    {
+      "id": "set_builder",
+      "category": "sets_logic",
+      "scope": "core",
+      "latex": "\\{x\\in\\mathbb{R}\\mid x>0\\}",
+      "meaning": "描述法表示集合",
+      "baseline_supported": true,
+      "baseline_font_fallback": false
+    },
+    {
+      "id": "forall",
+      "category": "sets_logic",
+      "scope": "core",
+      "latex": "\\forall x\\in A",
+      "meaning": "任意量词",
+      "baseline_supported": true,
+      "baseline_font_fallback": false
+    },
+    {
+      "id": "exists",
+      "category": "sets_logic",
+      "scope": "core",
+      "latex": "\\exists x\\in A",
+      "meaning": "存在量词",
+      "baseline_supported": true,
+      "baseline_font_fallback": false
+    },
+    {
+      "id": "implies",
+      "category": "sets_logic",
+      "scope": "core",
+      "latex": "p\\Rightarrow q",
+      "meaning": "蕴含",
+      "baseline_supported": true,
+      "baseline_font_fallback": false
+    },
+    {
+      "id": "iff",
+      "category": "sets_logic",
+      "scope": "core",
+      "latex": "p\\Leftrightarrow q",
+      "meaning": "充要关系",
+      "baseline_supported": true,
+      "baseline_font_fallback": false
+    },
+    {
+      "id": "logical_connectives",
+      "category": "sets_logic",
+      "scope": "core",
+      "latex": "\\neg p,\\;p\\land q,\\;p\\lor q",
+      "meaning": "否定、合取、析取",
+      "baseline_supported": true,
+      "baseline_font_fallback": false
+    },
+    {
+      "id": "interval",
+      "category": "sets_logic",
+      "scope": "core",
+      "latex": "(-\\infty,0]\\cup(1,+\\infty)",
+      "meaning": "区间及无穷大",
+      "baseline_supported": true,
+      "baseline_font_fallback": false
+    },
+    {
+      "id": "plus_minus",
+      "category": "arithmetic_algebra",
+      "scope": "core",
+      "latex": "x=\\pm2",
+      "meaning": "正负号",
+      "baseline_supported": true,
+      "baseline_font_fallback": false
+    },
+    {
+      "id": "minus_plus",
+      "category": "arithmetic_algebra",
+      "scope": "core",
+      "latex": "a\\mp b",
+      "meaning": "负正配对符号",
+      "baseline_supported": true,
+      "baseline_font_fallback": false
+    },
+    {
+      "id": "multiplication",
+      "category": "arithmetic_algebra",
+      "scope": "core",
+      "latex": "2\\times3=6",
+      "meaning": "乘号",
+      "baseline_supported": true,
+      "baseline_font_fallback": false
+    },
+    {
+      "id": "division",
+      "category": "arithmetic_algebra",
+      "scope": "core",
+      "latex": "6\\div3=2",
+      "meaning": "除号",
+      "baseline_supported": true,
+      "baseline_font_fallback": false
+    },
+    {
+      "id": "center_dot",
+      "category": "arithmetic_algebra",
+      "scope": "core",
+      "latex": "a\\cdot b",
+      "meaning": "点乘或普通乘法点号",
+      "baseline_supported": true,
+      "baseline_font_fallback": false
+    },
+    {
+      "id": "fraction",
+      "category": "arithmetic_algebra",
+      "scope": "core",
+      "latex": "\\frac{a}{b}",
+      "meaning": "分式",
+      "baseline_supported": true,
+      "baseline_font_fallback": false
+    },
+    {
+      "id": "display_fraction",
+      "category": "arithmetic_algebra",
+      "scope": "core",
+      "latex": "\\dfrac{a+b}{c+d}",
+      "meaning": "展示尺寸分式",
+      "baseline_supported": true,
+      "baseline_font_fallback": false
+    },
+    {
+      "id": "text_fraction",
+      "category": "arithmetic_algebra",
+      "scope": "core",
+      "latex": "x^{\\tfrac12}",
+      "meaning": "紧凑分式",
+      "baseline_supported": true,
+      "baseline_font_fallback": false
+    },
+    {
+      "id": "square_root",
+      "category": "arithmetic_algebra",
+      "scope": "core",
+      "latex": "\\sqrt{x}",
+      "meaning": "平方根",
+      "baseline_supported": true,
+      "baseline_font_fallback": false
+    },
+    {
+      "id": "nth_root",
+      "category": "arithmetic_algebra",
+      "scope": "core",
+      "latex": "\\sqrt[n]{a}",
+      "meaning": "n次方根",
+      "baseline_supported": true,
+      "baseline_font_fallback": false
+    },
+    {
+      "id": "powers_subscripts",
+      "category": "arithmetic_algebra",
+      "scope": "core",
+      "latex": "a_n^2",
+      "meaning": "幂与下标",
+      "baseline_supported": true,
+      "baseline_font_fallback": false
+    },
+    {
+      "id": "not_equal",
+      "category": "arithmetic_algebra",
+      "scope": "core",
+      "latex": "a\\ne b\\neq c",
+      "meaning": "不等号",
+      "baseline_supported": true,
+      "baseline_font_fallback": false
+    },
+    {
+      "id": "less_greater_equal",
+      "category": "arithmetic_algebra",
+      "scope": "core",
+      "latex": "a\\le b\\leq c,\\;x\\ge y\\geq z",
+      "meaning": "不小于与不大于",
+      "baseline_supported": true,
+      "baseline_font_fallback": false
+    },
+    {
+      "id": "less_greater_slanted",
+      "category": "arithmetic_algebra",
+      "scope": "core",
+      "latex": "a\\leqslant b,\\;c\\geqslant d",
+      "meaning": "斜体不等号",
+      "baseline_supported": true,
+      "baseline_font_fallback": false
+    },
+    {
+      "id": "approximation",
+      "category": "arithmetic_algebra",
+      "scope": "core",
+      "latex": "\\pi\\approx3.14",
+      "meaning": "近似相等",
+      "baseline_supported": true,
+      "baseline_font_fallback": false
+    },
+    {
+      "id": "proportionality",
+      "category": "arithmetic_algebra",
+      "scope": "core",
+      "latex": "y\\propto x",
+      "meaning": "成正比例",
+      "baseline_supported": true,
+      "baseline_font_fallback": false
+    },
+    {
+      "id": "absolute_value",
+      "category": "arithmetic_algebra",
+      "scope": "core",
+      "latex": "\\left\\lvert x\\right\\rvert",
+      "meaning": "绝对值",
+      "baseline_supported": true,
+      "baseline_font_fallback": false
+    },
+    {
+      "id": "sequence_sum",
+      "category": "arithmetic_algebra",
+      "scope": "core",
+      "latex": "\\sum_{k=1}^{n}k=\\dfrac{n(n+1)}2",
+      "meaning": "数列求和",
+      "baseline_supported": true,
+      "baseline_font_fallback": false
+    },
+    {
+      "id": "ellipsis",
+      "category": "arithmetic_algebra",
+      "scope": "core",
+      "latex": "a_1,a_2,\\ldots,a_n;\\quad 1+2+\\cdots+n",
+      "meaning": "省略号",
+      "baseline_supported": true,
+      "baseline_font_fallback": false
+    },
+    {
+      "id": "cases",
+      "category": "arithmetic_algebra",
+      "scope": "core",
+      "latex": "f(x)=\\begin{cases}x,&x\\ge0\\\\-x,&x<0\\end{cases}",
+      "meaning": "分段函数或方程组",
+      "baseline_supported": true,
+      "baseline_font_fallback": false
+    },
+    {
+      "id": "overbrace",
+      "category": "arithmetic_algebra",
+      "scope": "core",
+      "latex": "\\overbrace{a+\\cdots+a}^{n}",
+      "meaning": "上方大括号标注",
+      "baseline_supported": true,
+      "baseline_font_fallback": false
+    },
+    {
+      "id": "underbrace",
+      "category": "arithmetic_algebra",
+      "scope": "core",
+      "latex": "\\underbrace{a+\\cdots+a}_{n}",
+      "meaning": "下方大括号标注",
+      "baseline_supported": true,
+      "baseline_font_fallback": false
+    },
+    {
+      "id": "percentage",
+      "category": "arithmetic_algebra",
+      "scope": "core",
+      "latex": "25\\%",
+      "meaning": "百分号",
+      "baseline_supported": true,
+      "baseline_font_fallback": false
+    },
+    {
+      "id": "per_thousand_unicode",
+      "category": "arithmetic_algebra",
+      "scope": "core",
+      "latex": "5‰",
+      "meaning": "Unicode千分号",
+      "alternative": "5\\text{‰}",
+      "note": "原始千分号也需显式适配；严格解析下不能直接回退到Unicode文本",
+      "baseline_supported": false,
+      "baseline_error": "KaTeX parse error: LaTeX-incompatible input and strict mode is set to 'error': Unrecognized Unicode character \"‰\" (8240) [unknownSymbol] at position 2: 5‰̲",
+      "alternative_parses": false,
+      "alternative_error": "KaTeX parse error: LaTeX-incompatible input and strict mode is set to 'error': Unrecognized Unicode character \"‰\" (8240) [unknownSymbol] at position 8: 5\\text{‰̲}"
+    },
+    {
+      "id": "slanted_fraction",
+      "category": "arithmetic_algebra",
+      "scope": "package_variant",
+      "latex": "\\sfrac{1}{2}",
+      "meaning": "xfrac斜线小分数",
+      "alternative": "\\frac{1}{2}",
+      "note": "数值相同，排版不是相同的斜线小分数",
+      "baseline_supported": false,
+      "baseline_error": "KaTeX parse error: Undefined control sequence: \\sfrac at position 1: \\̲s̲f̲r̲a̲c̲{1}{2}",
+      "alternative_parses": true,
+      "origin": "xfrac",
+      "reference": "https://ctan.org/pkg/xfrac"
+    },
+    {
+      "id": "celsius",
+      "category": "arithmetic_algebra",
+      "scope": "package_variant",
+      "latex": "20\\celsius",
+      "meaning": "摄氏温度",
+      "alternative": "20{}^\\circ\\mathrm{C}",
+      "note": "温度单位，不是把20解释为角度",
+      "baseline_supported": false,
+      "baseline_error": "KaTeX parse error: Undefined control sequence: \\celsius at position 3: 20\\̲c̲e̲l̲s̲i̲u̲s̲",
+      "alternative_parses": true,
+      "origin": "gensymb; siunitx",
+      "reference": "https://ctan.org/pkg/gensymb"
+    },
+    {
+      "id": "per_thousand",
+      "category": "arithmetic_algebra",
+      "scope": "package_variant",
+      "latex": "5\\perthousand",
+      "meaning": "gensymb千分号",
+      "alternative": "5\\text{‰}",
+      "note": "原始Unicode备选严格解析也失败，必须适配字形",
+      "baseline_supported": false,
+      "baseline_error": "KaTeX parse error: Undefined control sequence: \\perthousand at position 2: 5\\̲p̲e̲r̲t̲h̲o̲u̲s̲a̲n̲d̲",
+      "alternative_parses": false,
+      "alternative_error": "KaTeX parse error: LaTeX-incompatible input and strict mode is set to 'error': Unrecognized Unicode character \"‰\" (8240) [unknownSymbol] at position 8: 5\\text{‰̲}",
+      "origin": "gensymb",
+      "reference": "https://ctan.org/pkg/gensymb"
+    },
+    {
+      "id": "text_per_thousand",
+      "category": "arithmetic_algebra",
+      "scope": "package_variant",
+      "latex": "\\text{5\\textperthousand}",
+      "meaning": "TS1文本模式千分号",
+      "alternative": "5\\text{‰}",
+      "note": "LaTeX文本编码TS1的正式符号命令",
+      "baseline_supported": false,
+      "baseline_error": "KaTeX parse error: Undefined control sequence: \\textperthousand at position 8: \\text{5\\̲t̲e̲x̲t̲p̲e̲r̲t̲h̲o̲u̲s̲a̲n̲d̲}",
+      "alternative_parses": false,
+      "alternative_error": "KaTeX parse error: LaTeX-incompatible input and strict mode is set to 'error': Unrecognized Unicode character \"‰\" (8240) [unknownSymbol] at position 8: 5\\text{‰̲}",
+      "origin": "LaTeX TS1 text encoding",
+      "reference": "https://ctan.org/pkg/textcomp"
+    },
+    {
+      "id": "blackboard_mathbbm",
+      "category": "arithmetic_algebra",
+      "scope": "package_variant",
+      "latex": "\\mathbbm{R}",
+      "meaning": "bbm双线体实数集",
+      "alternative": "\\mathbb{R}",
+      "note": "数学语义相同但字形可能不同",
+      "baseline_supported": false,
+      "baseline_error": "KaTeX parse error: Undefined control sequence: \\mathbbm at position 1: \\̲m̲a̲t̲h̲b̲b̲m̲{R}",
+      "alternative_parses": true,
+      "origin": "bbm-macros",
+      "reference": "https://ctan.org/pkg/bbm-macros"
+    },
+    {
+      "id": "blackboard_mathds",
+      "category": "arithmetic_algebra",
+      "scope": "package_variant",
+      "latex": "\\mathds{R}",
+      "meaning": "doublestroke双线体实数集",
+      "alternative": "\\mathbb{R}",
+      "note": "数学语义相同但字形可能不同",
+      "baseline_supported": false,
+      "baseline_error": "KaTeX parse error: Undefined control sequence: \\mathds at position 1: \\̲m̲a̲t̲h̲d̲s̲{R}",
+      "alternative_parses": true,
+      "origin": "doublestroke",
+      "reference": "https://ctan.org/pkg/doublestroke"
+    },
+    {
+      "id": "sine",
+      "category": "functions_trigonometry",
+      "scope": "core",
+      "latex": "\\sin\\alpha",
+      "meaning": "正弦",
+      "baseline_supported": true,
+      "baseline_font_fallback": false
+    },
+    {
+      "id": "cosine",
+      "category": "functions_trigonometry",
+      "scope": "core",
+      "latex": "\\cos\\alpha",
+      "meaning": "余弦",
+      "baseline_supported": true,
+      "baseline_font_fallback": false
+    },
+    {
+      "id": "tangent",
+      "category": "functions_trigonometry",
+      "scope": "core",
+      "latex": "\\tan\\alpha",
+      "meaning": "正切",
+      "baseline_supported": true,
+      "baseline_font_fallback": false
+    },
+    {
+      "id": "cotangent",
+      "category": "functions_trigonometry",
+      "scope": "core",
+      "latex": "\\cot\\alpha",
+      "meaning": "余切",
+      "baseline_supported": true,
+      "baseline_font_fallback": false
+    },
+    {
+      "id": "inverse_sine",
+      "category": "functions_trigonometry",
+      "scope": "core",
+      "latex": "\\arcsin x",
+      "meaning": "反正弦",
+      "baseline_supported": true,
+      "baseline_font_fallback": false
+    },
+    {
+      "id": "inverse_cosine",
+      "category": "functions_trigonometry",
+      "scope": "core",
+      "latex": "\\arccos x",
+      "meaning": "反余弦",
+      "baseline_supported": true,
+      "baseline_font_fallback": false
+    },
+    {
+      "id": "inverse_tangent",
+      "category": "functions_trigonometry",
+      "scope": "core",
+      "latex": "\\arctan x",
+      "meaning": "反正切",
+      "baseline_supported": true,
+      "baseline_font_fallback": false
+    },
+    {
+      "id": "logarithm",
+      "category": "functions_trigonometry",
+      "scope": "core",
+      "latex": "\\log_a x",
+      "meaning": "对数",
+      "baseline_supported": true,
+      "baseline_font_fallback": false
+    },
+    {
+      "id": "common_logarithm",
+      "category": "functions_trigonometry",
+      "scope": "core",
+      "latex": "\\lg x",
+      "meaning": "常用对数",
+      "baseline_supported": true,
+      "baseline_font_fallback": false
+    },
+    {
+      "id": "natural_logarithm",
+      "category": "functions_trigonometry",
+      "scope": "core",
+      "latex": "\\ln x",
+      "meaning": "自然对数",
+      "baseline_supported": true,
+      "baseline_font_fallback": false
+    },
+    {
+      "id": "function_mapping",
+      "category": "functions_trigonometry",
+      "scope": "core",
+      "latex": "f:A\\to B,\\quad x\\mapsto f(x)",
+      "meaning": "函数映射",
+      "baseline_supported": true,
+      "baseline_font_fallback": false
+    },
+    {
+      "id": "composition",
+      "category": "functions_trigonometry",
+      "scope": "core",
+      "latex": "(f\\circ g)(x)",
+      "meaning": "复合函数",
+      "baseline_supported": true,
+      "baseline_font_fallback": false
+    },
+    {
+      "id": "vector_arrow",
+      "category": "vectors",
+      "scope": "core",
+      "latex": "\\vec{a}",
+      "meaning": "单字母向量",
+      "baseline_supported": true,
+      "baseline_font_fallback": false
+    },
+    {
+      "id": "vector_ab",
+      "category": "vectors",
+      "scope": "core",
+      "latex": "\\overrightarrow{AB}",
+      "meaning": "双字母向量",
+      "baseline_supported": true,
+      "baseline_font_fallback": false
+    },
+    {
+      "id": "vector_bold",
+      "category": "vectors",
+      "scope": "core",
+      "latex": "\\mathbf{a}",
+      "meaning": "正粗体向量",
+      "baseline_supported": true,
+      "baseline_font_fallback": false
+    },
+    {
+      "id": "vector_boldsymbol",
+      "category": "vectors",
+      "scope": "core",
+      "latex": "\\boldsymbol{a}",
+      "meaning": "粗斜体向量",
+      "baseline_supported": true,
+      "baseline_font_fallback": false
+    },
+    {
+      "id": "vector_bm",
+      "category": "vectors",
+      "scope": "core",
+      "latex": "\\bm{a}",
+      "meaning": "bm风格粗体向量",
+      "baseline_supported": true,
+      "baseline_font_fallback": false
+    },
+    {
+      "id": "vector_magnitude",
+      "category": "vectors",
+      "scope": "core",
+      "latex": "\\left\\lvert\\vec a\\right\\rvert",
+      "meaning": "向量的模",
+      "baseline_supported": true,
+      "baseline_font_fallback": false
+    },
+    {
+      "id": "vector_dot_product",
+      "category": "vectors",
+      "scope": "core",
+      "latex": "\\vec a\\cdot\\vec b",
+      "meaning": "向量数量积",
+      "baseline_supported": true,
+      "baseline_font_fallback": false
+    },
+    {
+      "id": "vector_angle",
+      "category": "vectors",
+      "scope": "core",
+      "latex": "\\langle\\vec a,\\vec b\\rangle",
+      "meaning": "向量夹角记法，依教材约定",
+      "baseline_supported": true,
+      "baseline_font_fallback": false
+    },
+    {
+      "id": "permutations",
+      "category": "combinatorics_probability_statistics",
+      "scope": "core",
+      "latex": "A_n^m=\\dfrac{n!}{(n-m)!}",
+      "meaning": "排列数",
+      "baseline_supported": true,
+      "baseline_font_fallback": false
+    },
+    {
+      "id": "combinations",
+      "category": "combinatorics_probability_statistics",
+      "scope": "core",
+      "latex": "C_n^m=\\dfrac{n!}{m!(n-m)!}",
+      "meaning": "组合数",
+      "baseline_supported": true,
+      "baseline_font_fallback": false
+    },
+    {
+      "id": "binomial",
+      "category": "combinatorics_probability_statistics",
+      "scope": "core",
+      "latex": "\\binom{n}{m}",
+      "meaning": "二项式形式的组合数",
+      "baseline_supported": true,
+      "baseline_font_fallback": false
+    },
+    {
+      "id": "factorial",
+      "category": "combinatorics_probability_statistics",
+      "scope": "core",
+      "latex": "0!=1,\\quad n!",
+      "meaning": "阶乘",
+      "baseline_supported": true,
+      "baseline_font_fallback": false
+    },
+    {
+      "id": "probability",
+      "category": "combinatorics_probability_statistics",
+      "scope": "core",
+      "latex": "P(A)=\\dfrac{m}{n}",
+      "meaning": "概率",
+      "baseline_supported": true,
+      "baseline_font_fallback": false
+    },
+    {
+      "id": "probability_operator",
+      "category": "combinatorics_probability_statistics",
+      "scope": "core",
+      "latex": "\\Pr(A)",
+      "meaning": "正体概率算子",
+      "baseline_supported": true,
+      "baseline_font_fallback": false
+    },
+    {
+      "id": "conditional_probability",
+      "category": "combinatorics_probability_statistics",
+      "scope": "core",
+      "latex": "P(A\\mid B)",
+      "meaning": "条件概率",
+      "baseline_supported": true,
+      "baseline_font_fallback": false
+    },
+    {
+      "id": "sample_mean",
+      "category": "combinatorics_probability_statistics",
+      "scope": "core",
+      "latex": "\\bar x=\\dfrac1n\\sum_{i=1}^n x_i",
+      "meaning": "样本均值",
+      "baseline_supported": true,
+      "baseline_font_fallback": false
+    },
+    {
+      "id": "expected_value",
+      "category": "combinatorics_probability_statistics",
+      "scope": "core",
+      "latex": "E(X)=\\sum_i x_i p_i",
+      "meaning": "数学期望",
+      "baseline_supported": true,
+      "baseline_font_fallback": false
+    },
+    {
+      "id": "variance",
+      "category": "combinatorics_probability_statistics",
+      "scope": "core",
+      "latex": "D(X)=E(X^2)-[E(X)]^2",
+      "meaning": "方差",
+      "baseline_supported": true,
+      "baseline_font_fallback": false
+    },
+    {
+      "id": "standard_deviation",
+      "category": "combinatorics_probability_statistics",
+      "scope": "core",
+      "latex": "\\sigma=\\sqrt{D(X)}",
+      "meaning": "标准差",
+      "baseline_supported": true,
+      "baseline_font_fallback": false
+    },
+    {
+      "id": "regression",
+      "category": "combinatorics_probability_statistics",
+      "scope": "core",
+      "latex": "\\hat y=\\hat a+\\hat b x",
+      "meaning": "回归方程中的估计量",
+      "baseline_supported": true,
+      "baseline_font_fallback": false
+    },
+    {
+      "id": "first_derivative",
+      "category": "basic_derivatives",
+      "scope": "core",
+      "latex": "f'(x)",
+      "meaning": "一阶导数撇号",
+      "baseline_supported": true,
+      "baseline_font_fallback": false
+    },
+    {
+      "id": "prime_command",
+      "category": "basic_derivatives",
+      "scope": "core",
+      "latex": "f^{\\prime}(x)",
+      "meaning": "prime命令表示一阶导数",
+      "baseline_supported": true,
+      "baseline_font_fallback": false
+    },
+    {
+      "id": "second_derivative",
+      "category": "basic_derivatives",
+      "scope": "core",
+      "latex": "f''(x)",
+      "meaning": "二阶导数",
+      "baseline_supported": true,
+      "baseline_font_fallback": false
+    },
+    {
+      "id": "derivative_fraction",
+      "category": "basic_derivatives",
+      "scope": "core",
+      "latex": "\\dfrac{\\mathrm{d}y}{\\mathrm{d}x}",
+      "meaning": "导数的微分商记号",
+      "baseline_supported": true,
+      "baseline_font_fallback": false
+    },
+    {
+      "id": "limit",
+      "category": "basic_derivatives",
+      "scope": "core",
+      "latex": "\\lim_{h\\to0}\\dfrac{f(x+h)-f(x)}h",
+      "meaning": "导数定义中的极限",
+      "baseline_supported": true,
+      "baseline_font_fallback": false
+    },
+    {
+      "id": "increment",
+      "category": "basic_derivatives",
+      "scope": "core",
+      "latex": "\\Delta y=f(x+\\Delta x)-f(x)",
+      "meaning": "函数增量",
+      "baseline_supported": true,
+      "baseline_font_fallback": false
+    },
+    {
+      "id": "evaluation_bar",
+      "category": "basic_derivatives",
+      "scope": "core",
+      "latex": "\\left.f'(x)\\right|_{x=1}",
+      "meaning": "在指定点取值",
+      "baseline_supported": true,
+      "baseline_font_fallback": false
+    },
+    {
+      "id": "custom_abs",
+      "category": "custom_shorthands",
+      "scope": "custom_shorthand",
+      "latex": "\\abs{x}",
+      "meaning": "自定义绝对值简写",
+      "alternative": "\\left\\lvert x\\right\\rvert",
+      "note": "不是未定义即应自动补齐的标准学校命令",
+      "baseline_supported": false,
+      "baseline_error": "KaTeX parse error: Undefined control sequence: \\abs at position 1: \\̲a̲b̲s̲{x}",
+      "alternative_parses": true
+    },
+    {
+      "id": "custom_norm",
+      "category": "custom_shorthands",
+      "scope": "custom_shorthand",
+      "latex": "\\norm{\\vec a}",
+      "meaning": "自定义范数简写",
+      "alternative": "\\left\\lVert\\vec a\\right\\rVert",
+      "note": "范数与高中向量模相关但不是任意表达式的通用同义词",
+      "baseline_supported": false,
+      "baseline_error": "KaTeX parse error: Undefined control sequence: \\norm at position 1: \\̲n̲o̲r̲m̲{\\vec a}",
+      "alternative_parses": true
+    },
+    {
+      "id": "custom_var",
+      "category": "custom_shorthands",
+      "scope": "custom_shorthand",
+      "latex": "\\Var(X)",
+      "meaning": "自定义方差算子",
+      "alternative": "\\operatorname{Var}(X)",
+      "note": "导言区未声明此命令不属于原生解析器缺陷",
+      "baseline_supported": false,
+      "baseline_error": "KaTeX parse error: Undefined control sequence: \\Var at position 1: \\̲V̲a̲r̲(X)",
+      "alternative_parses": true
+    },
+    {
+      "id": "custom_cov",
+      "category": "custom_shorthands",
+      "scope": "custom_shorthand",
+      "latex": "\\Cov(X,Y)",
+      "meaning": "自定义协方差算子",
+      "alternative": "\\operatorname{Cov}(X,Y)",
+      "note": "协方差非各教材统一要求；不应无条件新增全局宏",
+      "baseline_supported": false,
+      "baseline_error": "KaTeX parse error: Undefined control sequence: \\Cov at position 1: \\̲C̲o̲v̲(X,Y)",
+      "alternative_parses": true
+    }
+  ]
+}

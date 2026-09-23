@@ -1347,9 +1347,185 @@
         let parsedDuplicateCandidateRenderGeneration = 0;
         let allSourcesList = [];
 
+        // A model response cannot supply its own teacher approval. Keep the
+        // approval local, tied to the question object and the visible text.
+        let parsedSourceReviewConfirmations = new WeakMap();
+
+        function parsedSourceReviewSnapshot(index, q = parsedQuestionsData[index]) {
+            const card = document.getElementById(`parsed-card-${index}`);
+            const content = card?.querySelector('.card-content-textarea');
+            const answer = card?.querySelector('.card-answer-textarea');
+            return JSON.stringify([
+                String(content ? content.value : (q?.content || '')),
+                String(answer ? answer.value : (q?.answer_markdown || ''))
+            ]);
+        }
+
+        function parsedQuestionNeedsSourceReview(index, q = parsedQuestionsData[index]) {
+            return !!(q && q.source_review && q.source_review.required === true &&
+                parsedSourceReviewConfirmations.get(q) !== parsedSourceReviewSnapshot(index, q));
+        }
+
+        function renderCurrentParsedCardPreview(index) {
+            const card = document.getElementById(`parsed-card-${index}`);
+            if (!card) return;
+            const [content, answer] = JSON.parse(parsedSourceReviewSnapshot(index));
+            renderParsedCardPreview(card, content, answer);
+        }
+
+        function updateParsedSourceReviewState(index) {
+            const q = parsedQuestionsData[index];
+            const card = document.getElementById(`parsed-card-${index}`);
+            if (!q || !card || !q.source_review?.required) return;
+            const pending = parsedQuestionNeedsSourceReview(index, q);
+            const confirmBox = card.querySelector('.card-source-review-confirm');
+            const label = card.querySelector('.card-source-review-status');
+            const selectBox = card.querySelector('.card-select-checkbox');
+            if (confirmBox) confirmBox.checked = !pending;
+            if (label) label.textContent = pending ? '待核对原文' : '已人工核对';
+            if (selectBox) {
+                selectBox.disabled = !!q.saved || pending;
+                if (pending || q.saved) selectBox.checked = false;
+            }
+        }
+
+        function invalidateParsedSourceReview(index) {
+            const q = parsedQuestionsData[index];
+            if (!q || !q.source_review?.required) return;
+            parsedSourceReviewConfirmations.delete(q);
+            updateParsedSourceReviewState(index);
+            updateSelectedCount();
+        }
+
+        function createSourceExcerptDetails(excerpt, title = '展开原文对照') {
+            const details = document.createElement('details');
+            details.className = 'mt-2';
+            const summary = document.createElement('summary');
+            summary.className = 'cursor-pointer font-semibold py-2';
+            summary.textContent = title;
+            const source = document.createElement('div');
+            source.className = 'whitespace-pre-wrap break-words max-h-72 overflow-y-auto rounded-lg border border-amber-200 bg-white p-3 text-slate-800 font-mono text-xs';
+            // Raw source may contain HTML or model text. Preserve it as text,
+            // and let KaTeX render only explicit math with trust disabled.
+            source.textContent = String(excerpt || '未取得对应原文，请打开原始文件核对。');
+            details.appendChild(summary);
+            details.appendChild(source);
+            const sourceImages = new Set();
+            const imagePattern = /!\[[^\]\n]*\]\(\s*(\/static\/(?:uploads|test_uploads)\/[^\s)]+)\s*\)/g;
+            let imageMatch;
+            while ((imageMatch = imagePattern.exec(String(excerpt || ''))) !== null) {
+                const safePath = window.MathBankSafe.safeImageUrl(imageMatch[1]);
+                if (safePath) sourceImages.add(safePath);
+            }
+            if (sourceImages.size) {
+                const images = document.createElement('div');
+                images.className = 'mt-2 flex flex-wrap gap-2';
+                sourceImages.forEach(path => {
+                    const img = document.createElement('img');
+                    img.src = path;
+                    img.alt = '原文插图，仅供对照';
+                    img.loading = 'lazy';
+                    img.decoding = 'async';
+                    img.className = 'max-w-full max-h-56 object-contain rounded-lg border border-amber-200 bg-white cursor-zoom-in';
+                    img.dataset.safeImageOpen = 'true';
+                    img.title = '点击查看原图';
+                    images.appendChild(img);
+                });
+                details.appendChild(images);
+            }
+            details.addEventListener('toggle', () => {
+                if (!details.open || details.dataset.mathRendered) return;
+                if (typeof renderMathInElement === 'function') {
+                    renderMathInElement(source, {
+                        delimiters: [
+                            {left: '$$', right: '$$', display: true},
+                            {left: '$', right: '$', display: false},
+                            {left: '\\(', right: '\\)', display: false},
+                            {left: '\\[', right: '\\]', display: true}
+                        ],
+                        throwOnError: false,
+                        trust: false
+                    });
+                    details.dataset.mathRendered = 'true';
+                }
+            });
+            return details;
+        }
+
+        function renderParsedSourceReview(card, q, index) {
+            if (!q.source_review?.required) return;
+            const panel = document.createElement('section');
+            panel.className = 'rounded-xl border border-amber-300 bg-amber-50 p-3 text-xs text-amber-900';
+            const status = document.createElement('strong');
+            status.className = 'card-source-review-status';
+            panel.appendChild(status);
+            const reasons = document.createElement('div');
+            reasons.className = 'mt-1 whitespace-pre-wrap';
+            reasons.textContent = (Array.isArray(q.source_review.reasons)
+                ? q.source_review.reasons : ['公式或题目内容需要对照原文核对。']).join('\n');
+            panel.appendChild(reasons);
+            panel.appendChild(createSourceExcerptDetails(q.source_review.source_excerpt));
+            const label = document.createElement('label');
+            label.className = 'flex items-center gap-2 mt-2 py-2 cursor-pointer font-semibold';
+            const approval = document.createElement('input');
+            approval.type = 'checkbox';
+            approval.className = 'card-source-review-confirm h-4 w-4';
+            approval.addEventListener('change', () => {
+                if (parsedQuestionsData[index] !== q) return;
+                if (approval.checked) {
+                    parsedSourceReviewConfirmations.set(q, parsedSourceReviewSnapshot(index, q));
+                } else {
+                    parsedSourceReviewConfirmations.delete(q);
+                }
+                updateParsedSourceReviewState(index);
+                updateSelectedCount();
+            });
+            label.appendChild(approval);
+            const labelText = document.createElement('span');
+            labelText.textContent = '已对照原文核对（修改题干或解析后需重新确认）';
+            label.appendChild(labelText);
+            panel.appendChild(label);
+            card.insertBefore(panel, card.children[1] || null);
+            updateParsedSourceReviewState(index);
+        }
+
+        function renderSourceIntegrityReport(report) {
+            const oldReport = document.getElementById('parsedSourceIntegrityReport');
+            if (oldReport) oldReport.remove();
+            const unmatched = Array.isArray(report?.unmatched_source) ? report.unmatched_source : [];
+            const reviewCount = Number(report?.source_review_count || 0);
+            if (!unmatched.length && !reviewCount) return;
+            const wrapper = document.getElementById('parsedQuestionsWrapper');
+            if (!wrapper) return;
+            const panel = document.createElement('section');
+            panel.id = 'parsedSourceIntegrityReport';
+            panel.className = 'rounded-xl border border-amber-300 bg-amber-50 p-4 text-xs text-amber-900 max-h-80 overflow-y-auto shrink-0';
+            const message = document.createElement('strong');
+            message.textContent = `原文核对提示：${reviewCount} 道题需逐题确认` +
+                (unmatched.length ? `，另有 ${unmatched.length} 段原文未能对应到拆分结果。请检查是否漏题。` : '。');
+            panel.appendChild(message);
+            unmatched.forEach((item, index) => {
+                panel.appendChild(createSourceExcerptDetails(
+                    item.source_excerpt,
+                    `未匹配原文 ${index + 1}：${String(item.reason || '请检查是否漏题或遗漏内容')}`
+                ));
+            });
+            wrapper.insertBefore(panel, wrapper.firstChild);
+        }
+
+        function appendSourceIntegrityLog(report) {
+            if (!report?.math_locks_created) return;
+            const byId = Number(report.math_locks_restored_by_id || report.math_locks_by_id || 0);
+            const byContent = Number(report.math_locks_restored_by_content || report.math_locks_by_content || 0);
+            const pending = Number(report.source_review_count || 0);
+            appendImportLog(`公式核对：${byId} 处按定位恢复，${byContent} 处与原文对应后恢复；${pending} 道题需人工核对。`, pending ? 'warning' : 'info');
+        }
+
         function replaceParsedQuestions(nextQuestions) {
             parsedQuestionsGeneration += 1;
             parsedQuestionsData = Array.isArray(nextQuestions) ? nextQuestions : [];
+            parsedSourceReviewConfirmations = new WeakMap();
+            renderSourceIntegrityReport(null);
             if (typeof resetParsedDuplicateCheckState === 'function') {
                 resetParsedDuplicateCheckState();
             }
@@ -2168,6 +2344,7 @@
             // One generation owns task creation, polling and terminal UI. A
             // reset or a newer import makes every older callback inert.
             const importTaskGeneration = beginDocumentImportTask();
+            replaceParsedQuestions([]);
 
             // Hide placeholder & results, show loading skeleton
             document.getElementById('importPlaceholder').classList.add('hidden');
@@ -2408,9 +2585,7 @@
                         if (estimatedCount) {
                             appendImportLog(`TeX 题数核对：源码约 ${estimatedCount} 题，实际拆分 ${actualCount} 题。`, estimatedCount === actualCount ? 'info' : 'warning');
                         }
-                        if (texDiagnostics.math_locks_created) {
-                            appendImportLog(`TeX 公式保真校验：${texDiagnostics.math_locks_restored || 0}/${texDiagnostics.math_locks_created} 个公式已按原源码恢复。`, 'info');
-                        }
+                        appendSourceIntegrityLog(texDiagnostics);
                         const texWarnings = Array.isArray(texDiagnostics.warnings) ? texDiagnostics.warnings : [];
                         texWarnings.forEach(message => appendImportLog(`TeX 预检：${message}`, 'warning'));
                         if (texWarnings.length) {
@@ -2418,6 +2593,7 @@
                         }
                         
                         renderParsedQuestionsList(parsedQuestionsData);
+                        renderSourceIntegrityReport(texDiagnostics);
                         
                         document.getElementById('importLoadingState').classList.add('hidden');
                         document.getElementById('parsedQuestionsWrapper').classList.remove('hidden');
@@ -2604,21 +2780,19 @@
                             if (restoredNumbers || restoredFormatting) {
                                 appendImportLog(`Word 排版语义：已恢复 ${restoredNumbers} 个自动编号、${restoredFormatting} 处上下标/下划线/强调格式。`, 'info');
                             }
-                            const lockedMath = report.math_locks_created || 0;
-                            if (lockedMath) {
-                                appendImportLog(`公式保真校验：${report.math_locks_restored || 0}/${lockedMath} 个公式已按 Word 原文恢复，拆卷模型未直接改写最终公式。`, 'info');
-                            }
+                            appendSourceIntegrityLog(report);
                             if (reviewCount > 0) {
                                 showToast(`Word 中有 ${reviewCount} 处公式、字符、图片或表格需人工核对，已保留提示标记。`, 'warning');
                             }
                         }
                         
                         renderParsedQuestionsList(parsedQuestionsData);
+                        renderSourceIntegrityReport(task.diagnostics);
                         
                         document.getElementById('importLoadingState').classList.add('hidden');
                         document.getElementById('parsedQuestionsWrapper').classList.remove('hidden');
                         
-                        if (task.document_type === 'pdf' && task.generate_answers === true) {
+                        if (['pdf', 'docx'].includes(task.document_type) && task.generate_answers === true) {
                             processAsyncAnswerGeneration(parsedQuestionsData, parsedQuestionsGeneration);
                         }
 
@@ -3733,7 +3907,7 @@
                     <!-- Card Top Configs Bar -->
                     <div class="grid grid-cols-2 sm:grid-cols-5 gap-2 border-b pb-3 shrink-0">
                         <div class="flex items-center space-x-2 select-none text-slate-700 text-xs font-bold">
-                            <input type="checkbox" data-index="${index}" class="card-select-checkbox h-4 w-4 rounded border-slate-300 text-brand-600 focus:ring-brand-500 cursor-pointer transition-colors" ${q.saved ? 'disabled opacity-50' : 'checked'} onclick="event.stopPropagation()">
+                            <input type="checkbox" data-index="${index}" class="card-select-checkbox h-4 w-4 rounded border-slate-300 text-brand-600 focus:ring-brand-500 cursor-pointer transition-colors" ${q.saved || parsedQuestionNeedsSourceReview(index, q) ? 'disabled' : 'checked'} onclick="event.stopPropagation()">
                             <span class="h-5 w-5 bg-brand-50 text-brand-600 rounded-full flex items-center justify-center text-[10px] font-bold border border-brand-100">${index + 1}</span>
                             <span>题型与难度</span>
                         </div>
@@ -3818,6 +3992,7 @@
                 card.querySelector('.card-answer-textarea').value = String(q.answer_markdown || '');
 
                 container.appendChild(card);
+                renderParsedSourceReview(card, q, index);
                 setupCardCategoryLinkage(card, q);
 
                 // Populate image badges
@@ -3844,10 +4019,12 @@
                 const debouncedPreview = debounce(triggerPreview, 200);
 
                 textInput.addEventListener('input', () => {
+                    invalidateParsedSourceReview(index);
                     invalidateParsedDuplicateCheck(index);
                     debouncedPreview();
                 });
                 ansInput.addEventListener('input', () => {
+                    invalidateParsedSourceReview(index);
                     invalidateParsedDuplicateCheck(index);
                     debouncedPreview();
                 });
@@ -4020,7 +4197,10 @@
             const chapter = card.querySelector('.card-chapter')?.value || '';
             let message = '';
             let target = null;
-            if (!content) {
+            if (parsedQuestionNeedsSourceReview(index, q)) {
+                message = `请先对照原文核对第 ${index + 1} 题，并勾选人工核对确认。`;
+                target = card.querySelector('.card-source-review-confirm');
+            } else if (!content) {
                 message = `第 ${index + 1} 题的题干内容不能为空！`;
                 target = card.querySelector('.card-content-textarea');
             } else if (!questionType) {
@@ -4108,6 +4288,7 @@
                 }
 
                 if (!isParsedQuestionSaveContextCurrent(saveGeneration, index, q)) return false;
+                if (!validateParsedQuestionBeforeImport(index)) return false;
                 if (expectedLocalSnapshot) {
                     const currentItem = buildParsedQuestionDuplicateItem(index, saveGeneration);
                     if (!currentItem || serializeQuestionDuplicateItem(currentItem) !== expectedLocalSnapshot) {
@@ -4288,7 +4469,7 @@
             checkboxes.forEach(cb => {
                 const idx = parseInt(cb.getAttribute('data-index'), 10);
                 const q = parsedQuestionsData[idx];
-                if (q && !q.saved && cb.checked) {
+                if (q && !q.saved && cb.checked && !parsedQuestionNeedsSourceReview(idx, q)) {
                     indices.push(idx);
                 }
             });
@@ -4305,6 +4486,7 @@
                 const q = parsedQuestionsData[idx];
                 if (q && !q.saved) {
                     unsavedCount++;
+                    if (parsedQuestionNeedsSourceReview(idx, q)) cb.checked = false;
                     if (cb.checked) {
                         checkedCount++;
                     }
@@ -4357,7 +4539,8 @@
         function toggleSelectAllParsed(checked) {
             const checkboxes = document.querySelectorAll('.card-select-checkbox');
             checkboxes.forEach(cb => {
-                if (!cb.disabled) {
+                const index = parseInt(cb.getAttribute('data-index'), 10);
+                if (!cb.disabled && !parsedQuestionNeedsSourceReview(index)) {
                     cb.checked = checked;
                 }
             });
@@ -4367,7 +4550,8 @@
         function invertSelectParsed() {
             const checkboxes = document.querySelectorAll('.card-select-checkbox');
             checkboxes.forEach(cb => {
-                if (!cb.disabled) {
+                const index = parseInt(cb.getAttribute('data-index'), 10);
+                if (!cb.disabled && !parsedQuestionNeedsSourceReview(index)) {
                     cb.checked = !cb.checked;
                 }
             });
@@ -5638,6 +5822,16 @@
             if (!q) return;
             const card = document.getElementById(`parsed-card-${index}`);
             if (!card) return;
+            if (parsedQuestionNeedsSourceReview(index, q)) {
+                showToast(`请先对照原文核对第 ${index + 1} 题，再生成解答。`, 'warning');
+                return;
+            }
+            const answerSnapshot = parsedSourceReviewSnapshot(index, q);
+            const [answerContent] = JSON.parse(answerSnapshot);
+            if (!answerContent.trim()) {
+                showToast(`第 ${index + 1} 题的题干内容不能为空。`, 'warning');
+                return;
+            }
             const requestIsCurrent = () => isParsedQuestionSaveContextCurrent(
                 answerGeneration,
                 index,
@@ -5658,7 +5852,7 @@
 
             try {
                 const formData = new FormData();
-                formData.append('content', q.content || '');
+                formData.append('content', answerContent);
                 formData.append('question_type', q.question_type || 'detailed_answer');
                 formData.append('stream', 'false');
                 if (typeof systemPreferSolveModel !== 'undefined') {
@@ -5684,11 +5878,17 @@
 
                 const data = await res.json();
                 if (!requestIsCurrent()) return;
+                if (parsedSourceReviewSnapshot(index, q) !== answerSnapshot || parsedQuestionNeedsSourceReview(index, q)) {
+                    showToast(`第 ${index + 1} 题在生成期间已修改或取消核对，本次解答未覆盖当前内容。`, 'info');
+                    renderCurrentParsedCardPreview(index);
+                    return;
+                }
                 if (data.status === 'success' && data.solution) {
                     q.answer_markdown = data.solution;
                     if (answerTextarea) answerTextarea.value = data.solution;
+                    invalidateParsedSourceReview(index);
                     invalidateParsedDuplicateCheck(index);
-                    renderParsedCardPreview(card, q.content || '', q.answer_markdown);
+                    renderCurrentParsedCardPreview(index);
                     showToast(`第 ${index + 1} 题 AI 解析生成成功！`, 'success');
                 } else {
                     throw new Error(data.message || '生成解答失败');
@@ -5697,7 +5897,7 @@
                 if (!requestIsCurrent()) return;
                 console.error(err);
                 showToast(`生成第 ${index + 1} 题解答失败: ${err.message}`, 'error');
-                renderParsedCardPreview(card, q.content || '', q.answer_markdown || '');
+                renderCurrentParsedCardPreview(index);
             } finally {
                 if (requestIsCurrent() && btn) {
                     btn.disabled = false;
@@ -5714,16 +5914,25 @@
             if (!requestIsCurrent()) return;
 
             const needAnswersIndices = [];
+            let skippedCount = 0;
             questions.forEach((q, idx) => {
-                const ans = (q.answer_markdown || '').trim();
+                const [, currentAnswer] = JSON.parse(parsedSourceReviewSnapshot(idx, q));
+                const ans = currentAnswer.trim();
                 // 保留所有已有答案，包括 A、2 等简短原版答案。
                 if (!ans) {
+                    if (parsedQuestionNeedsSourceReview(idx, q)) {
+                        skippedCount++;
+                        return;
+                    }
                     needAnswersIndices.push(idx);
                 }
             });
 
+            if (skippedCount) {
+                appendImportLog(`已暂缓 ${skippedCount} 道待核对题的自动解答，请先对照原文确认。`, 'warning');
+            }
             if (needAnswersIndices.length === 0) {
-                appendImportLog('试卷成功提取到所有原版参考答案/解析，无须额外推导。', 'success');
+                if (!skippedCount) appendImportLog('试卷成功提取到所有原版参考答案/解析，无须额外推导。', 'success');
                 return;
             }
 
@@ -5752,6 +5961,13 @@
                     const taskIdx = needAnswersIndices[currentPointer++];
                     const q = questions[taskIdx];
                     if (!q) continue;
+                    const answerSnapshot = parsedSourceReviewSnapshot(taskIdx, q);
+                    const [answerContent, currentAnswer] = JSON.parse(answerSnapshot);
+                    if (parsedQuestionNeedsSourceReview(taskIdx, q) || currentAnswer.trim() || !answerContent.trim()) {
+                        skippedCount++;
+                        renderCurrentParsedCardPreview(taskIdx);
+                        continue;
+                    }
 
                     const card = document.getElementById(`parsed-card-${taskIdx}`);
                     if (card) {
@@ -5763,7 +5979,7 @@
 
                     try {
                         const formData = new FormData();
-                        formData.append('content', q.content || '');
+                        formData.append('content', answerContent);
                         formData.append('question_type', q.question_type || 'detailed_answer');
                         formData.append('stream', 'false');
                         if (typeof systemPreferSolveModel !== 'undefined') {
@@ -5785,6 +6001,12 @@
                         if (res.ok) {
                             const data = await res.json();
                             if (!requestIsCurrent()) return;
+                            if (parsedSourceReviewSnapshot(taskIdx, q) !== answerSnapshot || parsedQuestionNeedsSourceReview(taskIdx, q)) {
+                                skippedCount++;
+                                appendImportLog(`第 ${taskIdx + 1} 题在生成期间已修改或取消核对，本次解答未覆盖当前内容。`, 'warning');
+                                renderCurrentParsedCardPreview(taskIdx);
+                                continue;
+                            }
                             if (data.status === 'success' && data.solution) {
                                 q.answer_markdown = data.solution;
                                 invalidateParsedDuplicateCheck(taskIdx);
@@ -5793,7 +6015,8 @@
                                 if (card) {
                                     const answerTextarea = card.querySelector('.card-answer-textarea');
                                     if (answerTextarea) answerTextarea.value = data.solution;
-                                    renderParsedCardPreview(card, q.content || '', q.answer_markdown);
+                                    invalidateParsedSourceReview(taskIdx);
+                                    renderCurrentParsedCardPreview(taskIdx);
                                     const btn = card.querySelector('.card-solve-btn');
                                     if (btn) btn.innerHTML = '<i class="fa-solid fa-wand-magic-sparkles text-indigo-500"></i><span>重生成解析</span>';
                                 }
@@ -5807,7 +6030,7 @@
                         appendImportLog(`第 ${taskIdx + 1} 题解析生成失败：${e.message}，可在题目卡片中重试。`, 'warning');
                         console.error(`第 ${taskIdx + 1} 题推导解答失败:`, e);
                         if (card) {
-                            renderParsedCardPreview(card, q.content || '', q.answer_markdown || '');
+                            renderCurrentParsedCardPreview(taskIdx);
                         }
                     }
                 }
@@ -5819,7 +6042,7 @@
             }
             await Promise.all(workers);
             if (!requestIsCurrent()) return;
-            appendImportLog(`AI 解答生成结束：成功 ${finishedCount} 题，失败 ${failedCount} 题。`, failedCount ? 'warning' : 'success');
+            appendImportLog(`AI 解答生成结束：成功 ${finishedCount} 题，失败 ${failedCount} 题。${skippedCount ? `另有 ${skippedCount} 题因待核对或内容变化已暂缓。` : ''}`, failedCount || skippedCount ? 'warning' : 'success');
         }
 
         window.generateSingleAnswer = generateSingleAnswer;

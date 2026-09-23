@@ -1,4 +1,5 @@
 from .image_layout import split_image_anchors, image_key, normalize_image_layouts, SIZE_CM
+from .geometry_symbols import normalize_school_math_symbols
 
 import hashlib
 import os
@@ -372,7 +373,7 @@ def clean_content_for_latex(
     if not content:
         return ""
     
-    text = content.strip()
+    text = normalize_school_math_symbols(content.strip(), target="latex")
     # Restore rendered TikZ only after all prose/table/choice transformations.
     # Otherwise paragraph joining can make a '%' comment swallow drawing code.
     tikz_blocks = {}
@@ -563,9 +564,31 @@ def build_latex_document(
     # Stable high-school mathematics baseline. Keep packages that alter core
     # math semantics (for example physics/unicode-math) out of this default.
     lines.append(r"\usepackage{amsmath,mathtools,cancel,cases,mhchem,siunitx,extarrows}")
+    fraction_sources = []
+    for item in questions_data:
+        question = item.get("question", {})
+        fraction_sources.extend(str(question.get(key) or "") for key in ("content", "answer_markdown", "tikz_code"))
+        for key in ("content_tikz_assets", "answer_tikz_assets"):
+            fraction_sources.extend(str(asset.get("tikz_code") or "") for asset in (question.get(key) or []) if isinstance(asset, dict))
+    if any(re.search(r"\\sfrac(?![A-Za-z])", source) for source in fraction_sources):
+        lines.append(r"\usepackage{xfrac}")
     # exam-zh uses unicode-math, which rejects the legacy bm package. Preserve
     # imported \bm{...} formulas through the native unicode-math equivalent.
     lines.append(r"\providecommand{\bm}[1]{\symbf{#1}}")
+    # unicode-math already supplies a real, stretchable top-parenthesis accent.
+    # Avoid loading yhmath, which also replaces unrelated hats and tildes.
+    for arc_command in ("wideparen", "widearc"):
+        lines.append(rf"\providecommand{{\{arc_command}}}[1]{{\overparen{{#1}}}}")
+    lines.append(
+        r"\ProvideDocumentCommand{\overarc}{O{1}m}{"
+        r"\ifdim #1pt=1pt\overparen{#2}\else"
+        r"\PackageError{mathbank}{Unsupported optional overarc width}"
+        r"{Use overarc without an option or with [1].}\fi}"
+    )
+    lines.append(r"\providecommand{\degree}{\ensuremath{{}^\circ}}")
+    lines.append(r"\providecommand{\celsius}{\ensuremath{{}^\circ\mathrm{C}}}")
+    lines.append(r"\providecommand{\perthousand}{\ensuremath{\mathord{\text{\textperthousand}}}}")
+    lines.append(r"\providecommand{\permil}{\perthousand}")
     # Tables: standard/aligned columns, three-line tables, adaptive width,
     # long tables, merged cells, diagonal headers, colored cells and tblr.
     lines.append(r"\usepackage{array,booktabs,tabularx,longtable,multirow,makecell,diagbox,colortbl,tabularray,threeparttable}")
@@ -617,6 +640,10 @@ def build_latex_document(
     lines.append(r"  math-font = xits,")
     lines.append(r"  fillin/no-answer-type=none")
     lines.append(r"}")
+    # Keep the native Unicode math accent and also allow the editor's bare
+    # shortcut (or an accent inside \text) to enter math mode safely.
+    lines.append(r"\let\mathbankoverparen\overparen")
+    lines.append(r"\RenewDocumentCommand{\overparen}{m}{\ensuremath{\mathbankoverparen{#1}}}")
     lines.append(r"\newcommand{\customcurve}[1][1]{%")
     lines.append(r"  \tikz[baseline,yshift=3,scale=0.05,thick,line width=0.8pt,")
     lines.append(r"        line cap=round, domain=-1:2.832, samples=300]{")

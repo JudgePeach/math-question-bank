@@ -74,7 +74,8 @@ from mathbank.task_manager import (
     TaskQueueFull,
 )
 from mathbank.docx_helper import extract_docx_markdown
-from mathbank.content_locks import lock_visible_math, restore_visible_math
+from mathbank.content_locks import lock_visible_math, reconcile_visible_math
+from mathbank.paper_parse import parse_paper_completion, finalize_source_answers
 from mathbank.math_markdown import normalize_question_math_markdown
 from mathbank.fraction_style import normalize_fraction_style
 from mathbank.tex_helper import (
@@ -3988,7 +3989,10 @@ def upload_batch_images(files: List[UploadFile] = File(...)):
 
 def parse_paper_text_internal(
     latex_content: str,
-    generate_answers_bool: bool
+    generate_answers_bool: bool,
+    *,
+    diagnostics: dict | None = None,
+    preserve_source_answers: bool = False,
 ) -> list:
     """内部通用函数：调用选定的 LLM 接口，将 LaTeX 试卷内容解析拆分为结构化 JSON 卡片"""
     parse_model = os.getenv("PREFER_PARSE_MODEL") or os.getenv("DEEPSEEK_PARSE_MODEL", "deepseek-flash")
@@ -4033,29 +4037,15 @@ def parse_paper_text_internal(
         provider_name=provider_name,
     )
         
-    res_json = response.json()
-    raw_ai_text = res_json["choices"][0]["message"]["content"].strip()
-    
-    parsed_data = parse_ai_json(raw_ai_text, raw_markdown=latex_content)
-    
-    if isinstance(parsed_data, dict):
-        if "questions" in parsed_data and isinstance(parsed_data["questions"], list):
-            parsed_questions = parsed_data["questions"]
-        elif "data" in parsed_data and isinstance(parsed_data["data"], list):
-            parsed_questions = parsed_data["data"]
-        else:
-            parsed_questions = None
-            for key, val in parsed_data.items():
-                if isinstance(val, list):
-                    parsed_questions = val
-                    break
-                if parsed_questions is None:
-                    parsed_questions = [parsed_data]
-    elif isinstance(parsed_data, list):
-        parsed_questions = parsed_data
-    else:
-        raise Exception("AI 返回的 JSON 格式不正确，期望是一个数组或包含 questions 列表的对象。")
-        
+    parsed_questions = parse_paper_completion(
+        response.json(),
+        raw_markdown="" if preserve_source_answers else latex_content,
+        diagnostics=diagnostics,
+    )
+    if preserve_source_answers:
+        # Compare the original response before answer filtering or formula edits.
+        return parsed_questions
+
     # 强制进行静默净化：若未勾选自动生成答案，则对于没有带有 [EXTRACTED_ORIGINAL] 的解析和解答，将其强行抹平为空。
     for q in parsed_questions:
         ans = q.get("answer_markdown", "")
@@ -4149,39 +4139,19 @@ def ai_parse_paper(
             provider_name=provider_name,
         )
             
-        res_json = response.json()
-        raw_ai_text = res_json["choices"][0]["message"]["content"].strip()
-        
-        parsed_data = parse_ai_json(raw_ai_text, raw_markdown=model_source)
-        
-        if isinstance(parsed_data, dict):
-            if "questions" in parsed_data and isinstance(parsed_data["questions"], list):
-                parsed_questions = parsed_data["questions"]
-            elif "data" in parsed_data and isinstance(parsed_data["data"], list):
-                parsed_questions = parsed_data["data"]
-            else:
-                parsed_questions = None
-                for key, val in parsed_data.items():
-                    if isinstance(val, list):
-                        parsed_questions = val
-                        break
-                if parsed_questions is None:
-                    parsed_questions = [parsed_data]
-        elif isinstance(parsed_data, list):
-            parsed_questions = parsed_data
-        else:
-            raise Exception("AI 返回的 JSON 格式不正确，期望是一个数组或包含 questions 列表的对象。")
-
-        if not parsed_questions or not all(isinstance(question, dict) for question in parsed_questions):
-            raise ValueError("AI 未返回有效的题目对象列表。")
-        for index, question in enumerate(parsed_questions, start=1):
-            if not isinstance(question.get("content"), str) or not question["content"].strip():
-                raise ValueError(f"AI 返回的第 {index} 题缺少有效题干，已停止导入以避免静默漏题。")
-            if not isinstance(question.get("referenced_images"), list):
-                question["referenced_images"] = []
-
-        lock_report = restore_visible_math(parsed_questions, math_locks)
+        parsed_questions = parse_paper_completion(
+            response.json(), diagnostics=tex_diagnostics,
+        )
+        lock_report = reconcile_visible_math(
+            parsed_questions, math_locks, tex_result["model_source"],
+        )
+        previous_warnings = list(tex_diagnostics.get("warnings", []))
         tex_diagnostics.update(lock_report)
+        tex_diagnostics["warnings"] = previous_warnings + lock_report.get("warnings", [])
+        finalize_source_answers(parsed_questions, tex_result["model_source"])
+        tex_diagnostics["source_review_count"] = sum(
+            bool(q.get("source_review", {}).get("required")) for q in parsed_questions
+        )
         tex_diagnostics["question_count_actual"] = len(parsed_questions)
         estimated_count = tex_diagnostics.get("question_count_estimate", 0)
         if estimated_count and estimated_count != len(parsed_questions):
@@ -4212,19 +4182,6 @@ def ai_parse_paper(
         
         # Translate referenced_images to server paths
         for q in parsed_questions:
-            # 强制进行静默净化：若未勾选自动生成答案，则对于没有带有 [EXTRACTED_ORIGINAL] 的解析和解答，将其强行抹平为空。
-            ans = q.get("answer_markdown", "")
-            if not ans:
-                q["answer_markdown"] = ""
-            else:
-                if not generate_answers_bool:
-                    if "[EXTRACTED_ORIGINAL]" in ans:
-                        q["answer_markdown"] = ans.replace("[EXTRACTED_ORIGINAL]", "").strip()
-                    else:
-                        q["answer_markdown"] = ""
-                else:
-                    q["answer_markdown"] = ans.replace("[EXTRACTED_ORIGINAL]", "").strip()
-
             # 智能提取出处双重保险：AI 提取优先，若 AI 未提取则尝试正则从 content 中提取
             extracted_source = q.get("source")
             content_str = q.get("content", "")
@@ -4307,7 +4264,10 @@ def ai_parse_paper(
         }
     except Exception as e:
         return JSONResponse(
-            content={"status": "error", "message": f"试卷解析失败: {str(e)}"},
+            content={
+                "status": "error", "message": f"试卷解析失败: {str(e)}",
+                "tex_diagnostics": locals().get("tex_diagnostics", {}),
+            },
             status_code=500
         )
 
@@ -5480,6 +5440,7 @@ def run_docx_parsing_task(
     generate_answers: bool = False
 ):
     temp_assets = []
+    diagnostics = {}
     try:
         DOCUMENT_TASKS.check_cancelled(task_id)
         DOCUMENT_TASKS.update(
@@ -5538,17 +5499,31 @@ def run_docx_parsing_task(
         )
         diagnostics["math_locks_created"] = len(math_locks)
         DOCUMENT_TASKS.check_cancelled(task_id)
-        parsed_questions = parse_paper_text_internal(locked_markdown_content, generate_answers)
-        lock_report = restore_visible_math(parsed_questions, math_locks)
+        parsed_questions = parse_paper_text_internal(
+            locked_markdown_content,
+            False,  # Extract original answers; solve reviewed questions in the frontend.
+            diagnostics=diagnostics,
+            preserve_source_answers=True,
+        )
+        lock_report = reconcile_visible_math(parsed_questions, math_locks, full_markdown_content)
+        previous_warnings = list(diagnostics.get("warnings", []))
         diagnostics.update(lock_report)
+        diagnostics["warnings"] = previous_warnings + lock_report.get("warnings", [])
+        finalize_source_answers(parsed_questions, full_markdown_content)
+        diagnostics["source_review_count"] = sum(
+            bool(q.get("source_review", {}).get("required")) for q in parsed_questions
+        )
 
         DOCUMENT_TASKS.check_cancelled(task_id)
         final_questions = post_process_pdf_parsed_questions(parsed_questions, paper_title, task_id, [full_markdown_content])
         DOCUMENT_TASKS.check_cancelled(task_id)
         DOCUMENT_TASKS.complete(
             task_id,
-            log="完成！已提取并拆分 Word 题目，请优先检查带“公式待核对”标记的内容。" if review_count else "完成！已提取并拆分全部 Word 题目卡片。",
+            log="拆分完成，请先对照原文核对提示内容。" if (
+                review_count or diagnostics.get("source_review_count") or diagnostics.get("unmatched_source")
+            ) else "完成！已提取并拆分全部 Word 题目卡片。",
             data=final_questions,
+            generate_answers=generate_answers,
             document_type="docx",
             diagnostics=diagnostics,
             temp_assets=list(temp_assets),
@@ -5561,6 +5536,7 @@ def run_docx_parsing_task(
             task_id,
             f"Word 试卷拆解失败: {str(ex)}",
             document_type="docx",
+            diagnostics=diagnostics,
         )
 
 

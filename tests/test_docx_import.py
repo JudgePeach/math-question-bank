@@ -24,6 +24,14 @@ from mathbank.mtef_helper import decode_mtef_formula, mtef_to_latex
 client = TestClient(app)
 
 
+@pytest.fixture(autouse=True)
+def forbid_live_docx_model_requests(monkeypatch):
+    def reject_request(*_args, **_kwargs):
+        raise AssertionError("DOCX tests must not contact a live AI provider.")
+
+    monkeypatch.setattr("requests.sessions.Session.request", reject_request)
+
+
 def _mtef_header() -> bytes:
     return b"\x05\x01\x00\x07\x00DSMT7\x00\x00"
 
@@ -727,7 +735,7 @@ def test_docx_image_only_options_keep_label_order_through_task(monkeypatch, tmp_
     body += '</w:p>'
     expected_paths = []
 
-    def split_extracted_word(source, _generate_answers):
+    def split_extracted_word(source, _generate_answers, **_kwargs):
         # Stand in only for AI; exercise real DOCX extraction and task postprocessing.
         options = re.findall(r'([A-D])\.\s*(!\[\]\(([^)]+)\))', source)
         assert [option[0] for option in options] == list("ABCD")
@@ -775,8 +783,13 @@ def test_document_postprocess_keeps_table_body_answer_and_reused_image_anchors()
     assert result["image_paths"] == paths
 
 
-def test_docx_upload_task_api_validation():
+def test_docx_upload_task_api_validation(monkeypatch):
     """测试 docx-task 接口对格式与任务排队生命周期的校验"""
+    from unittest.mock import Mock
+    import main
+
+    submit = Mock()
+    monkeypatch.setattr(main.DOCUMENT_TASKS, "submit", submit)
     headers = {"X-Local-Token": LOCAL_TOKEN}
 
     # 1. 拒绝非 .docx 后缀
@@ -808,7 +821,14 @@ def test_docx_upload_task_api_validation():
     task_id = ok_res.json()["task_id"]
     assert task_id is not None
 
-    # 4. 轮询状态接口
-    status_res = client.get(f"/api/tasks/{task_id}/status")
-    assert status_res.status_code == 200
-    assert "status" in status_res.json()
+    try:
+        submit.assert_called_once()
+        assert submit.call_args.args[0] == task_id
+        assert submit.call_args.args[1] is main.run_docx_parsing_task
+
+        # 4. 轮询状态接口；此测试只验证排队，不运行付费模型任务。
+        status_res = client.get(f"/api/tasks/{task_id}/status")
+        assert status_res.status_code == 200
+        assert status_res.json()["status"] == "pending"
+    finally:
+        main.DOCUMENT_TASKS.remove(task_id)

@@ -12,6 +12,8 @@
 - **前端脚本拆分**：前端 JS 采用无编译的“渐进式级联加载”架构，按 `api.js`、`editor.js`、`ocr.js`、`import.js`、`paper.js` 的顺序级联加载；前四个模块负责 API/全局状态、编辑与渲染、OCR 图像交互、导入拆卷，`paper.js` 负责组卷工作台。加载顺序严格依存，不允许产生任何编译及捆绑动作。
 - **前端样式与字体**：Tailwind CSS + FontAwesome 图标库 + Inter/Outfit 字体包（均已下载至本地 `/static/lib` 支持 100% 离线使用与跨平台系统降级）。
 - **公式渲染**：KaTeX（已下载至本地支持 100% 离线数学公式渲染），必须支持题干与解析框实时解析、秒级渲染。
+- **平行四边形符号**：题干、解析、导入及组卷预览统一支持 `\parallelogram` 与 Unicode `▱`，包括正文、数学环境、`\text{▱}`、上下标及分式；公式速查提供插入入口。网页由 `editor.js` 向本地 KaTeX 注册固定 SVG 字形并保留 MathML 语义，不依赖系统回退字体、不修改第三方库、不放宽 `trust`。PDF/LaTeX 与 Word 仅在导出副本中通过 `mathbank.geometry_symbols` 适配，Word 保留可编辑 OMML，数据库原文不批量改写。代码、图片路径、公式锁与 TikZ 源码不参与符号替换。专项检查为 `tests/test_math_preview_regressions.py`、`tests/test_parallelogram_export.py`，实际浏览器使用 `MATHBANK_TEST_BROWSER=1 python3 -m pytest --noconftest tests/test_parallelogram_browser.py`。
+- **圆弧与常见中学符号兼容**：`\wideparen{AB}`、`\overparen`、`\widearc`、默认 `\overarc` 使用随内容伸缩的真实上圆弧；网页复用 KaTeX 基底布局并绘制本地 SVG，保留 MathML 上弧语义，不得替成尖帽、平顶括号或固定宽度的 `\frown`。支持 `\ang` 的默认数值角度与分号分隔度分秒、`\celsius` / `℃`、`\perthousand` / `\textperthousand` / `\permil` / `‰` 及 `\sfrac` 斜分数；`\ang` 的自定义排版选项和 `\overarc` 非默认宽度不得静默吞掉，`\overarc[1]` 与默认等价。默认 PDF 模板直接提供圆弧、摄氏度、千分号与 `\degree` 兼容，出现 `\sfrac` 时预载 `xfrac`，不依赖报错后补包或加载会改写宽帽的 `yhmath`。Word 保留原生可编辑圆弧和斜分数。`tests/fixtures/school_math_symbols.json` 保存 120 组代表性写法与修复前基线；114 组支持项和其余 6 组专用字体/自定义命令的标准替代式分别验证，不自动把 `\mathbbm` / `\mathds` 换字体，也不猜测 `\abs` / `\norm` / `\Var` / `\Cov` 的定义。专项为 `tests/test_school_math_preview.py`、`MATHBANK_TEST_SYMBOL_NATIVE=1 python3 -m pytest --noconftest tests/test_school_math_export.py` 及 `MATHBANK_TEST_BROWSER=1 python3 -m pytest --noconftest tests/test_school_math_browser.py`，需实际核对圆弧宽度、位置、PDF 缺字与形状。
 - **中转站模型 7:3 弹性 UI 布局与 Reasoning Effort 自动解析**：在系统 API 设置中选择中转站平台（`zhongzhan_gpt` 或 `zhongzhan_claude`）时，模型输入区域自动转换为 7:3 弹性比例（70% 模型名称，30% 推理强度）。后端由 `mathbank.ai_providers.parse_model_and_effort` 自动提取纯净模型名称并注入请求参数。
 - **全局 Tooltip 提示系统**：基于纯原生事件代理接管 `title` / `data-tooltip` 浮现（详见第 6 节交互规范）。
 
@@ -137,7 +139,9 @@
 - **MathType 制表位与降级边界**：MTEF 的 `LINE` / `PILE` 内嵌制表位按“数量 + 类型/偏移”读取，不额外消费独立 `RULER` 的记录标记；独立 `RULER` 仍按记录类型 7 处理。二进制结构失败时禁止剥离控制字节后拼接可打印字符冒充公式；兼容模式只接受头部之后明确的旧式纯文本体，其余保留原公式预览并标记待核对。
 - **Word 语义保真**：解析 `word/numbering.xml` 恢复自动编号；普通段落上标、下标、下划线转化为 LaTeX/Markdown 表达；表格转为 `tabular`（支持合并单元格转义）；图片校验格式与大小。
 - **图片选项与原位图片**：PDF/Word 拆题后处理必须保留 `content` / `answer_markdown` 中的图片引用，尤其是 `choices` 各选项、表格单元格、正文和公式待核对位置；`image_paths` 只登记资源，不得据此删除正文图片，按首次出现顺序去重。图片选项预览按可见内容而非文件路径长度选择列数，四个纯图片选项优先四列、窄栏自动两列或一列，图片加载后重新测量并等比例限制在选项内部；已在正文渲染的图片不得再追加为缩略图。
-- **公式可见性锁定协议 (`lock_visible_math`)**：拆卷前用带唯一 ID 的 `<mathbank-math>` 锁定公式，模型只返回 ID 引用，提取完成后在解题前逐字恢复原公式，ID 异常立即中断报错。
+- **公式来源核对 (`lock_visible_math` / `reconcile_visible_math`)**：Word 与 TeX/粘贴拆卷保留本地原文及带唯一 ID 的可见公式，模型优先返回 ID，也兼容直接返回原公式。核对按原文题段、文字上下文、公式槽位与局部顺序/次数进行；仅在来源唯一且内容匹配时恢复原公式，禁止按全卷公式计数、模糊相似度或数学等价推导自动放行。缺 ID 本身不得使整卷失败，公式变化、重复/未知 ID、位置歧义等以每题 `source_review` 保留原因与原文对照；未匹配的整题或原文片段必须进入 `unmatched_source` 展示，不得静默遗漏。恢复须先在副本完成分析，再提交替换，严格校验失败不得遗留部分修改。
+- **拆卷审查与答案来源**：待核对题默认不勾选，单题导入、批量导入、全选及自动生成解答均不得绕过核对；人工确认绑定当前题干与答案快照，编辑后失效。Word 拆题阶段只提取原答案，用户勾选自动解答时由前端在拆分后对已通过核对且无答案的题目补全。原答案须先参与来源核对，再移除 `[EXTRACTED_ORIGINAL]` 标记；未标明来源的非空答案保留为待确认候选，不能预先清空后误报公式丢失，也不能静默冒充原版答案。模型返回的 `source_review` 不得作为本地检查或人工确认依据。
+- **拆卷响应诊断**：`mathbank.paper_parse` 统一校验非空题目列表、题干与答案类型，并记录完成原因、输出字符数和数字用量字段；即使 JSON 完整，`finish_reason=length` 等截断返回仍须明确拒绝。诊断分别显示编号恢复、原文核对和待核对数量，不声称公式总数一致即可保证题目位置正确；不自动追加付费重试，普通日志不落模型原始回复或凭据。
 
 ### 3.10 组卷排版工作台
 - **自定义题型组卷范围**：`exam`（常规）与 `quiz`（日常小练）的网页预览、LaTeX/PDF 和 Word 必须保留所有已选自定义题型。未调整时内置四类顺序保持稳定，其后按元数据顺序排列自定义类型，已从配置删除的历史题型按购物车首次出现顺序追加，以原标识兜底显示。自定义类型保留名称，默认使用解答题的分值、作答留白排版；题型名称按目标格式转义，题型标识不得直接拼入内联 JavaScript。后端分组规则统一放在 `mathbank.question_types`，导出端点传入服务端元数据；普通模板 Word 答案须按正文题号顺序输出。`exam_19` 仍只使用内置四类及原有固定题号、答题卡规则，本次不扩展自定义题型。

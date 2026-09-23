@@ -495,6 +495,55 @@ def test_import_disclosure_follows_file_type_and_reset(browser, tmp_path):
     assert browser.evaluate("!document.getElementById('importSourceDetails').open && document.getElementById('texImagesSection').hidden")
 
 
+def test_import_source_review_requires_teacher_confirmation_and_survives_edits(browser, tmp_path):
+    browser.evaluate(r"""
+    (() => {
+        selectWorkspace('import', '导入中心');
+        replaceParsedQuestions([
+            {content: '计算 $1+1$。', answer_markdown: '', question_type: 'detailed_answer'},
+            {content: '已知 $x^2-1$，求最小值。', answer_markdown: '', question_type: 'detailed_answer',
+             source_review: {required: true, reasons: ['公式与原文不同，请核对正负号。'],
+                source_excerpt: '2. 已知 $x^2+1$，求最小值。<img src=x onerror=window.reviewInjected=true>'}}
+        ]);
+        renderParsedQuestionsList(parsedQuestionsData);
+        renderSourceIntegrityReport({source_review_count: 1, unmatched_source: [
+            {source_excerpt: '3. 计算 $3+4$。', reason: '原文题目未对应到结果'}
+        ]});
+        document.getElementById('importPlaceholder').classList.add('hidden');
+        document.getElementById('parsedQuestionsWrapper').classList.remove('hidden');
+        return true;
+    })()
+    """)
+    browser.command('wait', '--fn', "!!document.querySelector('#parsed-card-1 .card-source-review-confirm')")
+    browser.command('click', '#parsed-card-1 details summary')
+    browser.command('wait', '--fn', "!!document.querySelector('#parsed-card-1 details .katex')")
+    assert browser.evaluate("getCheckedUnsavedIndices()") == [0]
+    assert browser.evaluate("document.querySelector('#parsed-card-1 .card-select-checkbox').disabled")
+    assert browser.evaluate("typeof window.reviewInjected === 'undefined'")
+    assert browser.evaluate("document.querySelectorAll('#parsed-card-1 details img').length") == 0
+    assert '3. 计算' in browser.evaluate("document.getElementById('parsedSourceIntegrityReport').textContent")
+    assert browser.evaluate("toggleSelectAllParsed(true); getCheckedUnsavedIndices()") == [0]
+    assert browser.evaluate("saveParsedQuestion(1)") is False
+
+    browser.command('click', '#parsed-card-1 .card-source-review-confirm')
+    assert browser.evaluate("!parsedQuestionNeedsSourceReview(1)")
+    assert browser.evaluate("toggleSelectAllParsed(true); getCheckedUnsavedIndices()") == [0, 1]
+    browser.evaluate(r"""
+    (() => {
+        const input = document.querySelector('#parsed-card-1 .card-content-textarea');
+        input.value += ' 请说明理由。';
+        input.dispatchEvent(new Event('input', {bubbles: true}));
+        return true;
+    })()
+    """)
+    assert browser.evaluate("parsedQuestionNeedsSourceReview(1)")
+    assert browser.evaluate("getCheckedUnsavedIndices()") == [0]
+    assert browser.evaluate("!document.querySelector('#parsed-card-1 .card-source-review-confirm').checked")
+    browser.command('screenshot', str(tmp_path / 'import-source-review.png'))
+    browser.evaluate("replaceParsedQuestions([]); renderParsedQuestionsList([]); true")
+    assert browser.evaluate("!document.getElementById('parsedSourceIntegrityReport')")
+
+
 def test_image_options_stay_in_labeled_import_editor_and_paper_cells(browser):
     paths = browser.evaluate(r"""
     (async () => {

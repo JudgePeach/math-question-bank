@@ -31,6 +31,7 @@ from docx.shared import Cm, Inches, Pt, RGBColor
 
 from mathbank.runtime_components import find_usable_pandoc
 from mathbank.question_types import PAPER_TYPE_ORDER, custom_type_labels, is_written_question_type, paper_type_order
+from mathbank.geometry_symbols import normalize_school_math_symbols
 
 
 MATH_NS = "http://schemas.openxmlformats.org/officeDocument/2006/math"
@@ -310,7 +311,8 @@ def _consume_math(text: str, start: int) -> tuple[MathToken | None, int]:
 
 def tokenize_mixed_content(text: str) -> list[str | MathToken | BlankToken]:
     """Split mixed Chinese/LaTeX text without relying on regex lookbehind."""
-    source = (text or "").replace("\r\n", "\n").replace("\r", "\n")
+    source = normalize_school_math_symbols(text or "", target="word")
+    source = source.replace("\r\n", "\n").replace("\r", "\n")
     tokens: list[str | MathToken | BlankToken] = []
     plain: list[str] = []
     index = 0

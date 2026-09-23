@@ -2125,6 +2125,156 @@ window.normalizeEditorFractions = normalizeEditorFractions;
             });
         }
 
+        function createMathMLSymbol(symbol, attributes = {}) {
+            // A fresh MathML leaf for each occurrence: parent builders may
+            // add attributes. Keep semantic text alongside the local SVG.
+            return {
+                type: 'mo', children: [], classes: [],
+                attributes: { lspace: '0em', rspace: '0em', stretchy: 'false', ...attributes },
+                setAttribute(key, value) { this.attributes[key] = String(value); },
+                getAttribute(key) { return this.attributes[key]; },
+                toText() { return symbol; },
+                toNode() {
+                    const node = document.createElementNS('http://www.w3.org/1998/Math/MathML', 'mo');
+                    Object.keys(this.attributes).forEach(key => node.setAttribute(key, this.attributes[key]));
+                    node.textContent = symbol;
+                    return node;
+                },
+                toMarkup() {
+                    const escape = value => String(value).replace(/[&<>"']/g, char => ({
+                        '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+                    }[char]));
+                    const attributes = Object.keys(this.attributes)
+                        .map(key => ' ' + key + '="' + escape(this.attributes[key]) + '"').join('');
+                    return '<mo' + attributes + '>' + escape(symbol) + '</mo>';
+                }
+            };
+        }
+
+        function registerParallelogramSymbol(renderer) {
+            // The bundled KaTeX extension API keeps this symbol in every
+            // rendering path, including text, scripts and fractions. Draw a
+            // fixed local outline instead of depending on a system font, and
+            // leave KaTeX's untrusted-command policy unchanged.
+            const { Span, SvgNode, PathNode } = renderer.__domTree;
+            renderer.__defineFunction({
+                type: 'mathbankParallelogram',
+                names: ['\\parallelogram'],
+                props: { numArgs: 0, allowedInText: true, allowedInArgument: true },
+                handler: ({ parser }) => ({ type: 'mathbankParallelogram', mode: parser.mode }),
+                htmlBuilder: (group, options) => {
+                    const path = new PathNode('mathbankParallelogram',
+                        'M230 0H930L700 600H0Z M266 50L70 550H665L860 50Z');
+                    const svg = new SvgNode([path], {
+                        width: '0.93em', height: '0.6em', viewBox: '0 0 930 600',
+                        preserveAspectRatio: 'xMidYMid meet', 'aria-hidden': 'true'
+                    });
+                    const span = new Span(['mord', 'mb-parallelogram'], [svg], options, {
+                        display: 'inline-block', position: 'relative', width: '0.93em', height: '0.6em'
+                    });
+                    span.height = 0.6;
+                    span.depth = 0;
+                    span.width = 0.93;
+                    span.maxFontSize = options.sizeMultiplier;
+                    return span;
+                },
+                mathmlBuilder: () => createMathMLSymbol('▱')
+            });
+            renderer.__defineMacro('▱', '\\parallelogram');
+        }
+        function registerSchoolMathSymbols(renderer) {
+            const { Span, SvgNode, PathNode } = renderer.__domTree;
+            renderer.__defineMacro('\\ensuremath', context =>
+                context.mode === 'text' ? '\\({#1}\\)' : '{#1}');
+            renderer.__defineFunction({
+                type: 'mathbankArcAccent', names: ['\\mathbankArcAccent'],
+                props: { numArgs: 0, allowedInArgument: true },
+                handler: ({ parser }) => ({ type: 'mathbankArcAccent', mode: parser.mode }),
+                htmlBuilder: (group, options) => {
+                    const path = new PathNode('mathbankArcAccent',
+                        'M0 280 Q500 -200 1000 280 L1000 330 Q500 -150 0 330 Z');
+                    const svg = new SvgNode([path], {
+                        width: '100%', height: '0.33em', viewBox: '0 0 1000 330',
+                        preserveAspectRatio: 'none', 'aria-hidden': 'true'
+                    });
+                    // The relative vlist row produced by overset has the base's
+                    // actual width. Keep top/bottom auto for its static baseline;
+                    // KaTeX still lays out the base, nested macros and scripts.
+                    const span = new Span(['mord', 'mb-arc-accent'], [svg], options, {
+                        position: 'absolute', left: '0', width: '100%', height: '0.33em'
+                    });
+                    span.height = 0.33;
+                    span.depth = span.width = 0;
+                    span.maxFontSize = options.sizeMultiplier;
+                    return span;
+                },
+                mathmlBuilder: () => createMathMLSymbol('⏜', { stretchy: 'true', accent: 'true' })
+            });
+            ['wideparen', 'overparen', 'widearc'].forEach(name => {
+                renderer.__defineMacro('\\' + name, '\\overset{\\mathbankArcAccent}{#1}');
+            });
+            renderer.__defineMacro('\\overarc', context => {
+                context.consumeSpaces();
+                if (context.future().text === '[') {
+                    context.popToken();
+                    let value = '';
+                    while (!['EOF', ']'].includes(context.future().text)) value += context.popToken().text;
+                    if (context.future().text !== ']' || value.trim() !== '1') {
+                        throw new renderer.ParseError('\\overarc supports the default width only; use \\wideparen{...}');
+                    }
+                    context.popToken();
+                }
+                return '\\wideparen';
+            });
+            renderer.__defineFunction({
+                type: 'mathbankPerThousand', names: ['\\perthousand', '\\textperthousand', '\\permil'],
+                props: { numArgs: 0, allowedInText: true, allowedInArgument: true },
+                handler: ({ parser }) => ({ type: 'mathbankPerThousand', mode: parser.mode }),
+                htmlBuilder: (group, options) => {
+                    const ring = (x, y) => `M${x} ${y - 110}a110 110 0 1 1 0 220a110 110 0 1 1 0 -220Z`
+                        + `M${x} ${y - 70}a70 70 0 1 0 0 140a70 70 0 1 0 0 -140Z`;
+                    const path = new PathNode('mathbankPerThousand',
+                        ring(140, 140) + ring(530, 555) + ring(810, 555) + 'M570 30H625L245 665H190Z');
+                    const svg = new SvgNode([path], {
+                        width: '0.95em', height: '0.7em', viewBox: '0 0 950 700',
+                        preserveAspectRatio: 'xMidYMid meet', 'aria-hidden': 'true'
+                    });
+                    const span = new Span(['mord', 'mb-perthousand'], [svg], options, {
+                        display: 'inline-block', position: 'relative', width: '0.95em', height: '0.7em'
+                    });
+                    span.height = 0.7;
+                    span.depth = 0;
+                    span.width = 0.95;
+                    span.maxFontSize = options.sizeMultiplier;
+                    return span;
+                },
+                mathmlBuilder: () => createMathMLSymbol('‰')
+            });
+            renderer.__defineMacro('‰', '\\perthousand');
+            renderer.__defineMacro('\\celsius', '\\ensuremath{{}^\\circ\\mathrm{C}}');
+            renderer.__defineMacro('℃', '\\celsius');
+            renderer.__defineMacro('\\sfrac', '\\ensuremath{{}^{#1}\\!/\\!{}_{#2}}');
+            renderer.__defineMacro('\\ang', context => {
+                context.consumeSpaces();
+                if (context.future().text === '[') {
+                    throw new renderer.ParseError('\\ang optional formatting is not supported; use its default numeric form');
+                }
+                const input = context.consumeArgs(1)[0].slice().reverse().map(token => token.text).join('');
+                const parts = input.split(';').map(part => part.trim());
+                if (parts.length > 3 || !parts.some(Boolean)
+                    || parts.some(part => part && !/^[+-]?(?:\d+(?:[.,]\d*)?|[.,]\d+)$/.test(part))) {
+                    throw new renderer.ParseError('\\ang expects a number or numeric degrees;minutes;seconds');
+                }
+                const units = ['\\circ', '\\prime', '\\prime\\prime'];
+                return '\\ensuremath{' + parts.map((part, index) => part
+                    ? part.replace(',', '.') + '^{' + units[index] + '}' : '').join('') + '}';
+            });
+        }
+        if (typeof katex !== 'undefined') {
+            registerParallelogramSymbol(katex);
+            registerSchoolMathSymbols(katex);
+        }
+
         function transformExamZhParenForPreview(text) {
             if (!text) return "";
             return text.replace(/\\paren\b/g, '<span class="exam-zh-paren-preview" role="img" aria-label="选择题作答括号">（&nbsp;&nbsp;）</span>');
@@ -2149,6 +2299,7 @@ window.normalizeEditorFractions = normalizeEditorFractions;
             [
                 /```[\s\S]*?```/g,
                 /`[^`\n]*`/g,
+                /\\begin\{tikzpicture\}[\s\S]*?\\end\{tikzpicture\}/g,
                 /!\[[^\]\n]*\]\([^\n)]*\)/g,
                 /\[\[MBM_[A-Za-z0-9_:-]+\]\]/g,
                 /\[ILLUSTRATION_BOX:\s*[^\]\n]*\]/gi,
@@ -2176,17 +2327,26 @@ window.normalizeEditorFractions = normalizeEditorFractions;
                 return save('$' + (name === 'math' ? body : environment) + '$');
             });
 
+            // Bold prose is unpacked after normalization. Normalize geometry
+            // within that text now, while keeping the outer textbf protected.
+            protect(/\\textbf\{[^{}\n]*\}/g, function(match) {
+                if (!/[▱‰℃]|\\(?:parallelogram|perthousand|textperthousand|permil|celsius)(?![A-Za-z])/.test(match)) return match;
+                return '\\textbf{' + normalizeNakedMathForPreview(match.slice(8, -1)) + '}';
+            });
+            // Semicolons in siunitx degree/minute/second input belong to one
+            // formula, rather than separating prose-level math candidates.
+            protect(/\\ang\s*\{[+\-\d.,;\s]*\}/g, match => '\\(' + match + '\\)');
+
             [
                 /\\(?:begin|end)\{[^}\n]+\}/g,
                 /\\item\b/g,
                 /\\fillin\b/g,
                 /\\paren\b/g,
-                /\\textbf\{[^{}\n]*\}/g,
                 /\\includegraphics(?:\s*\[[^\]\n]*\])?\s*\{[^}\n]+\}/g,
                 /<\/?[A-Za-z][^>\n]*>/g
             ].forEach(function(pattern) { protect(pattern); });
 
-            source = source.replace(/[A-Za-z0-9\\{}_^+\-*/=<>|(),.:\[\]\t ]+/g, function(raw) {
+            source = source.replace(/[A-Za-z0-9▱‰℃\\{}_^+\-*/=<>|(),.:\[\]\t ]+/g, function(raw) {
                 const core = raw.trim();
                 if (!core) return raw;
                 const nonMathCommands = new Set([
@@ -2200,7 +2360,11 @@ window.normalizeEditorFractions = normalizeEditorFractions;
                 const hasRelation = /[A-Za-z0-9})\]]\s*(?:=|<|>)\s*(?:[A-Za-z0-9({\[\\+\-])/.test(core);
                 const hasFunction = /\b[A-Za-z]\s*\([^)]*[A-Za-z0-9_+\-,\\][^)]*\)/.test(core);
                 const hasCoordinate = /\(\s*[+\-]?(?:\d+(?:\.\d+)?|[A-Za-z])\s*,[^)]*\)/.test(core);
-                if (!hasMathCommand && !hasScript && !hasRelation && !hasFunction && !hasCoordinate) return raw;
+                if (!hasMathCommand && !hasScript && !hasRelation && !hasFunction && !hasCoordinate) {
+                    // A pasted symbol alone must not turn surrounding English
+                    // prose into math or consume adjacent dollar delimiters.
+                    return raw.replace(/[▱‰℃]/g, symbol => '\\(' + symbol + '\\)');
+                }
                 const leading = raw.slice(0, raw.length - raw.trimStart().length);
                 const trailing = raw.slice(raw.trimEnd().length);
                 return leading + '$' + core + '$' + trailing;

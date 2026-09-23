@@ -16,7 +16,8 @@ def run_preview_script(assertions):
     end = source.index(marker, start) + len(marker)
     katex_path = str(PROJECT_ROOT / "static/lib/katex/katex.min.js")
     script = (
-        "global.window = {MathBankSafe: {safeImageUrl(v) { return v; }, escapeAttribute(v) { return v; }}};\n"
+        "process.on('uncaughtException', error => { console.error(error.stack); process.exit(1); });\n"
+        + "global.window = {MathBankSafe: {safeImageUrl(v) { return v; }, escapeAttribute(v) { return v; }}};\n"
         + "const katex = require(" + json.dumps(katex_path) + ");\n"
         + source[start:end]
         + r'''
@@ -104,4 +105,41 @@ const image = preprocessFormulaForKaTeX('图 ![](/static/uploads/figure.png)', {
 });
 assert(image.includes('mb-inline-image-align-right'));
 assert(image.includes('mb-inline-image-size-large'));
+''')
+
+
+def test_parallelogram_uses_local_vector_and_semantic_mathml_in_every_math_style():
+    run_preview_script(r'''
+const samples = [
+    String.raw`\parallelogram ABCD`, '▱ABCD', String.raw`\text{▱}ABCD`,
+    String.raw`\text{A▱B}`, String.raw`\text{\parallelogram}`, String.raw`x^\parallelogram`,
+    String.raw`S_{▱ABCD}`, String.raw`\dfrac{\parallelogram ABCD}{▱EFGH}`,
+    String.raw`\sqrt{▱}`, String.raw`\overline{▱ABCD}`, String.raw`\color{red}{▱}`,
+    String.raw`a_{▱}^{▱^{▱}}`,
+];
+for (const formula of samples) {
+    const rendered = katex.renderToString(formula, {throwOnError: true, strict: 'error', trust: false});
+    assert(rendered.includes('mb-parallelogram'), `no local vector: ${formula}`);
+    assert(rendered.includes('<svg') && rendered.includes('<path'), `missing vector geometry: ${formula}`);
+    assert(rendered.includes('>▱</mo>'), `missing semantic symbol: ${formula}`);
+    assert(!rendered.includes('_fallback'), `system font fallback: ${formula}`);
+}
+const raw = String.raw`在 ▱ABCD 中；在 \parallelogram EFGH 中；▱$IJKL$。`;
+const preview = preprocessFormulaForKaTeX(raw);
+assert.deepEqual(parsedFormulas(preview), ['▱', String.raw`\parallelogram EFGH`, '▱', 'IJKL']);
+assert.equal(normalizeNakedMathForPreview(normalizeNakedMathForPreview(raw)), normalizeNakedMathForPreview(raw));
+const protectedSource = '代码 `▱`，图片 ![▱](/static/uploads/▱.png)，锁 [[MBM_math_1]]。';
+assert.equal(normalizeNakedMathForPreview(protectedSource), protectedSource);
+assert.equal(normalizeNakedMathForPreview('Let ▱ABCD be a parallelogram.'), String.raw`Let \(▱\)ABCD be a parallelogram.`);
+for (const bold of [String.raw`\textbf{▱ABCD}`, String.raw`\textbf{\parallelogram ABCD}`]) {
+    const rendered = preprocessFormulaForKaTeX(bold);
+    assert(rendered.includes('<strong>'));
+    assert.equal(parsedFormulas(rendered).length, 1);
+}
+const tikz = String.raw`\begin{tikzpicture}\node {▱};\end{tikzpicture}`;
+assert.equal(normalizeNakedMathForPreview(tikz), tikz);
+const table = String.raw`\begin{tabular}{cc} ▱ABCD & $\parallelogram EFGH$ \\ $\text{▱}$ & $S_{▱}$ \end{tabular}`;
+assert.equal(parsedFormulas(preprocessFormulaForKaTeX(table)).length, 4);
+const untrusted = katex.renderToString(String.raw`\href{javascript:alert(1)}{\parallelogram}`, {throwOnError: false, trust: false});
+assert(!untrusted.includes('<a '), 'symbol support enabled untrusted HTML commands');
 ''')

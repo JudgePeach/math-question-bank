@@ -504,7 +504,7 @@ def test_import_answer_generation_rejects_replaced_question_set_in_real_js():
     assert node, "Node.js is required for the frontend executable regression"
 
     import_source = _read(STATIC_JS_DIR / "import.js")
-    helpers_start = import_source.index("function replaceParsedQuestions(nextQuestions)")
+    helpers_start = import_source.index("let parsedSourceReviewConfirmations = new WeakMap()")
     helpers_end = import_source.index("function blockImportResetWhileSaving()", helpers_start)
     helpers_source = import_source[helpers_start:helpers_end]
     answer_start = import_source.index("async function generateSingleAnswer(index)")
@@ -546,7 +546,7 @@ function makeCard() {{
   }};
 }}
 let activeCard = null;
-const document = {{ getElementById() {{ return activeCard; }} }};
+const document = {{ getElementById(id) {{ return id.startsWith('parsed-card-') ? activeCard : null; }} }};
 {helpers_source}
 {answer_source}
 
@@ -1154,7 +1154,7 @@ def test_parsed_save_generation_prevents_index_reuse_and_stale_callback_in_real_
     assert node, "Node.js is required for the frontend executable regression"
 
     import_source = _read(STATIC_JS_DIR / "import.js")
-    helpers_start = import_source.index("function replaceParsedQuestions(nextQuestions)")
+    helpers_start = import_source.index("let parsedSourceReviewConfirmations = new WeakMap()")
     helpers_end = import_source.index("function openImportModal()", helpers_start)
     helpers_source = import_source[helpers_start:helpers_end]
     save_start = import_source.index("function saveParsedQuestion(index)")
@@ -1216,7 +1216,7 @@ function fetch() {{
   return new Promise(resolve => pendingFetches.push(resolve));
 }}
 let activeCard = null;
-const document = {{ getElementById() {{ return activeCard; }} }};
+const document = {{ getElementById(id) {{ return id.startsWith('parsed-card-') ? activeCard : null; }} }};
 {helpers_source}
 {save_source}
 
