@@ -281,8 +281,8 @@ def test_import_source_review_in_shipped_js(review_script, scenario):
     node = shutil.which("node")
     assert node, "Node.js is required for the frontend executable regression"
     result = subprocess.run(
-        [node, "-e", review_script, scenario], cwd=ROOT,
-        capture_output=True, text=True, check=False,
+        [node, "-e", "eval(require('node:fs').readFileSync(0,'utf8'))", scenario],
+        input=review_script, cwd=ROOT, capture_output=True, encoding="utf-8", check=False,
     )
     assert result.returncode == 0, result.stderr
 
@@ -310,5 +310,6 @@ assert.equal(parsedQuestionsData.filter((q,i)=>parsedQuestionNeedsSourceReview(i
 assert.equal(JSON.stringify(parsedQuestionsData.map(q=>q.source_review||null)),evidence);
 assert.equal(requests.length,0,'selection and validation do not call models or write questions');
 """
-    result = subprocess.run([shutil.which('node'), '-e', script], cwd=ROOT, capture_output=True, text=True)
+    result = subprocess.run([shutil.which('node'), '-e', "eval(require('node:fs').readFileSync(0,'utf8'))"],
+                            input=script, cwd=ROOT, capture_output=True, encoding='utf-8')
     assert result.returncode == 0, result.stderr

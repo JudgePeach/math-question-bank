@@ -747,8 +747,10 @@ pdfScenarios[process.argv[1]]().catch(error=>{console.error(error);process.exitC
 def test_pdf_layout_ui_behavior(pdf_script, scenario):
     node = shutil.which("node")
     assert node, "Node.js is required for executable frontend regression checks"
-    result = subprocess.run([node, "-e", pdf_script, scenario], cwd=ROOT,
-                            capture_output=True, text=True, check=False)
+    # Linux limits each argv entry to roughly 128 KiB. Feed the complete
+    # shipped-code harness through UTF-8 stdin, keeping scenario argv stable.
+    result = subprocess.run([node, "-e", "eval(require('node:fs').readFileSync(0,'utf8'))", scenario],
+                            input=pdf_script, cwd=ROOT, capture_output=True, encoding="utf-8", check=False)
     assert result.returncode == 0, result.stderr
 
 
