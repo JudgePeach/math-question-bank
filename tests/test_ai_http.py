@@ -117,3 +117,17 @@ def test_post_read_timeout_is_not_retried_to_avoid_duplicate_billing():
             robust_request_post("https://transit.example/v1", timeout=10)
 
     request_mock.assert_called_once()
+
+
+@pytest.mark.parametrize("error", [requests.exceptions.ProxyError, requests.exceptions.ConnectTimeout])
+def test_explicit_single_attempt_skips_even_connection_retry(error):
+    provider = resolve_text_provider("ZHONGZHAN_GPT/gpt-5.6-sol", {
+        "ZHONGZHAN_GPT_API_KEY": "unused-test-key",
+        "ZHONGZHAN_GPT_BASE_URL": "https://transit.example/v1/",
+    })
+    with patch("mathbank.ai_http.requests.post", side_effect=error("connect failure")) as post:
+        with pytest.raises(error):
+            post_chat_completion(provider, {"model": "test", "messages": []}, timeout=10,
+                                 retry_connection=False)
+    post.assert_called_once()
+    assert "retry_connection" not in post.call_args.kwargs

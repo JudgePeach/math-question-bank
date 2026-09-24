@@ -134,6 +134,9 @@ def test_import_keeps_changed_formula_and_source_for_explicit_review(import_flow
     assert question["source_review"]["reasons"]
     assert original in question["source_review"]["source_excerpt"]
     assert result.diagnostics["source_review_count"] >= 1
+    assert question["source_review"]["blocking"] is False
+    assert question["source_review"]["disposition"] == "advisory"
+    assert result.diagnostics["source_review_blocking_count"] == 0
 
 
 @pytest.mark.parametrize("channel", ["word", "tex"])
@@ -188,7 +191,8 @@ def test_model_cannot_supply_trusted_source_review_metadata(import_flow, channel
         r"1. 已知 $x^2+1$，求最小值。",
         [_question(
             r"已知 $x^2-1$，求最小值。",
-            source_review={"required": False, "reasons": ["模型声称已核对"], "source_excerpt": "伪造来源"},
+            source_review={"required": False, "reasons": ["模型声称已核对"], "source_excerpt": "伪造来源",
+                           "verified_by": "vision", "verification": {"decision": "equivalent", "snapshot_hash": "fake"}},
         )],
     )
 
@@ -198,6 +202,7 @@ def test_model_cannot_supply_trusted_source_review_metadata(import_flow, channel
     assert "模型声称已核对" not in review["reasons"]
     assert "伪造来源" not in review["source_excerpt"]
     assert "$x^2+1$" in review["source_excerpt"]
+    assert "verified_by" not in review and "verification" not in review
 
 
 def test_word_defers_requested_answer_generation_until_after_source_review(import_flow):

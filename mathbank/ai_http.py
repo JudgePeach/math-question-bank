@@ -16,7 +16,7 @@ class AIProviderHTTPError(RuntimeError):
     """Raised when an AI provider returns a non-success HTTP response."""
 
 
-def robust_request_post(url: str, **kwargs):
+def robust_request_post(url: str, *, retry_connection: bool = True, **kwargs):
     """POST with a conservative proxy fallback.
 
     A response/read failure may happen after the provider has already started
@@ -36,7 +36,7 @@ def robust_request_post(url: str, **kwargs):
         requests.exceptions.ProxyError,
         requests.exceptions.ConnectTimeout,
     ) as exc:
-        if kwargs.get("proxies") == {"http": None, "https": None}:
+        if not retry_connection or kwargs.get("proxies") == {"http": None, "https": None}:
             raise
         print(
             f"[Robust Network] Provider connection failed before a response "
@@ -87,6 +87,7 @@ def post_chat_completion(
     stream: bool = False,
     check_status: bool = True,
     provider_name: Optional[str] = None,
+    retry_connection: bool = True,
 ):
     """Send one OpenAI-compatible chat completion request.
 
@@ -107,6 +108,8 @@ def post_chat_completion(
     }
     if stream:
         request_kwargs["stream"] = True
+    if not retry_connection:
+        request_kwargs["retry_connection"] = False
 
     response = robust_request_post(
         provider.chat_completions_url,

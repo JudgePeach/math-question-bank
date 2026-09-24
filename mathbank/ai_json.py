@@ -34,6 +34,44 @@ def _extract_json_envelope(text: str) -> str:
     return text[start : end + 1]
 
 
+def _preserve_json_fillin_command(text: str) -> str:
+    r"""Preserve only an unescaped \fillin before JSON consumes its \f escape.
+
+    This known layout command can make otherwise valid JSON silently produce
+    U+000C + 'illin'. Do not run the general LaTeX repair on valid JSON: normal
+    newline/tab escapes followed by Latin text must remain JSON escapes.
+    Correctly doubled backslashes and all other escape sequences stay intact.
+    """
+    result: List[str] = []
+    in_string = False
+    index = 0
+    command = r"\fillin"
+    while index < len(text):
+        char = text[index]
+        if char == '"':
+            in_string = not in_string
+            result.append(char)
+            index += 1
+            continue
+        if in_string and char == "\\":
+            end = index + len(command)
+            complete = text.startswith(command, index) and (
+                end == len(text) or not (text[end].isascii() and text[end].isalpha())
+            )
+            if complete:
+                result.append("\\" + command)
+                index = end
+                continue
+            # Consume each existing JSON escape as one pair, so escaped quotes
+            # and an already escaped LaTeX backslash cannot be reinterpreted.
+            result.append(text[index:index + 2])
+            index += 2
+            continue
+        result.append(char)
+        index += 1
+    return "".join(result)
+
+
 def _repair_json_string_content(text: str) -> str:
     """Escape raw controls and unescaped LaTeX commands inside JSON strings."""
 
@@ -217,6 +255,7 @@ def parse_ai_json(raw_text: str, raw_markdown: Optional[str] = None) -> Any:
     missing = object()
     parsed_data = missing
     for candidate in candidates:
+        candidate = _preserve_json_fillin_command(candidate)
         try:
             parsed_data = json.loads(candidate)
             break

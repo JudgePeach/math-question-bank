@@ -1965,9 +1965,16 @@
                         </div>
                     </div>
 
+                    <div id="docxVerificationContainer" hidden class="import-config-card hidden p-3 bg-slate-50/80 border border-slate-200/60 rounded-xl shrink-0">
+                        <label class="flex items-start gap-2 text-xs text-slate-700 cursor-pointer">
+                            <input type="checkbox" id="docxVerifySuspicions" class="mt-0.5 h-4 w-4 rounded border-slate-300 text-brand-600 focus:ring-brand-500">
+                            <span><span class="font-semibold">额外模型核验（可选）</span><span class="block mt-1 text-[10px] text-slate-500 leading-normal">开启后可能额外调用识图模型对照 Word 原文；关闭不影响正常导入。</span></span>
+                        </label>
+                    </div>
+
                     <!-- PDF Advanced Parsing Options (Visible only when PDF selected) -->
                     <div id="pdfPageRangeContainer" class="import-config-card hidden space-y-2.5 p-3 bg-indigo-50/40 border border-indigo-100 rounded-xl shrink-0">
-                        <div class="flex items-center justify-between">
+                        <div class="flex flex-wrap gap-2 items-center justify-between">
                             <label class="block text-xs font-bold text-indigo-950 flex items-center space-x-1.5">
                                 <i class="fa-solid fa-microchip text-brand-600"></i>
                                 <span>PDF 解析策略与范围</span>
@@ -1978,23 +1985,36 @@
                             </div>
                         </div>
 
-                        <div class="grid grid-cols-2 gap-2">
+                        <div class="grid grid-cols-1 sm:grid-cols-3 gap-2">
                             <label class="relative flex flex-col p-2 bg-white border border-slate-200 rounded-xl cursor-pointer shadow-sm hover:border-brand-500 transition-all group">
                                 <div class="flex items-center space-x-1.5">
-                                    <input type="radio" name="pdfStrategy" value="native_preferred" checked class="w-3.5 h-3.5 text-brand-600 border-slate-300 focus:ring-brand-500">
-                                    <span class="text-xs font-bold text-slate-800 group-hover:text-brand-600">原生文字公式提取</span>
+                                    <input type="radio" name="pdfStrategy" value="layout_aware" checked onchange="updatePdfVerificationOption()" class="w-3.5 h-3.5 text-brand-600 border-slate-300 focus:ring-brand-500">
+                                    <span class="text-xs font-bold text-slate-800 group-hover:text-brand-600">智能图文提取（推荐）</span>
                                 </div>
-                                <span class="text-[10px] text-slate-500 mt-1 leading-normal">优先直提原生文字与公式，遇公式图片自动补全 OCR。</span>
+                                <span class="text-[10px] text-slate-500 mt-1 leading-normal">提取文字、公式与配图，核对图片归属；提取说明可按需查看，不影响导入。</span>
                             </label>
 
                             <label class="relative flex flex-col p-2 bg-white border border-slate-200 rounded-xl cursor-pointer shadow-sm hover:border-brand-500 transition-all group">
                                 <div class="flex items-center space-x-1.5">
-                                    <input type="radio" name="pdfStrategy" value="force_ocr" class="w-3.5 h-3.5 text-brand-600 border-slate-300 focus:ring-brand-500">
-                                    <span class="text-xs font-bold text-slate-800 group-hover:text-brand-600">全图视觉 OCR</span>
+                                    <input type="radio" name="pdfStrategy" value="native_preferred" onchange="updatePdfVerificationOption()" class="w-3.5 h-3.5 text-brand-600 border-slate-300 focus:ring-brand-500">
+                                    <span class="text-xs font-bold text-slate-800 group-hover:text-brand-600">文字优先</span>
                                 </div>
-                                <span class="text-[10px] text-slate-500 mt-1 leading-normal">强制对全卷页面进行大模型视觉转译。</span>
+                                <span class="text-[10px] text-slate-500 mt-1 leading-normal">优先提取原生文字与公式，必要时识图补全；配图需手动补充。</span>
+                            </label>
+
+                            <label class="relative flex flex-col p-2 bg-white border border-slate-200 rounded-xl cursor-pointer shadow-sm hover:border-brand-500 transition-all group">
+                                <div class="flex items-center space-x-1.5">
+                                    <input type="radio" name="pdfStrategy" value="force_ocr" onchange="updatePdfVerificationOption()" class="w-3.5 h-3.5 text-brand-600 border-slate-300 focus:ring-brand-500">
+                                    <span class="text-xs font-bold text-slate-800 group-hover:text-brand-600">全页识图</span>
+                                </div>
+                                <span class="text-[10px] text-slate-500 mt-1 leading-normal">对所选页面逐页识别文字与公式；配图需手动补充。</span>
                             </label>
                         </div>
+                        <p class="text-[10px] text-slate-500 leading-normal">智能模式沿用已配置的识图模型核对配图，可能产生额外调用与等待。结果仍需对照原卷审查。</p>
+                        <label class="flex items-start gap-2 text-xs text-slate-700 cursor-pointer">
+                            <input type="checkbox" id="pdfVerifySuspicions" class="mt-0.5 h-4 w-4 rounded border-slate-300 text-brand-600 focus:ring-brand-500">
+                            <span><span class="font-semibold">额外模型核验（可选）</span><span id="pdfVerifySuspicionsNote" class="block mt-1 text-[10px] text-slate-500 leading-normal">开启后仅对疑点额外请求模型核验；关闭不影响正常导入。</span></span>
+                        </label>
                     </div>
 
                     <!-- Step 4: Run AI Parse & Reset buttons -->

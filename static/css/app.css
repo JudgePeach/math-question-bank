@@ -1428,6 +1428,11 @@ header, main {
 }
 
 /* Math formula styling */
+.mb-preview-paragraph-break {
+    display: block;
+    height: 0.35em;
+}
+
 .katex-display {
     overflow-x: auto;
     overflow-y: hidden;
@@ -4649,6 +4654,7 @@ body.question-editor-open {
     #importInputPane.import-source-pane,
     #importReviewPane.import-result-pane {
         width: 100%;
+        height: auto;
         min-height: 520px;
         flex: 0 0 auto;
         overflow: visible;
@@ -4656,6 +4662,7 @@ body.question-editor-open {
     }
 
     .import-primary-actions {
+        position: static;
         bottom: 0;
         margin: 0 -0.75rem -0.75rem;
         padding: 0.7rem 0.75rem !important;
@@ -5400,6 +5407,18 @@ button[aria-disabled="true"]:hover,
 #importInputPane > .import-config-card { flex: 0 0 auto; min-height: 0; }
 #importInputPane #texDropzone { min-height: 130px; }
 #importInputPane :is(label, input, button), #texFileName { font-size: 14px !important; }
+.parsed-card-footer { display: grid; grid-template-columns: minmax(0, 1fr); gap: 8px; min-width: 0; }
+.parsed-card-image-badges { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; min-width: 0; max-width: 100%; max-height: 64px; overflow: auto; }
+.parsed-card-image-badges:empty { display: none; }
+.parsed-card-image-badge { flex: 0 1 auto; min-width: 0; max-width: 140px; }
+.parsed-card-image-badge > i { flex: 0 0 auto; }
+.parsed-card-image-name { display: block; min-width: 0; max-width: 100px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.parsed-card-action-buttons { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 8px; min-width: 0; max-width: 100%; }
+.parsed-card-action-buttons > button { flex: 0 0 auto; min-height: 36px; padding: 6px 10px; justify-content: center; white-space: nowrap; }
+.parsed-card-action-buttons > button > :is(i, span) { flex-shrink: 0; white-space: nowrap; }
+@media (max-width: 768px), (pointer: coarse) {
+    .parsed-card-action-buttons > button { min-height: 44px; }
+}
 #paperFilterSection > div { padding: 0 !important; background: transparent; border: 0; box-shadow: none; }
 #paperFilterSection :is(input, select) { min-height: 40px; font-size: 14px; }
 #paperFilterSection label { font-size: 12px; }

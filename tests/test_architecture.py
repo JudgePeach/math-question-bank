@@ -171,10 +171,17 @@ def test_blocking_upload_and_ai_handlers_run_in_fastapi_worker_threads():
 
 
 def test_paper_parsers_use_defensive_ai_json_parser():
-    main_source = (PROJECT_ROOT / "main.py").read_text(encoding="utf-8")
+    def called_functions(path, name):
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        function = next(node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name == name)
+        return {node.func.id for node in ast.walk(function)
+                if isinstance(node, ast.Call) and isinstance(node.func, ast.Name)}
 
-    assert main_source.count("parse_ai_json(raw_ai_text, raw_markdown=latex_content)") == 1
-    assert main_source.count("parse_ai_json(raw_ai_text, raw_markdown=model_source)") == 1
+    for handler in ("parse_paper_text_internal", "ai_parse_paper"):
+        assert "parse_paper_completion" in called_functions(PROJECT_ROOT / "main.py", handler)
+    assert "parse_ai_json" in called_functions(
+        PROJECT_ROOT / "mathbank" / "paper_parse.py", "parse_paper_completion"
+    )
 
 
 def test_backend_modules_and_cli_tools_live_in_packages():

@@ -2762,12 +2762,16 @@ window.normalizeEditorFractions = normalizeEditorFractions;
             // Replace LaTeX line breaks with HTML br tags outside math environments
             tempText = tempText.replace(/\\\\/g, '<br>');
             
-            // 小问分行自愈：单回车或标点后紧跟小问编号 (如 \n(1), \n(2), \n(i), \n（1）) 自动升格为段落换行 <br><br>
-            tempText = tempText.replace(/(?:\r?\n|\s+|[。；;!！\.]\s*)([(（]?(?:[1-9]|10|[ivxIVX]+|[①②③④⑤⑥⑦⑧⑨⑩])[)）\.]|\([1-9]\)|（[1-9]）|\([ivxIVX]+\)|（[ivxIVX]+）)(?=\s*[\u4e00-\u9fa5a-zA-Z\$])/g, '<br><br>$1 ');
+            // A paragraph starts a new line with a short visual gap; two BRs
+            // would additionally create a whole empty text line in Word answers.
+            const paragraphBreak = '<span class="mb-preview-paragraph-break" aria-hidden="true"></span>';
+            // Keep subquestions on distinct paragraphs without adding a second
+            // gap when the source already has a blank line or a hard break.
+            tempText = tempText.replace(/(?:\r?\n|\s+|[。；;!！\.]\s*)([(（]?(?:[1-9]|10|[ivxIVX]+|[①②③④⑤⑥⑦⑧⑨⑩])[)）\.]|\([1-9]\)|（[1-9]）|\([ivxIVX]+\)|（[ivxIVX]+）)(?=\s*[\u4e00-\u9fa5a-zA-Z\$])/g, paragraphBreak + '$1 ');
 
-            // 严格遵循 LaTeX 标准规范：双回车 (\n\n+) 代表起新段落 (<br><br>)；单回车 (\n) 仅视为空格，不产生硬换行；显式 \\\\ 代表强制换行 (<br>)
+            // 双回车起新段落；单回车仅视为空格；显式 \\\\ 保留为硬换行。
             tempText = tempText.replace(/\r\n/g, '\n')
-                               .replace(/\n\n+/g, '<br><br>')
+                               .replace(/\n\n+/g, paragraphBreak)
                                .replace(/\n/g, ' ');
                                
             // 转换 Markdown 题目插图与配图语法 ![](/static/uploads/xxx.png) 为精美自适应预览图
@@ -2780,6 +2784,23 @@ window.normalizeEditorFractions = normalizeEditorFractions;
                 const align = layout && ['left', 'center', 'right'].includes(layout.align) ? layout.align : 'center';
                 const size = layout && ['auto', 'small', 'medium', 'large'].includes(layout.size) ? layout.size : 'auto';
                 return `<div class="my-2.5 text-center mb-inline-image-align-${align}"><img src="${window.MathBankSafe.escapeAttribute(safeSrc)}" alt="${safeAlt}" class="mb-inline-image-size-${size} max-w-[220px] max-h-[180px] object-contain rounded-lg border border-slate-200 shadow-sm inline-block cursor-zoom-in hover:shadow-sm hover:scale-[1.02] transition-all" data-safe-image-open="true" title="点击在新标签页查看高清原图"></div>`;
+            });
+
+            // Generated block content already owns its vertical spacing. Keep
+            // image/choice/table anchors and display math in place, but do not
+            // stack a paragraph spacer on their existing block margins.
+            tempText = tempText
+                .replace(new RegExp('(?:' + paragraphBreak + '\\s*){2,}', 'g'), paragraphBreak)
+                .replace(new RegExp('(?:<br>\\s*)+' + paragraphBreak, 'g'), paragraphBreak)
+                .replace(new RegExp(paragraphBreak + '(?:\\s*<br>)+', 'g'), paragraphBreak)
+                .replace(new RegExp(paragraphBreak + '\\s*(?=<(?:div|table|ul|ol)\\b)', 'g'), '')
+                .replace(new RegExp('(</(?:div|table|ul|ol)>)\\s*' + paragraphBreak, 'g'), '$1')
+                .replace(new RegExp('^(?:\\s*' + paragraphBreak + ')+|(?:' + paragraphBreak + '\\s*)+$', 'g'), '');
+            placeholders.forEach(({placeholder, original}) => {
+                if (!/^(?:\$\$|\\\[)/.test(original)) return;
+                tempText = tempText
+                    .replace(new RegExp(paragraphBreak + '\\s*' + placeholder, 'g'), placeholder)
+                    .replace(new RegExp(placeholder + '\\s*' + paragraphBreak, 'g'), placeholder);
             });
                                
             // Restore math blocks with HTML escaping

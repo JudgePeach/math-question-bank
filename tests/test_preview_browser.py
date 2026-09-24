@@ -55,6 +55,22 @@ class Browser:
         self.evaluate("MathBankBrowserChecks.settle().then(() => true)")
 
 
+def complete_import_fixture_categories(browser, index):
+    """Give minimal mock questions valid required fields, without bypassing validation."""
+    assert browser.evaluate("""(() => {
+        const card=document.getElementById('parsed-card-' + """ + str(index) + """);
+        const comp=card.querySelector('.card-compulsory');
+        const chapter=card.querySelector('.card-chapter');
+        const first=[...comp.options].find(option=>option.value);
+        if(!first)return false;
+        comp.value=first.value;comp.dispatchEvent(new Event('change',{bubbles:true}));
+        const next=[...chapter.options].find(option=>option.value);
+        if(!next)return false;
+        chapter.value=next.value;chapter.dispatchEvent(new Event('change',{bubbles:true}));
+        return Boolean(comp.value&&chapter.value);
+    })()""")
+
+
 @pytest.fixture(scope="module")
 def browser(tmp_path_factory):
     executable = shutil.which("agent-browser")
@@ -73,6 +89,7 @@ def browser(tmp_path_factory):
     env = dict(os.environ, MATHBANK_LAUNCH_ID=uuid.uuid4().hex)
     env.pop("PYTHONPATH", None)
     browser = Browser(executable, "mathbank-test-" + uuid.uuid4().hex[:12])
+    browser.root = root  # Disposable app root for opt-in local fixture assets.
     opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
     with (root / "server.log").open("w") as log:
         server = subprocess.Popen(
@@ -495,7 +512,7 @@ def test_import_disclosure_follows_file_type_and_reset(browser, tmp_path):
     assert browser.evaluate("!document.getElementById('importSourceDetails').open && document.getElementById('texImagesSection').hidden")
 
 
-def test_import_source_review_requires_teacher_confirmation_and_survives_edits(browser, tmp_path):
+def test_import_source_review_is_optional_and_retains_evidence(browser, tmp_path):
     browser.evaluate(r"""
     (() => {
         selectWorkspace('import', '导入中心');
@@ -514,20 +531,28 @@ def test_import_source_review_requires_teacher_confirmation_and_survives_edits(b
         return true;
     })()
     """)
-    browser.command('wait', '--fn', "!!document.querySelector('#parsed-card-1 .card-source-review-confirm')")
-    browser.command('click', '#parsed-card-1 details summary')
-    browser.command('wait', '--fn', "!!document.querySelector('#parsed-card-1 details .katex')")
-    assert browser.evaluate("getCheckedUnsavedIndices()") == [0]
-    assert browser.evaluate("document.querySelector('#parsed-card-1 .card-select-checkbox').disabled")
+    browser.command('wait', '--fn', "!!document.querySelector('#parsed-card-1 .card-source-review-panel')")
+    assert browser.evaluate("document.querySelectorAll('.card-source-review-confirm').length") == 0
+    assert browser.evaluate("!document.querySelector('#parsed-card-1 .card-source-review-panel').open")
+    assert browser.evaluate("!document.getElementById('parsedSourceIntegrityReport').open")
+    assert browser.evaluate('getCheckedUnsavedIndices()') == [0, 1]
+    assert not browser.evaluate("document.querySelector('#parsed-card-1 .card-select-checkbox').disabled")
+    for selector in ('#parsed-card-1 .card-source-review-panel > summary',
+                     '#parsed-card-1 .card-source-review-panel > details > summary'):
+        browser.command('scrollintoview', selector)
+        browser.settle()
+        browser.command('click', selector)
+        browser.settle()
+    source_state = browser.evaluate("({outerOpen:document.querySelector('#parsed-card-1 .card-source-review-panel').open,sourceOpen:document.querySelector('#parsed-card-1 .card-source-review-panel > details').open,mathRendered:document.querySelector('#parsed-card-1 .card-source-review-panel > details').dataset.mathRendered,renderer:typeof renderMathInElement,katex:!!document.querySelector('#parsed-card-1 .card-source-review-panel .katex')})")
+    (tmp_path / 'source-review-toggle-state.json').write_text(json.dumps(source_state, ensure_ascii=False))
+    assert source_state['outerOpen'] and source_state['sourceOpen'] and source_state['katex'], source_state
     assert browser.evaluate("typeof window.reviewInjected === 'undefined'")
     assert browser.evaluate("document.querySelectorAll('#parsed-card-1 details img').length") == 0
     assert '3. 计算' in browser.evaluate("document.getElementById('parsedSourceIntegrityReport').textContent")
-    assert browser.evaluate("toggleSelectAllParsed(true); getCheckedUnsavedIndices()") == [0]
-    assert browser.evaluate("saveParsedQuestion(1)") is False
-
-    browser.command('click', '#parsed-card-1 .card-source-review-confirm')
-    assert browser.evaluate("!parsedQuestionNeedsSourceReview(1)")
     assert browser.evaluate("toggleSelectAllParsed(true); getCheckedUnsavedIndices()") == [0, 1]
+    complete_import_fixture_categories(browser, 1)
+    assert browser.evaluate("validateParsedQuestionBeforeImport(1,{notify:false,focus:false})")
+    assert browser.evaluate('parsedQuestionNeedsSourceReview(1)')
     browser.evaluate(r"""
     (() => {
         const input = document.querySelector('#parsed-card-1 .card-content-textarea');
@@ -536,10 +561,11 @@ def test_import_source_review_requires_teacher_confirmation_and_survives_edits(b
         return true;
     })()
     """)
-    assert browser.evaluate("parsedQuestionNeedsSourceReview(1)")
-    assert browser.evaluate("getCheckedUnsavedIndices()") == [0]
-    assert browser.evaluate("!document.querySelector('#parsed-card-1 .card-source-review-confirm').checked")
-    browser.command('screenshot', str(tmp_path / 'import-source-review.png'))
+    assert browser.evaluate('parsedQuestionNeedsSourceReview(1)')
+    assert browser.evaluate('parsedQuestionsData[1].source_review.required') is True
+    assert browser.evaluate('getCheckedUnsavedIndices()') == [0, 1]
+    assert browser.evaluate("document.querySelectorAll('.card-source-review-confirm').length") == 0
+    browser.command('screenshot', str(tmp_path / 'import-source-review-optional.png'))
     browser.evaluate("replaceParsedQuestions([]); renderParsedQuestionsList([]); true")
     assert browser.evaluate("!document.getElementById('parsedSourceIntegrityReport')")
 

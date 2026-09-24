@@ -44,6 +44,41 @@ _WORD_SCHOOL_ARITIES = {
 _SCHOOL_TOKEN = re.compile(r"\\(?:[A-Za-z]+|[^\n])|[℃‰]")
 _TEXT_UNIT = re.compile(r"\\(?:celsius|perthousand|textperthousand|permil)(?![A-Za-z])|℃")
 _LATEX_UNIT = re.compile(r"\\(?:textperthousand|permil)(?![A-Za-z])|[℃‰]")
+_REASONING_SYMBOLS = {"∵": r"\because", "∴": r"\therefore"}
+_REASONING_TOKEN = re.compile(r"\\(?:[A-Za-z]+|[^\n])|[∵∴]")
+_TEXT_ARGUMENT_COMMANDS = {"text", "textrm", "textnormal", "textbf", "textit", "emph", "mbox", "hbox"}
+
+
+def _replace_latex_reasoning_symbols(source: str, *, in_math: bool) -> str:
+    """Use the math font for Unicode reasoning signs, including text macros."""
+    parts: list[str] = []
+    cursor = copied = 0
+    while match := _REASONING_TOKEN.search(source, cursor):
+        cursor = match.end()
+        if _is_escaped(source, match.start()):
+            continue
+        token = match.group()
+        if token in _REASONING_SYMBOLS:
+            command = _REASONING_SYMBOLS[token]
+            # A lexical space ends the control word without an empty group
+            # that would steal a following subscript/superscript attachment.
+            replacement = command + " " if in_math else r"\ensuremath{" + command + "}"
+        elif token.removeprefix("\\") in _TEXT_ARGUMENT_COMMANDS | {"ensuremath"}:
+            group_start = cursor
+            while group_start < len(source) and source[group_start].isspace():
+                group_start += 1
+            group = _balanced_group(source, group_start)
+            if group is None:
+                continue
+            content = _replace_latex_reasoning_symbols(group[0], in_math=token == r"\ensuremath")
+            replacement = source[match.start():group_start] + "{" + content + "}"
+            cursor = group[1]
+        else:
+            continue
+        parts.extend((source[copied:match.start()], replacement))
+        copied = cursor
+    parts.append(source[copied:])
+    return "".join(parts)
 
 
 def _replace_word_school_commands(source: str, *, in_math: bool) -> str:
@@ -143,7 +178,8 @@ def _normalize_export_symbols(value: str, *, target: str, school_commands: bool 
         raise ValueError("Unsupported geometry-symbol export target")
     if not value or ("▱" not in value and r"\parallelogram" not in value
                      and not (school_commands and (any(char in value for char in "℃‰")
-                              or any("\\" + name in value for name in _WORD_SCHOOL_ARITIES)))):
+                              or any("\\" + name in value for name in _WORD_SCHOOL_ARITIES)
+                              or target == "latex" and any(char in value for char in _REASONING_SYMBOLS)))):
         return value or ""
 
     protected: dict[str, str] = {}
@@ -179,7 +215,7 @@ def _normalize_export_symbols(value: str, *, target: str, school_commands: bool 
             bracket_end = _paired_end(source, bracket, "[", "]")
             if bracket_end < len(source) and source[bracket_end] == "(":
                 end = _paired_end(source, bracket_end, "(", ")")
-        elif source.startswith(("https://", "http://", "/static/uploads/"), cursor):
+        elif source.startswith(("https://", "http://", "/static/uploads/", "/static/test_uploads/"), cursor):
             end = cursor + re.match(r"[^\s<>]+", source[cursor:]).end()
         elif source[cursor] == "%":
             end = source.find("\n", cursor)
@@ -225,6 +261,21 @@ def _normalize_export_symbols(value: str, *, target: str, school_commands: bool 
                 else (r"\celsius{}" if match.group() == "℃" else r"\perthousand{}"),
                 result,
             )
+            if any(char in result for char in _REASONING_SYMBOLS):
+                result = _replace_delimited_math(
+                    result, lambda span: save(_replace_latex_reasoning_symbols(span, in_math=True)),
+                )
+
+                def reasoning_environment(span: str, name: str) -> str:
+                    if name in _STANDALONE_MATH_ENVIRONMENTS | _INNER_MATH_ENVIRONMENTS:
+                        return save(_replace_latex_reasoning_symbols(span, in_math=True))
+                    opening = span.index("}") + 1
+                    closing = span.rfind(r"\end{")
+                    return (span[:opening] + _replace_latex_environments(span[opening:closing], reasoning_environment)
+                            + span[closing:])
+
+                result = _replace_latex_environments(result, reasoning_environment)
+                result = _replace_latex_reasoning_symbols(result, in_math=False)
     else:
         # Save existing math first; Unicode inside \text remains native OMML.
         def adapt_math(span: str) -> str:

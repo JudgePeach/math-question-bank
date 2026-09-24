@@ -97,6 +97,32 @@ def test_parse_ai_json_preserves_latex_that_looks_like_valid_json_escape():
     assert parsed["content"] == "\\textbf{重点} 与 \\nabla f"
 
 
+def test_valid_json_cannot_decode_the_complete_fillin_macro_as_form_feed():
+    raw = r'{"markdown":"14. 则 $k=$\fillin.","content":"下一空\fillin{2}"}'
+    assert "\x0cillin" in json.loads(raw)["markdown"]  # Valid JSON, damaged LaTeX.
+    parsed = parse_ai_json(raw)
+    assert parsed == {"markdown": r"14. 则 $k=$\fillin.", "content": r"下一空\fillin{2}"}
+    assert "\x0c" not in parsed["markdown"]
+
+
+def test_fillin_repair_preserves_real_json_controls_and_already_escaped_commands():
+    raw = r'{"content":"\fillin\nnext\ntext\ttext\rreturn\fpage\bback","other":"\\fillin \\frac{1}{2} \\textbf{字} \\nabla f"}'
+    expected = json.loads(raw)
+    expected["content"] = expected["content"].replace("\x0cillin", r"\fillin")
+    assert parse_ai_json(raw) == expected
+
+
+@pytest.mark.parametrize("raw", [
+    r'{"content":"\n"}', r'{"content":"\t"}', r'{"content":"\f"}',
+    r'{"content":"\\"}', r'{"content":"\filli"}',
+    r'{"content":"\fillinois \fillinfoo"}',
+    r'{"content":"normal \nnext \ntext \ttext \rreturn \fpage \bback"}',
+    r'{"content":"quoted \\\"x\\\" and \\fillin; slash / and unicode \u0066"}',
+])
+def test_fillin_fix_does_not_reinterpret_other_valid_json_strings(raw):
+    assert parse_ai_json(raw) == json.loads(raw)
+
+
 def test_parse_ai_json_rejects_structurally_invalid_output():
     with pytest.raises(json.JSONDecodeError):
         parse_ai_json('{"questions": nope}')
