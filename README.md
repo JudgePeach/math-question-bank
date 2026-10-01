@@ -10,6 +10,8 @@
 
 无需复杂的前端编译即可运行：Windows 10/11 x64 便携包内置 Python 与匹配的 VC++ 运行库，解压后即可启动；macOS 便携包不内置 Python，运行前请确认本机已安装 Python 3.10 或更高版本，启动器会自动检测并创建或修复项目隔离的 `venv`。支持数学公式与几何图形秒级预览，深度集成一键组卷、A4 仿真画布排版、高考级 PDF 试卷导出、DeepSeek AI 解题以及一键 OCR 题目识别。
 
+https://github.com/user-attachments/assets/46834cbd-3499-4c06-9d8e-c81bdc10a0a7
+
 ![MathBank 首页工作台（深海蓝主题）](docs/images/screenshot1.png)
 
 ![MathBank 题库管理与题目解析（深海蓝主题）](docs/images/screenshot2.png)
