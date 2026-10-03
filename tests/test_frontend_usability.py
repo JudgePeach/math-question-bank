@@ -1398,7 +1398,7 @@ def test_application_shell_navigation_reuses_peer_workspaces():
         ".app-navigation",
         ".app-content-shell",
         '.app-nav-item[aria-current="page"]',
-        "grid-template-columns: repeat(5, minmax(0, 1fr))",
+        "grid-template-columns: repeat(6, minmax(0, 1fr))",
         "padding-bottom: 64px",
     ):
         assert marker in css_source
