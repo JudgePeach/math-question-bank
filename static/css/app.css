@@ -8,7 +8,8 @@ html.init-ws-paper #paperWorkspaceSection { display: flex !important; }
 html.init-ws-dashboard #bankWorkspaceSection,
 html.init-ws-dashboard #paperWorkspaceSection,
 html.init-ws-dashboard #importWorkspaceSection,
-html.init-ws-dashboard #recordsWorkspaceSection { display: none !important; }
+html.init-ws-dashboard #recordsWorkspaceSection,
+html.init-ws-dashboard #qaWorkspaceSection { display: none !important; }
 html.init-ws-dashboard #dashboardWorkspaceSection { display: block !important; }
 
 /* Local Inter & Outfit Webfonts (100% Offline & Cross-Platform) */
@@ -2644,7 +2645,7 @@ main {
         width: 100%;
         height: 100%;
         display: grid;
-        grid-template-columns: repeat(5, minmax(0, 1fr));
+        grid-template-columns: repeat(6, minmax(0, 1fr));
         gap: 0.35rem;
     }
 
@@ -2654,7 +2655,7 @@ main {
         justify-content: center;
         flex-direction: column;
         gap: 0.18rem;
-        padding: 0.3rem 0.4rem;
+        padding: 0.3rem 0.2rem;
         border-radius: 11px;
         font-size: 0.66rem;
         line-height: 1;
@@ -2765,9 +2766,63 @@ td img.mb-inline-image-size-large { max-height: 160px; }
 #bankWorkspaceSection.bank-browser.hidden,
 #paperWorkspaceSection.hidden,
 #recordsWorkspaceSection.hidden,
+#qaWorkspaceSection.hidden,
 #importWorkspaceSection.hidden {
     display: none !important;
 }
+
+/* Reuse PhysicsBank's QA workspace, extending the empty state with local FAQs. */
+.qa-workspace {
+    overflow-y: auto;
+    padding: clamp(16px, 4vw, 40px);
+    color: var(--text-primary);
+}
+.qa-workspace-content { max-width: 880px; margin: 0 auto; }
+.qa-heading h2 { margin: 0; font-size: 24px; font-weight: 700; }
+.qa-heading p, .qa-empty-state p { margin: 8px 0 0; color: var(--text-secondary); font-size: 14px; line-height: 1.7; }
+.qa-heading .qa-source-note { font-size: 12px; }
+.qa-empty-state {
+    margin-top: 24px;
+    min-height: 260px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    padding: 32px 20px;
+    border: 1px solid var(--workspace-border);
+    border-radius: 16px;
+    background: var(--apple-bg-elevated);
+    text-align: center;
+}
+.qa-empty-state[hidden], .qa-question[hidden] { display: none; }
+.qa-empty-icon {
+    display: grid;
+    place-items: center;
+    width: 56px;
+    height: 56px;
+    margin-bottom: 18px;
+    border-radius: 16px;
+    background: rgba(var(--brand-500-rgb), .1);
+    color: rgb(var(--brand-500-rgb));
+    font-size: 24px;
+}
+.qa-empty-state h3 { margin: 0; font-size: 17px; font-weight: 600; }
+.qa-search-row { display: flex; gap: 10px; margin: 24px 0 16px; }
+.qa-search-box { display: flex; align-items: center; gap: 10px; min-width: 0; flex: 1; padding: 0 14px; border: 1px solid var(--workspace-border); border-radius: 12px; background: var(--apple-bg-elevated); }
+.qa-search-box i { color: var(--text-secondary); }
+.qa-search-box input { width: 100%; min-width: 0; min-height: 46px; border: 0; background: transparent; color: inherit; font-size: 14px; }
+.qa-reset, .qa-categories button { min-height: 44px; padding: 8px 14px; border: 1px solid var(--workspace-border); border-radius: 10px; background: var(--apple-bg-elevated); color: var(--text-secondary); font-size: 13px; }
+.qa-categories { display: flex; flex-wrap: wrap; gap: 8px; }
+.qa-categories button[aria-pressed="true"] { background: rgba(var(--brand-500-rgb), .12); border-color: rgb(var(--brand-500-rgb)); color: var(--text-primary); font-weight: 600; }
+.qa-result-count { margin: 16px 0 10px; font-size: 12px; color: var(--text-secondary); }
+.qa-question-list { display: grid; gap: 10px; }
+.qa-question { border: 1px solid var(--workspace-border); border-radius: 14px; background: var(--apple-bg-elevated); overflow-wrap: anywhere; }
+.qa-question summary { cursor: pointer; padding: 18px; font-size: 15px; font-weight: 600; line-height: 1.6; }
+.qa-question summary::marker { color: rgb(var(--brand-500-rgb)); }
+.qa-answer { padding: 0 18px 18px; font-size: 14px; line-height: 1.9; }
+.qa-answer p + p { margin-top: 10px; }
+.qa-answer .qa-entry-source { margin-top: 14px; padding-top: 10px; border-top: 1px solid var(--workspace-border); font-size: 12px; color: var(--text-secondary); }
+.qa-search-box:focus-within, .qa-question summary:focus-visible, .qa-categories button:focus-visible, .qa-reset:focus-visible { outline: 2px solid rgb(var(--brand-500-rgb)); outline-offset: 3px; }
 
 .bank-management-header {
     min-width: 0;

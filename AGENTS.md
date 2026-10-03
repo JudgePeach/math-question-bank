@@ -243,6 +243,7 @@
 - **依赖与目标平台**：`requirements.txt` 与 `requirements-dev.txt` 使用精确版本；Windows 交叉构建额外读取 `requirements-windows.txt`，目标平台依赖必须在共享运行时锁或 Windows 锁中显式固定，禁止依赖构建主机的 `sys_platform` marker。构建下载 wheel 必须使用 `sys.executable -m pip`。
 
 ## 6. 界面设计与交互规范
+- **QA 常见问题工作区**：复用 PhysicBank 的导航及独立工作区，通过 `selectWorkspace('qa')` 切换；桌面侧栏与窄屏六入口底栏保持一致，从导入返回时恢复 QA。`static/js/qa-data.js` 保存脱敏整理的静态问答，先于 `qa.js` 加载，两者纳入 `main.py` 的资源版本戳。正文仅通过 `textContent` 写入，以原生 `details/summary` 展开；搜索和分类只过滤现有节点，不重建展开状态、不调用模型、不写题库或本地草稿。每条保留群主答复的日期与消息序号，维护规则见 `docs/community-qa.md`；不可将旧版限制、未实现承诺或群友猜测写成当前事实，不得提交原始群聊或敏感资料。专项验证 `tests/test_qa_workspace.py`，实际浏览器部分使用 `MATHBANK_TEST_BROWSER=1`。
 - **导入题卡操作区**：文件徽标与按钮采用独立网格行，文件名限宽省略、悬停可看全名，徽标区域最高 64px 并可滚动；初次渲染与手动截图追加配图共用该约束。手动截图/AI 生成解析/导入按钮文字不拆行、同排等高；常用桌面及 375px 布局保持同排，极窄屏按整个按钮换排，不压缩成多行文字或溢出题卡。
 - **视觉与色彩**：极简教研卡片风格，支持 6 套主题（默认曜石黑 `.theme-obsidian`）。图标采用平面极简设计（Flat Minimalist）。
 - **暗色模式规范**：高通透玻璃底 + 10% 品牌色透光微光与高对比文字；下拉菜单统一使用 `.glass-dropdown`；深色编辑器采用高对比选中样式（`selection:bg-indigo-600`）。

@@ -1903,7 +1903,8 @@
             if (typeof window.selectWorkspace === 'function') {
                 const workspaceName = returnNavTarget === 'paper'
                     ? '智能组卷'
-                    : (returnNavTarget === 'dashboard' ? '工作台' : '题库管理');
+                    : (returnNavTarget === 'dashboard' ? '工作台'
+                        : (returnNavTarget === 'qa' ? 'QA · 常见问题' : '题库管理'));
                 window.selectWorkspace(returnNavTarget, workspaceName);
             }
         }

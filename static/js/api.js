@@ -2196,6 +2196,11 @@
                 }
             }
 
+            const checkQa = document.getElementById('ws-check-qa');
+            const btnQa = document.getElementById('ws-btn-qa');
+            if (checkQa) checkQa.classList.toggle('hidden', workspaceId !== 'qa');
+            if (btnQa) btnQa.classList.toggle('font-medium', workspaceId === 'qa');
+
             closeWorkspaceDropdown();
         };
 
