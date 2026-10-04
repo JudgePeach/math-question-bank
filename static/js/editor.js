@@ -2065,6 +2065,7 @@ window.normalizeEditorFractions = normalizeEditorFractions;
             let cleaned = text.replace(pattern, '').replace(/\\paren\b/g, '').trim();
             cleaned = cleaned.replace(/(?:<br\s*\/?>\s*)+$/i, '').trim();
 
+            cleaned = normalizePreviewDollarSigns(cleaned);
             const sanitizedDollars = cleaned.replace(/\\\$/g, '');
             const dollarCount = (sanitizedDollars.match(/\$/g) || []).length;
             if (dollarCount % 2 !== 0) {
@@ -2271,6 +2272,7 @@ window.normalizeEditorFractions = normalizeEditorFractions;
             });
         }
         if (typeof katex !== 'undefined') {
+            katex.__defineMacro('\\textdollar', '\\text{\\$}');
             registerParallelogramSymbol(katex);
             registerSchoolMathSymbols(katex);
         }
@@ -2308,6 +2310,7 @@ window.normalizeEditorFractions = normalizeEditorFractions;
                 /@@MATH_PLACEHOLDER_\d+@@/g
             ].forEach(function(pattern) { protect(pattern); });
 
+            source = normalizePreviewDollarSigns(source);
             source = replaceDelimitedMathForPreview(source, save);
             source = replaceLatexEnvironmentsForPreview(source, function(environment, name, body) {
                 if (/^(tabular\*?|tabularx|longtable|tblr|longtblr|talltblr)$/.test(name)) {
@@ -2374,6 +2377,37 @@ window.normalizeEditorFractions = normalizeEditorFractions;
                 source = source.replace(entry.marker, function() { return entry.original; });
             });
             return source;
+        }
+
+        function normalizePreviewDollarSigns(text) {
+            const literal = '\\(\\text{\\$}\\)';
+            const tokens = /```[\s\S]*?```|`[^`\n]*`|\\begin\{tikzpicture\}[\s\S]*?\\end\{tikzpicture\}|!\[[^\]\n]*\]\([^\n)]*\)|\[\[MBM_[A-Za-z0-9_:-]+\]\]|\$\$[\s\S]*?\$\$|\\\([\s\S]*?\\\)|\\\[[\s\S]*?\\\]|\\textdollar\b(?:\{\})?|\$/g;
+            let result = '', copied = 0, match;
+            while ((match = tokens.exec(text))) {
+                const token = match[0], start = match.index;
+                if (isLatexTokenEscaped(text, start)) continue;
+                if (token.startsWith('\\textdollar')) {
+                    result += text.slice(copied, start) + literal;
+                    copied = tokens.lastIndex;
+                } else if (token === '$') {
+                    let end = text.indexOf('$', start + 1);
+                    while (end >= 0 && isLatexTokenEscaped(text, end)) end = text.indexOf('$', end + 1);
+                    const tail = text.slice(start + 1);
+                    // Prose amounts are currency; $5$, $2+3$ and multiline
+                    // formulas retain their original mathematical meaning.
+                    const currency = /^\d[\d,]*(?:\.\d+)?(?:[.,!?;:]?[ \t]+[A-Za-z]{2,}\b|[.,!?;:]?(?:\s*$))/.test(tail);
+                    const isolated = (start === 0 || text[start - 1] === '\n')
+                        && /^[ \t]*(?:\n[ \t]*\n|\n[ \t]*\\begin\{choices\}|$)/.test(tail);
+                    const amountList = /^\d[\d,]*(?:\.\d+)?[.,;:]?[ \t]+\$\d/.test(tail);
+                    if (currency || isolated || amountList || end < 0) {
+                        result += text.slice(copied, start) + literal;
+                        copied = start + 1;
+                    } else {
+                        tokens.lastIndex = end + 1;
+                    }
+                }
+            }
+            return result + text.slice(copied);
         }
 
         function isLatexTokenEscaped(text, index) {
@@ -2757,7 +2791,8 @@ window.normalizeEditorFractions = normalizeEditorFractions;
             tempText = tempText.replace(/\\\\qquad/g, '&nbsp;&nbsp;&nbsp;&nbsp;')
                                .replace(/\\\\quad/g, '&nbsp;&nbsp;')
                                .replace(/\\qquad/g, '&nbsp;&nbsp;&nbsp;&nbsp;')
-                               .replace(/\\quad/g, '&nbsp;&nbsp;');
+                               .replace(/\\quad/g, '&nbsp;&nbsp;')
+                               .replace(/\\ /g, '&nbsp;');
                                
             // Replace LaTeX line breaks with HTML br tags outside math environments
             tempText = tempText.replace(/\\\\/g, '<br>');

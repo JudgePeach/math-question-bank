@@ -42,10 +42,37 @@ function parsedFormulas(html) {
     node = shutil.which("node")
     assert node, "Node.js is required for executable preview regressions"
     result = subprocess.run(
-        [node, "-"], input=script, cwd=PROJECT_ROOT, text=True,
+        [node, "-"], input=script, cwd=PROJECT_ROOT, text=True, encoding="utf-8",
         capture_output=True, timeout=30, check=False,
     )
     assert result.returncode == 0, result.stdout + result.stderr
+
+
+def test_currency_dollars_do_not_capture_prose_or_choices():
+    run_preview_script(r'''
+const stem = "The price is $90.00. Jack rings up $90.00 and adds 6% tax. Jill rings up $90.00, subtracts 20% of the price. What is Jack's total minus Jill's total?\n$\n\n";
+const choices = String.raw`\begin{choices}
+\item \ -\textdollar 1.06
+\item \ -\textdollar 0.53
+\item \ \textdollar 0
+\item \ \textdollar 0.53
+\item \ \textdollar 1.06
+\end{choices}`;
+const html = preprocessFormulaForKaTeX(stem + choices);
+assert(html.includes("and adds 6% tax. Jill rings up"));
+assert(!html.includes(String.raw`\ -`));
+assert(!html.includes(String.raw`\ \(`));
+assert.equal((html.match(/class="choices-label/g) || []).length, 5);
+assert.equal(parsedFormulas(html).length, 9);
+assert(parsedFormulas(html).every(formula => formula === String.raw`\text{\$}`));
+assert.deepEqual(parsedFormulas(preprocessFormulaForKaTeX('Price $5 and $10; compute $2+3$ or $5$.')), [String.raw`\text{\$}`, String.raw`\text{\$}`, '2+3', '5']);
+assert.deepEqual(parsedFormulas(preprocessFormulaForKaTeX('The price is $5')), [String.raw`\text{\$}`]);
+assert.deepEqual(parsedFormulas(preprocessFormulaForKaTeX('Costs $5, $10, and $15.')), Array(3).fill(String.raw`\text{\$}`));
+assert.deepEqual(parsedFormulas(preprocessFormulaForKaTeX('Price $5 total\n$\n\n' + String.raw`\begin{choices}\item $x+1$\end{choices}`)), [String.raw`\text{\$}`, String.raw`\text{\$}`, 'x+1']);
+assert.deepEqual(parsedFormulas(preprocessFormulaForKaTeX(String.raw`$-\textdollar 1.06$`)), [String.raw`-\textdollar 1.06`]);
+const protectedText = String.raw`\begin{tikzpicture}\node {$5};\end{tikzpicture} ![](/static/uploads/$5.png) [[MBM_1]]`;
+assert.equal(normalizePreviewDollarSigns(protectedText), protectedText);
+''')
 
 
 def test_tables_keep_existing_formulas_and_repair_only_naked_cell_math():

@@ -245,7 +245,9 @@ if (window.preprocessFormulaForKaTeX(multilineSource) !== multilineSource) {
 }
 """
     result = subprocess.run(
-        [node, "-e", script],
+        [node, "-"],
+        input=script,
+        encoding="utf-8",
         cwd=PROJECT_ROOT,
         text=True,
         capture_output=True,
@@ -326,7 +328,9 @@ if (katexCalls !== 2 || choicesCalls !== 2) {
 }
 """
     result = subprocess.run(
-        [node, "-e", script],
+        [node, "-"],
+        input=script,
+        encoding="utf-8",
         cwd=PROJECT_ROOT,
         text=True,
         capture_output=True,
