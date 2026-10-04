@@ -75,6 +75,25 @@ assert.equal(normalizePreviewDollarSigns(protectedText), protectedText);
 ''')
 
 
+def test_currency_at_line_end_preserves_math_in_the_next_sentence():
+    run_preview_script(r'''
+for (const newline of ['\n', '\r\n', '\n\n']) {
+    for (const amount of ['$5.', '$5', '$90.00.']) {
+        const source = 'Assume each cost ' + amount + newline + 'Then $x^2=y$. Now...';
+        const html = preprocessFormulaForKaTeX(source);
+        assert.deepEqual(parsedFormulas(html), [String.raw`\text{\$}`, 'x^2=y']);
+        assert(html.includes('Then $x^2=y$. Now...'), html);
+    }
+    const adjacentMath = preprocessFormulaForKaTeX('Cost $5.' + newline + '$x^2=y$.');
+    assert.deepEqual(parsedFormulas(adjacentMath), [String.raw`\text{\$}`, 'x^2=y']);
+    for (const formula of ['$5+' + newline + '6=11$', '$5' + newline + '+6=11$']) {
+        assert.equal(preprocessFormulaForKaTeX(formula), formula);
+        assert.deepEqual(parsedFormulas(preprocessFormulaForKaTeX(formula)), [formula.slice(1, -1)]);
+    }
+}
+''')
+
+
 def test_tables_keep_existing_formulas_and_repair_only_naked_cell_math():
     run_preview_script(r'''
 const proper = String.raw`\begin{tabular}{cc} $x_1$ & $y_1$ \\ $x_2$ & $y_2$ \end{tabular}`;

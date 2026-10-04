@@ -2395,7 +2395,7 @@ window.normalizeEditorFractions = normalizeEditorFractions;
                     const tail = text.slice(start + 1);
                     // Prose amounts are currency; $5$, $2+3$ and multiline
                     // formulas retain their original mathematical meaning.
-                    const currency = /^\d[\d,]*(?:\.\d+)?(?:[.,!?;:]?[ \t]+[A-Za-z]{2,}\b|[.,!?;:]?(?:\s*$))/.test(tail);
+                    const currency = /^\d[\d,]*(?:\.\d+)?(?:[.,!?;:]?\s+[A-Za-z]{2,}\b|[.,!?;:][ \t]*\r?\n|[.,!?;:]?(?:\s*$))/.test(tail);
                     const isolated = (start === 0 || text[start - 1] === '\n')
                         && /^[ \t]*(?:\n[ \t]*\n|\n[ \t]*\\begin\{choices\}|$)/.test(tail);
                     const amountList = /^\d[\d,]*(?:\.\d+)?[.,;:]?[ \t]+\$\d/.test(tail);
