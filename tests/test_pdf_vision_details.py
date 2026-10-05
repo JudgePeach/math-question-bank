@@ -4,6 +4,7 @@ from copy import deepcopy
 import base64
 import hashlib
 import math
+import os
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -223,7 +224,140 @@ def test_inplace_mutation_of_earlier_registered_view_is_not_accepted(tmp_path):
     with fitz.open() as document:
         result = render(document.new_page(width=240, height=320), tmp_path, register=register)
     assert result["status"] == "skipped" and not result["views"]
-    assert not list(tmp_path.iterdir())
+    assert list(tmp_path.iterdir()) == [registered[0]]
+    assert registered[0].read_bytes().startswith(b"changed")
+    assert not registered[1].exists()
+
+
+def test_same_size_inplace_change_with_restored_mtime_is_kept_not_published(tmp_path):
+    registered = []
+    changed = []
+    def register(url):
+        registered.append(tmp_path / Path(url).name)
+        if len(registered) == 2:
+            path = registered[0]
+            before = path.stat()
+            data = path.read_bytes()
+            replacement = b"X" + data[1:]
+            path.write_bytes(replacement)
+            os.utime(path, ns=(before.st_atime_ns, before.st_mtime_ns))
+            changed.append(replacement)
+    with fitz.open() as document:
+        result = render(document.new_page(width=240, height=320), tmp_path, register=register)
+    assert result["status"] == "skipped" and not result["views"]
+    assert list(tmp_path.iterdir()) == [registered[0]]
+    assert registered[0].read_bytes() == changed[0] and not registered[1].exists()
+
+
+@pytest.mark.parametrize("replacement", ["different_size", "same_size_all_stat_reused", "same_bytes_new_ctime"])
+def test_rollback_inode_reuse_is_deterministic_and_cannot_claim_replacement(tmp_path, monkeypatch, replacement):
+    path = tmp_path.resolve() / "owned.png"
+    original = b"original PNG bytes"
+    path.write_bytes(original)
+    descriptor = os.open(path, os.O_RDONLY | getattr(os, "O_BINARY", 0))
+    try:
+        owned = details._freeze_owned_file(path, descriptor, original)
+    finally:
+        os.close(descriptor)
+    path.unlink()
+    changed = b"replacement" if replacement == "different_size" else (
+        b"X" + original[1:] if replacement == "same_size_all_stat_reused" else original)
+    path.write_bytes(changed)
+    real_lstat, real_fstat = Path.lstat, os.fstat
+    replacement_identity = (path.stat().st_dev, path.stat().st_ino)
+
+    def reused(value):
+        # Force the CI failure on every OS, without relying on allocator luck.
+        return SimpleNamespace(
+            st_mode=value.st_mode, st_dev=owned.snapshot[0], st_ino=owned.snapshot[1],
+            st_size=value.st_size, st_mtime_ns=owned.snapshot[3],
+            st_ctime_ns=(owned.snapshot[4] + 1 if replacement == "same_bytes_new_ctime" else owned.snapshot[4]),
+        )
+    def lstat(candidate, *args, **kwargs):
+        value = real_lstat(candidate, *args, **kwargs)
+        return reused(value) if candidate == path else value
+    def fstat(fd):
+        value = real_fstat(fd)
+        return reused(value) if (value.st_dev, value.st_ino) == replacement_identity else value
+    monkeypatch.setattr(Path, "lstat", lstat)
+    monkeypatch.setattr(details.os, "fstat", fstat)
+    details._rollback([owned])
+    assert path.read_bytes() == changed
+
+
+@pytest.mark.parametrize("failure", ["write", "short_write", "flush", "cancel_write"])
+def test_partial_write_failures_clean_only_this_request_files_and_close_fds(tmp_path, monkeypatch, failure):
+    existing = tmp_path / "keep.png"
+    existing.write_bytes(b"keep original")
+    original_fdopen, original_open, original_dup = os.fdopen, os.open, os.dup
+    descriptors = []
+    def opened(*args, **kwargs):
+        fd = original_open(*args, **kwargs)
+        descriptors.append(fd)
+        return fd
+    def duplicated(fd):
+        pinned = original_dup(fd)
+        descriptors.append(pinned)
+        return pinned
+    class PartialWriter:
+        def __init__(self, stream):
+            self.stream = stream
+        def __enter__(self):
+            return self
+        def write(self, data):
+            written = self.stream.write(data[:max(1, len(data) // 2)])
+            if failure == "cancel_write":
+                raise TaskCancelled("cancelled during write")
+            if failure == "write":
+                raise OSError("partial write")
+            return written
+        def __exit__(self, kind, error, traceback):
+            self.stream.__exit__(kind, error, traceback)
+            if failure == "flush" and kind is None:
+                raise OSError("flush failed after partial bytes")
+    def fdopen(fd, mode, *args, **kwargs):
+        stream = original_fdopen(fd, mode, *args, **kwargs)
+        return PartialWriter(stream) if mode == "wb" else stream
+    monkeypatch.setattr(details.os, "open", opened)
+    monkeypatch.setattr(details.os, "dup", duplicated)
+    monkeypatch.setattr(details.os, "fdopen", fdopen)
+    with fitz.open() as document:
+        if failure == "cancel_write":
+            with pytest.raises(TaskCancelled):
+                render(document.new_page(width=240, height=320), tmp_path)
+        else:
+            result = render(document.new_page(width=240, height=320), tmp_path)
+            assert result["status"] == "skipped" and not result["views"]
+    assert list(tmp_path.iterdir()) == [existing] and existing.read_bytes() == b"keep original"
+    for fd in set(descriptors):
+        with pytest.raises(OSError):
+            os.fstat(fd)
+
+
+@pytest.mark.parametrize("failure", ["dup", "fdopen"])
+def test_descriptor_setup_failure_removes_new_empty_file_without_leaking_fd(tmp_path, monkeypatch, failure):
+    original_open, original_dup = os.open, os.dup
+    descriptors = []
+    def opened(*args, **kwargs):
+        fd = original_open(*args, **kwargs)
+        descriptors.append(fd)
+        return fd
+    def duplicated(fd):
+        pinned = original_dup(fd)
+        descriptors.append(pinned)
+        return pinned
+    def failed(*_args, **_kwargs):
+        raise OSError("descriptor setup failed")
+    monkeypatch.setattr(details.os, "open", opened)
+    monkeypatch.setattr(details.os, "dup", failed if failure == "dup" else duplicated)
+    if failure == "fdopen":
+        monkeypatch.setattr(details.os, "fdopen", failed)
+    with fitz.open() as document:
+        result = render(document.new_page(width=240, height=320), tmp_path)
+    assert result["status"] == "skipped" and not result["views"] and not list(tmp_path.iterdir())
+    for fd in set(descriptors):
+        with pytest.raises(OSError):
+            os.fstat(fd)
 
 
 class SmallPage:

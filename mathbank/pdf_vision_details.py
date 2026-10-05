@@ -8,6 +8,7 @@ The caller renders locally/serially; workers receive only paths and metadata.
 from __future__ import annotations
 
 import hashlib
+from dataclasses import dataclass
 from io import BytesIO
 import math
 import os
@@ -76,12 +77,71 @@ def _safe_directory(directory: Path, *, create: bool = False) -> None:
         _safe_directory(directory)
 
 
-def _rollback(created: list[tuple[Path, int, int]]) -> None:
-    for path, device, inode in reversed(created):
+def _stat_key(value) -> tuple:
+    return value.st_dev, value.st_ino, value.st_size, value.st_mtime_ns, value.st_ctime_ns
+
+
+@dataclass(frozen=True)
+class _OwnedFile:
+    path: Path
+    snapshot: tuple | None = None
+    sha256: str | None = None
+
+
+def _read_snapshot(descriptor: int, *, expected: bytes | None = None) -> tuple[tuple, str]:
+    """Read a bounded stable descriptor, optionally proving our written prefix."""
+    before = os.fstat(descriptor)
+    if not stat.S_ISREG(before.st_mode) or not 0 <= before.st_size <= MAX_DETAIL_PNG_BYTES:
+        raise ValueError("详情图所有权快照无效。")
+    os.lseek(descriptor, 0, os.SEEK_SET)
+    checksum = hashlib.sha256()
+    size = 0
+    while True:
+        data = os.read(descriptor, min(1024 * 1024, MAX_DETAIL_PNG_BYTES - size + 1))
+        if not data:
+            break
+        if size + len(data) > MAX_DETAIL_PNG_BYTES or (
+            expected is not None and data != expected[size:size + len(data)]
+        ):
+            raise ValueError("详情图内容已变化，不能确认归属。")
+        checksum.update(data)
+        size += len(data)
+    after = os.fstat(descriptor)
+    if size != before.st_size or _stat_key(before) != _stat_key(after):
+        raise ValueError("详情图读取时发生变化，不能确认归属。")
+    return _stat_key(after), checksum.hexdigest()
+
+
+def _freeze_owned_file(path: Path, descriptor: int, expected: bytes) -> _OwnedFile:
+    snapshot, checksum = _read_snapshot(descriptor, expected=expected)
+    _safe_directory(path.parent)
+    current = path.lstat()
+    if not stat.S_ISREG(current.st_mode) or _stat_key(current) != snapshot:
+        raise ValueError("详情图路径已变化，不能确认归属。")
+    return _OwnedFile(path, snapshot, checksum)
+
+
+def _rollback(created: list[_OwnedFile]) -> None:
+    for owned in reversed(created):
+        path = owned.path
+        if owned.snapshot is None or owned.sha256 is None:
+            continue
         try:
             _safe_directory(path.parent)
             current = path.lstat()
-            if stat.S_ISREG(current.st_mode) and (current.st_dev, current.st_ino) == (device, inode):
+            if not stat.S_ISREG(current.st_mode) or _stat_key(current) != owned.snapshot:
+                continue
+            descriptor = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_BINARY", 0))
+            try:
+                snapshot, checksum = _read_snapshot(descriptor)
+            finally:
+                os.close(descriptor)
+            # Close before unlink for Windows. Recheck the spelling and complete
+            # snapshot afterwards; inode alone can be immediately reused on Linux.
+            _safe_directory(path.parent)
+            current = path.lstat()
+            if (snapshot == owned.snapshot and checksum == owned.sha256
+                    and stat.S_ISREG(current.st_mode) and _stat_key(current) == owned.snapshot):
                 path.unlink()
         except (OSError, ValueError):
             # A replacement or moved/symlinked parent is no longer our file.
@@ -125,7 +185,7 @@ def render_pdf_detail_views(
     ):
         raise ValueError("详情图URL前缀必须属于本地静态资源目录。")
 
-    created: list[tuple[Path, int, int]] = []
+    created: list[_OwnedFile] = []
     try:
         import pymupdf as fitz
 
@@ -189,17 +249,38 @@ def render_pdf_detail_views(
             _safe_directory(directory)
             filename = f"{asset_prefix}_{descriptor['id']}_{uuid.uuid4().hex}.png"
             destination = directory / filename
-            flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0)
+            flags = os.O_RDWR | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_BINARY", 0)
             descriptor_fd = os.open(destination, flags, 0o600)
+            pinned_fd = None
+            record_index = len(created)
             try:
                 identity = os.fstat(descriptor_fd)
-                created.append((destination, identity.st_dev, identity.st_ino))
+                # Even dup/fdopen failure must leave a safely removable empty
+                # file. The pin keeps the original inode alive until write/flush
+                # has ended, including failures that leave a partial PNG.
+                initial = (_OwnedFile(destination, _stat_key(identity), hashlib.sha256(b"").hexdigest())
+                           if stat.S_ISREG(identity.st_mode) and identity.st_size == 0 else _OwnedFile(destination))
+                created.append(initial)
+                pinned_fd = os.dup(descriptor_fd)
                 with os.fdopen(descriptor_fd, "wb") as handle:
                     descriptor_fd = None
                     handle.write(png)
             finally:
-                if descriptor_fd is not None:
-                    os.close(descriptor_fd)
+                try:
+                    if descriptor_fd is not None:
+                        os.close(descriptor_fd)
+                finally:
+                    if pinned_fd is not None:
+                        try:
+                            try:
+                                created[record_index] = _freeze_owned_file(destination, pinned_fd, png)
+                            except (OSError, ValueError):
+                                created[record_index] = _OwnedFile(destination)
+                        finally:
+                            os.close(pinned_fd)
+            owned = created[record_index]
+            if owned.snapshot is None or owned.snapshot[2] != len(png) or owned.sha256 != descriptor["sha256"]:
+                raise _DetailUnavailable("local_failure")
             check_cancelled()
             url = f"{url_prefix.rstrip('/')}/{filename}"
             registration = register_asset(url)
@@ -208,7 +289,7 @@ def render_pdf_detail_views(
             check_cancelled()
             _safe_directory(directory)
             current = destination.lstat()
-            if not stat.S_ISREG(current.st_mode) or (current.st_dev, current.st_ino) != (identity.st_dev, identity.st_ino):
+            if not stat.S_ISREG(current.st_mode) or _stat_key(current) != owned.snapshot:
                 raise _DetailUnavailable("registration")
             views.append({**descriptor, "path": str(destination), "url": url})
         # Registration is a caller callback. Before returning, ensure no callback
@@ -220,9 +301,9 @@ def render_pdf_detail_views(
             descriptor_fd = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
             try:
                 identity = os.fstat(descriptor_fd)
-                owned = next((item for item in created if item[0] == path), None)
+                owned = next((item for item in created if item.path == path), None)
                 if (owned is None or not stat.S_ISREG(identity.st_mode)
-                        or (identity.st_dev, identity.st_ino) != owned[1:]
+                        or _stat_key(identity) != owned.snapshot
                         or identity.st_size != len(png)):
                     raise _DetailUnavailable("registration")
                 with os.fdopen(descriptor_fd, "rb") as handle:
