@@ -2,6 +2,7 @@
 
 import io
 import json
+import threading
 import uuid
 from pathlib import Path
 from types import SimpleNamespace
@@ -16,6 +17,7 @@ from mathbank.task_manager import TaskCancelled
 
 @pytest.fixture(autouse=True)
 def no_network(monkeypatch):
+    monkeypatch.setattr("mathbank.pdf_vision_request.PDF_VISION_RETRY_DELAY_SECONDS", 0)
     def fail(*args, **kwargs):
         raise AssertionError("Tests must not contact a model")
     monkeypatch.setattr("requests.sessions.Session.request", fail)
@@ -153,6 +155,124 @@ def test_half_crop_ignored_large_image_and_duplicate_region_require_review():
     assert all(any("重叠" in reason for reason in item["review_reasons"]) for item in figures)
 
 
+def test_q27_group_and_repeated_right_subfigure_are_retained_with_containment_review():
+    # Geometry from the audited Q27 group/right-child case, with no uploaded
+    # files or provider response needed. Its IoU is about 0.5, not 0.8.
+    group = [87.9358, 270.5839, 569.1897, 430.9316]
+    right = [327.4803, 270.2184, 569.5197, 430.7816]
+    info = {"page_index": 6, "width": 595.32, "height": 841.92,
+            "candidates": [{"id": "p7_raster_001", "type": "raster", "bbox": list(group)}]}
+    result = {"page_complete": True, "figures": [
+        {"bbox": list(group), "native_box": True, "candidate_ids": ["p7_raster_001"],
+         "anchor_before": "图1", "anchor_after": "", "review_required": False},
+        {"bbox": list(right), "candidate_ids": [], "anchor_before": "图2", "anchor_after": "",
+         "review_required": False},
+    ]}
+    figures, warnings = pdf_figures._validate_layout(result, info)
+    assert len(figures) == 2
+    assert [figure["id"] for figure in figures] == ["p7-f1", "p7-f2"]
+    assert any("整组配图及其局部重复插入" in message for message in warnings)
+    assert all(figure["review_required"] for figure in figures)
+    assert all(any("完整包含" in message for message in figure["review_reasons"]) for figure in figures)
+    assert result["figures"][0]["bbox"] == group and result["figures"][1]["bbox"] == right
+
+
+@pytest.mark.parametrize("model_box", [[620, 740, 860, 860], None])
+def test_precomputed_scan_strip_native_claim_uses_only_retained_model_frame(model_box):
+    boxes = [[0.5308, 0, 309.564, 999.7505], [309.564, 0, 654.6812, 999.7505],
+             [654.6812, 0, 999.7984, 999.7505]]
+    info = {"page_index": 0, "width": 595.276, "height": 841.89, "full_page_image": True,
+            "candidates": [{"id": f"p1_raster_{index + 1:03d}", "type": "raster", "bbox": box}
+                           for index, box in enumerate(boxes)]}
+    result = {"page_complete": True, "figures": [{"bbox": list(boxes[2]), "model_bbox": model_box,
+              "native_box": True, "candidate_ids": ["p1_raster_003"], "review_required": False}],
+              "ignored_candidates": [{"id": "p1_raster_001", "reason": "page_background"},
+                                     {"id": "p1_raster_002", "reason": "page_background"}]}
+    figures, warnings = pdf_figures._validate_layout(result, info)
+    assert any("扫描背景切片" in message for message in warnings)
+    assert result["figures"][0]["bbox"] == boxes[2]
+    if model_box is None:
+        assert figures == []
+        # Old crop padding is still server-generated tile geometry, not a
+        # model rectangle. It must not invent a missing saved estimate.
+        result["figures"][0]["bbox"] = [652.1, 0, 1000, 1000]
+        assert pdf_figures._validate_layout(result, info)[0] == []
+    else:
+        assert len(figures) == 1 and figures[0]["model_bbox"] == model_box
+        assert figures[0]["bbox"][1] > 700 and figures[0]["bbox"][3] < 900
+        assert figures[0]["native_box"] is False and figures[0]["review_required"] is True
+
+
+@pytest.mark.parametrize("first,second,contained", [
+    ([100, 100, 500, 500], [300, 200, 500, 400], True),
+    ([300, 200, 500, 400], [100, 100, 500, 500], True),
+    ([100, 100, 500, 500], [480, 200, 680, 400], False),
+    ([100, 100, 500, 500], [510, 200, 710, 400], False),
+    ([100, 100, 500, 500], [120, 100, 520, 500], False),
+])
+def test_containment_requires_nearly_all_of_meaningfully_smaller_crop(first, second, contained):
+    message = pdf_figures._figure_overlap_warning(first, second)
+    assert ("完整包含" in message) is contained
+
+
+def test_local_guard_created_group_child_overlap_keeps_both_assets_and_source(tmp_path, monkeypatch):
+    from mathbank import pdf_raster_guard
+    original_inspection = pdf_figures.inspect_pdf_page
+    def inspection(page, index):
+        return {**original_inspection(page, index), "full_page_image": True}
+    monkeypatch.setattr(pdf_figures, "inspect_pdf_page", inspection)
+    def layout(info):
+        return {"page_complete": True, "figures": [
+            {"bbox": [100, 100, 500, 500], "candidate_ids": [], "anchor_before": "Refer to the diagram.",
+             "anchor_after": "Find the answer.", "review_required": False},
+            {"bbox": [650, 150, 850, 350], "candidate_ids": [], "anchor_before": "Refer to the diagram.",
+             "anchor_after": "Find the answer.", "review_required": False},
+        ]}
+    def guard(_path, box):
+        return {"bbox": [100, 100, 900, 500] if box[0] == 100 else box,
+                "changed": box[0] == 100, "warnings": [], "notes": []}
+    monkeypatch.setattr(pdf_raster_guard, "guard_raster_figure_bbox", guard)
+    result, assets, _ = run_enrichment(tmp_path, monkeypatch, layout=layout)
+    page = result["pages"][0]
+    assert page["status"] == "checked" and len(page["figures"]) == len(assets) == 2
+    assert all(figure["review_required"] for figure in page["figures"])
+    assert any("图框校验后" in message and "完整包含" in message for message in page["warnings"])
+    assert all((tmp_path / Path(path).name).exists() for path in assets)
+    assert "Refer to the diagram." in result["page_texts"][0] and "Find the answer." in result["page_texts"][0]
+
+
+@pytest.mark.parametrize("completed_left", [90, 100])
+def test_component_completion_expands_only_its_proven_side_and_keeps_review(tmp_path, monkeypatch, completed_left):
+    from mathbank import pdf_raster_guard
+    original_inspection = pdf_figures.inspect_pdf_page
+    def inspection(page, index):
+        return {**original_inspection(page, index), "full_page_image": True,
+                "candidates": [], "text_blocks": []}
+    monkeypatch.setattr(pdf_figures, "inspect_pdf_page", inspection)
+    def layout(info):
+        return {"page_complete": True, "figures": [
+            {"bbox": [100, 100, 500, 500], "candidate_ids": [], "anchor_before": "Refer to the diagram.",
+             "anchor_after": "Find the answer.", "review_required": True, "review_reason": "Check source label."},
+        ]}
+    raw = layout({})
+    info = {"candidates": [], "page_index": 0, "width": 400, "height": 500, "full_page_image": True}
+    padded = pdf_figures._validate_layout(raw, info)[0][0]["bbox"]
+    def guard(_path, box):
+        assert box == [100, 100, 500, 500]
+        return {"bbox": [completed_left, 100, 500, 500], "changed": True,
+                "method": "bounded_component_completion", "component_completion": {"side": "left"},
+                "warnings": [], "notes": ["Bounded same-component padding."]}
+    monkeypatch.setattr(pdf_raster_guard, "guard_raster_figure_bbox", guard)
+    result, assets, _ = run_enrichment(tmp_path, monkeypatch, layout=layout)
+    figure = result["pages"][0]["figures"][0]
+    assert figure["bbox"] == [min(completed_left, padded[0]), *padded[1:]]
+    assert figure["model_bbox"] == [100, 100, 500, 500]
+    assert figure["review_required"] and "Check source label." in figure["review_reasons"]
+    assert len(assets) == 1 and (tmp_path / Path(assets[0]).name).exists()
+
+
+
+
 @pytest.mark.parametrize("bbox", [[-1, 0, 200, 200], [0, 0, 1001, 200],
                                    [300, 200, 100, 50], [False, 0, 200, 200],
                                    [0, 0, float("nan"), 20], [0, 0, 1000, 1000]])
@@ -212,6 +332,25 @@ def test_vision_request_uses_selected_provider_and_tracks_usage(tmp_path, monkey
     assert "enable_thinking" not in sent[0]
 
 
+def test_verified_qwen38_layout_uses_json_mode_and_no_implicit_reasoning(tmp_path, monkeypatch):
+    from mathbank.ai_providers import resolve_ocr_provider
+    provider = resolve_ocr_provider("siliconflow", {"SILICONFLOW_API_KEY": "unused",
+                                                  "SILICONFLOW_OCR_MODEL": "Qwen/Qwen3.8-27B"})
+    monkeypatch.setattr(pdf_figures, "resolve_ocr_provider", lambda _: provider)
+    path = tmp_path / "page.png"
+    Image.new("RGB", (10, 10), "white").save(path)
+    sent = []
+    def post(_provider, payload, **kwargs):
+        sent.append(payload)
+        return SimpleNamespace(status_code=200, json=lambda: {"choices": [{"finish_reason": "stop", "message": {
+            "content": '{"page_complete":true,"figures":[],"ignored_candidates":[]}'}}]})
+    monkeypatch.setattr(pdf_figures, "post_chat_completion", post)
+    pdf_figures.request_pdf_layout(str(path), "text", {"page_index": 0},
+                                  diagnostics={"visual_calls": 0, "usage": {}}, check_cancelled=lambda: None)
+    assert sent[0]["enable_thinking"] is False
+    assert sent[0]["response_format"] == {"type": "json_object"}
+
+
 def test_truncated_layout_response_is_rejected_even_if_json_valid(tmp_path, monkeypatch):
     from mathbank.ai_providers import resolve_ocr_provider
     provider = resolve_ocr_provider("siliconflow", {"SILICONFLOW_API_KEY": "unused"})
@@ -227,6 +366,49 @@ def test_truncated_layout_response_is_rejected_even_if_json_valid(tmp_path, monk
                                       check_cancelled=lambda: None)
 
 
+def test_layout_timeout_retries_once_with_exact_http_budget(tmp_path, monkeypatch):
+    from mathbank.ai_providers import resolve_ocr_provider
+    import requests
+    provider = resolve_ocr_provider("siliconflow", {"SILICONFLOW_API_KEY": "unused"})
+    monkeypatch.setattr(pdf_figures, "resolve_ocr_provider", lambda _: provider)
+    path = tmp_path / "page.png"
+    Image.new("RGB", (10, 10)).save(path)
+    calls = []
+    def post(*args, **kwargs):
+        calls.append(kwargs)
+        if len(calls) == 1:
+            raise requests.ReadTimeout("private")
+        return SimpleNamespace(status_code=200, json=lambda: {"choices": [{"finish_reason": "stop", "message": {
+            "content": '{"figures":[],"page_complete":true,"ignored_candidates":[]}'}}]})
+    monkeypatch.setattr(pdf_figures, "post_chat_completion", post)
+    report = {"visual_calls": 0, "usage": {}}
+    result = pdf_figures.request_pdf_layout(str(path), "source", {"page_index": 0},
+                                         diagnostics=report, check_cancelled=lambda: None)
+    assert result["figures"] == [] and result["visual_calls"] == report["visual_calls"] == 2
+    assert all(kw["timeout"] == 600 and kw["retry_connection"] is False for kw in calls)
+    assert report["attempts"][0]["status"] == "failed"
+
+
+def test_native_layout_bad_geometry_does_not_repeat_paid_call(tmp_path, monkeypatch):
+    from mathbank.ai_providers import resolve_ocr_provider
+    provider = resolve_ocr_provider("siliconflow", {"SILICONFLOW_API_KEY": "unused"})
+    monkeypatch.setattr(pdf_figures, "resolve_ocr_provider", lambda _: provider)
+    path = tmp_path / "page.png"
+    Image.new("RGB", (10, 10)).save(path)
+    calls = []
+    def post(*args, **kwargs):
+        calls.append(kwargs)
+        return SimpleNamespace(status_code=200, json=lambda: {"choices": [{"finish_reason": "stop", "message": {
+            "content": '{"figures":[{"bbox":[-1,0,200,200]}],"page_complete":true,"ignored_candidates":[]}'}}]})
+    monkeypatch.setattr(pdf_figures, "post_chat_completion", post)
+    report = {"visual_calls": 0, "usage": {}}
+    result = pdf_figures.request_pdf_layout(str(path), "usable native source", {"page_index": 0},
+                                         diagnostics=report, check_cancelled=lambda: None)
+    with pytest.raises(ValueError, match="越界"):
+        pdf_figures._validate_layout(result, {"page_index": 0})
+    assert len(calls) == result["visual_calls"] == report["visual_calls"] == 1
+
+
 def test_pdf_task_integrates_source_locks_and_figure_assets(monkeypatch):
     import main
     data = make_pdf()
@@ -235,6 +417,18 @@ def test_pdf_task_integrates_source_locks_and_figure_assets(monkeypatch):
         "pages": [{"page_index": 0, "markdown": "1. Refer to the diagram.\nFind the answer.", "needs_ocr": False}],
         "pdf_type": "text_based"})
     monkeypatch.setattr(pdf_figures, "request_pdf_layout", lambda image, source, info, **k: fake_layout(info))
+    gate = threading.BoundedSemaphore(1)
+    monkeypatch.setattr(main, "PDF_OCR_SEMAPHORE", gate)
+    original_enrichment = main.enrich_pdf_with_figures
+    def enrichment(*args, **kwargs):
+        assert kwargs["vision_semaphore"] is gate
+        # The caller must not occupy a permit around local processing: an
+        # outer acquisition would deadlock the worker with a one-slot gate.
+        assert gate.acquire(blocking=False)
+        gate.release()
+        assert set(kwargs["precomputed_page_infos"]) == {0}
+        return original_enrichment(*args, **kwargs)
+    monkeypatch.setattr(main, "enrich_pdf_with_figures", enrichment)
     requests = []
     def split(source, solve, **kwargs):
         requests.append((source, solve, kwargs))
@@ -300,8 +494,19 @@ def test_shared_figure_cards_receive_independent_equal_files(tmp_path, template)
     assert original.read_bytes() == (tmp_path / Path(registered[0]).name).read_bytes()
 
 
-def test_cancel_after_crop_cleans_registered_files_and_never_splits(monkeypatch):
+def test_cancel_after_crop_cleans_registered_files_and_never_splits(monkeypatch, tmp_path, db_session):
     import main
+    from mathbank import asset_lifecycle
+    uploads, retained = tmp_path / 'uploads', tmp_path / 'retained'
+    (uploads / 'tmp').mkdir(parents=True)
+    monkeypatch.setattr(main, 'UPLOAD_DIR', str(uploads))
+    monkeypatch.setattr(main, 'TMP_UPLOAD_DIR', str(uploads / 'tmp'))
+    monkeypatch.setattr(asset_lifecycle, '_STORES', dict(asset_lifecycle._STORES))
+    asset_lifecycle.register_asset_store(uploads, retained)
+    # Cancellation retirement consults real stored references before removing
+    # public paths; a missing schema must retain files rather than pretending
+    # the reference check succeeded.
+    assert db_session.query(main.Question).count() == 0
     task_id = "test-layout-cancel-" + uuid.uuid4().hex
     monkeypatch.setattr(main, "inspect_and_extract_pdf", lambda *a, **k: {
         "pages": [{"page_index": 0, "markdown": "1. Refer to the diagram.\nFind the answer.", "needs_ocr": False}]})
@@ -322,6 +527,11 @@ def test_cancel_after_crop_cleans_registered_files_and_never_splits(monkeypatch)
         assert state["status"] == "cancelled"
         assert recorded
         assert all(not (Path(main.TMP_UPLOAD_DIR) / Path(path).name).exists() for path in state["temp_assets"])
+        for path in state['temp_assets']:
+            kept = retained / 'files' / 'tmp' / Path(path).name
+            assert kept.is_file(), 'Cancelled images remain recoverable after public-path cleanup'
+            with Image.open(kept) as picture:
+                picture.verify()
     finally:
         main.DOCUMENT_TASKS.remove(task_id)
 

@@ -89,3 +89,9 @@ tests/artifacts/*
 *.xdv
 *.bbl
 *.blg
+
+# 12. 内部计划与维护文档只在本地保留
+# 公开保留 AI 题库检索指南及 README 使用的图片资源
+/docs/*
+!/docs/AI_DATABASE_GUIDE.md
+!/docs/images/

@@ -59,7 +59,7 @@ def test_native_regional_and_full_pages_share_one_split_without_duplicate_vision
         full_calls.append(info["page_index"])
         return joint(full)
     monkeypatch.setattr(pdf_page_vision, "request_pdf_page", page_request)
-    def legacy(image):
+    def legacy(image, **kwargs):
         full_calls.append("legacy")
         return full
     monkeypatch.setattr(main, "ocr_pdf_page_image", legacy)
@@ -140,7 +140,7 @@ def test_force_ocr_never_uses_regional_planning(monkeypatch):
     monkeypatch.setattr(main, "inspect_and_extract_pdf", forbidden)
     monkeypatch.setattr(pdf_native_regions, "plan_pdf_regions", forbidden)
     monkeypatch.setattr(pdf_region_vision, "request_pdf_regions", forbidden)
-    monkeypatch.setattr(main, "ocr_pdf_page_image", lambda *a: "1. 直接识别整页。")
+    monkeypatch.setattr(main, "ocr_pdf_page_image", lambda *a, **kw: "1. 直接识别整页。")
     monkeypatch.setattr(main, "parse_paper_text_internal", lambda *a, **k: [{"content": "直接识别整页。"}])
     task_id = "regional-force-" + uuid.uuid4().hex
     main.DOCUMENT_TASKS.create(task_id, document_type="pdf", temp_assets=[])

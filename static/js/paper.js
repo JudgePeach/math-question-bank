@@ -389,6 +389,7 @@
     // Workspace View Switcher
     const originalSelectWorkspace = window.selectWorkspace;
     window.selectWorkspace = function (workspaceId, workspaceName) {
+        if (workspaceId === 'qa' && window.__qaEnabled === false) return;
         // The initial flash-prevention class keeps the first workspace visible
         // during page boot.  Once the user makes an explicit workspace choice,
         // remove it so its !important rules cannot mask the target workspace.
@@ -401,6 +402,7 @@
         const importSec = document.getElementById('importWorkspaceSection');
         const recordsSec = document.getElementById('recordsWorkspaceSection');
         const dashboardSec = document.getElementById('dashboardWorkspaceSection');
+        const qaSec = document.getElementById('qaWorkspaceSection');
         if (workspaceId === 'import' && previousWorkspace !== 'import' && importSec) {
             importSec.dataset.returnNavTarget = previousWorkspace;
         }
@@ -422,6 +424,7 @@
         if (paperSec) paperSec.classList.add('hidden');
         if (importSec) importSec.classList.add('hidden');
         if (recordsSec) recordsSec.classList.add('hidden');
+        if (qaSec) qaSec.classList.add('hidden');
 
         if (workspaceId === 'dashboard') {
             if (dashboardSec) {
@@ -439,6 +442,8 @@
             if (importSec) importSec.classList.remove('hidden');
         } else if (workspaceId === 'records') {
             if (recordsSec) recordsSec.classList.remove('hidden');
+        } else if (workspaceId === 'qa') {
+            if (qaSec) qaSec.classList.remove('hidden');
         } else {
             if (typeof window.closeBankDetail === 'function') window.closeBankDetail();
             if (bankSec) bankSec.classList.remove('hidden');

@@ -128,16 +128,19 @@ def test_ocr_read_timeout_is_not_retried(tmp_path):
 
 
 def test_pdf_ocr_does_not_fallback_after_ambiguous_read_timeout():
-    providers = [MagicMock(provider_label="first"), MagicMock(provider_label="second")]
+    provider = MagicMock(provider_label="configured")
 
-    with patch("main.resolve_ocr_fallbacks", return_value=providers), patch(
+    with patch.dict(os.environ, {"OCR_PREFER_ENGINE": "siliconflow"}), patch("main.resolve_ocr_provider", return_value=provider) as resolve, patch(
         "main.ocr_via_provider",
         side_effect=requests.exceptions.ReadTimeout("unknown provider state"),
     ) as mock_ocr:
-        with pytest.raises(RuntimeError, match="避免重复计费"):
+        with pytest.raises(requests.exceptions.ReadTimeout):
             ocr_pdf_page_image("/tmp/page.png")
 
     mock_ocr.assert_called_once()
+    resolve.assert_called_once_with("siliconflow")
+    assert mock_ocr.call_args.args == ("/tmp/page.png", provider)
+    assert mock_ocr.call_args.kwargs["pdf_page"] is True
 
 
 def test_draw_request_strips_siliconflow_provider_prefix(tmp_path):

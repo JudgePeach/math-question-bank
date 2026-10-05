@@ -23,6 +23,7 @@ def review_script():
 
     shipped = "\n".join([
         api_source[api_source.index("function safeImageUrl(value)"):api_source.index("function sanitizeRichHtml(value)")],
+        section("let retainedDocumentResult = null", "const parsedQuestionSaveInFlight"),
         section("const parsedSourceVisionVerifications", "function blockImportResetWhileSaving"),
         section("function renderParsedQuestionsList", "function setupCardCategoryLinkage"),
         section("function validateParsedQuestionBeforeImport", "function confirmClearAllParsed"),
@@ -147,7 +148,7 @@ const scenarios = {
     assert.equal(selected.checked, true);
     assert.equal(selected.disabled, false);
     assert.equal(card.querySelector('.card-source-review-confirm'),null);
-    assert.equal(card.querySelector('.card-source-review-status').textContent,'查看原文与提取说明（可选）');
+    assert.equal(card.querySelector('.card-source-review-status').textContent,'未完成视觉核验 · 查看提取说明');
     const panel=card.querySelector('.card-source-review-panel');
     assert.equal(panel.tagName,'details'); assert.equal(panel.open,false);
     assert.equal(card.querySelector('script'), null, 'source text must never become HTML');
@@ -180,6 +181,30 @@ const scenarios = {
     assert.equal(validateParsedQuestionBeforeImport(0,{notify:false,focus:false}),false,'missing category stays invalid');
     assert.equal(q.source_review.required,true);
     assert.equal(requests.length,0);
+  },
+  async confirmed_formula_records_stay_collapsed_and_do_not_repeat_old_warnings() {
+    const q=verifiedQuestion();
+    q.source_review.reasons=['公式未恢复，需要核对公式'];
+    const card=show([q]);
+    const report={source_review_count:0,math_locks_created:1,math_locks_missing:1,
+      warnings:['历史核对发现公式未恢复'],pdf_review_items:[{question_index:0,reasons:q.source_review.reasons}],
+      pdf_source_verification:{status:'completed',calls:1,checked:1,confirmed:1,pending:0}};
+    renderSourceIntegrityReport(report);appendSourceIntegrityLog(report);
+    const panel=card.querySelector('.card-source-review-panel');
+    assert.equal(panel.open,false);
+    assert.equal(panel.querySelector('.card-source-review-status').textContent,'查看原页自动核验记录');
+    assert.ok(panel.querySelector('.card-source-review-explanation').textContent.includes('已对照原文确认'));
+    assert.equal(parsedQuestionNeedsSourceReview(0),false);
+    assert.equal(document.getElementById('parsedSourceIntegrityReport').open,false);
+    assert.equal(document.getElementById('parsedSourceIntegrityReport').querySelector('.pdf-review-question-list'),null);
+    assert.ok(logs.every(line=>!line.includes('需要核对')&&!line.includes('未恢复')&&!line.includes('1 道题')));
+    assert.equal(toasts.length,0);
+    assert.equal(requests.length,0);
+    const content=card.querySelector('.card-content-textarea').value;
+    edit(card,'.card-content-textarea',content+'修改');
+    assert.ok(panel.querySelector('.card-source-review-explanation').textContent.includes('旧核验结论仅供参考'));
+    assert.equal(parsedQuestionNeedsSourceReview(0),true);
+    assert.equal(panel.open,false,'editing does not open the historical record automatically');
   },
   async precheck_stale_snapshot_still_aborts() {
     const card=show([pendingQuestion()]);
@@ -273,6 +298,7 @@ scenarios[process.argv[1]]().catch(error => { console.error(error); process.exit
 
 @pytest.mark.parametrize("scenario", [
     "pending_is_optional_and_save_still_prechecks", "edits_keep_optional_evidence_and_regular_validation",
+    "confirmed_formula_records_stay_collapsed_and_do_not_repeat_old_warnings",
     "precheck_stale_snapshot_still_aborts", "requested_answers_include_pending_and_preserve_edit_race",
     "requested_queue_keeps_concurrency_and_snapshot_protection", "unmatched_report_and_new_import",
     "local_source_images_only",

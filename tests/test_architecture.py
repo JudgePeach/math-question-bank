@@ -120,7 +120,14 @@ def test_multimodal_ai_routes_use_shared_provider_resolvers():
 
     assert "def ocr_via_provider" in main_source
     assert "resolve_ocr_provider(engine)" in main_source
-    assert "resolve_ocr_fallbacks(prefer_engine)" in main_source
+    assert "resolve_ocr_provider(prefer_engine)" in main_source
+    module = ast.parse(main_source)
+    pdf_ocr = next(node for node in module.body if isinstance(node, ast.FunctionDef)
+                   and node.name == "ocr_pdf_page_image")
+    calls = {node.func.id for node in ast.walk(pdf_ocr)
+             if isinstance(node, ast.Call) and isinstance(node.func, ast.Name)}
+    assert "resolve_ocr_provider" in calls
+    assert "resolve_ocr_fallbacks" not in calls, "PDF retries must not expand across providers"
     assert main_source.count("resolve_draw_provider(prefer_draw)") == 2
 
 

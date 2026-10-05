@@ -120,6 +120,7 @@ FORBIDDEN_RELEASE_PARTS = {
     ".pytest_cache",
     ".system_generated",
     "__pycache__",
+    "docs",
     "scratch",
     "test_uploads",
     "tests",

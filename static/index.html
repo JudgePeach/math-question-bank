@@ -106,6 +106,12 @@
                 <i class="fa-solid fa-clock-rotate-left" aria-hidden="true"></i>
                 <span>试卷记录</span>
             </button>
+            <!-- QA_START -->
+            <button type="button" id="appNavQa" class="app-nav-item" data-app-nav-target="qa" onclick="selectWorkspace('qa', 'QA · 常见问题')">
+                <i class="fa-regular fa-circle-question" aria-hidden="true"></i>
+                <span>QA</span>
+            </button>
+            <!-- QA_END -->
         </nav>
 
         <div class="app-nav-spacer"></div>
@@ -161,6 +167,12 @@
                         <span>组卷排版工作台</span>
                         <i class="fa-solid fa-check text-[10px] text-brand-600 dark:text-brand-500 hidden" id="ws-check-paper"></i>
                     </button>
+                    <!-- QA_START -->
+                    <button type="button" onclick="selectWorkspace('qa', 'QA · 常见问题')" class="glass-dropdown-item w-full px-3.5 py-2.5 text-xs text-left flex items-center justify-between rounded-xl" id="ws-btn-qa">
+                        <span>QA · 常见问题</span>
+                        <i class="fa-solid fa-check text-[10px] text-brand-600 dark:text-brand-500 hidden" id="ws-check-qa"></i>
+                    </button>
+                    <!-- QA_END -->
                 </div>
             </div>
 
@@ -992,7 +1004,7 @@
                     <i class="fa-solid fa-file-invoice text-indigo-500"></i>
                     <span>题目详情</span>
                 </span>
-                <button type="button" id="editQuestionFromPreviewBtn" disabled onclick="openQuestionEditorModal('classification')" class="bank-detail-edit-btn glass-btn-primary rounded-xl" aria-label="编辑当前题目">
+                <button type="button" id="editQuestionFromPreviewBtn" disabled onclick="openQuestionEditorModal()" class="bank-detail-edit-btn glass-btn-primary rounded-xl" aria-label="编辑当前题目">
                     <i class="fa-solid fa-pen" aria-hidden="true"></i>
                     <span>编辑</span>
                 </button>
@@ -1194,6 +1206,35 @@
             </div>
         </section>
         <!-- End of Saved Paper Records Workspace -->
+
+        <!-- QA_START -->
+        <section id="qaWorkspaceSection" class="qa-workspace hidden w-full h-full" aria-labelledby="qaWorkspaceTitle">
+            <div class="qa-workspace-content">
+                <div class="qa-heading">
+                    <h2 id="qaWorkspaceTitle">QA · 常见问题</h2>
+                    <p>MathBank 使用问答</p>
+                    <p id="qaSourceNote" class="qa-source-note"></p>
+                </div>
+                <div class="qa-search-row">
+                    <label for="qaSearchInput" class="sr-only">搜索常见问题</label>
+                    <div class="qa-search-box">
+                        <i class="fa-solid fa-magnifying-glass" aria-hidden="true"></i>
+                        <input type="search" id="qaSearchInput" placeholder="搜索问题、关键词，例如：API、导入、备份" autocomplete="off">
+                    </div>
+                    <button type="button" id="qaResetFilters" class="qa-reset">重置</button>
+                </div>
+                <div id="qaCategories" class="qa-categories" role="group" aria-label="按主题筛选问答"></div>
+                <p id="qaResultCount" class="qa-result-count" role="status" aria-live="polite"></p>
+                <div id="qaQuestionList" class="qa-question-list"></div>
+                <div id="qaEmptyState" class="qa-empty-state" hidden>
+                    <span class="qa-empty-icon" aria-hidden="true"><i class="fa-regular fa-circle-question"></i></span>
+                    <h3>没有匹配的问题</h3>
+                    <p>试试更短的关键词，或重置筛选查看全部问答。</p>
+                </div>
+                <noscript><p>请启用 JavaScript 以查看常见问题。</p></noscript>
+            </div>
+        </section>
+        <!-- QA_END -->
 
     </main>
     </div>
@@ -1967,8 +2008,8 @@
 
                     <div id="docxVerificationContainer" hidden class="import-config-card hidden p-3 bg-slate-50/80 border border-slate-200/60 rounded-xl shrink-0">
                         <label class="flex items-start gap-2 text-xs text-slate-700 cursor-pointer">
-                            <input type="checkbox" id="docxVerifySuspicions" class="mt-0.5 h-4 w-4 rounded border-slate-300 text-brand-600 focus:ring-brand-500">
-                            <span><span class="font-semibold">额外模型核验（可选）</span><span class="block mt-1 text-[10px] text-slate-500 leading-normal">开启后可能额外调用识图模型对照 Word 原文；关闭不影响正常导入。</span></span>
+                            <input type="checkbox" id="docxVerifySuspicions" checked class="mt-0.5 h-4 w-4 rounded border-slate-300 text-brand-600 focus:ring-brand-500">
+                            <span><span class="font-semibold">自动核对疑点</span><span class="block mt-1 text-[10px] text-slate-500 leading-normal">对照 Word 原页核对疑点；明确差异自动修正并复核，最多 3 轮，通过后不再提示。</span></span>
                         </label>
                     </div>
 
@@ -2012,8 +2053,8 @@
                         </div>
                         <p class="text-[10px] text-slate-500 leading-normal">智能模式沿用已配置的识图模型核对配图，可能产生额外调用与等待。结果仍需对照原卷审查。</p>
                         <label class="flex items-start gap-2 text-xs text-slate-700 cursor-pointer">
-                            <input type="checkbox" id="pdfVerifySuspicions" class="mt-0.5 h-4 w-4 rounded border-slate-300 text-brand-600 focus:ring-brand-500">
-                            <span><span class="font-semibold">额外模型核验（可选）</span><span id="pdfVerifySuspicionsNote" class="block mt-1 text-[10px] text-slate-500 leading-normal">开启后仅对疑点额外请求模型核验；关闭不影响正常导入。</span></span>
+                            <input type="checkbox" id="pdfVerifySuspicions" checked class="mt-0.5 h-4 w-4 rounded border-slate-300 text-brand-600 focus:ring-brand-500">
+                            <span><span class="font-semibold">自动核对疑点</span><span id="pdfVerifySuspicionsNote" class="block mt-1 text-[10px] text-slate-500 leading-normal">对照原页核对疑点；明确差异自动修正并复核，最多 3 轮，通过后不再提示。</span></span>
                         </label>
                     </div>
 
@@ -2209,6 +2250,10 @@
     <script src="/static/js/import.js"></script>
     <script src="/static/js/paper.js"></script>
     <script src="/static/js/dashboard.js"></script>
+    <!-- QA_START -->
+    <script src="/static/js/qa-data.js"></script>
+    <script src="/static/js/qa.js"></script>
+    <!-- QA_END -->
 
     <!-- On-demand multimodal TikZ workbench -->
     <div id="answerTikzWorkbenchModal" role="dialog" aria-modal="true" aria-hidden="true" aria-labelledby="answerTikzWorkbenchTitle" class="fixed inset-0 z-[80] hidden items-center justify-center bg-slate-950/65 p-2 opacity-0 backdrop-blur-sm transition-opacity duration-200 sm:p-4">

@@ -23,10 +23,10 @@ https://github.com/user-attachments/assets/46834cbd-3499-4c06-9d8e-c81bdc10a0a7
 只需了解一些基础的 LaTeX 数学公式语法，MathBank 就能帮一线数学老师高效解决组卷与备课难题：
 
 - 🎨 **1:1 A4 仿真组卷排版**：提供像 Word 一样直观的仿真试卷画布，密封线、大标题、注意事项框一应俱全。支持拖拽排序、题目留白高度调整，以及一键切换 A3 答题卡与高考 19 题预设。
-- ⚡ **秒级公式渲染与高考级导出**：内置专业数学公式排版引擎，网页上修改秒级实时预览。支持一键导出高考标准的高清 PDF 试卷与完整的排版源码包。
+- ⚡ **秒级公式渲染与高考级导出**：内置专业数学公式排版引擎，网页上修改秒级实时预览。选择题选项按实际宽度自动调整列数，保持文字和公式单行显示；小问分段保留前置标点。支持一键导出高考标准的高清 PDF 试卷与完整的排版源码包。
 - 🤖 **AI 智能组卷与辅助解答**：内置 DeepSeek 等大语言模型，能根据考点细目表与难度阶梯一键自动挑选题目生成试卷；支持单题一键 AI 生成详细解析与教学反思。
 - 📚 **主流教材大纲一键切换**：原生预设 **人教A版**、**人教B版**、**苏教版**与**沪教版**标准高中大纲目录，切换大纲时系统自动智能映射，无需手动重新整理题目。
-- 📄 **多格式试卷智能拆解与 PDF 双策略分流**：支持直接拖入 **LaTeX 源码 (.tex)**、**PDF 试卷 (.pdf)** 或 **Word 试卷 (.docx)** 快速智能切片拆题。PDF 拆解原生提供 **【原生文字公式提取】（默认推荐）** 与 **【全图视觉 OCR】** 双解析策略：推荐优先使用原生提取模式，享受 `PDF Inspector` 毫秒级 0 视觉 Token 损耗的极速提取，当遇到 Word/MathType 特殊导出卷导致公式硬转化为图片时，系统会自动平滑降级并触发 VLM 视觉 OCR 识图补全；同时，为避免极少数排版极其特殊的试卷使自愈规则失效，系统亦保留了全图视觉 OCR 的强力备选通道，保障 100% 拆解成功率。Word 导入则会结构化转换 Office OMML，并从 OLE `Equation Native` 流解析 MathType 结构，不能高置信转换的公式保留原预览图并标记人工核对。
+- 📄 **多格式试卷智能拆解与 PDF 双策略分流**：支持直接拖入 **LaTeX 源码 (.tex)**、**PDF 试卷 (.pdf)** 或 **Word 试卷 (.docx)** 快速智能切片拆题。PDF 拆解原生提供 **【原生文字公式提取】（默认推荐）** 与 **【全图视觉 OCR】** 双解析策略：推荐优先使用原生提取模式，享受 `PDF Inspector` 毫秒级 0 视觉 Token 损耗的极速提取，当遇到 Word/MathType 特殊导出卷导致公式硬转化为图片时，系统会自动平滑降级并触发 VLM 视觉 OCR 识图补全；同时，为避免极少数排版极其特殊的试卷使自愈规则失效，系统亦保留了全图视觉 OCR 备选通道与原页复核提示；模型识别结果仍需对照原卷检查。Word 导入则会结构化转换 Office OMML，并从 OLE `Equation Native` 流解析 MathType 结构，不能高置信转换的公式保留原预览图并标记人工核对。
 
 ---
 
@@ -224,7 +224,6 @@ python3 -m scripts.restore data_backup/snapshots/mathbank-backup-时间戳.zip -
 │   └── questions_library.md    # AI 专属只读题库（过滤答案，防 AI 泄露）
 ├── docs/                       # 项目文档与 README 展示图片
 │   ├── AI_DATABASE_GUIDE.md    # AI 题库检索使用指南
-│   ├── 项目目录重构与模块解耦整理计划.md
 │   └── images/                 # 产品界面预览图
 ├── mathbank/                   # 后端业务领域包
 │   ├── database.py             # SQLite 数据模型与 Session
@@ -258,7 +257,7 @@ python3 -m scripts.restore data_backup/snapshots/mathbank-backup-时间戳.zip -
 ├── static/                     # 前端静态资源目录
 │   ├── index.html              # 主控制台前端页面 (SPA)
 │   ├── css/                    # Tailwind, FontAwesome, KaTeX 离线样式
-│   ├── uploads/                # 插图存储目录 (自动物理清理)
+│   ├── uploads/                # 插图存储目录 (暂未引用图片进入可恢复保留区)
 │   └── js/                     # 级联加载前端 JS 模块
 │       ├── api.js              # API 交互与 Token 拦截
 │       ├── editor.js           # 编辑、KaTeX 预览与 TikZ 编译

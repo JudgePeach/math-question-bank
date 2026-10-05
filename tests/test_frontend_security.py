@@ -749,7 +749,8 @@ def test_question_selection_and_save_are_transactional():
     assert "const requestBackupSnapshot = Object.freeze" in save_source
     assert "EditorState.isCurrent(editorSession)" in save_source
     assert "window.editorMatchesBackupSnapshot(requestBackupSnapshot)" in save_source
-    assert "backupEditorState(data.question.id, null, requestBackupSnapshot)" in save_source
+    assert "backupEditorState(data.question.id, null, savedBackupSnapshot)" in save_source
+    assert "mapRecord(requestBackupSnapshot" in save_source
     assert "EditorState.useQuestion(data.question)" in save_source
     assert "selectQuestion(data.question" not in save_source
     assert "window.isQuestionSaveInFlight" in import_source

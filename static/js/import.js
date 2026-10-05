@@ -24,6 +24,7 @@
             }
 
             window.collectAnswerImagePaths = function(markdown) {
+                if (window.MathBankImageAssets) return window.MathBankImageAssets.collect(markdown);
                 markdown = String(markdown || '');
                 const foundImages = [];
                 const imagePattern = /!\[.*?\]\(([^)]+)\)/g;
@@ -40,12 +41,60 @@
             window.syncAnswerImagesFromMarkdown = function() {
                 const textarea = document.getElementById('editAnswerMarkdown');
                 const markdown = textarea ? textarea.value : '';
-                uploadedAnswerImages = window.collectAnswerImagePaths(markdown);
+                const hidden = new Set(TikzState.referencePaths());
+                uploadedAnswerImages = window.collectAnswerImagePaths(markdown).filter(path => !hidden.has(path));
                 if (typeof window.renderAnswerImageBadges === 'function') {
                     window.renderAnswerImageBadges();
                 }
             };
         })();
+
+        function syncEditorImageReferences() {
+            const hidden = new Set(TikzState.referencePaths());
+            const content = document.getElementById('editContent');
+            const answer = document.getElementById('editAnswerMarkdown');
+            uploadedImages = window.collectAnswerImagePaths(content ? content.value : '')
+                .filter(path => !hidden.has(path));
+            uploadedAnswerImages = window.collectAnswerImagePaths(answer ? answer.value : '')
+                .filter(path => !hidden.has(path));
+        }
+        window.syncEditorImageReferences = syncEditorImageReferences;
+
+        function editorAssetReferences() {
+            syncEditorImageReferences();
+            return window.MathBankImageAssets.all(
+                document.getElementById('editContent').value,
+                document.getElementById('editAnswerMarkdown').value,
+                TikzState.contentAssets, TikzState.answerAssets
+            );
+        }
+        window.editorAssetReferences = editorAssetReferences;
+
+        function applyEditorAssetPathMap(rawMapping, session) {
+            if (!EditorState.isCurrent(session) || !window.MathBankImageAssets) return;
+            const mapping = window.MathBankImageAssets.normalizeMap(rawMapping);
+            if (!Object.keys(mapping).length) return;
+            const content = document.getElementById('editContent');
+            const answer = document.getElementById('editAnswerMarkdown');
+            const mapped = window.MathBankImageAssets.mapRecord({
+                content: content.value, answer_markdown: answer.value,
+                content_tikz_assets: TikzState.contentAssets, answer_tikz_assets: TikzState.answerAssets,
+                image_layouts: FigureLayoutState.imageLayouts
+            }, mapping);
+            // Only migrate URLs in the current values: text typed while saving
+            // and later additions/removals remain untouched and remain dirty.
+            window.MathBankImageAssets.mapInput(content, mapping);
+            window.MathBankImageAssets.mapInput(answer, mapping);
+            TikzState.contentAssets = mapped.content_tikz_assets;
+            TikzState.answerAssets = mapped.answer_tikz_assets;
+            FigureLayoutState.imageLayouts = mapped.image_layouts;
+            syncEditorImageReferences();
+            if (typeof window.updateContentPreview === 'function') window.updateContentPreview();
+            if (typeof window.updateAnswerPreview === 'function') window.updateAnswerPreview();
+            if (typeof renderIllustrationBadges === 'function') renderIllustrationBadges();
+            if (typeof window.renderAnswerImageBadges === 'function') window.renderAnswerImageBadges();
+            if (typeof window.renderAnswerTikzAssets === 'function') window.renderAnswerTikzAssets();
+        }
 
         function findContentTikzImagePath(markdown) {
             return window.collectAnswerImagePaths(markdown).find(path => {
@@ -798,6 +847,7 @@
                         return false;
                     }
                 }
+                if (typeof window.syncEditorImageReferences === 'function') window.syncEditorImageReferences();
                 const editorSession = EditorState.snapshot();
                 const content = document.getElementById('editContent').value;
                 const qtype = document.getElementById('editQType').value;
@@ -937,7 +987,8 @@
                     figureLayout.figure_align_custom ? 'true' : 'false'
                 );
                 formData.append('tags', tags);
-                const combinedImages = Array.from(new Set([
+                const combinedImages = typeof window.editorAssetReferences === 'function'
+                    ? window.editorAssetReferences() : Array.from(new Set([
                     ...uploadedImages,
                     ...(typeof uploadedAnswerImages !== 'undefined' ? uploadedAnswerImages : []),
                     ...TikzState.referencePaths()
@@ -1021,6 +1072,13 @@
                         const editorSessionStillCurrent = EditorState.isCurrent(editorSession);
                         const requestStillVisible = editorSessionStillCurrent &&
                             window.editorMatchesBackupSnapshot(requestBackupSnapshot);
+                        const savedBackupSnapshot = window.MathBankImageAssets
+                            ? window.MathBankImageAssets.mapRecord(requestBackupSnapshot,
+                                window.MathBankImageAssets.normalizeMap(data.asset_path_map))
+                            : requestBackupSnapshot;
+                        if (editorSessionStillCurrent && typeof applyEditorAssetPathMap === 'function') {
+                            applyEditorAssetPathMap(data.asset_path_map, editorSession);
+                        }
 
                         // Never clear OCR or overwrite fields belonging to a newer
                         // edit/switch that happened after this request started.
@@ -1050,13 +1108,13 @@
                             // never start a second detail request that could overwrite
                             // input typed after the POST response arrived.
                             EditorState.useQuestion(data.question);
-                            backupEditorState(data.question.id, null, requestBackupSnapshot);
+                            backupEditorState(data.question.id, null, savedBackupSnapshot);
                             document.getElementById('editorTitle').textContent = '编辑数学题';
                             if (!requestStillVisible) {
                                 showToast('题目已保存；保存后继续输入的内容仍待再次保存', 'info');
                             }
                         } else if (editorSessionStillCurrent) {
-                            backupEditorState(data.question.id, null, requestBackupSnapshot);
+                            backupEditorState(data.question.id, null, savedBackupSnapshot);
                         }
                         if (editorSessionStillCurrent) {
                             refreshRelatedDropdown(relatedQuestionId, { expectedValue: relatedQuestionId });
@@ -1330,6 +1388,44 @@
         let batchSelectedImages = [];
         let parsedQuestionsData = [];
         let parsedQuestionsGeneration = 0;
+        let retainedDocumentResult = null;
+
+        function stopDocumentResultRetention() {
+            if (retainedDocumentResult?.timer) clearInterval(retainedDocumentResult.timer);
+            retainedDocumentResult = null;
+        }
+
+        function refreshDocumentResultRetention() {
+            const lease = retainedDocumentResult;
+            if (!lease) return;
+            const workspace = document.getElementById('importWorkspaceSection');
+            const active = lease.generation === parsedQuestionsGeneration
+                && window.currentPdfTaskId === lease.taskId
+                && parsedQuestionsData.some(question => !question.saved)
+                && (!workspace || (!workspace.hidden && !workspace.classList.contains('hidden')));
+            if (!active) {
+                if (lease.timer) clearInterval(lease.timer);
+                lease.timer = null;
+                return;
+            }
+            if (lease.pending) return;
+            lease.pending = true;
+            fetch(`/api/tasks/${encodeURIComponent(lease.taskId)}/retain`, { method: 'POST' })
+                .then(response => {
+                    if ((response.status === 404 || response.status === 410)
+                            && retainedDocumentResult === lease) stopDocumentResultRetention();
+                })
+                .catch(() => {})
+                .finally(() => { lease.pending = false; });
+            if (!lease.timer) lease.timer = setInterval(refreshDocumentResultRetention, 60000);
+        }
+
+        function startDocumentResultRetention(taskId) {
+            stopDocumentResultRetention();
+            retainedDocumentResult = { taskId, generation: parsedQuestionsGeneration, timer: null, pending: false };
+            refreshDocumentResultRetention();
+        }
+
         const parsedQuestionSaveInFlight = new Map();
         let parsedBatchSaveInFlight = null;
         const parsedDuplicateResults = new Map();
@@ -1351,11 +1447,13 @@
         // gate. Model-verification labels still belong to the exact snapshot;
         // re-rendering or undoing an edit must not revive a revoked claim.
         const parsedSourceVisionVerifications = new WeakMap();
+        const parsedSourceReviewSnapshots = new WeakMap();
+        let parsedSourceReviewReport = null;
 
         function parsedSourceReviewSnapshot(index, q = parsedQuestionsData[index]) {
             const card = document.getElementById(`parsed-card-${index}`);
-            const content = card?.querySelector('.card-content-textarea');
-            const answer = card?.querySelector('.card-answer-textarea');
+            const content = card?.__sourceQuestion === q ? card.querySelector('.card-content-textarea') : null;
+            const answer = card?.__sourceQuestion === q ? card.querySelector('.card-answer-textarea') : null;
             return JSON.stringify([
                 String(content ? content.value : (q?.content || '')),
                 String(answer ? answer.value : (q?.answer_markdown || ''))
@@ -1397,27 +1495,82 @@
             renderParsedCardPreview(card, content, answer);
         }
 
+        function parsedSourceReviewDisplay(index, q = parsedQuestionsData[index], report = parsedSourceReviewReport) {
+            const review = q?.source_review || {};
+            const snapshot = parsedSourceReviewSnapshot(index, q);
+            if (parsedSourceReviewSnapshots.has(q) && parsedSourceReviewSnapshots.get(q) !== snapshot) {
+                parsedSourceReviewSnapshots.set(q, null);
+            }
+            const edited = parsedSourceReviewSnapshots.has(q) && parsedSourceReviewSnapshots.get(q) === null;
+            const confirmed = !edited && parsedQuestionWasVisionVerified(q)
+                && parsedSourceVisionVerifications.get(q) === snapshot;
+            const attempt = confirmed ? review.verification : review.verification_attempt;
+            const decision = attempt?.decision;
+            const evidence = typeof attempt?.evidence === 'string' ? attempt.evidence.trim() : '';
+            const originalReasons = Array.isArray(review.reasons)
+                ? review.reasons.filter(reason => typeof reason === 'string' && reason.trim()) : [];
+            if (edited) return {state: 'edited', label: '内容已修改 · 查看旧核验记录',
+                explanation: '题文已发生变化，旧核验结论仅供参考，不会因此再次调用核验模型。',
+                reasons: ['内容已修改，先前的自动核验仅适用于旧内容。']};
+            if (confirmed) return {state: 'confirmed', label: `查看${parsedSourceVerificationLabel(q)}自动核验记录`,
+                explanation: '识图模型已对照原文确认本题，以下保留核验前的记录与确认依据。',
+                reasons: evidence ? [evidence] : originalReasons};
+            if (evidence && ['different', 'uncertain'].includes(decision)) {
+                return decision === 'different'
+                    ? {state: 'different', label: '模型发现差异 · 查看具体位置',
+                        explanation: '视觉核验发现以下差异，请结合原文查看；仍可编辑和导入。', reasons: [evidence]}
+                    : {state: 'uncertain', label: '模型尚无法确认 · 查看原因',
+                        explanation: '视觉核验未能作出明确判断，以下说明无法确认的地方；不表示已经发现错误。', reasons: [evidence]};
+            }
+            const verification = sourceVerificationForReport(report);
+            const diagnostic = [
+                ...(Array.isArray(verification?.invalid_items) ? verification.invalid_items : []),
+                ...(Array.isArray(verification?.skipped_reasons) ? verification.skipped_reasons : []),
+            ].find(item => item?.question_index === index && typeof item.reason === 'string' && item.reason.trim());
+            const reasons = diagnostic ? [diagnostic.reason.trim()] : originalReasons;
+            return {state: 'not_checked', label: '未完成视觉核验 · 查看提取说明',
+                explanation: verification?.status === 'disabled'
+                    ? '本次未启用视觉核验，以下是本地提取时的疑点，不是模型确认的错误。'
+                    : '本题尚无可采用的视觉核验结论，以下是未完成原因或本地提取疑点，不是模型确认的错误。',
+                reasons};
+        }
+
+        function parsedSourceRepairSummary(q) {
+            const repair = q?.source_review?.repair;
+            if (!repair || typeof repair !== 'object') return '';
+            const attempts = Number.isSafeInteger(repair.attempts) && repair.attempts > 0 ? repair.attempts : 0;
+            const reason = typeof repair.reason === 'string' && repair.reason.trim() ? repair.reason.trim() : '';
+            if (repair.status === 'confirmed') return parsedQuestionWasVisionVerified(q)
+                ? `自动修复后已核验${attempts ? `（尝试 ${attempts} 轮）` : ''}。` : '';
+            if (!['exhausted', 'stopped', 'failed'].includes(repair.status)) return '';
+            return (attempts ? `已尝试自动修复 ${attempts} 轮，` : '自动修复未完成，') +
+                '仍未取得确认。' + (reason ? reason : '');
+        }
+
         function updateParsedSourceReviewState(index) {
             const q = parsedQuestionsData[index];
             const card = document.getElementById(`parsed-card-${index}`);
             if (!q || !card || card.__sourceQuestion !== q || !parsedQuestionHasSourceReview(q)) return;
-            const autoVerified = parsedQuestionWasVisionVerified(q) &&
-                parsedSourceVisionVerifications.get(q) === parsedSourceReviewSnapshot(index, q);
+            const display = parsedSourceReviewDisplay(index, q);
             const label = card.querySelector('.card-source-review-status');
-            if (label) label.textContent = autoVerified
-                ? `查看${parsedSourceVerificationLabel(q)}自动核验记录`
-                : '查看原文与提取说明（可选）';
+            if (label) label.textContent = display.label;
+            const panel = card.querySelector('.card-source-review-panel');
+            if (panel) panel.dataset.reviewState = display.state;
+            const explanation = card.querySelector('.card-source-review-explanation');
+            if (explanation) explanation.textContent = display.explanation;
             const reasons = card.querySelector('.card-source-review-reasons');
-            if (reasons && parsedQuestionWasVisionVerified(q) && !autoVerified) {
-                reasons.textContent = '内容已修改，先前的自动核验仅适用于旧内容。';
-            }
+            if (reasons) reasons.textContent = display.reasons.join('\n');
+            const repair = card.querySelector('.card-source-review-repair');
+            if (repair) repair.textContent = display.state === 'edited' ? '' : parsedSourceRepairSummary(q);
         }
 
         function invalidateParsedSourceReview(index) {
             const q = parsedQuestionsData[index];
             if (!q || !parsedQuestionHasSourceReview(q)) return;
             if (parsedQuestionWasVisionVerified(q)) parsedSourceVisionVerifications.set(q, null);
+            parsedSourceReviewSnapshots.set(q, null);
             updateParsedSourceReviewState(index);
+            if (parsedSourceReviewReport) renderSourceIntegrityReport(parsedSourceReviewReport);
             updateSelectedCount();
         }
 
@@ -1484,15 +1637,18 @@
             status.className = 'card-source-review-status cursor-pointer py-1';
             panel.appendChild(status);
             const explanation = document.createElement('p');
-            explanation.className = 'mt-2';
-            explanation.textContent = '这些记录表示程序未能自动确认的内容，不等于题目有错，也不影响选择和导入。';
+            explanation.className = 'card-source-review-explanation mt-2';
             panel.appendChild(explanation);
             const reasons = document.createElement('div');
             reasons.className = 'card-source-review-reasons mt-1 whitespace-pre-wrap';
             reasons.textContent = (Array.isArray(q.source_review.reasons) ? q.source_review.reasons : []).join('\n');
             panel.appendChild(reasons);
+            const repair = document.createElement('p');
+            repair.className = 'card-source-review-repair mt-1 whitespace-pre-wrap break-words';
+            panel.appendChild(repair);
             const sourceDetails = createSourceExcerptDetails(q.source_review.source_excerpt, '查看原文依据');
-            const attempt = q.source_review.verification || q.source_review.verification_attempt;
+            const attempt = parsedQuestionWasVisionVerified(q)
+                ? q.source_review.verification : q.source_review.verification_attempt;
             if (typeof attempt?.evidence === 'string') {
                 const evidence = document.createElement('p');
                 evidence.className = 'mt-2 whitespace-pre-wrap break-words';
@@ -1500,6 +1656,40 @@
                 sourceDetails.insertBefore(evidence, sourceDetails.children[1] || null);
             }
             panel.appendChild(sourceDetails);
+            const history = document.createElement('details');
+            history.className = 'card-source-review-history mt-2';
+            const historyTitle = document.createElement('summary');
+            historyTitle.className = 'cursor-pointer py-1';
+            historyTitle.textContent = '查看最初提取说明';
+            history.appendChild(historyTitle);
+            const historyText = document.createElement('p');
+            historyText.className = 'whitespace-pre-wrap break-words';
+            historyText.textContent = (Array.isArray(q.source_review.reasons) ? q.source_review.reasons
+                .filter(reason => typeof reason === 'string') : []).join('\n');
+            history.appendChild(historyText);
+            panel.appendChild(history);
+            const repairHistory = Array.isArray(q.source_review.repair?.history) ? q.source_review.repair.history : [];
+            if (repairHistory.length) {
+                const audit = document.createElement('details');
+                audit.className = 'card-source-review-repair-history mt-2';
+                const auditTitle = document.createElement('summary');
+                auditTitle.className = 'cursor-pointer py-1';
+                auditTitle.textContent = '查看自动修复记录';
+                audit.appendChild(auditTitle);
+                const auditText = document.createElement('div');
+                auditText.className = 'whitespace-pre-wrap break-words max-h-72 overflow-y-auto';
+                const entries = repairHistory.slice(0, 5).map((entry, round) => {
+                    const decision = {equivalent: '核验通过', different: '仍有差异', uncertain: '无法确认', not_checked: '未完成核验'}[entry?.decision] || '未完成核验';
+                    const patches = Array.isArray(entry?.patches) ? entry.patches.slice(0, 8).filter(patch =>
+                        ['content', 'answer_markdown'].includes(patch?.field) && typeof patch.before === 'string' && typeof patch.after === 'string') : [];
+                    return `第 ${round + 1} 轮：${decision}` +
+                        (typeof entry?.verification_evidence === 'string' ? `\n复核依据：${entry.verification_evidence}` : '') +
+                        patches.map(patch => `\n${patch.field === 'content' ? '题干' : '答案'}修正前：${patch.before}\n修正稿：${patch.after}`).join('');
+                });
+                auditText.textContent = '以下记录导入阶段的修正过程；未通过复核的修正稿不会替换题文。\n\n' + entries.join('\n\n');
+                audit.appendChild(auditText);
+                panel.appendChild(audit);
+            }
             card.insertBefore(panel, card.lastElementChild || null);
             updateParsedSourceReviewState(index);
         }
@@ -1519,7 +1709,7 @@
                 (count('review_pages') ? `，${count('review_pages')} 页保留配图说明。` : '。');
         }
 
-        function pdfExtractionReportSummary(extraction) {
+        function pdfExtractionReportSummary(extraction, vision) {
             if (!extraction || typeof extraction !== 'object') return '';
             const count = key => {
                 const value = Number(extraction[key]);
@@ -1528,11 +1718,19 @@
             const nativePages = count('native_pages');
             const repairedPages = Number.isSafeInteger(extraction.repaired_pages) && extraction.repaired_pages > 0
                 && extraction.repaired_pages <= nativePages ? extraction.repaired_pages : 0;
+            const visionCalls = Number.isSafeInteger(vision?.calls) && vision.calls > 0 ? vision.calls : 0;
+            const retryCount = Number.isSafeInteger(vision?.retries) && vision.retries >= 0
+                && vision.retries < visionCalls ? vision.retries : null;
+            const requestSummary = visionCalls
+                ? `逐页识别请求 ${visionCalls} 次` + (retryCount !== null ? `，其中失败后重试 ${retryCount} 次` : '') +
+                    (Number.isSafeInteger(vision?.timeout_seconds) && vision.timeout_seconds > 0 && vision.timeout_seconds <= 3600
+                        ? `；每次超时设为 ${vision.timeout_seconds} 秒。` : '。')
+                : '';
             return `PDF 提取方式：原生直提 ${nativePages} 页` +
                 (repairedPages ? `（其中本地公式结构修复 ${repairedPages} 页）` : '') +
                 `，局部识别 ${count('regional_pages')} 页，` +
                 `整页识别 ${count('full_vision_pages')} 页。` +
-                (count('native_characters_reused') ? `局部页保留原生文字 ${count('native_characters_reused')} 字符。` : '');
+                (count('native_characters_reused') ? `局部页保留原生文字 ${count('native_characters_reused')} 字符。` : '') + requestSummary;
         }
 
         function pdfLayoutWarnings(report) {
@@ -1543,6 +1741,16 @@
                 ? report.pdf_layout.warnings.map(value => String(value)).filter(Boolean) : [];
         }
 
+        function paperSplittingReportSummary(splitting) {
+            if (!splitting || !Number.isSafeInteger(splitting.calls) || splitting.calls < 1) return '';
+            const retries = Number.isSafeInteger(splitting.retries) && splitting.retries >= 0
+                && splitting.retries < splitting.calls ? splitting.retries : null;
+            return `PDF 整卷拆题请求 ${splitting.calls} 次` +
+                (retries !== null ? `，其中失败后重试 ${retries} 次` : '') +
+                (Number.isSafeInteger(splitting.timeout_seconds) && splitting.timeout_seconds > 0 && splitting.timeout_seconds <= 3600
+                    ? `；每次超时设为 ${splitting.timeout_seconds} 秒。` : '。');
+        }
+
         function sourceVerificationForReport(report) {
             return report?.docx_source_verification || report?.pdf_source_verification;
         }
@@ -1550,6 +1758,15 @@
         function pdfLayoutNotes(report) {
             const notes = Array.isArray(report?.pdf_layout?.notes)
                 ? report.pdf_layout.notes.map(value => String(value)).filter(Boolean) : [];
+            // The server keeps only unresolved Word extraction warnings here;
+            // historical extraction counts and general diagnostics are not
+            // current warnings. Keep these concrete reasons inspectable even
+            // when source comparison alone preserved a source placeholder.
+            if (Array.isArray(report?.word_extraction_warnings)) {
+                notes.unshift(...report.word_extraction_warnings
+                    .filter(value => typeof value === 'string' && value.trim())
+                    .map(value => `Word 提取：${value.trim()}`));
+            }
             if (Array.isArray(report?.ignored_source_notes)) {
                 notes.unshift(...report.ignored_source_notes.filter(value => typeof value === 'string' && value.trim()));
             }
@@ -1577,6 +1794,11 @@
             skipped.forEach(item => {
                 if (!item || typeof item.reason !== 'string' || !item.reason.trim()) return;
                 notes.push('未自动核验：' + pdfReviewItemLabel(item) + '：' + item.reason);
+            });
+            const invalid = Array.isArray(verification?.invalid_items) ? verification.invalid_items : [];
+            invalid.forEach(item => {
+                if (!item || typeof item.reason !== 'string' || !item.reason.trim()) return;
+                notes.push('核验结果未采纳：' + pdfReviewItemLabel(item) + '：' + item.reason.trim());
             });
             return [...new Set(notes)];
         }
@@ -1660,6 +1882,7 @@
                 }
                 if (review?.required !== true && !pending && !items.has(index)) return;
                 const existing = items.get(index);
+                const display = parsedSourceReviewDisplay(index, question, report);
                 const numbers = new Set(matches.filter(match => match?.question_index === index)
                     .map(match => match.source_number).filter(number => Number.isInteger(number) && number > 0));
                 if (Number.isInteger(review?.source_number) && review.source_number > 0) {
@@ -1679,10 +1902,13 @@
                         : (numbers.size === 1 ? [...numbers][0] : null),
                     source_pages: Array.isArray(existing?.source_pages) ? existing.source_pages
                         : [...new Set(pages.filter(page => Number.isInteger(page) && page > 0))].sort((a, b) => a - b),
-                    reasons: parsedQuestionWasVisionVerified(question) && pending
-                        ? ['内容已修改，先前的自动核验已失效，请对照原文核对。']
-                        : (Array.isArray(existing?.reasons) && existing.reasons.length ? existing.reasons
-                            : (Array.isArray(review?.reasons) ? review.reasons : [])),
+                    review_state: display.state,
+                    repair_summary: display.state === 'edited' ? '' : parsedSourceRepairSummary(question),
+                    reasons: display.state === 'not_checked'
+                        ? ['未完成视觉核验：' + (display.reasons.length ? display.reasons.join('；')
+                            : (Array.isArray(existing?.reasons) ? existing.reasons.join('；') : '尚无可采用的核验结论。'))]
+                        : [(display.state === 'different' ? '模型发现差异：'
+                            : display.state === 'uncertain' ? '模型尚无法确认：' : '') + display.reasons.join('；')],
                 });
             });
             return [...items.values()].sort((a, b) => a.question_index - b.question_index);
@@ -1711,24 +1937,31 @@
                         (reasons.length > 2 ? '其他原因可展开处理说明查看。' : '')
                     : '本地检查后，无需额外模型核验。';
             }
-            return `本地检查后，AI 核验 ${count('checked')} 题，已确认 ${count('confirmed')} 题，` +
+            const checkedSummary = verification.status === 'partial'
+                ? `本地检查后，收到 ${count('checked')} 题的有效核验结论，`
+                : `本地检查后，AI 核验 ${count('checked')} 题，`;
+            return checkedSummary + `已确认 ${count('confirmed')} 题，` +
                 `保留提取说明 ${count('pending')} 题（额外调用 ${count('calls')} 次）。` +
+                (verification.status === 'partial' ? '有效结论已逐题保留，未完成的题目单独提示。' : '') +
                 (count('skipped') ? `其中 ${count('skipped')} 题未执行自动核验。` : '') +
                 (notes.length ? notes.join('；') : '');
         }
 
         function renderSourceIntegrityReport(report) {
+            parsedSourceReviewReport = report;
+            parsedQuestionsData.forEach((question, index) => updateParsedSourceReviewState(index));
             const oldReport = document.getElementById('parsedSourceIntegrityReport');
             if (oldReport) oldReport.remove();
             const unmatched = Array.isArray(report?.unmatched_source) ? report.unmatched_source : [];
             const reviewCount = Number(report?.source_review_count || 0);
             const layoutSummary = pdfLayoutReportSummary(report?.pdf_layout);
-            const extractionSummary = pdfExtractionReportSummary(report?.pdf_extraction);
+            const extractionSummary = pdfExtractionReportSummary(report?.pdf_extraction, report?.pdf_vision);
+            const splittingSummary = paperSplittingReportSummary(report?.pdf_splitting);
             const verificationSummary = pdfSourceVerificationReportSummary(sourceVerificationForReport(report));
             const warnings = pdfLayoutWarnings(report);
             const notes = pdfLayoutNotes(report);
             const reviewItems = pdfReviewItemsForReport(report);
-            if (!unmatched.length && !reviewCount && !layoutSummary && !extractionSummary && !verificationSummary && !reviewItems.length && !notes.length) return;
+            if (!unmatched.length && !reviewCount && !layoutSummary && !extractionSummary && !splittingSummary && !verificationSummary && !reviewItems.length && !notes.length) return;
             const wrapper = document.getElementById('parsedQuestionsWrapper');
             if (!wrapper) return;
             const panel = document.createElement('details');
@@ -1741,6 +1974,12 @@
                 ? `有 ${unplacedFigures} 张配图未自动归位 · 查看提取说明（不影响导入）`
                 : '提取说明与原文对照（可选查看，不影响导入）';
             panel.appendChild(reportToggle);
+            if (splittingSummary) {
+                const summary = document.createElement('p');
+                summary.className = 'pdf-splitting-summary mb-2';
+                summary.textContent = splittingSummary;
+                panel.appendChild(summary);
+            }
             if (verificationSummary) {
                 const summary = document.createElement('p');
                 summary.className = 'pdf-source-verification-summary mb-2 text-slate-600 whitespace-pre-wrap';
@@ -1755,11 +1994,13 @@
                 list.className = 'pdf-review-question-list space-y-2 mt-2 mb-3';
                 reviewItems.forEach(item => {
                     const row = document.createElement('li');
+                    row.dataset.reviewState = item.review_state || 'not_checked';
                     row.appendChild(createPdfReviewQuestionLink(item, true));
                     const reason = document.createElement('span');
                     reason.className = 'whitespace-pre-wrap break-words';
                     reason.textContent = '：' + (Array.isArray(item?.reasons) && item.reasons.length
-                        ? item.reasons.map(String).join('；') : '请对照原卷核对本题。');
+                        ? item.reasons.map(String).join('；') : '请对照原卷核对本题。') +
+                        (item.repair_summary ? '；' + item.repair_summary : '');
                     row.appendChild(reason);
                     list.appendChild(row);
                 });
@@ -1816,9 +2057,11 @@
         }
 
         function appendSourceIntegrityLog(report) {
+            const splittingSummary = paperSplittingReportSummary(report?.pdf_splitting);
+            if (splittingSummary) appendImportLog(splittingSummary, 'info');
             const verificationSummary = pdfSourceVerificationReportSummary(sourceVerificationForReport(report));
             if (verificationSummary) appendImportLog(verificationSummary, 'info');
-            const extractionSummary = pdfExtractionReportSummary(report?.pdf_extraction);
+            const extractionSummary = pdfExtractionReportSummary(report?.pdf_extraction, report?.pdf_vision);
             if (extractionSummary) appendImportLog(extractionSummary, 'info');
             const layoutSummary = pdfLayoutReportSummary(report?.pdf_layout);
             if (layoutSummary) {
@@ -1834,9 +2077,15 @@
         }
 
         function replaceParsedQuestions(nextQuestions) {
+            if (typeof stopDocumentResultRetention === 'function') stopDocumentResultRetention();
             parsedQuestionsGeneration += 1;
             parsedQuestionsData = Array.isArray(nextQuestions) ? nextQuestions : [];
             parsedQuestionsData.forEach(question => {
+                if (parsedQuestionHasSourceReview(question) && !parsedSourceReviewSnapshots.has(question)) {
+                    parsedSourceReviewSnapshots.set(question, JSON.stringify([
+                        String(question.content || ''), String(question.answer_markdown || '')
+                    ]));
+                }
                 if (parsedQuestionWasVisionVerified(question) && !parsedSourceVisionVerifications.has(question)) {
                     parsedSourceVisionVerifications.set(question, JSON.stringify([
                         String(question.content || ''), String(question.answer_markdown || '')
@@ -1886,6 +2135,7 @@
             if (typeof window.selectWorkspace === 'function') {
                 window.selectWorkspace('import', '导入中心');
             }
+            refreshDocumentResultRetention();
         }
 
         function closeImportModal() {
@@ -1903,12 +2153,19 @@
             if (typeof window.selectWorkspace === 'function') {
                 const workspaceName = returnNavTarget === 'paper'
                     ? '智能组卷'
-                    : (returnNavTarget === 'dashboard' ? '工作台' : '题库管理');
+                    : (returnNavTarget === 'dashboard' ? '工作台'
+                        : (returnNavTarget === 'qa' ? 'QA · 常见问题' : '题库管理'));
                 window.selectWorkspace(returnNavTarget, workspaceName);
             }
+            refreshDocumentResultRetention();
         }
 
         document.addEventListener('DOMContentLoaded', () => {
+            const workspace = document.getElementById('importWorkspaceSection');
+            if (workspace && typeof MutationObserver !== 'undefined') {
+                new MutationObserver(refreshDocumentResultRetention)
+                    .observe(workspace, { attributes: true, attributeFilter: ['class', 'hidden'] });
+            }
             const details = document.getElementById('importSourceDetails');
             if (details) details.addEventListener('toggle', () => {
                 const images = document.getElementById('texImagesSection');
@@ -1943,11 +2200,11 @@
         }
 
         function selectedPdfSourceVerification() {
-            return selectedPdfStrategy() === 'layout_aware' && !!document.getElementById('pdfVerifySuspicions')?.checked;
+            return selectedPdfStrategy() === 'layout_aware' && document.getElementById('pdfVerifySuspicions')?.checked !== false;
         }
 
         function selectedDocxSourceVerification() {
-            return !!document.getElementById('docxVerifySuspicions')?.checked;
+            return document.getElementById('docxVerifySuspicions')?.checked !== false;
         }
 
         function updatePdfVerificationOption() {
@@ -1956,7 +2213,7 @@
             const enabled = selectedPdfStrategy() === 'layout_aware';
             if (checkbox) checkbox.disabled = !enabled;
             if (note) note.textContent = enabled
-                ? '开启后仅对疑点额外请求模型核验；关闭不影响正常导入。'
+                ? '对照原页核对疑点；明确差异自动修正并复核，最多 3 轮，通过后不再提示。'
                 : '仅智能图文提取模式可用；当前模式不额外调用模型核验疑点。';
         }
 
@@ -2999,6 +3256,7 @@
         }
 
         function beginDocumentImportTask() {
+            if (typeof stopDocumentResultRetention === 'function') stopDocumentResultRetention();
             documentImportTaskGeneration += 1;
             stopCurrentDocumentPoll();
             window.currentPdfTaskId = null;
@@ -3093,8 +3351,8 @@
                         if (subText) {
                             if (task.status === 'source_verification') {
                                 subText.textContent = task.document_type === 'docx'
-                                    ? '正在按所选设置核验 Word 原文；结果保留在可选提取说明中。'
-                                    : '正在按所选设置核验原页；结果保留在可选提取说明中。';
+                                    ? '正在自动核验 Word 原文疑点，确认无误后不再提示。'
+                                    : '正在自动核验原页疑点，确认无误后不再提示。';
                             } else if (task.status === 'layout_analysis') {
                                 subText.textContent = '正在对照原页提取配图并核对归属，不确定的图片将保留供人工核对...';
                             } else if (task.status === 'extracting_docx' || (task.log && task.log.includes('OMML'))) {
@@ -3104,7 +3362,10 @@
                                     ? '保留可靠原生文字，仅识别局部区域；复杂页面继续整页识别，请稍候...'
                                     : '正在通过多模态视觉引擎并行转译图文与公式，请稍候...';
                             } else if (task.status === 'ai_splitting' || (task.log && task.log.includes('大模型') || task.log.includes('pdf-inspector') || task.log.includes('Word 原生'))) {
-                                subText.textContent = '文本与公式已提取完毕，正在通过大模型进行题目切片与属性匹配...';
+                                subText.textContent = '文本与公式已提取完毕，正在通过大模型进行题目切片与属性匹配...' +
+                                    (Number.isSafeInteger(task.diagnostics?.pdf_splitting?.timeout_seconds)
+                                        && task.diagnostics.pdf_splitting.timeout_seconds > 0 && task.diagnostics.pdf_splitting.timeout_seconds <= 3600
+                                        ? `每次超时 ${task.diagnostics.pdf_splitting.timeout_seconds} 秒，可恢复失败最多重试一次，复用已提取内容。` : '');
                             } else if (task.status === 'completed') {
                                 subText.textContent = '拆解完成，正在呈现题目审查列表...';
                             }
@@ -3119,15 +3380,16 @@
                     if (task.status === 'completed') {
                         if (!finishDocumentPoll(identity)) return;
                         replaceParsedQuestions(task.data || []);
+                        if (typeof startDocumentResultRetention === 'function') startDocumentResultRetention(taskId);
                         const isWordTask = task.document_type === 'docx';
                         const documentLabel = isWordTask ? 'Word' : 'PDF';
                         appendImportLog(`${documentLabel} 试卷分析并拆解成功！共分析出 ${parsedQuestionsData.length} 道数学题。`, 'success');
                         if (isWordTask && task.diagnostics) {
                             const report = task.diagnostics;
                             const converted = (report.omml_converted || 0) + (report.mtef_converted || 0);
-                            const reviewCount = report.review_required || 0;
+                            const reviewCount = Number(report.word_extraction_review_count ?? report.review_required ?? 0);
                             appendImportLog(`Word 提取报告：${converted} 个公式已转换，${report.images_extracted || 0} 张图片已保留。` +
-                                (reviewCount > 0 ? `提取阶段标记 ${reviewCount} 处疑点，可按需展开提取说明查看，不影响导入。` : ''), reviewCount > 0 ? 'warning' : 'info');
+                                (reviewCount > 0 ? `仍有 ${reviewCount} 处提取疑点，可展开提取说明查看。` : ''), reviewCount > 0 ? 'warning' : 'info');
                             const structuralMathType = report.mtef_structural_converted || 0;
                             const annotatedMathType = report.mtef_annotation_converted || 0;
                             const compatibleMathType = report.mtef_compatibility_converted || 0;
@@ -3143,7 +3405,7 @@
                                 appendImportLog(`Word 排版语义：已恢复 ${restoredNumbers} 个自动编号、${restoredFormatting} 处上下标/下划线/强调格式。`, 'info');
                             }
                             if (reviewCount > 0) {
-                                showToast(`Word 提取阶段标记 ${reviewCount} 处公式、字符、图片或表格疑点，可按需展开提取说明查看，不影响导入。`, 'warning');
+                                showToast(`Word 仍有 ${reviewCount} 处提取疑点，可展开提取说明查看，不影响导入。`, 'warning');
                             }
                         }
                         appendSourceIntegrityLog(task.diagnostics);
@@ -3168,6 +3430,12 @@
                     } else if (task.status === 'error') {
                         if (!finishDocumentPoll(identity)) return;
                         appendImportLog(`分析失败: ${task.error || '未知错误'}`, 'error');
+                        const splittingSummary = paperSplittingReportSummary(task.diagnostics?.pdf_splitting);
+                        if (splittingSummary) {
+                            appendImportLog(splittingSummary, 'info');
+                            document.getElementById('importSubLoadingText').textContent =
+                                '逐页提取已经完成，整卷拆题未完成。' + splittingSummary;
+                        }
                         
                         const loadingIcon = document.querySelector('#importLoadingState .fa-spinner');
                         if (loadingIcon) {
@@ -3464,6 +3732,8 @@
                 question_type: typeInput ? typeInput.value : String(q.question_type || ''),
                 image_paths: safeDuplicateImagePaths([
                     ...(Array.isArray(q.image_paths) ? q.image_paths : []),
+                    ...(window.MathBankImageAssets ? window.MathBankImageAssets.collect(contentInput ? contentInput.value : q.content) : []),
+                    ...(window.MathBankImageAssets ? window.MathBankImageAssets.collect(answerInput ? answerInput.value : q.answer_markdown) : []),
                     ...collectTikzAssetImagePaths(contentAssets, answerAssets),
                     legacyReference
                 ]),
@@ -3493,6 +3763,8 @@
                 answer_markdown: answerInput ? answerInput.value : '',
                 question_type: typeInput ? typeInput.value : '',
                 image_paths: safeDuplicateImagePaths([
+                    ...(window.MathBankImageAssets ? window.MathBankImageAssets.collect(contentInput ? contentInput.value : '') : []),
+                    ...(window.MathBankImageAssets ? window.MathBankImageAssets.collect(answerInput ? answerInput.value : '') : []),
                     ...(typeof uploadedImages !== 'undefined' ? uploadedImages : []),
                     ...(typeof uploadedAnswerImages !== 'undefined' ? uploadedAnswerImages : []),
                     ...(typeof TikzState !== 'undefined' ? TikzState.referencePaths() : []),
@@ -4584,6 +4856,33 @@
             return false;
         }
 
+        function applyParsedAssetPathMap(rawMapping, generation, index, question) {
+            if (!isParsedQuestionSaveContextCurrent(generation, index, question)
+                    || !window.MathBankImageAssets) return;
+            const mapping = window.MathBankImageAssets.normalizeMap(rawMapping);
+            if (!Object.keys(mapping).length) return;
+            const card = document.getElementById(`parsed-card-${index}`);
+            if (!card) return;
+            const content = card.querySelector('.card-content-textarea');
+            const answer = card.querySelector('.card-answer-textarea');
+            const mapped = window.MathBankImageAssets.mapRecord({
+                ...question,
+                content: content ? content.value : question.content,
+                answer_markdown: answer ? answer.value : question.answer_markdown
+            }, mapping);
+            Object.assign(question, mapped);
+            window.MathBankImageAssets.mapInput(content, mapping);
+            window.MathBankImageAssets.mapInput(answer, mapping);
+            const badges = document.getElementById(`card-images-badges-${index}`);
+            if (badges) {
+                badges.innerHTML = '';
+                (question.image_paths || []).forEach(path => appendSafeImageBadge(badges, path));
+            }
+            if (typeof renderParsedCardPreview === 'function') {
+                renderParsedCardPreview(card, mapped.content, mapped.answer_markdown);
+            }
+        }
+
         function saveParsedQuestion(index) {
             const q = parsedQuestionsData[index];
             if (!q) return Promise.resolve(true);
@@ -4599,6 +4898,23 @@
             const card = document.getElementById(`parsed-card-${index}`);
             if (!card) return Promise.reject(new Error('Card element not found'));
             const saveBtn = card.querySelector('.card-save-btn');
+            const captureSaveSnapshot = () => {
+                const field = name => String(card.querySelector(`.card-${name}`)?.value || '');
+                const contentAssets = safePersistedTikzAssets(q.content_tikz_assets);
+                const answerAssets = safePersistedTikzAssets(q.answer_tikz_assets);
+                const duplicateItem = buildParsedQuestionDuplicateItem(index, saveGeneration);
+                return {
+                    content: field('content-textarea').trim(), answer_markdown: field('answer-textarea').trim(),
+                    question_type: field('qtype'), difficulty: field('difficulty'), source: field('source').trim(),
+                    category_compulsory: field('compulsory'), category_chapter: field('chapter'),
+                    category_knowledge: field('knowledge'),
+                    image_paths: duplicateItem ? duplicateItem.image_paths : safeDuplicateImagePaths(q.image_paths),
+                    content_tikz_assets: contentAssets, answer_tikz_assets: answerAssets,
+                    tikz_code: String(contentAssets[0] ? (contentAssets[0].tikz_code || '') : (q.tikz_code || '')),
+                    tikz_reference_image_path: String(contentAssets[0]
+                        ? (contentAssets[0].reference_image_path || '') : (q.tikz_reference_image_path || ''))
+                };
+            };
 
             const restoreButton = () => {
                 if (!isParsedQuestionSaveContextCurrent(saveGeneration, index, q) || !saveBtn) return;
@@ -4728,6 +5044,7 @@
                 if (duplicateOverride === 'independent') {
                     formData.append('duplicate_override', 'independent');
                 }
+                const submittedSnapshot = captureSaveSnapshot();
 
                 const response = await fetch('/api/questions', {
                     method: 'POST',
@@ -4755,26 +5072,51 @@
                 // index. The backend save remains valid, but stale callbacks
                 // must never mutate the new import session or its card.
                 if (!isParsedQuestionSaveContextCurrent(saveGeneration, index, q)) return true;
-                q.saved = true;
+                if (typeof applyParsedAssetPathMap === 'function') {
+                    applyParsedAssetPathMap(data.asset_path_map, saveGeneration, index, q);
+                }
+                const confirmedSnapshot = window.MathBankImageAssets
+                    ? window.MathBankImageAssets.mapRecord(submittedSnapshot,
+                        window.MathBankImageAssets.normalizeMap(data.asset_path_map))
+                    : submittedSnapshot;
+                const currentSnapshot = captureSaveSnapshot();
+                q.saved = JSON.stringify(currentSnapshot) === JSON.stringify(confirmedSnapshot);
+                q.modifiedAfterSave = !q.saved;
+                Object.assign(q, currentSnapshot);
+                // The request owns private reference assets, while this array
+                // also feeds the import card's visible thumbnail fallback.
+                const privateReferences = new Set([
+                    ...currentSnapshot.content_tikz_assets.map(asset => asset.reference_image_path),
+                    ...currentSnapshot.answer_tikz_assets.map(asset => asset.reference_image_path),
+                    currentSnapshot.tikz_reference_image_path
+                ].map(path => window.MathBankSafe.safeImageUrl(path)).filter(Boolean));
+                q.image_paths = q.image_paths.filter(path => !privateReferences.has(path));
+                if (typeof refreshDocumentResultRetention === 'function') refreshDocumentResultRetention();
                 q.duplicateIndexWarning = String(data.warning || '');
                 const statusBadge = card.querySelector('.card-status-badge');
-                statusBadge.textContent = '已导入';
-                statusBadge.className = 'card-status-badge text-[10px] font-bold px-2 py-0.5 rounded bg-green-50 text-green-700 border border-green-200 animate-pulse';
-                saveBtn.className = 'card-save-btn px-4 py-1.5 rounded-lg bg-emerald-50 text-emerald-700 font-bold text-[10px] border border-emerald-300 hover:bg-emerald-100 transition-colors';
-                saveBtn.innerHTML = '<i class="fa-solid fa-rotate-right"></i> <span>再次导入</span>';
+                statusBadge.textContent = q.saved ? '已导入' : '仍有修改待导入';
+                statusBadge.className = 'card-status-badge text-[10px] font-bold px-2 py-0.5 rounded border ' +
+                    (q.saved ? 'bg-green-50 text-green-700 border-green-200 animate-pulse' : 'bg-amber-50 text-amber-700 border-amber-200');
+                saveBtn.className = q.saved
+                    ? 'card-save-btn px-4 py-1.5 rounded-lg bg-emerald-50 text-emerald-700 font-bold text-[10px] border border-emerald-300 hover:bg-emerald-100 transition-colors'
+                    : 'card-save-btn glass-btn text-brand-700 font-bold px-4 py-1.5 rounded-lg text-[10px]';
+                saveBtn.innerHTML = q.saved ? '<i class="fa-solid fa-rotate-right"></i> <span>再次导入</span>'
+                    : '<i class="fa-solid fa-file-arrow-up"></i> <span>导入此题</span>';
                 saveBtn.disabled = false;
                 const cb = card.querySelector('.card-select-checkbox');
                 if (cb) {
-                    cb.disabled = true;
-                    cb.checked = false;
-                    cb.classList.add('opacity-50');
+                    cb.disabled = q.saved;
+                    cb.checked = !q.saved;
+                    if (q.saved) cb.classList.add('opacity-50');
+                    else cb.classList.remove('opacity-50');
                 }
                 if (typeof updateSelectedCount === 'function') updateSelectedCount();
                 if (options.suppressToast !== true) {
                     if (data.warning) {
                         showToast(String(data.warning), 'warning');
                     } else {
-                        showToast(`第 ${index + 1} 题导入成功！`);
+                        showToast(q.saved ? `第 ${index + 1} 题导入成功！`
+                            : `第 ${index + 1} 题已导入；保存期间的新修改仍待导入。`, q.saved ? 'success' : 'info');
                     }
                 }
                 if (options.suppressRefresh !== true) {
@@ -5074,7 +5416,7 @@
                         closeImportModal();
                     }, 1500);
                 } else {
-                    showToast(`批量导入已完成！成功: ${successCount}/${indicesToSave.length}${fingerprintWarningNote}。疑似题或失败题已保留供继续审查。`, 'warning');
+                    showToast(`批量导入已完成！成功: ${successCount}/${indicesToSave.length}${fingerprintWarningNote}。疑似题、失败题及保存期间的新修改已保留，尚未全部导入。`, 'warning');
                 }
                 return true;
             })().catch(error => {

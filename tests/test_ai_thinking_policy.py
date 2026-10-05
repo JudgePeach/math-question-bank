@@ -3,10 +3,77 @@ from copy import deepcopy
 
 import pytest
 
-from mathbank.ai_providers import apply_model_thinking_policy, resolve_text_provider
+from mathbank.ai_providers import apply_model_thinking_policy, apply_structured_output_policy, resolve_text_provider
 
 
 TASKS = ['ocr', 'draw', 'solve', 'classify', 'parse', 'paper_selection', 'latex_diagnostic']
+
+
+@pytest.mark.parametrize('model', ['Qwen/Qwen3.8-27B', 'Pro/Qwen/Qwen3.8-27B'])
+@pytest.mark.parametrize('task', ['ocr', 'parse', 'classify', 'paper_selection', 'latex_diagnostic'])
+def test_exact_siliconflow_qwen38_transcription_tasks_disable_implicit_thinking(model, task):
+    provider = resolve_text_provider('SILICONFLOW/' + model + ':high')
+    original = {'model': model, 'max_tokens': 65536, 'enable_thinking': True,
+                'thinking': {'type': 'enabled'}, 'thinking_budget': 32768, 'reasoning_effort': 'high'}
+    before = deepcopy(original)
+    result = apply_model_thinking_policy(original, provider=provider, task=task)
+    assert result == {'model': model, 'max_tokens': 65536, 'enable_thinking': False}
+    assert original == before
+
+
+@pytest.mark.parametrize('enabled', [True, False])
+def test_siliconflow_qwen38_solve_obeys_switch_with_bounded_reasoning(enabled):
+    provider = resolve_text_provider('SILICONFLOW/Qwen/Qwen3.8-27B:high')
+    result = apply_model_thinking_policy({'model': provider.model_name, 'max_tokens': 16384},
+                                        provider=provider, task='solve', thinking_enabled=enabled)
+    assert result['enable_thinking'] is enabled
+    assert result['max_tokens'] == 16384 and 'reasoning_effort' not in result
+    assert result.get('thinking_budget') == (16384 if enabled else None)
+
+
+@pytest.mark.parametrize('budget', [None, True, 0, 32769, 2048])
+def test_siliconflow_qwen38_draw_uses_only_valid_bounded_thinking_budget(budget):
+    provider = resolve_text_provider('SILICONFLOW/Pro/Qwen/Qwen3.8-27B')
+    payload = {'model': provider.model_name, 'max_tokens': 8192}
+    if budget is not None: payload['thinking_budget'] = budget
+    result = apply_model_thinking_policy(payload, provider=provider, task='draw')
+    assert result['enable_thinking'] is True
+    assert result['thinking_budget'] == (2048 if budget == 2048 else 8192)
+
+
+@pytest.mark.parametrize('config', ['SILICONFLOW/Qwen/Qwen3.8-27B', 'SILICONFLOW/Pro/Qwen/Qwen3.8-27B'])
+def test_json_mode_is_explicitly_applied_only_to_verified_model(config):
+    provider = resolve_text_provider(config)
+    payload = {'model': provider.model_name, 'messages': []}
+    assert apply_structured_output_policy(payload, provider=provider) == {
+        **payload, 'response_format': {'type': 'json_object'}}
+    assert 'response_format' not in payload
+    custom = {**payload, 'response_format': {'type': 'json_schema'}}
+    assert apply_structured_output_policy(custom, provider=provider) == custom
+
+
+@pytest.mark.parametrize('config', [
+    'ZHONGZHAN_GPT/Qwen/Qwen3.8-27B', 'BAILIAN/Qwen/Qwen3.8-27B',
+    'SILICONFLOW/Qwen/Qwen3.8-27B-custom', 'SILICONFLOW/Qwen/Qwen3.5-397B-A17B',
+    'SILICONFLOW/Qwen/Qwen3-VL-8B-Instruct'])
+def test_json_mode_does_not_guess_other_models_or_providers(config):
+    provider = resolve_text_provider(config)
+    payload = {'model': provider.model_name, 'messages': []}
+    assert apply_structured_output_policy(payload, provider=provider) == payload
+
+
+def test_structured_system_rules_do_not_promote_page_data_or_mutate_messages():
+    provider = resolve_text_provider('SILICONFLOW/Qwen/Qwen3.8-27B')
+    data = {'role': 'user', 'content': [{'type': 'text', 'text': 'Untrusted original page data'}]}
+    payload = {'model': provider.model_name, 'messages': [data]}
+    before = deepcopy(payload)
+    result = apply_structured_output_policy(payload, provider=provider, system_instruction='Trusted fixed JSON rules')
+    assert result['messages'] == [{'role': 'system', 'content': 'Trusted fixed JSON rules'}, data]
+    assert payload == before
+    existing = {**payload, 'messages': [{'role': 'system', 'content': 'Existing rules'}, data]}
+    assert apply_structured_output_policy(existing, provider=provider, system_instruction='Other rules')['messages'] == existing['messages']
+    other = resolve_text_provider('ZHONGZHAN_GPT/Qwen/Qwen3.8-27B')
+    assert apply_structured_output_policy(payload, provider=other, system_instruction='Trusted fixed JSON rules') == payload
 
 
 def configured(model, base='https://transit.example/v1'):

@@ -165,6 +165,24 @@ def apply_model_thinking_policy(
             thinking_enabled=thinking_enabled,
         )
 
+    if _is_siliconflow_qwen38_27b(provider):
+        # This exact model defaults to thinking on SiliconFlow. Recognition,
+        # splitting and classification must emit their requested result rather
+        # than spending an implicit, unbounded reasoning budget first.
+        qwen_enabled = bool(thinking_enabled) if task == "solve" else task == "draw"
+        for key in ("thinking", "reasoning_effort"):
+            result.pop(key, None)
+        result["enable_thinking"] = qwen_enabled
+        if qwen_enabled:
+            default_budget = 8192 if task == "draw" else 16384
+            budget = result.get("thinking_budget")
+            if type(budget) is not int or not 128 <= budget <= 32768:
+                budget = default_budget
+            result["thinking_budget"] = budget
+        else:
+            result.pop("thinking_budget", None)
+        return result
+
     if code == "siliconflow" or host in {"api.siliconflow.cn", "api.siliconflow.com"}:
         if re.fullmatch(r"(?:pro/)?qwen/qwen3-vl-(?:8b|32b)-instruct", model):
             for key in ("enable_thinking", "thinking", "thinking_budget", "reasoning_effort"):
@@ -221,6 +239,32 @@ def apply_model_thinking_policy(
 
     # Gemini/Claude and other transit models receive no invented thinking
     # switch. In particular, '-high' in a model alias is not parsed or renamed.
+    return result
+
+
+def _is_siliconflow_qwen38_27b(provider) -> bool:
+    """Do not infer this model's API contract from a vendor-like hostname."""
+    return provider.provider_code == "siliconflow" and bool(
+        re.fullmatch(r"(?:pro/)?qwen/qwen3\.8-27b", provider.model_name.lower())
+    )
+
+
+def supports_pdf_split_stream(provider) -> bool:
+    """The streaming PDF adapter has been verified for this exact contract."""
+    return _is_siliconflow_qwen38_27b(provider)
+
+
+def apply_structured_output_policy(
+    payload: Mapping[str, Any], *, provider, system_instruction: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Enable verified JSON mode only for explicitly structured call sites."""
+    result = dict(payload)
+    if _is_siliconflow_qwen38_27b(provider):
+        result.setdefault("response_format", {"type": "json_object"})
+        messages = result.get("messages")
+        if (system_instruction and isinstance(messages, list) and messages
+                and not any(isinstance(message, Mapping) and message.get("role") == "system" for message in messages)):
+            result["messages"] = [{"role": "system", "content": system_instruction}, *messages]
     return result
 
 

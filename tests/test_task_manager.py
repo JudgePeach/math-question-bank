@@ -1,12 +1,36 @@
+import datetime as dt
 import threading
+from types import SimpleNamespace
 
 import pytest
 
+import mathbank.task_manager as task_manager
 from mathbank.task_manager import (
     TaskCancelled,
     TaskManager,
     TaskQueueFull,
 )
+
+
+@pytest.fixture
+def task_clock(monkeypatch):
+    class Clock(dt.datetime):
+        current = dt.datetime(2026, 10, 2, tzinfo=dt.timezone.utc)
+
+        @classmethod
+        def now(cls, tz=None):
+            return cls.current.astimezone(tz)
+
+        @classmethod
+        def advance(cls, seconds):
+            cls.current += dt.timedelta(seconds=seconds)
+
+    monkeypatch.setattr(
+        task_manager,
+        "dt",
+        SimpleNamespace(datetime=Clock, timezone=dt.timezone, timedelta=dt.timedelta),
+    )
+    return Clock
 
 
 def test_cancelled_task_cannot_be_overwritten_as_complete():
@@ -193,3 +217,147 @@ def test_periodic_maintenance_cleans_expired_assets_without_new_tasks():
     assert cleaned.wait(timeout=1)
     assert manager.snapshot("idle-terminal") is None
     manager.shutdown()
+
+
+def test_retained_completed_import_preserves_images_until_activity_stops(task_clock, tmp_path):
+    image = tmp_path / "unsaved-figure.png"
+    image.write_bytes(b"temporary import image")
+    cleaned = []
+
+    def cleanup(paths):
+        cleaned.extend(paths)
+        image.unlink()
+
+    manager = TaskManager(max_workers=1, max_queue=0, temp_asset_cleanup=cleanup)
+    try:
+        manager.create("paper", temp_assets=[str(image)])
+        manager.complete("paper", data=[{"content": "question", "source_review": {"proof": "unchanged"}}])
+        completed = manager.snapshot("paper")
+        # A teacher continues proofreading well beyond the original one-hour TTL.
+        for _minute in range(125):
+            task_clock.advance(60)
+            assert manager.retain("paper") is True
+            assert manager.cleanup() == 0
+            assert image.is_file()
+            assert manager.snapshot("paper") == completed
+        assert cleaned == []
+        task_clock.advance(3599)
+        assert manager.cleanup() == 0
+        task_clock.advance(1)
+        assert manager.cleanup() == 1
+        assert not image.exists()
+        assert manager.snapshot("paper") is None
+        assert manager.retain("paper") is False
+        assert cleaned == [str(image)]
+    finally:
+        manager.shutdown()
+
+
+def test_retention_uses_completion_when_later_than_active_heartbeat(task_clock):
+    manager = TaskManager(max_workers=1, max_queue=0)
+    try:
+        manager.create("paper", progress=25)
+        active = manager.snapshot("paper")
+        assert manager.retain("paper") is True
+        assert manager.snapshot("paper") == active
+        task_clock.advance(3601)
+        assert manager.cleanup() == 0  # Live jobs never expire as terminal results.
+        manager.complete("paper", data=[1])
+        task_clock.advance(3599)
+        assert manager.cleanup() == 0
+        task_clock.advance(1)
+        assert manager.cleanup() == 1
+    finally:
+        manager.shutdown()
+
+
+@pytest.mark.parametrize("terminal", ["cancelled", "error"])
+def test_retention_cannot_revive_cancelled_or_failed_tasks(task_clock, terminal):
+    manager = TaskManager(max_workers=1, max_queue=0)
+    try:
+        manager.create("paper")
+        assert manager.retain("paper") is True
+        if terminal == "cancelled":
+            manager.cancel("paper")
+        else:
+            manager.fail("paper", "failed")
+        ended = manager.snapshot("paper")
+        task_clock.advance(3599)
+        assert manager.retain("paper") is False
+        assert manager.snapshot("paper") == ended
+        task_clock.advance(1)
+        assert manager.cleanup() == 1
+        assert manager.retain("paper") is False
+    finally:
+        manager.shutdown()
+
+
+def test_record_capacity_keeps_retained_results_and_evicts_inactive_ones(task_clock):
+    cleaned = []
+    manager = TaskManager(
+        max_workers=1, max_queue=0, max_records=2,
+        temp_asset_cleanup=lambda paths: cleaned.extend(paths),
+    )
+    try:
+        manager.create("active", temp_assets=["active.png"])
+        manager.complete("active")
+        assert manager.retain("active") is True
+        manager.create("inactive", temp_assets=["inactive.png"])
+        manager.complete("inactive")
+        manager.create("replacement")
+        assert manager.snapshot("active") is not None
+        assert manager.snapshot("inactive") is None
+        assert cleaned == ["inactive.png"]
+        manager.complete("replacement")
+        assert manager.retain("replacement") is True
+        with pytest.raises(TaskQueueFull):
+            manager.create("must-wait")
+        assert manager.snapshot("active") is not None
+        assert manager.snapshot("replacement") is not None
+        assert manager.snapshot("must-wait") is None
+        assert cleaned == ["inactive.png"]
+        task_clock.advance(3600)
+        manager.create("after-expiry")
+        assert manager.snapshot("after-expiry") is not None
+        assert cleaned == ["inactive.png", "active.png"]
+    finally:
+        manager.shutdown()
+
+
+def test_concurrent_retention_and_cleanup_keep_terminal_evidence(task_clock):
+    cleaned = []
+    manager = TaskManager(
+        max_workers=1, max_queue=0,
+        temp_asset_cleanup=lambda paths: cleaned.extend(paths),
+    )
+    try:
+        manager.create("paper", temp_assets=["image.png"])
+        manager.complete("paper", data=[{"source_review": {"proof": "unchanged"}}])
+        completed = manager.snapshot("paper")
+        task_clock.advance(3599)
+        barrier = threading.Barrier(25)
+        failures = []
+
+        def worker(index):
+            try:
+                barrier.wait(timeout=2)
+                if index % 2:
+                    assert manager.retain("paper") is True
+                else:
+                    assert manager.cleanup() == 0
+            except BaseException as exc:
+                failures.append(exc)
+
+        threads = [threading.Thread(target=worker, args=(index,)) for index in range(25)]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join(timeout=3)
+        assert not any(thread.is_alive() for thread in threads)
+        assert failures == []
+        task_clock.advance(1)
+        assert manager.cleanup() == 0
+        assert manager.snapshot("paper") == completed
+        assert cleaned == []
+    finally:
+        manager.shutdown()

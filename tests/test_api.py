@@ -590,7 +590,7 @@ def test_parse_paper_flows_use_shared_provider_resolution(client):
         assert "reasoning_effort" not in kwargs["json"]
         assert "thinking_budget" not in kwargs["json"]
         assert "max_tokens" not in kwargs["json"]
-        assert kwargs["timeout"] == 180
+        assert kwargs["timeout"] == 600
 
 def test_figure_align_api(client):
     headers = {"X-Local-Token": LOCAL_TOKEN}

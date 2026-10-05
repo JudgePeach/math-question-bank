@@ -1,4 +1,5 @@
 import pytest
+from pathlib import Path
 from types import SimpleNamespace
 from sqlalchemy import create_engine, event
 from sqlalchemy.exc import OperationalError
@@ -195,11 +196,16 @@ def test_configure_sqlite_wal_fails_when_delete_fallback_also_fails(tmp_path):
         configure_sqlite_wal(engine)
 
 
-def test_healthz_endpoint_is_lightweight_and_ready(client):
-    from main import SERVER_INSTANCE_ID
+def test_healthz_endpoint_is_lightweight_and_ready(client, monkeypatch):
+    from main import SERVER_INSTANCE_ID, UPLOAD_DIR
+    from mathbank import health
+
+    # The test app stores images in test_uploads, so readiness must not depend
+    # on a real user's uploads directory existing beside the source checkout.
+    monkeypatch.setattr(health, "UPLOADS_DIR", Path(UPLOAD_DIR))
 
     response = client.get("/healthz")
 
-    assert response.status_code == 200
+    assert response.status_code == 200, response.text
     assert response.json()["status"] == "ready"
     assert response.json()["server_instance_id"] == SERVER_INSTANCE_ID

@@ -195,7 +195,7 @@ global.window = {
 };
 """ + helper_source + r"""
 const fillin = String.raw`\fillin`;
-const renderedFillin = String.raw`$\underline{\hspace{1.5cm}}$`;
+const renderedFillin = String.raw`\(\underline{\hspace{1.5cm}}\)`;
 for (let count = 1; count <= 6; count += 1) {
   const source = `11${fillin.repeat(count)}`;
   const rendered = window.preprocessFormulaForKaTeX(source);
@@ -245,7 +245,9 @@ if (window.preprocessFormulaForKaTeX(multilineSource) !== multilineSource) {
 }
 """
     result = subprocess.run(
-        [node, "-e", script],
+        [node, "-"],
+        input=script,
+        encoding="utf-8",
         cwd=PROJECT_ROOT,
         text=True,
         capture_output=True,
@@ -326,7 +328,9 @@ if (katexCalls !== 2 || choicesCalls !== 2) {
 }
 """
     result = subprocess.run(
-        [node, "-e", script],
+        [node, "-"],
+        input=script,
+        encoding="utf-8",
         cwd=PROJECT_ROOT,
         text=True,
         capture_output=True,
@@ -1398,7 +1402,7 @@ def test_application_shell_navigation_reuses_peer_workspaces():
         ".app-navigation",
         ".app-content-shell",
         '.app-nav-item[aria-current="page"]',
-        "grid-template-columns: repeat(5, minmax(0, 1fr))",
+        "grid-template-columns: repeat(6, minmax(0, 1fr))",
         "padding-bottom: 64px",
     ):
         assert marker in css_source
@@ -1731,14 +1735,17 @@ def test_bank_browser_uses_detail_first_layout_and_card_based_editor_dialog():
     assert 'onclick="selectWorkspace(\'import\', \'导入中心\')"' in index_source
     assert 'role="separator"' in index_source
     assert 'aria-orientation="vertical"' in index_source
-    assert "openQuestionEditorModal('classification')" in index_source
+    # The established editor entry opens content/OCR by default; PDF engine
+    # upgrades must preserve that existing user-facing behavior.
+    assert 'onclick="openQuestionEditorModal()"' in index_source
     assert index_source.index('class="bank-management-header') < index_source.index('class="bank-filter-toolbar"')
     assert index_source.index('class="bank-filter-toolbar"') < index_source.index('id="sidebarSection"')
     assert "bank-question-card" in editor_source
     assert "bank-question-excerpt" in editor_source
     assert "bank-question-meta" in editor_source
     assert "function switchQuestionEditorPanel(panelId)" in editor_source
-    assert "function openQuestionEditorModal(panelId = 'classification')" in editor_source
+    assert "function openQuestionEditorModal(panelId = 'content')" in editor_source
+    assert "switchContentTab('ocr')" in editor_source
     assert "function closeQuestionEditorModal()" in editor_source
     assert "function openNewQuestionEditor()" in editor_source
     assert "function setBankSplitRatio(value" in editor_source

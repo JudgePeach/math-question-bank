@@ -52,17 +52,23 @@ def setup(tmp_path, monkeypatch):
     add_question(state)
     add_question(state, page=2)
     state.response = {"choices": [{"finish_reason": "stop", "message": {"content": json.dumps({"items": [
-        {"id": "item_001", "decision": "equivalent", "evidence": "原页函数及所求不变，已知改为给出。"},
-        {"id": "item_002", "decision": "uncertain", "evidence": "原页图像中的条件边界看不清。"},
+        {"id": "item_001", "source_number": 14, "source_pages": [1], "checks": checks(),
+         "decision": "equivalent", "evidence": "原页函数及所求不变，已知改为给出。"},
+        {"id": "item_002", "source_number": 15, "source_pages": [2], "checks": checks(math_and_conditions=False),
+         "decision": "uncertain", "evidence": "原页图像中的条件边界看不清。"},
     ]})}}], "usage": {"prompt_tokens": 100, "completion_tokens": 50, "total_tokens": 155}}
     builder = verify.prompts.build_pdf_source_verification_prompt
     def prompt(items):
-        state.prompt_items.append(deepcopy(items))
+        state.latest_prompt_items = deepcopy(items)
         return builder(items)
     monkeypatch.setattr(verify.prompts, "build_pdf_source_verification_prompt", prompt)
     def post(config, payload, **kwargs):
         state.calls.append((config, deepcopy(payload), kwargs))
-        return SimpleNamespace(status_code=200, json=lambda: deepcopy(state.response))
+        state.prompt_items.append(deepcopy(state.latest_prompt_items))
+        response = deepcopy(state.response)
+        if getattr(state, "batch_responses", None):
+            response["choices"][0]["message"]["content"] = json.dumps(state.batch_responses.pop(0))
+        return SimpleNamespace(status_code=200, json=lambda: response)
     monkeypatch.setattr(verify, "post_chat_completion", post)
     return state
 
@@ -73,8 +79,15 @@ def call(setup, data=None, **kwargs):
     return verify.verify_pdf_source_suspicions(setup.questions, setup.diagnostics, setup.urls, setup.numbers, **kwargs)
 
 
-def all_equivalent(count):
-    return {"items": [{"id": f"item_{index + 1:03d}", "decision": "equivalent", "evidence": "原页全部条件与题干一致，仅表述排版差异。"}
+def checks(**overrides):
+    return {**{key: True for key in verify._CHECKS}, **overrides}
+
+
+def all_equivalent(count, state):
+    return {"items": [{"id": f"item_{index + 1:03d}", "source_number": 14 + index,
+                       "source_pages": next(item["source_pages"] for item in state.diagnostics["pdf_review_items"]
+                                            if item["question_index"] == index), "checks": checks(),
+                       "decision": "equivalent", "evidence": "原页全部条件与题干一致，仅表述排版差异。"}
                       for index in range(count)]}
 
 
@@ -82,23 +95,28 @@ def test_confirmed_only_clear_review_keep_original_evidence_and_text(setup):
     original = deepcopy(setup.questions)
     report = call(setup)
     assert report == {"status": "completed", "calls": 1, "checked": 2, "confirmed": 1, "pending": 1, "skipped": 0,
-        "usage": setup.response["usage"], "notes": [], "skipped_reasons": [], "items": [
+        "usage": setup.response["usage"], "notes": [], "skipped_reasons": [], "invalid_items": [], "items": [
             {"id": "item_001", "question_index": 0, "source_number": 14, "source_pages": [1],
-             "decision": "equivalent", "evidence": "原页函数及所求不变，已知改为给出。"},
+             "decision": "equivalent", "evidence": "原页函数及所求不变，已知改为给出。", "checks": checks()},
             {"id": "item_002", "question_index": 1, "source_number": 15, "source_pages": [2],
-             "decision": "uncertain", "evidence": "原页图像中的条件边界看不清。"}]}
+             "decision": "uncertain", "evidence": "原页图像中的条件边界看不清。", "checks": checks(math_and_conditions=False)}]}
     confirmed = setup.questions[0]["source_review"]
     assert confirmed["required"] is False and confirmed["verified_by"] == "vision"
     assert confirmed["source_excerpt"] == original[0]["source_review"]["source_excerpt"]
     assert confirmed["reasons"] == original[0]["source_review"]["reasons"]
     assert len(confirmed["verification"]["snapshot_hash"]) == 64
     assert confirmed["verification"]["model"] == setup.provider.model_name
-    assert setup.questions[1] == original[1]
+    pending = setup.questions[1]["source_review"]
+    assert pending["required"] is True
+    assert pending["verification_attempt"]["decision"] == "uncertain"
+    assert pending["verification_attempt"]["checks"]["math_and_conditions"] is False
+    assert pending["reasons"] == [*original[1]["source_review"]["reasons"], "原页自动核验：原页图像中的条件边界看不清。"]
     for new, old in zip(setup.questions, original):
         assert new["content"] == old["content"] and new["answer_markdown"] == old["answer_markdown"]
     assert setup.diagnostics["source_review_count"] == 1
     assert [item["question_index"] for item in setup.diagnostics["pdf_review_items"]] == [1]
     payload = setup.calls[0][1]
+    assert setup.calls[0][2]["timeout"] == 600
     assert setup.calls[0][2]["retry_connection"] is False
     assert payload["max_tokens"] == 4096
     assert len([part for part in payload["messages"][0]["content"] if part["type"] == "image_url"]) == 2
@@ -148,21 +166,25 @@ def test_no_required_items_do_not_resolve_provider_or_touch_pages(setup, monkeyp
     ("14. 选取编号Ⅰ的区域，求值。", "选取编号Ⅱ的区域，求值。"),
     ("14. 选取编号１的区域，求值。", "选取编号２的区域，求值。"),
     ("14. 已知 x²，求值。", "给出 x³，求值。"),
-    ("14. 已知 $x=1$，求值。", "给出 [[MBM_unknown]]，求值。"),
-    ("14. 已知 $x=1$，求值。", "给出 $x=1$ [公式待核对]，求值。"),
     ("14. 已知 $x=1$，求值。", "给出 $x=1，求值。"),
-    ("14. 已知 $x=1$。![图](/static/uploads/a.png)", "给出 $x=1$。![图](/static/uploads/b.png)"),
-    ("14. 已知 $x=1$。![图](/static/uploads/a.png)求值。", "给出 $x=1$。求值。![图](/static/uploads/a.png)"),
-    ("14. 已知 $x=1$。![图](/static/uploads/a.png)", "给出 $x=1$。"),
 ])
-def test_critical_formula_condition_or_image_change_never_reaches_model(setup, source, output):
+def test_formula_and_condition_differences_are_checked_against_original_pages(setup, source, output):
     setup.questions.clear()
     setup.diagnostics = {"source_matches": [], "pdf_review_items": []}
     add_question(setup, source=source, output=output)
     original = deepcopy(setup.questions)
-    report = call(setup, all_equivalent(1))
-    assert report["status"] == "no_candidates" and report["skipped"] == report["pending"] == 1
-    assert not setup.calls and setup.questions == original
+    data = all_equivalent(1, setup)
+    data["items"][0].update(decision="different", checks=checks(math_and_conditions=False),
+                             evidence="原页公式或关键条件与候选不同，需要保留核对提示。")
+    report = call(setup, data)
+    assert report["status"] == "completed" and report["checked"] == report["pending"] == 1
+    assert report["confirmed"] == 0 and len(setup.calls) == 2
+    assert setup.questions[0]["source_review"]["repair"]["status"] == "stopped"
+    pending = setup.questions[0]["source_review"]
+    assert pending["required"] is True and pending["verification_attempt"]["decision"] == "different"
+    assert pending["reasons"][:1] == original[0]["source_review"]["reasons"]
+    assert setup.questions[0]["content"] == original[0]["content"]
+    assert setup.prompt_items[0][0]["local_suspicions"]
 
 
 def test_math_tokens_compare_full_content_not_formula_count(setup):
@@ -201,14 +223,14 @@ def test_ambiguous_provenance_or_other_review_reasons_stay_manual(setup, change)
     elif change == "wrong_offsets": match["source_end"] += 1
     elif change == "boolean_index": match["question_index"] = False
     elif change == "conflicting_review_item": item["reasons"] = ["配图待核对"]
-    report = call(setup, all_equivalent(1))
+    report = call(setup, all_equivalent(1, setup))
     assert report["calls"] == 0 and report["pending"] == 1 and report["skipped"] == 1
     assert review["required"] is True
 
 
-@pytest.mark.parametrize("change", ["missing", "duplicate", "unknown", "decision", "extra", "empty_evidence", "long_evidence", "root_field", "not_list"])
+@pytest.mark.parametrize("change", ["duplicate", "unknown", "root_field", "not_list"])
 def test_bad_model_contract_cannot_clear_even_first_valid_item(setup, change):
-    data = all_equivalent(2)
+    data = all_equivalent(2, setup)
     if change == "missing": data["items"].pop()
     elif change == "duplicate": data["items"][1]["id"] = "item_001"
     elif change == "unknown": data["items"][1]["id"] = "unknown"
@@ -224,10 +246,61 @@ def test_bad_model_contract_cannot_clear_even_first_valid_item(setup, change):
     assert setup.questions == original and setup.diagnostics == diagnostics
 
 
+@pytest.mark.parametrize("change,code", [
+    ("missing", "missing_result"), ("decision", "invalid_verdict"), ("extra", "invalid_fields"),
+    ("empty_evidence", "invalid_verdict"), ("long_evidence", "invalid_verdict"),
+    ("missing_field", "invalid_fields"), ("duplicate", "duplicate_id"),
+])
+def test_item_contract_failure_retains_that_question_and_accepts_valid_peer(setup, change, code):
+    data = all_equivalent(2, setup)
+    if change == "missing": data["items"].pop()
+    elif change == "decision": data["items"][1]["decision"] = "probably"
+    elif change == "extra": data["items"][1]["confidence"] = 1
+    elif change == "empty_evidence": data["items"][1]["evidence"] = " "
+    elif change == "long_evidence": data["items"][1]["evidence"] = "字" * 401
+    elif change == "missing_field": data["items"][1].pop("checks")
+    elif change == "duplicate": data["items"].append(deepcopy(data["items"][1]))
+    original = deepcopy(setup.questions[1])
+    report = call(setup, data)
+    assert report["status"] == "partial" and report["calls"] == report["checked"] == report["confirmed"] == 1
+    assert report["pending"] == 1 and report["skipped"] == 0
+    assert setup.questions[0]["source_review"]["required"] is False
+    assert setup.questions[1] == original
+    assert report["invalid_items"] == [{"id": "item_002", "question_index": 1, "source_number": 15,
+                                        "source_pages": [2], "code": code, "reason": verify._INVALID_REASONS[code]}]
+    assert report["notes"] and setup.diagnostics["source_review_count"] == 1
+    assert [item["question_index"] for item in setup.diagnostics["pdf_review_items"]] == [1]
+
+
+@pytest.mark.parametrize("change", ["unknown_id", "missing_id", "not_object", "broken_json", "trailing_json", "duplicate_field", "nan"])
+def test_ambiguous_identity_or_incomplete_json_discards_entire_response(setup, change):
+    data = all_equivalent(2, setup)
+    raw = json.dumps(data)
+    if change == "unknown_id": data["items"][1]["id"] = "item_unknown"
+    elif change == "missing_id": data["items"][1].pop("id")
+    elif change == "not_object": data["items"][1] = None
+    elif change == "broken_json": raw = raw[:-2]
+    elif change == "trailing_json": raw += " more output"
+    elif change == "duplicate_field": raw = raw.replace('"id": "item_001"', '"id": "item_001", "id": "item_001"')
+    elif change == "nan": raw = raw.replace('"source_number": 15', '"source_number": NaN')
+    if change in {"unknown_id", "missing_id", "not_object"}: raw = json.dumps(data)
+    setup.response["choices"][0]["message"]["content"] = raw
+    original = deepcopy(setup.questions)
+    report = call(setup)
+    assert report["calls"] == 1 and report["status"] == "failed"
+    assert report["checked"] == report["confirmed"] == 0 and report["invalid_items"] == []
+    assert setup.questions == original
+
+
+def test_complete_json_code_fence_remains_accepted(setup):
+    setup.response["choices"][0]["message"]["content"] = "```json\n" + json.dumps(all_equivalent(2, setup)) + "\n```"
+    assert call(setup)["confirmed"] == 2
+
+
 @pytest.mark.parametrize("finish", ["length", "content_filter", None])
 def test_truncated_response_preserves_required_and_actual_usage(setup, finish):
     setup.response["choices"][0]["finish_reason"] = finish
-    report = call(setup, all_equivalent(2))
+    report = call(setup, all_equivalent(2, setup))
     assert report["status"] == "failed" and report["confirmed"] == 0
     assert report["usage"] == setup.response["usage"]
     assert all(question["source_review"]["required"] for question in setup.questions)
@@ -242,23 +315,30 @@ def test_inflight_edits_invalidate_all_decisions(setup, monkeypatch, field):
         else: setup.questions[0][field] += "用户编辑"
         return SimpleNamespace(status_code=200, json=lambda: deepcopy(setup.response))
     monkeypatch.setattr(verify, "post_chat_completion", post)
-    report = call(setup, all_equivalent(2))
+    report = call(setup, all_equivalent(2, setup))
     assert report["status"] == "failed" and "已变化" in report["notes"][0]
     assert all(question["source_review"]["required"] for question in setup.questions)
 
 
-def test_eight_item_limit_and_four_page_limit_do_not_truncate_items(setup):
+def test_more_than_eight_items_are_checked_once_in_multiple_batches(setup):
     for _ in range(8): add_question(setup)
-    report = call(setup, all_equivalent(8))
-    assert report["checked"] == report["confirmed"] == 8 and report["skipped"] == report["pending"] == 2
-    assert len(setup.calls) == 1
+    data = all_equivalent(10, setup)
+    setup.batch_responses = [{"items": data["items"][:8]}, {"items": data["items"][8:]}]
+    report = call(setup)
+    assert report["checked"] == report["confirmed"] == 10 and report["skipped"] == report["pending"] == 0
+    assert report["calls"] == len(setup.calls) == 2
+    assert [len(items) for items in setup.prompt_items] == [8, 2]
+    assert report["usage"] == {key: 2 * value for key, value in setup.response["usage"].items()}
 
 
-def test_page_limit_skips_fifth_page_and_keeps_full_available_pages(setup):
+def test_page_limit_opens_a_new_batch_for_fifth_page(setup):
     for page in [3, 4, 5]: add_question(setup, page=page)
-    report = call(setup, all_equivalent(4))
-    assert report["checked"] == 4 and report["pending"] == report["skipped"] == 1
-    assert len([part for part in setup.calls[0][1]["messages"][0]["content"] if part["type"] == "image_url"]) == 4
+    data = all_equivalent(5, setup)
+    setup.batch_responses = [{"items": data["items"][:4]}, {"items": data["items"][4:]}]
+    report = call(setup)
+    assert report["checked"] == report["confirmed"] == 5 and report["pending"] == report["skipped"] == 0
+    assert [len([part for part in payload["messages"][0]["content"] if part["type"] == "image_url"])
+            for _, payload, _ in setup.calls] == [4, 1]
 
 
 @pytest.mark.parametrize("mode", ["single", "total"])
@@ -268,8 +348,10 @@ def test_text_budget_skips_whole_items_and_never_truncates(setup, monkeypatch, m
         report = call(setup)
         assert report["calls"] == 0 and report["pending"] == report["skipped"] == 2
     else:
-        monkeypatch.setattr(verify, "MAX_TOTAL_CHARS", 65)
-        report = call(setup, all_equivalent(1))
+        one = verify._candidate(0, setup.questions[0], setup.diagnostics)
+        monkeypatch.setattr(verify, "MAX_TOTAL_CHARS", verify._planned_text_chars([one], None, verify._candidate_images([one], [])))
+        monkeypatch.setattr(verify, "MAX_CALLS", 1)
+        report = call(setup, all_equivalent(1, setup))
         assert report["checked"] == 1 and report["pending"] == report["skipped"] == 1
         assert setup.prompt_items[0][0]["source_excerpt"] == setup.diagnostics["source_matches"][0]["source_excerpt"]
 
@@ -390,7 +472,7 @@ def first_pass_cache(setup):
 def test_first_pass_cache_is_slice_verified_and_not_resent_in_full(setup):
     cache = first_pass_cache(setup)
     original = deepcopy(cache)
-    report = call(setup, all_equivalent(2), source_pages=cache)
+    report = call(setup, all_equivalent(2, setup), source_pages=cache)
     assert report["confirmed"] == 2 and report["calls"] == 1 and report["skipped_reasons"] == []
     assert cache == original
     for question in setup.questions:
@@ -417,7 +499,7 @@ def test_incomplete_or_mismatched_cache_never_qualifies_a_referee_call(setup, ch
     elif change == "truncated": cache[0]["truncated"] = True
     elif change == "too_long": cache[0]["markdown"] = "字" * (verify.MAX_CACHED_PAGE_CHARS + 1)
     elif change == "not_list": cache = {}
-    report = call(setup, all_equivalent(2), source_pages=cache)
+    report = call(setup, all_equivalent(2, setup), source_pages=cache)
     assert report["calls"] == 0 and report["pending"] == report["skipped"] == 2
     assert all(item["code"] == "source_evidence_missing" for item in report["skipped_reasons"])
     assert all(question["source_review"]["required"] for question in setup.questions)
@@ -426,7 +508,8 @@ def test_incomplete_or_mismatched_cache_never_qualifies_a_referee_call(setup, ch
 def test_cache_excerpt_mismatch_skips_only_that_item_and_keeps_other_proven_item(setup):
     cache = first_pass_cache(setup)
     cache[0]["markdown"] = cache[0]["markdown"].replace("已知", "另知")  # Same length, so later page offsets stay exact.
-    report = call(setup, {"items": [{"id": "item_002", "decision": "equivalent", "evidence": "第15题原页核对通过。"}]}, source_pages=cache)
+    report = call(setup, {"items": [{"id": "item_002", "source_number": 15, "source_pages": [2], "checks": checks(),
+                                    "decision": "equivalent", "evidence": "第15题原页核对通过。"}]}, source_pages=cache)
     assert report["confirmed"] == 1 and report["skipped"] == 1 and report["pending"] == 1
     assert report["skipped_reasons"][0]["question_index"] == 0
     assert report["skipped_reasons"][0]["code"] == "source_evidence_missing"
@@ -440,15 +523,14 @@ def test_cache_changes_during_request_invalidate_the_snapshot(setup, monkeypatch
         cache[0]["markdown"] += "后来编辑"
         return SimpleNamespace(status_code=200, json=lambda: deepcopy(setup.response))
     monkeypatch.setattr(verify, "post_chat_completion", post)
-    report = call(setup, all_equivalent(2), source_pages=cache)
+    report = call(setup, all_equivalent(2, setup), source_pages=cache)
     assert report["status"] == "failed" and report["confirmed"] == 0 and report["calls"] == 1
     assert all(question["source_review"]["required"] for question in setup.questions)
 
 
-@pytest.mark.parametrize("code", ["formula_difference", "condition_difference", "source_evidence_missing", "figure_risk", "budget_limit", "other_review_reason"])
+@pytest.mark.parametrize("code", ["formula_difference", "source_evidence_missing", "figure_risk", "budget_limit", "other_review_reason"])
 def test_skipped_reasons_explain_the_block_without_exposing_source_text(setup, monkeypatch, code):
-    if code == "formula_difference": setup.questions[0]["content"] = "给出函数 $y=x^3$，求顶点。"
-    elif code == "condition_difference": setup.questions[0]["content"] = "给出函数 $y=x^2$，求两个顶点。"
+    if code == "formula_difference": setup.questions[0]["content"] = "给出函数 [公式待核对]，求顶点。"
     elif code == "source_evidence_missing": setup.diagnostics["source_matches"].pop(0)
     elif code == "figure_risk": setup.questions[0]["source_review"]["reasons"].append("配图裁剪范围不完整。")
     elif code == "budget_limit": monkeypatch.setattr(verify, "MAX_ITEMS", 0)
@@ -460,3 +542,411 @@ def test_skipped_reasons_explain_the_block_without_exposing_source_text(setup, m
     assert skipped["code"] == code and skipped["reason"]
     assert "source_excerpt" not in skipped and "output" not in skipped
     assert "求顶点" not in json.dumps(skipped, ensure_ascii=False)
+
+
+@pytest.mark.parametrize("source,output", [
+    ("14. 已知 $x=1$，求值。", "给出 [[MBM_unknown]]，求值。"),
+    ("14. 已知 $x=1$，求值。", "给出 [公式待核对]，求值。"),
+    ("14. 已知 $x=1$，求值。", "给出 [公式结构待核对]，求值。"),
+    ("14. 已知 $x=1$。![图](/static/uploads/a.png)", "给出 $x=1$。![图](/static/uploads/b.png)"),
+    ("14. 已知 $x=1$。![图](/static/uploads/a.png)求值。", "给出 $x=1$。求值。![图](/static/uploads/a.png)"),
+    ("14. 已知 $x=1$。![图](/static/uploads/a.png)", "给出 $x=1$。"),
+])
+def test_unresolved_formula_or_missing_replaced_moved_image_is_not_certified(setup, source, output):
+    setup.questions.clear()
+    setup.diagnostics = {"source_matches": [], "pdf_review_items": []}
+    add_question(setup, source=source, output=output)
+    original = deepcopy(setup.questions)
+    report = call(setup, all_equivalent(1, setup))
+    assert report["status"] == "no_candidates" and report["pending"] == report["skipped"] == 1
+    assert not setup.calls and setup.questions == original
+
+
+@pytest.mark.parametrize("reason", [
+    "题干第 1 处公式与原文不同，请核对符号、数值和次序。",
+    "题干第 1 处公式编号属于其他位置，可能发生串题或调换。",
+    "题干第 1 处公式编号重复出现，请核对是否重复或遗漏内容。",
+    "公式编号重复出现，请核对公式是否放错位置。",
+    "原文公式定位信息不完整，请对照原文核对。",
+])
+def test_formula_suspicion_can_be_cleared_only_by_full_visual_verdict(setup, reason):
+    from mathbank.pdf_figures import _review_explanations
+    setup.questions.clear()
+    setup.diagnostics = {"source_matches": [], "pdf_review_items": []}
+    add_question(setup, source="14. 已知 $x-1=2$，求值。", output="已知 $x+1=2$，求值。")
+    setup.questions[0]["source_review"]["reasons"] = [reason]
+    setup.diagnostics["pdf_review_items"][0]["reasons"] = _review_explanations([reason])
+    original_content = setup.questions[0]["content"]
+    data = all_equivalent(1, setup)
+    data["items"][0]["evidence"] = "原PDF第1页第14题为x+1=2，候选正确，首次摘录误成减号。"
+    report = call(setup, data)
+    assert report["confirmed"] == 1 and report["pending"] == 0 and len(setup.calls) == 1
+    assert setup.questions[0]["source_review"]["required"] is False
+    assert setup.questions[0]["content"] == original_content
+    assert len(setup.questions[0]["source_review"]["verification"]["page_evidence_hash"]) == 64
+    prompt = setup.calls[0][1]["messages"][0]["content"][0]["text"]
+    assert "以原PDF页面为依据" in prompt and "不能将摘录当作真值" in prompt
+    assert "本地已确认逐项数学公式" not in prompt
+
+
+def answer_review(setup):
+    setup.questions.clear()
+    setup.diagnostics = {"source_matches": [], "pdf_review_items": []}
+    add_question(setup)
+    answer = "【答案】$x-1=2$。"
+    setup.questions[0]["answer_markdown"] = "$x+1=2$。"
+    reason = "原版答案第 1 处公式与原文不同，请核对符号、数值和次序。"
+    setup.questions[0]["source_review"].update(source_excerpt=answer, reasons=[reason])
+    setup.diagnostics["pdf_review_items"][0].update(reasons=[reason], source_pages=[1, 2])
+    stem = setup.diagnostics["source_matches"][0]
+    setup.diagnostics["source_matches"].append({"question_index": 0, "field": "answer_markdown", "source_number": 14,
+        "source_start": len(stem["source_excerpt"]) + 2, "source_end": len(stem["source_excerpt"]) + 2 + len(answer),
+        "source_excerpt": answer})
+    cache = [{"page_number": number, "origin": "ocr", "figures": [], "markdown": text}
+             for number, text in [(1, stem["source_excerpt"]), (2, answer), (3, ""), (4, ""), (5, "")]]
+    return cache
+
+
+def test_answer_formula_on_separate_page_is_included_and_may_be_confirmed(setup):
+    cache = answer_review(setup)
+    original = deepcopy(setup.questions[0])
+    report = call(setup, all_equivalent(1, setup), source_pages=cache)
+    assert report["confirmed"] == 1 and report["pending"] == 0
+    candidate = setup.prompt_items[0][0]
+    assert candidate["source_pages"] == [1, 2]
+    assert candidate["source_answer_excerpt"] == "【答案】$x-1=2$。"
+    assert candidate["output_answer"] == "$x+1=2$。"
+    assert "answer_markdown" in candidate["local_suspicions"]
+    assert setup.questions[0]["answer_markdown"] == original["answer_markdown"]
+    assert len([part for part in setup.calls[0][1]["messages"][0]["content"] if part["type"] == "image_url"]) == 2
+
+
+@pytest.mark.parametrize("change", ["missing_answer_match", "answer_page_omitted", "stale_answer_excerpt", "unresolved_answer"])
+def test_answer_formula_cannot_clear_from_stem_evidence_alone(setup, change):
+    cache = answer_review(setup)
+    if change == "missing_answer_match": setup.diagnostics["source_matches"].pop()
+    elif change == "answer_page_omitted": setup.diagnostics["pdf_review_items"][0]["source_pages"] = [1]
+    elif change == "stale_answer_excerpt": cache[1]["markdown"] = "【答案】$x-2=3$。"
+    elif change == "unresolved_answer": setup.questions[0]["answer_markdown"] = "[公式结构待核对]"
+    original = deepcopy(setup.questions)
+    report = call(setup, all_equivalent(1, setup), source_pages=cache)
+    assert report["confirmed"] == report["calls"] == 0 and report["pending"] == 1
+    assert setup.questions == original
+
+
+@pytest.mark.parametrize("change", ["wrong_number", "wrong_pages", "boolean_page", "duplicate_page", "missing_check", "false_check", "string_check", "generic_evidence"])
+def test_incomplete_visual_checks_or_wrong_page_contract_cannot_clear(setup, change):
+    data = all_equivalent(2, setup)
+    item = data["items"][0]
+    if change == "wrong_number": item["source_number"] = 99
+    elif change == "wrong_pages": item["source_pages"] = [2]
+    elif change == "boolean_page": item["source_pages"] = [True]
+    elif change == "duplicate_page": item["source_pages"] = [1, 1]
+    elif change == "missing_check": item["checks"].pop("math_and_conditions")
+    elif change == "false_check": item["checks"]["math_and_conditions"] = False
+    elif change == "string_check": item["checks"]["math_and_conditions"] = "true"
+    elif change == "generic_evidence": item["evidence"] = "通过"
+    original = deepcopy(setup.questions)
+    report = call(setup, data)
+    assert report["status"] == "partial" and report["checked"] == report["confirmed"] == 1 and len(setup.calls) == 1
+    assert setup.questions[0] == original[0]
+    assert setup.questions[1]["source_review"]["required"] is False
+    assert report["invalid_items"][0]["question_index"] == 0
+
+
+def test_original_page_bytes_changing_during_call_invalidates_verdict(setup, monkeypatch):
+    data = all_equivalent(2, setup)
+    setup.response["choices"][0]["message"]["content"] = json.dumps(data)
+    def post(*args, **kwargs):
+        setup.calls.append(1)
+        Image.new("RGB", (20, 20), "black").save(setup.root / "tmp" / "pdf_page_test_1.png")
+        return SimpleNamespace(status_code=200, json=lambda: deepcopy(setup.response))
+    monkeypatch.setattr(verify, "post_chat_completion", post)
+    original = deepcopy(setup.questions)
+    report = call(setup)
+    assert report["status"] == "failed" and report["confirmed"] == 0
+    assert "原页图像已变化" in report["notes"][0] and setup.questions == original
+
+
+def test_eight_batch_cap_leaves_unattempted_items_explicit(setup):
+    for _ in range(63): add_question(setup)
+    data = all_equivalent(65, setup)
+    setup.batch_responses = [{"items": data["items"][left:left + 8]} for left in range(0, 64, 8)]
+    report = call(setup)
+    assert report["checked"] == report["confirmed"] == 64
+    assert report["calls"] == len(setup.calls) == verify.MAX_CALLS == 8
+    assert report["pending"] == report["skipped"] == 1
+    assert report["skipped_reasons"][0]["question_index"] == 64
+    assert report["skipped_reasons"][0]["code"] == "budget_limit"
+    assert all(kwargs["retry_connection"] is False for _, _, kwargs in setup.calls)
+    assert all(len(payload["messages"][0]["content"][0]["text"]) <= verify.MAX_TOTAL_CHARS
+               for _, payload, _ in setup.calls)
+
+
+def test_failed_batch_is_not_retried_and_later_distinct_items_are_checked(setup):
+    for _ in range(8): add_question(setup)
+    data = all_equivalent(10, setup)
+    setup.batch_responses = [{"items": []}, {"items": data["items"][8:]}]
+    report = call(setup)
+    assert report["calls"] == len(setup.calls) == 2 and report["checked"] == report["confirmed"] == 2
+    assert report["pending"] == 8 and report["skipped"] == 0
+    assert [item["id"] for item in setup.prompt_items[1]] == ["item_009", "item_010"]
+    assert all(q["source_review"]["required"] for q in setup.questions[:8])
+    assert not any(q["source_review"]["required"] for q in setup.questions[8:])
+    assert report["notes"] and setup.diagnostics["source_review_count"] == 8
+
+
+@pytest.mark.parametrize("placeholder", ["[公式待核对]", "[公式结构待核对]", "无法识别的公式"])
+@pytest.mark.parametrize("decision", ["equivalent", "different"])
+def test_source_only_formula_placeholder_is_checked_against_original_page(setup, placeholder, decision):
+    setup.questions.clear()
+    setup.diagnostics = {"source_matches": [], "pdf_review_items": []}
+    add_question(setup, source=f"14. 已知 {placeholder}，求值。", output="已知 $x+1=2$，求值。")
+    cache = first_pass_cache(setup)
+    original_content = setup.questions[0]["content"]
+    original_source = setup.questions[0]["source_review"]["source_excerpt"]
+    data = all_equivalent(1, setup)
+    data["items"][0].update(
+        decision=decision, checks=checks(math_and_conditions=decision == "equivalent"),
+        evidence=("原页第14题为x+1=2，候选完整且正确，首次提取公式占位不影响原图核验。"
+                  if decision == "equivalent" else "原页第14题为x-1=2，候选误成加号，需保留公式核对提示。"))
+    report = call(setup, data, source_pages=cache)
+    assert report["checked"] == 1
+    assert report["calls"] == (2 if decision == "different" else 1)
+    assert report["confirmed"] == (1 if decision == "equivalent" else 0)
+    assert setup.questions[0]["source_review"]["required"] is (decision != "equivalent")
+    assert setup.questions[0]["content"] == original_content
+    assert setup.questions[0]["source_review"]["source_excerpt"] == original_source
+    assert setup.prompt_items[0][0]["local_suspicions"]["content"] == "formula_difference"
+
+
+@pytest.mark.parametrize("blocked", ["[公式待核对]", "[公式结构待核对]", "无法识别的公式", "[[MBM_unknown]]"])
+def test_source_placeholder_does_not_allow_incomplete_output_or_unknown_identity(setup, blocked):
+    setup.questions.clear()
+    setup.diagnostics = {"source_matches": [], "pdf_review_items": []}
+    add_question(setup, source="14. 已知 [公式待核对]，求值。", output=f"已知 {blocked}，求值。")
+    original = deepcopy(setup.questions)
+    report = call(setup, all_equivalent(1, setup))
+    assert report["calls"] == report["confirmed"] == 0 and report["pending"] == 1
+    assert setup.questions == original
+
+
+@pytest.mark.parametrize("source_tail", ["[插图待补: 图1]", '<img src="a.png">', "[[MBM_unknown]]"])
+def test_source_only_formula_placeholder_does_not_bypass_image_or_identity_guard(setup, source_tail):
+    setup.questions.clear()
+    setup.diagnostics = {"source_matches": [], "pdf_review_items": []}
+    add_question(setup, source=f"14. 已知 [公式待核对]，求值。{source_tail}", output="已知 $x+1=2$，求值。")
+    original = deepcopy(setup.questions)
+    report = call(setup, all_equivalent(1, setup))
+    assert report["calls"] == report["confirmed"] == 0 and report["pending"] == 1
+    assert setup.questions == original
+
+
+def candidate_image(setup, name="candidate.png", color="black"):
+    path = setup.root / "tmp" / name
+    Image.new("RGB", (30, 15), color).save(path)
+    return "/static/uploads/tmp/" + name
+
+
+@pytest.mark.parametrize("placement", ["same", "moved", "copy"])
+@pytest.mark.parametrize("decision", ["equivalent", "different"])
+def test_candidate_picture_pixels_enable_complete_visual_comparison(setup, placement, decision):
+    image_path = candidate_image(setup)
+    source_path = "/static/uploads/tmp/original_picture.png" if placement == "copy" else image_path
+    source = f"14. 已知 $x=1$。![原图]({source_path})求值。"
+    output = (f"给出 $x=1$。求值。![候选图]({image_path})" if placement == "moved"
+              else f"给出 $x=1$。![候选图]({image_path})求值。")
+    setup.questions.clear()
+    setup.diagnostics = {"source_matches": [], "pdf_review_items": []}
+    add_question(setup, source=source, output=output,
+                 extra_reason="题干插图的引用或所在位置与原文不同，请核对缺图、错图及选项位置。")
+    data = all_equivalent(1, setup)
+    data["items"][0].update(decision=decision, checks=checks(figures=decision == "equivalent"),
+                             evidence="原页与候选图片的图形、标注和位置已逐项比较。")
+    report = call(setup, data, candidate_image_paths=[image_path])
+    assert report["checked"] == 1
+    assert report["calls"] == (2 if decision == "different" else 1)
+    assert report["confirmed"] == (decision == "equivalent")
+    assert setup.questions[0]["source_review"]["required"] is (decision != "equivalent")
+    sent = setup.calls[0][1]["messages"][0]["content"]
+    assert len([part for part in sent if part["type"] == "image_url"]) == 2
+    metadata = setup.prompt_items[0][0]["candidate_images"][0]
+    assert metadata["path"] == image_path and len(metadata["sha256"]) == 64
+    assert metadata["bindings"] == [{"id": "item_001", "field": "content", "occurrence": 1}]
+    review = setup.questions[0]["source_review"]
+    audit = review["verification"] if decision == "equivalent" else review["verification_attempt"]
+    assert audit["candidate_images"] == [metadata] and len(audit["candidate_image_evidence_hash"]) == 64
+
+
+@pytest.mark.parametrize("failure", ["not_owned", "missing", "corrupt", "placeholder", "removed", "added", "crop_risk"])
+def test_incomplete_or_unsafe_picture_evidence_does_not_discard_valid_peer(setup, failure):
+    image_path = candidate_image(setup)
+    setup.questions.clear()
+    setup.diagnostics = {"source_matches": [], "pdf_review_items": []}
+    source = f"14. 已知 $x=1$。![图]({image_path})求值。"
+    output = f"给出 $x=1$。![图]({image_path})求值。"
+    if failure == "placeholder": output = "给出 $x=1$。[插图待补: 图1]求值。"
+    elif failure == "removed": output = "给出 $x=1$。求值。"
+    elif failure == "added": output += f"![额外图]({image_path})"
+    add_question(setup, source=source, output=output,
+                 extra_reason="配图裁剪范围不完整。" if failure == "crop_risk" else None)
+    add_question(setup, page=2)
+    if failure == "missing": (setup.root / "tmp" / "candidate.png").unlink()
+    elif failure == "corrupt": (setup.root / "tmp" / "candidate.png").write_bytes(b"invalid")
+    original = deepcopy(setup.questions[0])
+    data = all_equivalent(2, setup)
+    data["items"] = data["items"][1:]
+    report = call(setup, data, candidate_image_paths=[] if failure == "not_owned" else [image_path])
+    assert report["calls"] == report["checked"] == report["confirmed"] == 1
+    assert report["pending"] == report["skipped"] == 1 and setup.questions[0] == original
+    assert report["skipped_reasons"][0]["code"] == "figure_risk"
+    assert [item["id"] for item in setup.prompt_items[0]] == ["item_002"]
+    assert len([part for part in setup.calls[0][1]["messages"][0]["content"] if part["type"] == "image_url"]) == 1
+
+
+@pytest.mark.parametrize("change", ["bytes", "missing", "ownership"])
+def test_candidate_picture_changed_in_flight_invalidates_entire_batch(setup, monkeypatch, change):
+    image_path = candidate_image(setup)
+    setup.questions.clear()
+    setup.diagnostics = {"source_matches": [], "pdf_review_items": []}
+    add_question(setup, source=f"14. 已知 $x=1$。![图]({image_path})", output=f"给出 $x=1$。![图]({image_path})")
+    add_question(setup, page=2)
+    allowed = [image_path]
+    def post(*args, **kwargs):
+        setup.calls.append(1)
+        if change == "bytes": candidate_image(setup, color="red")
+        elif change == "missing": (setup.root / "tmp" / "candidate.png").unlink()
+        elif change == "ownership": allowed.clear()
+        return SimpleNamespace(status_code=200, json=lambda: deepcopy(setup.response))
+    monkeypatch.setattr(verify, "post_chat_completion", post)
+    original = deepcopy(setup.questions)
+    report = call(setup, all_equivalent(2, setup), candidate_image_paths=allowed)
+    assert report["status"] == "failed" and report["confirmed"] == report["checked"] == 0
+    assert setup.questions == original and "候选图片已变化" in report["notes"][0]
+
+
+def test_answer_picture_has_its_own_evidence_binding(setup):
+    cache = answer_review(setup)
+    image_path = candidate_image(setup)
+    source = cache[1]["markdown"] + f"![答案图]({image_path})"
+    cache[1]["markdown"] = source
+    match = setup.diagnostics["source_matches"][1]
+    match.update(source_excerpt=source, source_end=match["source_start"] + len(source))
+    setup.questions[0]["source_review"]["source_excerpt"] = source
+    setup.questions[0]["answer_markdown"] += f"![答案图]({image_path})"
+    report = call(setup, all_equivalent(1, setup), source_pages=cache, candidate_image_paths=[image_path])
+    assert report["confirmed"] == 1
+    image = setup.prompt_items[0][0]["candidate_images"][0]
+    assert image["bindings"] == [{"id": "item_001", "field": "answer_markdown", "occurrence": 1}]
+    assert len([part for part in setup.calls[0][1]["messages"][0]["content"] if part["type"] == "image_url"]) == 3
+
+
+def test_picture_moved_from_answer_to_stem_still_requires_editing(setup):
+    cache = answer_review(setup)
+    image_path = candidate_image(setup)
+    source = cache[1]["markdown"] + f"![答案图]({image_path})"
+    cache[1]["markdown"] = source
+    match = setup.diagnostics["source_matches"][1]
+    match.update(source_excerpt=source, source_end=match["source_start"] + len(source))
+    setup.questions[0]["source_review"]["source_excerpt"] = source
+    setup.questions[0]["content"] += f"![答案图]({image_path})"
+    original = deepcopy(setup.questions)
+    report = call(setup, all_equivalent(1, setup), source_pages=cache, candidate_image_paths=[image_path])
+    assert report["confirmed"] == report["calls"] == 0 and report["pending"] == 1
+    assert setup.questions == original and report["skipped_reasons"][0]["code"] == "figure_risk"
+
+
+def test_picture_batch_budget_splits_once_without_partial_image_requests(setup, monkeypatch):
+    from mathbank import source_review_images
+    monkeypatch.setattr(source_review_images, "MAX_BATCH_IMAGES", 1)
+    setup.questions.clear()
+    setup.diagnostics = {"source_matches": [], "pdf_review_items": []}
+    allowed = []
+    for index in range(2):
+        path = candidate_image(setup, f"candidate_{index}.png")
+        allowed.append(path)
+        add_question(setup, source=f"{14 + index}. 已知 $x=1$。![图]({path})",
+                     output=f"给出 $x=1$。![图]({path})")
+    data = all_equivalent(2, setup)
+    setup.batch_responses = [{"items": [item]} for item in data["items"]]
+    report = call(setup, candidate_image_paths=allowed)
+    assert report["calls"] == report["checked"] == report["confirmed"] == 2
+    assert report["pending"] == report["skipped"] == 0
+    assert [len(items) for items in setup.prompt_items] == [1, 1]
+    assert all(len([part for part in payload["messages"][0]["content"] if part["type"] == "image_url"]) == 2
+               for _, payload, _ in setup.calls)
+
+
+@pytest.mark.parametrize("with_picture", [False, True])
+def test_request_labels_count_toward_batch_text_budget(setup, monkeypatch, with_picture):
+    allowed = []
+    if with_picture:
+        setup.questions.clear()
+        setup.diagnostics = {"source_matches": [], "pdf_review_items": []}
+        for index in range(2):
+            path = candidate_image(setup, f"candidate_{index}.png")
+            allowed.append(path)
+            add_question(setup, source=f"{14 + index}. 已知 $x=1$。![图]({path})",
+                         output=f"给出 $x=1$。![图]({path})", page=index + 1)
+    candidates = [verify._candidate(index, question, setup.diagnostics, allow_image_changes=True)
+                  for index, question in enumerate(setup.questions)]
+    images = verify._candidate_images(candidates, allowed)
+    # The main JSON prompt fits exactly; only the page/candidate-image labels
+    # push this request over its budget. Each smaller complete request fits.
+    limit = len(verify._verification_prompt(candidates, None, images))
+    assert verify._planned_text_chars(candidates, None, images) > limit
+    assert all(verify._planned_text_chars([candidate], None, verify._candidate_images([candidate], allowed)) < limit
+               for candidate in candidates)
+    monkeypatch.setattr(verify, "MAX_TOTAL_CHARS", limit)
+    setup.batch_responses = [{"items": [item]} for item in all_equivalent(2, setup)["items"]]
+    report = call(setup, candidate_image_paths=allowed)
+    assert report["calls"] == report["checked"] == report["confirmed"] == 2
+    assert report["pending"] == report["skipped"] == 0
+    assert all(verify._text_chars(payload["messages"][0]["content"]) <= limit for _, payload, _ in setup.calls)
+
+
+@pytest.mark.parametrize("with_picture", [False, True])
+def test_single_item_label_overflow_skips_without_request(setup, monkeypatch, with_picture):
+    setup.questions.clear()
+    setup.diagnostics = {"source_matches": [], "pdf_review_items": []}
+    allowed = [candidate_image(setup)] if with_picture else []
+    tail = f"![图]({allowed[0]})" if allowed else ""
+    add_question(setup, source="14. 已知 $x=1$。" + tail, output="给出 $x=1$。" + tail)
+    candidates = [verify._candidate(0, setup.questions[0], setup.diagnostics, allow_image_changes=True)]
+    images = verify._candidate_images(candidates, allowed)
+    limit = len(verify._verification_prompt(candidates, None, images))
+    monkeypatch.setattr(verify, "MAX_TOTAL_CHARS", limit)
+    report = call(setup, all_equivalent(1, setup), candidate_image_paths=allowed)
+    assert report["calls"] == report["checked"] == report["confirmed"] == 0
+    assert report["pending"] == report["skipped"] == 1
+    assert report["skipped_reasons"][0]["code"] == "budget_limit"
+    assert not setup.calls and setup.questions[0]["source_review"]["required"] is True
+
+
+def test_actual_request_text_is_rechecked_after_planning(setup, monkeypatch):
+    candidates = [verify._candidate(index, question, setup.diagnostics, allow_image_changes=True)
+                  for index, question in enumerate(setup.questions)]
+    images = verify._candidate_images(candidates, [])
+    monkeypatch.setattr(verify, "MAX_TOTAL_CHARS", verify._planned_text_chars(candidates, None, images))
+    original = verify._page_messages
+    monkeypatch.setattr(verify, "_page_messages", lambda *args: [*original(*args), {"type": "text", "text": "额外页面说明"}])
+    report = call(setup, all_equivalent(2, setup))
+    assert report["calls"] == report["checked"] == report["confirmed"] == 0
+    assert report["status"] == "failed" and "超过文字额度" in report["notes"][0]
+    assert not setup.calls and all(question["source_review"]["required"] for question in setup.questions)
+
+
+@pytest.mark.parametrize("hidden", ["fenced", "inline", "escaped"])
+def test_image_reference_made_literal_is_missing_visible_picture(setup, hidden):
+    image_path = candidate_image(setup)
+    reference = f"![图]({image_path})"
+    if hidden == "fenced": literal = f"\n```text\n{reference}\n```\n"
+    elif hidden == "inline": literal = f"`{reference}`"
+    else: literal = "\\" + reference
+    setup.questions.clear()
+    setup.diagnostics = {"source_matches": [], "pdf_review_items": []}
+    add_question(setup, source="14. 已知 $x=1$。" + reference, output="给出 $x=1$。" + literal)
+    original = deepcopy(setup.questions)
+    report = call(setup, all_equivalent(1, setup), candidate_image_paths=[image_path])
+    assert report["calls"] == report["confirmed"] == 0 and report["pending"] == report["skipped"] == 1
+    assert report["skipped_reasons"][0]["code"] == "figure_risk" and setup.questions == original

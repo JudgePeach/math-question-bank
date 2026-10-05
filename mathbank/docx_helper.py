@@ -49,6 +49,7 @@ _REL_NS = W_NS["r"]
 _DRAWING_NS = W_NS["a"]
 _VML_NS = W_NS["v"]
 _OFFICE_NS = W_NS["o"]
+_COMPATIBILITY_NS = "http://schemas.openxmlformats.org/markup-compatibility/2006"
 
 _SYMBOL_FONT_MAP = {
     0x61: r"\alpha ", 0x62: r"\beta ", 0x63: r"\chi ",
@@ -334,6 +335,78 @@ def _normalise_image(image_bytes: bytes, source_ext: str) -> Optional[tuple[byte
             return converted.getvalue(), ".png"
     except (UnidentifiedImageError, OSError, ValueError, Image.DecompressionBombError):
         return None
+
+
+def _select_compatible_alternatives(root, z: zipfile.ZipFile, rels: Dict[str, str]) -> None:
+    """Read one representation of Word's Choice/Fallback pairs, never both.
+
+    A fallback belongs to the same visible object as its choice. In particular,
+    reading a legacy OLE fallback after native OMML creates a spurious formula
+    warning. Prefer a choice only when its drawing resources can be read by our
+    extractor; an unsupported vector drawing may have a usable raster fallback.
+    This only prunes the parsed XML copy, without changing the source package.
+    """
+    image_support: Dict[str, bool] = {}
+
+    def has_image(elem) -> bool:
+        references = [blip.attrib.get(f"{{{_REL_NS}}}embed")
+                      for blip in elem.iter(f"{{{_DRAWING_NS}}}blip")]
+        references.extend(image.attrib.get(f"{{{_REL_NS}}}id")
+                          for image in elem.iter(f"{{{_VML_NS}}}imagedata"))
+        for rel_id in references:
+            target = rels.get(rel_id or "", "")
+            if target not in image_support:
+                archive_path = _resolve_archive_target(z, target)
+                try:
+                    image_support[target] = bool(
+                        archive_path and _normalise_image(
+                            z.read(archive_path), os.path.splitext(archive_path)[1].lower()
+                        )
+                    )
+                except (OSError, ValueError, KeyError, zipfile.BadZipFile):
+                    image_support[target] = False
+            if image_support[target]:
+                return True
+        return False
+
+    def payload_support(elem) -> tuple[bool, bool]:
+        # Native formulas keep their usual structural diagnostics; an unknown
+        # formula must not silently turn into an unmarked fallback picture.
+        if elem.tag in {f"{{{_MATH_NS}}}oMath", f"{{{_MATH_NS}}}oMathPara"}:
+            return True, True
+        if elem.tag in {f"{{{_DRAWING_NS}}}blip", f"{{{_VML_NS}}}imagedata"}:
+            return True, has_image(elem)
+        if elem.tag in {f"{{{_WORD_NS}}}drawing", f"{{{_WORD_NS}}}pict"}:
+            return True, has_image(elem) or any(
+                payload_support(text_box) == (True, True)
+                for text_box in elem.iter(f"{{{_WORD_NS}}}txbxContent")
+            )
+        if elem.tag == f"{{{_WORD_NS}}}object":
+            return True, True
+        if elem.tag in {f"{{{_WORD_NS}}}t", f"{{{_WORD_NS}}}sym"}:
+            return True, True
+        visible_children = [supported for found, supported in
+                            (payload_support(child) for child in elem) if found]
+        return bool(visible_children), all(visible_children)
+
+    def visit(elem) -> None:
+        for child in list(elem):
+            visit(child)
+        if elem.tag != f"{{{_COMPATIBILITY_NS}}}AlternateContent":
+            return
+        choices = [child for child in elem
+                   if child.tag == f"{{{_COMPATIBILITY_NS}}}Choice"]
+        fallback = next((child for child in elem
+                         if child.tag == f"{{{_COMPATIBILITY_NS}}}Fallback"), None)
+        selected = next((choice for choice in choices
+                         if payload_support(choice) == (True, True)), None)
+        if selected is None:
+            # If all representations are unavailable, retain one so the normal
+            # extraction path still reports its genuine resource/formula error.
+            selected = fallback if fallback is not None else (choices[0] if choices else None)
+        elem[:] = [selected] if selected is not None else []
+
+    visit(root)
 
 
 def _save_image(
@@ -891,6 +964,7 @@ def extract_docx_markdown(
             rels = _extract_rels(z, diagnostics)
             diagnostics["_numbering"] = _extract_numbering(z, diagnostics)
             root = SafeET.fromstring(z.read("word/document.xml"))
+            _select_compatible_alternatives(root, z, rels)
             body = root.find("w:body", W_NS)
             if body is None:
                 raise ValueError("Word 文档结构无效：缺少 w:body")

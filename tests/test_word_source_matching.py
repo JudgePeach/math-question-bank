@@ -130,6 +130,46 @@ def test_word_existing_locks_remain_atomic_next_to_new_bare_math_wrapping():
     assert '$x,y$' in questions[0]['content']
 
 
+def test_word_repeated_formula_locks_use_exact_local_context_before_path_limit():
+    source = ('1.设x满足条件并完成下面的各个计算，第一处 $x$，第二处 $x$，'
+              '第三处 $x$，第四处 $x$，第五处 $x$，第六处 $x$，第七处 $x$。')
+    content = source[2:].replace('设x', '设 $x$')
+    questions, report = reconcile(source, content)
+    assert report['source_review_count'] == 0
+    assert report['math_locks_restored'] == 7
+    assert report['math_locks_missing'] == 0
+    assert report['unmatched_source'] == []
+    assert questions[0]['content'] == content
+
+
+def test_word_many_formula_locks_can_locate_source_without_long_prose_anchors():
+    source = '1.设x；' + '；'.join(f'第{index}处 $x+{index}$' for index in range(8)) + '。'
+    content = source[2:].replace('设x', '设 $x$')
+    _, report = reconcile(source, content)
+    assert report['source_review_count'] == 0
+    assert report['math_locks_restored'] == 8
+    assert len(report['source_matches']) == 1
+
+
+@pytest.mark.parametrize('change', ['formula', 'missing', 'position', 'image'])
+def test_word_repeated_formula_prefix_alignment_retains_real_changes(change):
+    source = ('1.设x满足条件并完成下面的各个计算，第一处 $x$，第二处 $x$，'
+              '第三处 $x$，第四处 $x$，第五处 $x$，第六处 $x$，第七处 $x$。'
+              '![](/static/uploads/original.png)结束。')
+    content = source[2:].replace('设x', '设 $x$')
+    if change == 'formula':
+        content = content.replace('第四处 $x$', '第四处 $y$')
+    elif change == 'missing':
+        content = content.replace('第四处 $x$', '第四处')
+    elif change == 'position':
+        content = content.replace('第四处 $x$', '$x$ 第四处')
+    else:
+        content = content.replace('![](/static/uploads/original.png)', '')
+        content = '![](/static/uploads/original.png)' + content
+    _, report = reconcile(source, content)
+    assert report['source_review_count'] == 1
+
+
 @pytest.mark.parametrize(('bare', 'wrapped'), [
     ('A={1,2,4}', r'A=\{1,2,4\}'),
     ('B={x|x²-4x+m=0}', r'B=\{x\mid x^2-4x+m=0\}'),

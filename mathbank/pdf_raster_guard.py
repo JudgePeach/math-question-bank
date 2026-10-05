@@ -218,10 +218,15 @@ def _page_evidence(path: str, mtime_ns: int, file_size: int):
     if len(large) > MAX_LINE_COMPONENTS:
         raise _EvidenceLimit("大图形候选过多，无法可靠确定独立图形")
     figures = []
+    line_components = []
     for component in large:
         box = component["bbox"]
         if any(_intersection(box, row) > 0 for row in text_rows) or _is_regular_grid(mask, box):
             continue
+        # A short label can already be connected to a graph's strokes, or lie
+        # inside its core rectangle. Keep this independently filtered line
+        # evidence even when there are too few separate outside labels below.
+        line_components.append(component)
         radius = min(24.0, max(8.0, letter_height * 1.6))
         labels = []
         for index, other in enumerate(components):
@@ -259,14 +264,19 @@ def _page_evidence(path: str, mtime_ns: int, file_size: int):
         if (box[2] - box[0]) / size[0] >= 0.03 and (box[3] - box[1]) / size[1] >= 0.03
         and _area(box) / (size[0] * size[1]) >= 0.0025
     )
+    run_records = {
+        id(component): {"bbox": tuple(component["bbox"]), "pixels": component["pixels"],
+                        "runs": tuple(component["runs"])}
+        for component in components if "runs" in component
+    }
     return {"figures": tuple(figures), "text_rows": tuple(tuple([row[0] * 1000 / size[0], row[1] * 1000 / size[1],
              row[2] * 1000 / size[0], row[3] * 1000 / size[1]]) for row in text_rows),
             "significant_components": significant,
             "components": len(components), "large_components": len(large), "analysis_size": size,
             "source_size": source_size, "letter_height": letter_height,
             "ink_mask": mask.tobytes(),
-            "significant_runs": tuple({"pixels": component["pixels"], "runs": tuple(component["runs"])}
-                                      for component in components if "runs" in component)}
+            "significant_runs": tuple(run_records.values()),
+            "line_components": tuple(run_records[id(component)] for component in line_components)}
 
 
 def _frame_ink(evidence: dict, bbox) -> int:
@@ -308,6 +318,90 @@ def _text_only_frame(evidence: dict, bbox) -> bool:
     return covered >= total * 0.90
 
 
+def _complete_single_component_edge(evidence: dict, original, deadline: float) -> dict | None:
+    """Complete only a small clipped edge with uniquely owned line ink.
+
+    This does not identify letters or infer diagram meaning. Detached labels,
+    multiple missing sides, paragraph ink and other graphic components cannot
+    justify this fallback. Coordinates and pixels stay in the bounded analysis
+    image already produced by the normal guard.
+    """
+    width, height = evidence["analysis_size"]
+
+    def analysis_box(box, *, integral=False):
+        values = (box[0] * width / 1000, box[1] * height / 1000,
+                  box[2] * width / 1000, box[3] * height / 1000)
+        return (math.floor(values[0]), math.floor(values[1]),
+                math.ceil(values[2]), math.ceil(values[3])) if integral else values
+
+    def component_ink(component, rectangle):
+        left, top, right, bottom = rectangle
+        total = 0
+        for index, (x0, y, x1) in enumerate(component["runs"]):
+            if index % 4096 == 0 and time.monotonic() > deadline:
+                raise _EvidenceLimit("本地单侧补边达到时间上限")
+            if top <= y < bottom:
+                total += max(0, min(x1, right) - max(x0, left))
+        return total
+
+    original_analysis = analysis_box(original)
+    candidates = []
+    for component in evidence.get("line_components", ()):
+        inside = component_ink(component, original_analysis)
+        outside = component["pixels"] - inside
+        if inside >= component["pixels"] * 0.98 and outside > max(8, component["pixels"] * 0.01):
+            candidates.append((component, inside))
+    if len(candidates) != 1:
+        return None
+    component, inside = candidates[0]
+    left, top, right, bottom = component["bbox"]
+    core = (left * 1000 / width, top * 1000 / height,
+            right * 1000 / width, bottom * 1000 / height)
+    missing = [index for index in range(4)
+               if (original[index] > core[index] if index < 2 else original[index] < core[index])]
+    if len(missing) != 1:
+        return None
+    side = missing[0]
+    axis_size = width if side % 2 == 0 else height
+    proposal = list(original)
+    proposal[side] = core[side] + (-2 if side < 2 else 2) * 1000 / axis_size
+    growth = abs(proposal[side] - original[side]) * axis_size / 1000
+    if (_box(proposal) is None or growth > min(24.0, evidence["letter_height"])
+            or _area(proposal) > _area(original) * 1.1):
+        return None
+    if any(_intersection(proposal, row) > 0 for row in evidence["text_rows"]):
+        return None
+    proposal_analysis = analysis_box(proposal)
+    # Use actual runs: a distant page border's bounding box is not proof that
+    # it intersects this illustration, while any other graphic ink is a veto.
+    if any(other is not component and component_ink(other, proposal_analysis) > 0
+           for other in evidence["significant_runs"]):
+        return None
+    before_pixels = analysis_box(original, integral=True)
+    after_pixels = analysis_box(proposal, integral=True)
+    added_ink = _frame_ink(evidence, proposal) - _frame_ink(evidence, original)
+    owned_ink = component_ink(component, after_pixels) - component_ink(component, before_pixels)
+    if added_ink <= 0 or owned_ink != added_ink:
+        return None
+    if time.monotonic() > deadline:
+        raise _EvidenceLimit("本地单侧补边达到时间上限")
+    return {
+        "bbox": [round(value, 4) for value in proposal],
+        "changed": True, "method": "bounded_component_completion", "status": "corrected",
+        "evidence_bbox": [round(value, 4) for value in core],
+        "component_completion": {
+            "inside_ink_fraction": round(inside / component["pixels"], 6),
+            "component_ink_pixels": component["pixels"],
+            "added_ink_pixels": added_ink, "unowned_added_ink_pixels": 0,
+            "side": ("left", "top", "right", "bottom")[side],
+            "growth_analysis_pixels": round(growth, 4),
+            "analysis_letter_height": evidence["letter_height"],
+        },
+    }
+
+
+
+
 def guard_raster_figure_bbox(image_path: str, bbox) -> dict:
     """Correct an XY/YX swap only with unique complete local graphic evidence."""
     original = _box(bbox)
@@ -317,6 +411,7 @@ def guard_raster_figure_bbox(image_path: str, bbox) -> dict:
     if original is None:
         result["warnings"] = ["扫描配图坐标无效，请对照原页重新框选。"]
         return result
+    deadline = time.monotonic() + MAX_SECONDS
     try:
         path = Path(image_path)
         stat = path.stat()
@@ -337,7 +432,16 @@ def guard_raster_figure_bbox(image_path: str, bbox) -> dict:
         if _frame_ink(evidence, original) < 8:
             result["warnings"] = ["图框内几乎没有可见内容，可能裁到了空白区域，请核对裁剪位置。"]
         elif _cuts_component(evidence, original):
-            result["warnings"] = ["图框截入了未完整覆盖的图形区域，请核对是否裁掉边缘或混入邻图。"]
+            try:
+                completed = _complete_single_component_edge(evidence, original, deadline)
+            except _EvidenceLimit as exc:
+                result.update(status="unavailable", notes=[str(exc) + "；本地边界检查未执行，保留原视觉图框。"])
+                return result
+            if completed:
+                result.update(completed)
+                result["notes"] = ["已按同一扫描线图的墨迹做有限补边，并保留原模型框。"]
+            else:
+                result["warnings"] = ["图框截入了未完整覆盖的图形区域，请核对是否裁掉边缘或混入邻图。"]
         elif _text_only_frame(evidence, original):
             result["warnings"] = ["图框内主要是连续正文，未见独立图形，请核对是否截到了题干或页脚。"]
         else:

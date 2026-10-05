@@ -1,13 +1,15 @@
 """Bounded visual adjudication of source-position suspicions after local guards.
 
-This optional step can clear only a single, narrow source-review reason. It
-cannot repair content or override an actual formula, image, origin or condition
-change. All results are checked and snapshot-bound before any review is updated.
+Formula and wording suspicions are checked against the original page images,
+including when first-pass text disagrees with the candidate. Bounded correction
+drafts require a fresh complete verdict and unchanged evidence before adoption.
+Image/provenance defects remain reviewable by the user.
 """
 
 from __future__ import annotations
 
 import base64
+from collections import Counter
 from copy import deepcopy
 import hashlib
 import json
@@ -18,16 +20,21 @@ from typing import Callable
 
 from mathbank import prompts
 from mathbank.ai_http import post_chat_completion
-from mathbank.ai_json import parse_ai_json
 from mathbank.ai_providers import apply_model_thinking_policy, resolve_ocr_provider
 from mathbank.asset_security import resolve_upload_asset
 from mathbank.content_locks import (
     _NUMBER, _NUMERIC_LITERAL, _REFERENCE, _comparison_layout, _formulas, _image_positions, _math_key, _plain_key,
 )
 from mathbank.paths import TEST_UPLOADS_DIR, UPLOADS_DIR
+from mathbank.document_requests import DOCUMENT_AI_TIMEOUT_SECONDS
+from mathbank.source_review_images import prepare_candidate_images, _references
+from mathbank.source_review_results import parse_review_response
+from mathbank.source_review_repair import MAX_EXTRA_CALLS, RepairStopped, output_hash, repair_verified_differences
+from mathbank.pdf_symbol_risks import SYMBOL_RISK_REASONS, bound_symbol_risk_hints
 from mathbank.task_manager import TaskCancelled
 
 
+MAX_CALLS = 8
 MAX_ITEMS = 8
 MAX_PAGES = 4
 MAX_ITEM_CHARS = 8000
@@ -47,6 +54,31 @@ _SKIPPED_REASONS = {
     "other_review_reason": "还存在其他原文或答案来源问题，保留人工核对。",
 }
 _DECISIONS = {"equivalent", "different", "uncertain"}
+_CHECKS = {"same_question", "complete_content", "math_and_conditions", "options_and_subquestions", "figures", "answer"}
+_INVALID_REASONS = {
+    "missing_result": "本题未返回核验结论，保留原核对提示。",
+    "duplicate_id": "本题重复返回核验结论，无法确定唯一结果，保留原核对提示。",
+    "invalid_fields": "本题核验结论字段不完整或不受支持，保留原核对提示。",
+    "invalid_verdict": "本题核验结论的原题号、页码、逐项判断或依据无效，保留原核对提示。",
+}
+_REVIEWABLE_REASONS = {
+    POSITION_REASON,
+    "原版答案文字或公式位置与原文未能完整对应，请对照原文核对。",
+    "原文公式定位信息不完整，请对照原文核对。",
+    "公式编号重复出现，请核对公式是否放错位置。",
+    "题干插图的引用或所在位置与原文不同，请核对缺图、错图及选项位置。",
+    "原版答案插图的引用或所在位置与原文不同，请核对缺图、错图及选项位置。",
+}
+_FORMULA_REASON = re.compile(
+    r"(?:题干|原版答案)第 \d+ 处公式(?:与原文不同，请核对符号、数值和次序。|"
+    r"编号属于其他位置，可能发生串题或调换。|编号重复出现，请核对是否重复或遗漏内容。)"
+)
+
+
+def _reviewable_reasons(reasons) -> bool:
+    return (isinstance(reasons, list) and bool(reasons)
+            and all(isinstance(reason, str) and (reason in _REVIEWABLE_REASONS or reason in SYMBOL_RISK_REASONS or _FORMULA_REASON.fullmatch(reason))
+                    for reason in reasons))
 _CRITICAL_WORDS = (
     "当且仅当", "逆时针", "顺时针", "不存在", "不超过", "不低于", "不少于", "不多于", "不能", "至少", "至多", "最多", "最少",
     "大于", "小于", "等于", "超过", "低于", "任意", "所有", "存在", "唯一", "整数", "自然数", "实数",
@@ -65,7 +97,7 @@ _CRITICAL = re.compile(
     + r"|[+\-=<>%‰‱°×÷±∓√∞∈∉∪∩⊂⊆⊃⊇≤≥≠≈∥⊥∠△^/():\[\]]"
 )
 _IMAGES = re.compile(r"!\[[^\]]*\]\([^\n)]*\)|\\includegraphics(?:\[[^\]]*\])?\{[^{}]*\}")
-_UNCERTAIN_TEXT = re.compile(r"\[插图待补|\[公式待核对|无法识别的公式|<\s*img\b", re.IGNORECASE)
+_UNCERTAIN_TEXT = re.compile(r"\[插图待补|\[公式[^\]\n]{0,20}待核对|无法识别的公式|<\s*img\b", re.IGNORECASE)
 
 
 class _VerificationError(ValueError):
@@ -146,64 +178,119 @@ def _locally_eligible(source: str, output: str) -> bool:
     return _local_block_reason(source, output) is None
 
 
-def _candidate(index: int, question: dict, diagnostics: dict) -> dict | None:
+def _visual_block_reason(source: str, output: str, *, allow_image_changes: bool = False) -> str | None:
+    """Reject unusable evidence, not the formula difference being adjudicated."""
+    if "MATHBANKGUARDSYMBOL" in source + output or _REFERENCE.search(source + "\n" + output):
+        return "source_evidence_missing"
+    # First-pass OCR may leave an unresolved formula in its excerpt while the
+    # candidate already contains a complete formula. The original page, not
+    # this imperfect excerpt, can establish whether that candidate is faithful.
+    # A still-incomplete candidate cannot be approved without editing it.
+    for value in (source, output):
+        if any("插图" in match.group() or "img" in match.group().lower()
+               for match in _UNCERTAIN_TEXT.finditer(value)):
+            return "figure_risk"
+    if _UNCERTAIN_TEXT.search(output):
+        return "formula_difference"
+    source_images = _image_positions(source, _formulas(source))
+    output_images = _image_positions(output, _formulas(output))
+    source_refs = _references(source, "source", "content")
+    output_refs = _references(output, "output", "content")
+    # Once every candidate image is supplied as actual pixels, the referee may
+    # inspect changed paths/positions against the original page. Missing or
+    # added occurrences still require editing, rather than visual approval.
+    if (any(not item["path"] for item in source_refs + output_refs)
+            or len(source_refs) != len(output_refs)
+            or not allow_image_changes and source_images != output_images):
+        return "figure_risk"
+    return None
+
+
+def _candidate(index: int, question: dict, diagnostics: dict, *, allow_image_changes: bool = False) -> dict | None:
     if not isinstance(diagnostics, dict):
         return None
     review = question.get("source_review")
-    if not isinstance(review, dict) or review.get("required") is not True:
+    if (not isinstance(review, dict) or review.get("required") is not True
+            or not _reviewable_reasons(review.get("reasons"))):
         return None
-    if review.get("reasons") != [POSITION_REASON]:
-        return None
+    symbol_hints = None
+    if set(review["reasons"]) & SYMBOL_RISK_REASONS:
+        symbol_hints = bound_symbol_risk_hints(question, diagnostics, index)
+        if symbol_hints is None:
+            return None
     output = question.get("content")
-    if not isinstance(output, str) or not output.strip():
+    answer_output = question.get("answer_markdown", "")
+    if not isinstance(output, str) or not output.strip() or not isinstance(answer_output, str):
         return None
-    all_matches = diagnostics.get("source_matches", [])
-    review_items = diagnostics.get("pdf_review_items", [])
+    all_matches, review_items = diagnostics.get("source_matches", []), diagnostics.get("pdf_review_items", [])
     if not isinstance(all_matches, list) or not isinstance(review_items, list):
         return None
     matches = [item for item in all_matches if isinstance(item, dict)
-               and isinstance(item.get("question_index"), int) and not isinstance(item["question_index"], bool)
-               and item["question_index"] == index and item.get("field") == "content"]
+               and type(item.get("question_index")) is int and item["question_index"] == index
+               and item.get("field") in {"content", "answer_markdown"}]
+    stems = [item for item in matches if item["field"] == "content"]
+    answers = [item for item in matches if item["field"] == "answer_markdown"]
     items = [item for item in review_items if isinstance(item, dict)
-             and isinstance(item.get("question_index"), int) and not isinstance(item["question_index"], bool)
-             and item["question_index"] == index]
-    if len(matches) != 1 or len(items) != 1:
+             and type(item.get("question_index")) is int and item["question_index"] == index]
+    if len(stems) != 1 or len(answers) > 1 or len(items) != 1:
         return None
-    match, item = matches[0], items[0]
-    if item.get("reasons") != [POSITION_REASON]:
+    # A nonempty answer needs its own exact source range. Checking the stem
+    # image alone cannot establish an answer printed elsewhere in the paper.
+    if (answer_output.strip() or any(reason.startswith("原版答案") for reason in review["reasons"])) and not answers:
         return None
-    start, end = match.get("source_start"), match.get("source_end")
-    if (not isinstance(start, int) or isinstance(start, bool) or start < 0
-            or not isinstance(end, int) or isinstance(end, bool) or end <= start):
+    stem, item = stems[0], items[0]
+    from mathbank.pdf_figures import _review_explanations
+    if item.get("reasons") != _review_explanations(review["reasons"]):
         return None
-    if sum(isinstance(other, dict) and other.get("field") == "content"
-           and other.get("source_start") == start and other.get("source_end") == end for other in all_matches) != 1:
+    number, pages = stem.get("source_number"), item.get("source_pages")
+    if (not _positive_int(number) or item.get("source_number") != number or not _positive_int(item.get("source_number"))
+            or not isinstance(pages, list) or not pages or any(not _positive_int(page) for page in pages)
+            or len(set(pages)) != len(pages) or len(pages) > MAX_PAGES):
         return None
-    source, number, pages = match.get("source_excerpt"), match.get("source_number"), item.get("source_pages")
-    if (not isinstance(source, str) or not source.strip() or source != review.get("source_excerpt")
-            or end - start != len(source) or not _positive_int(number)
-            or not _positive_int(item.get("source_number")) or item["source_number"] != number or not isinstance(pages, list)
-            or not pages or any(not _positive_int(page) for page in pages) or len(set(pages)) != len(pages)
-            or len(pages) > MAX_PAGES or len(source) + len(output) > MAX_ITEM_CHARS):
+    for match in matches:
+        start, end, source = match.get("source_start"), match.get("source_end"), match.get("source_excerpt")
+        if (type(start) is not int or start < 0 or type(end) is not int or end <= start
+                or not isinstance(source, str) or not source.strip() or end - start != len(source)
+                or match.get("source_number") not in (None, number)):
+            return None
+        if sum(isinstance(other, dict) and other.get("source_start") == start and other.get("source_end") == end
+               for other in all_matches) != 1:
+            return None
+        field_output = output if match["field"] == "content" else answer_output.replace("[EXTRACTED_ORIGINAL]", "").strip()
+        if _visual_block_reason(source, field_output, allow_image_changes=allow_image_changes) is not None:
+            return None
+    source = stem["source_excerpt"]
+    answer_source = answers[0]["source_excerpt"] if answers else ""
+    # The existing review excerpt contains precisely the suspect source parts,
+    # which can be only the answer. It is not necessarily the stem's excerpt.
+    excerpts = [match["source_excerpt"] for match in sorted(matches, key=lambda item: item["source_start"])]
+    if review.get("source_excerpt") not in [*excerpts, "\n\n".join(excerpts)]:
         return None
-    if not _locally_eligible(source, output):
+    if sum(map(len, (source, output, answer_source, answer_output))) > MAX_ITEM_CHARS:
         return None
     heading = _NUMBER.match(source)
     if not heading or int(heading.group(1) or heading.group(2)) != number:
         return None
-    return {"id": f"item_{index + 1:03d}", "question_index": index, "source_number": number,
-            "source_pages": sorted(pages), "source_excerpt": source, "output": output}
+    result = {"id": f"item_{index + 1:03d}", "question_index": index, "source_number": number,
+              "source_pages": sorted(pages), "source_excerpt": source, "output": output}
+    if answers:
+        result.update(source_answer_excerpt=answer_source, output_answer=answer_output.replace("[EXTRACTED_ORIGINAL]", "").strip())
+    if symbol_hints is not None:
+        result["visual_symbol_risks"] = symbol_hints
+    return result
 
 
 def _skipped_entry(index: int, question: dict, diagnostics: dict, code: str | None = None) -> dict:
     diagnostics = diagnostics if isinstance(diagnostics, dict) else {}
     all_matches, all_items = diagnostics.get("source_matches"), diagnostics.get("pdf_review_items")
     matches = ([item for item in all_matches if isinstance(item, dict)
-               and type(item.get("question_index")) is int and item["question_index"] == index and item.get("field") == "content"]
+               and type(item.get("question_index")) is int and item["question_index"] == index
+               and item.get("field") in {"content", "answer_markdown"}]
                if isinstance(all_matches, list) else [])
     items = [item for item in all_items if isinstance(item, dict)
              and type(item.get("question_index")) is int and item["question_index"] == index] if isinstance(all_items, list) else []
-    match = matches[0] if len(matches) == 1 else {}
+    stems = [match for match in matches if match["field"] == "content"]
+    match = stems[0] if len(stems) == 1 else {}
     item = items[0] if len(items) == 1 else {}
     number = match.get("source_number")
     pages = item.get("source_pages")
@@ -213,15 +300,17 @@ def _skipped_entry(index: int, question: dict, diagnostics: dict, code: str | No
     if code is None:
         if any(isinstance(reason, str) and any(word in reason for word in ("插图", "配图", "裁剪")) for reason in reasons):
             code = "figure_risk"
-        elif reasons != [POSITION_REASON]:
+        elif not _reviewable_reasons(reasons):
             code = "other_review_reason"
         else:
-            source, output = match.get("source_excerpt"), question.get("content")
-            if isinstance(source, str) and isinstance(output, str):
-                if len(source) + len(output) > MAX_ITEM_CHARS or isinstance(pages, list) and len(pages) > MAX_PAGES:
-                    code = "budget_limit"
-                else:
-                    code = _local_block_reason(source, output)
+            size = 0
+            for source_match in matches:
+                source, output = source_match.get("source_excerpt"), question.get(source_match["field"], "")
+                if isinstance(source, str) and isinstance(output, str):
+                    size += len(source) + len(output)
+                    code = code or _visual_block_reason(source, output)
+            if size > MAX_ITEM_CHARS or isinstance(pages, list) and len(pages) > MAX_PAGES:
+                code = "budget_limit"
             code = code or "source_evidence_missing"
     return {"question_index": index, "source_number": number if _positive_int(number) else None,
             "source_pages": sorted(set(pages)) if isinstance(pages, list) and all(_positive_int(page) for page in pages) else [],
@@ -262,16 +351,19 @@ def _source_baseline(source_pages: list[dict], page_numbers: list[int]) -> dict:
 
 
 def _cached_excerpt_matches(candidate: dict, diagnostics: dict, baseline: dict) -> bool:
-    match = next(item for item in diagnostics["source_matches"]
-                 if isinstance(item, dict) and type(item.get("question_index")) is int
-                 and item["question_index"] == candidate["question_index"] and item.get("field") == "content")
-    start, end = match["source_start"], match["source_end"]
-    if baseline["markdown"][start:end] != candidate["source_excerpt"]:
-        return False
+    matches = [item for item in diagnostics["source_matches"]
+               if isinstance(item, dict) and type(item.get("question_index")) is int
+               and item["question_index"] == candidate["question_index"]
+               and item.get("field") in {"content", "answer_markdown"}]
+    actual_pages = set()
+    for match in matches:
+        start, end = match["source_start"], match["source_end"]
+        if baseline["markdown"][start:end] != match["source_excerpt"]:
+            return False
+        actual_pages.update(number for number, left, right, text in baseline["ranges"]
+                            if max(start, left) < min(end, right)
+                            and text[max(start, left) - left:min(end, right) - left].strip())
     nonempty_pages = {number for number, _, _, text in baseline["ranges"] if text.strip()}
-    actual_pages = {number for number, left, right, text in baseline["ranges"]
-                    if max(start, left) < min(end, right)
-                    and text[max(start, left) - left:min(end, right) - left].strip()}
     return bool(actual_pages) and actual_pages <= set(candidate["source_pages"]) <= nonempty_pages
 
 
@@ -282,6 +374,10 @@ def _snapshot(questions: list, diagnostics: dict, indices: list[int], source_pag
             "source_matches": diagnostics.get("source_matches"), "pdf_review_items": diagnostics.get("pdf_review_items"),
             "source_pages": source_pages}
     return hashlib.sha256(json.dumps(data, sort_keys=True, ensure_ascii=False, separators=(",", ":")).encode("utf-8")).hexdigest()
+
+
+def _page_label(number: int) -> dict:
+    return {"type": "text", "text": f"原PDF第 {number} 页"}
 
 
 def _page_messages(page_urls: list, page_numbers: list, wanted: set[int]) -> list[dict]:
@@ -307,43 +403,112 @@ def _page_messages(page_urls: list, page_numbers: list, wanted: set[int]) -> lis
         data = path.read_bytes()
         if not data.startswith(b"\x89PNG\r\n\x1a\n"):
             raise _VerificationError("原页图像不是有效PNG")
-        messages.extend([{"type": "text", "text": f"原PDF第 {number} 页"},
+        messages.extend([_page_label(number),
                          {"type": "image_url", "image_url": {"url": "data:image/png;base64," + base64.b64encode(data).decode("ascii")}}])
     return messages
 
 
-def _valid_decisions(parsed, expected: set[str]) -> dict:
+def _valid_decisions(parsed, candidates: list[dict]) -> tuple[dict, list[dict]]:
+    if isinstance(parsed, list):
+        parsed = {"items": parsed}
+    expected = {item["id"]: item for item in candidates}
     if not isinstance(parsed, dict) or set(parsed) != {"items"} or not isinstance(parsed["items"], list):
         raise _VerificationError("核验结果结构无效")
-    if len(parsed["items"]) != len(expected):
-        raise _VerificationError("核验结果缺少对应题目")
-    results = {}
+    # An unknown identity cannot be safely attributed to a single question.
+    # Reject the envelope before accepting any apparently valid result.
     for item in parsed["items"]:
-        if not isinstance(item, dict) or set(item) != {"id", "decision", "evidence"}:
-            raise _VerificationError("核验结果字段缺失或不受支持")
+        if not isinstance(item, dict) or not isinstance(item.get("id"), str) or item["id"] not in expected:
+            raise _VerificationError("核验结果包含无法归属的题目标识")
+    counts = Counter(item["id"] for item in parsed["items"])
+    by_id = {item["id"]: item for item in parsed["items"]}
+    results, invalid = {}, []
+
+    def retain(candidate, code):
+        invalid.append({key: candidate[key] for key in ("id", "question_index", "source_number", "source_pages")}
+                       | {"code": code, "reason": _INVALID_REASONS[code]})
+
+    for identifier, candidate in expected.items():
+        if counts[identifier] == 0:
+            retain(candidate, "missing_result")
+            continue
+        if counts[identifier] != 1:
+            retain(candidate, "duplicate_id")
+            continue
+        item = by_id[identifier]
+        if not isinstance(item, dict) or set(item) != {"id", "source_number", "source_pages", "decision", "checks", "evidence"}:
+            retain(candidate, "invalid_fields")
+            continue
         identifier, decision, evidence = item["id"], item["decision"], item["evidence"]
-        if (not isinstance(identifier, str) or identifier not in expected or identifier in results
-                or not isinstance(decision, str) or decision not in _DECISIONS
-                or not isinstance(evidence, str) or not evidence.strip() or len(evidence) > MAX_EVIDENCE_CHARS):
-            raise _VerificationError("核验结果标识、结论或依据无效")
-        results[identifier] = {"decision": decision, "evidence": evidence.strip()}
-    return results
+        if (not isinstance(decision, str) or decision not in _DECISIONS
+                or not isinstance(evidence, str) or not 6 <= len(evidence.strip()) <= MAX_EVIDENCE_CHARS
+                or not _positive_int(item["source_number"]) or item["source_number"] != expected[identifier]["source_number"]
+                or not isinstance(item["source_pages"], list) or any(not _positive_int(page) for page in item["source_pages"])
+                or sorted(item["source_pages"]) != expected[identifier]["source_pages"]
+                or not isinstance(item["checks"], dict) or set(item["checks"]) != _CHECKS
+                or any(type(value) is not bool for value in item["checks"].values())
+                or decision == "equivalent" and not all(item["checks"].values())):
+            retain(candidate, "invalid_verdict")
+            continue
+        results[identifier] = {"decision": decision, "evidence": evidence.strip(), "checks": dict(item["checks"])}
+    return results, invalid
+
+
+def _candidate_images(candidates, allowed_paths):
+    items = [{"id": item["id"], "output": {"content": item["output"],
+              "answer_markdown": item.get("output_answer", "")}} for item in candidates]
+    return prepare_candidate_images(items, allowed_paths=allowed_paths,
+                                    uploads_dir=UPLOADS_DIR, test_uploads_dir=TEST_UPLOADS_DIR)
+
+
+def _complete_images(image_evidence) -> bool:
+    return all(item["complete"] for item in image_evidence["per_item"].values())
+
+
+def _verification_prompt(candidates, baseline, image_evidence=None):
+    prompt_items = [{key: value for key, value in item.items() if key != "question_index"} for item in candidates]
+    for item in prompt_items:
+        images = image_evidence["per_item"][item["id"]]["images"] if image_evidence else []
+        if images:
+            item["candidate_images"] = images
+        item["local_suspicions"] = {
+            field: reason for field, source, output in (
+                ("content", item["source_excerpt"], item["output"]),
+                ("answer_markdown", item.get("source_answer_excerpt", ""), item.get("output_answer", "")),
+            ) if (reason := _local_block_reason(source, output)) is not None
+        }
+    if baseline is not None:
+        for item in prompt_items:
+            item["evidence_reused"] = True
+    return prompts.build_pdf_source_verification_prompt(prompt_items)
+
+
+def _text_chars(content) -> int:
+    """Count all request text; image bytes have their own bounded budget."""
+    return sum(len(part["text"]) for part in content if part["type"] == "text")
+
+
+def _planned_text_chars(candidates, baseline, image_evidence) -> int:
+    pages = sorted({page for candidate in candidates for page in candidate["source_pages"]})
+    return _text_chars([{"type": "text", "text": _verification_prompt(candidates, baseline, image_evidence)},
+                        *(_page_label(page) for page in pages), *image_evidence["messages"]])
 
 
 def verify_pdf_source_suspicions(
     questions: list[dict], diagnostics: dict, page_urls: list[str], page_numbers: list[int], *,
     check_cancelled: Callable[[], None] = _no_cancel, source_pages: list[dict] | None = None,
+    candidate_image_paths=(), progress=lambda message: None,
 ) -> dict:
-    """One optional call; errors preserve the original manual-review requirements."""
+    """Check bounded batches once each; errors retain unresolved review details."""
     check_cancelled()
     required = [index for index, question in enumerate(questions)
                 if isinstance(question, dict) and isinstance(question.get("source_review"), dict)
                 and question["source_review"].get("required") is True]
     report = {"status": "no_candidates", "calls": 0, "checked": 0, "confirmed": 0,
-              "pending": len(required), "skipped": 0, "usage": {}, "notes": [], "items": [], "skipped_reasons": []}
+              "pending": len(required), "skipped": 0, "usage": {}, "notes": [], "items": [], "skipped_reasons": [], "invalid_items": []}
     if not required:
         return report
-    candidates, wanted_pages, chars = [], set(), 0
+    batches = []
+    wanted_pages = set()
     baseline = None
     if source_pages is not None:
         try:
@@ -354,35 +519,92 @@ def verify_pdf_source_suspicions(
             report["notes"] = ["首次页面识别缓存无法完整对应原页，已保留人工核对；未重新识图。"]
             return report
     for index in required:
-        candidate = _candidate(index, questions[index], diagnostics)
+        check_cancelled()
+        candidate = _candidate(index, questions[index], diagnostics, allow_image_changes=True)
         if candidate is None:
             report["skipped_reasons"].append(_skipped_entry(index, questions[index], diagnostics))
             continue
         if baseline is not None and not _cached_excerpt_matches(candidate, diagnostics, baseline):
             report["skipped_reasons"].append(_skipped_entry(index, questions[index], diagnostics, "source_evidence_missing"))
             continue
-        pages = wanted_pages | set(candidate["source_pages"])
-        size = len(candidate["source_excerpt"]) + len(candidate["output"])
-        if len(candidates) >= MAX_ITEMS or len(pages) > MAX_PAGES or chars + size > MAX_TOTAL_CHARS:
-            report["skipped_reasons"].append(_skipped_entry(index, questions[index], diagnostics, "budget_limit"))
+        single_images = _candidate_images([candidate], candidate_image_paths)
+        if not _complete_images(single_images):
+            skipped = _skipped_entry(index, questions[index], diagnostics, "figure_risk")
+            skipped["details"] = single_images["per_item"][candidate["id"]]["reasons"]
+            report["skipped_reasons"].append(skipped)
             continue
-        candidates.append(candidate)
-        wanted_pages, chars = pages, chars + size
-    report["skipped"] = len(required) - len(candidates)
-    if not candidates:
+        pages = wanted_pages | set(candidate["source_pages"])
+        trial = [*(batches[-1] if batches else []), candidate]
+        trial_images = _candidate_images(trial, candidate_image_paths) if batches else single_images
+        batch_size = _planned_text_chars(trial, baseline, trial_images)
+        if (not batches or len(batches[-1]) >= MAX_ITEMS or len(pages) > MAX_PAGES
+                or batch_size > MAX_TOTAL_CHARS or not _complete_images(trial_images)):
+            if (len(batches) >= MAX_CALLS or MAX_ITEMS < 1
+                    or _planned_text_chars([candidate], baseline, single_images) > MAX_TOTAL_CHARS):
+                report["skipped_reasons"].append(_skipped_entry(index, questions[index], diagnostics, "budget_limit"))
+                continue
+            batches.append([])
+            pages = set(candidate["source_pages"])
+        batches[-1].append(candidate)
+        wanted_pages = pages
+    report["skipped"] = len(required) - sum(map(len, batches))
+    if not batches:
         return report
+    failed = False
+    repair_budget = {"remaining": MAX_EXTRA_CALLS}
+    for candidates in batches:
+        check_cancelled()
+        batch_report = _verify_candidate_batch(questions, diagnostics, candidates, page_urls, page_numbers,
+                                                check_cancelled=check_cancelled, source_pages=source_pages, baseline=baseline,
+                                                candidate_image_paths=candidate_image_paths,
+                                                repair_budget=repair_budget, progress=progress)
+        for key in ("calls", "checked", "confirmed"):
+            report[key] += batch_report[key]
+        for key in ("repair_calls", "recheck_calls", "repaired"):
+            if key in batch_report:
+                report[key] = report.get(key, 0) + batch_report[key]
+        report["items"].extend(batch_report["items"])
+        report["invalid_items"].extend(batch_report["invalid_items"])
+        report["notes"].extend(batch_report["notes"])
+        for key, value in batch_report["usage"].items():
+            report["usage"][key] = report["usage"].get(key, 0) + value
+        failed = failed or batch_report["status"] in {"failed", "partial"}
+    report["notes"] = list(dict.fromkeys(report["notes"]))
+    report["pending"] = sum(isinstance(q.get("source_review"), dict) and q["source_review"].get("required") is True
+                            for q in questions if isinstance(q, dict))
+    report["status"] = ("partial" if report["checked"] else "failed") if failed else "completed"
+    return report
+
+
+def _verify_candidate_batch(questions, diagnostics, candidates, page_urls, page_numbers, *,
+                            check_cancelled, source_pages, baseline, candidate_image_paths,
+                            repair_budget=None, progress=lambda message: None):
+    """Execute one batch once; a failed batch never retries or erases evidence."""
+    required = [index for index, q in enumerate(questions)
+                if isinstance(q, dict) and isinstance(q.get("source_review"), dict) and q["source_review"].get("required") is True]
+    report = {"status": "failed", "calls": 0, "checked": 0, "confirmed": 0,
+              "usage": {}, "notes": [], "items": [], "invalid_items": []}
+    wanted_pages = set().union(*(set(item["source_pages"]) for item in candidates))
     try:
         indices = [item["question_index"] for item in candidates]
+        if any(_candidate(item["question_index"], questions[item["question_index"]], diagnostics,
+                          allow_image_changes=True) != item for item in candidates):
+            raise _VerificationError("核验前题目或来源条件已变化，未使用旧候选")
+        if baseline is not None and _source_baseline(source_pages, page_numbers) != baseline:
+            raise _VerificationError("核验前首次页面证据已变化，未使用旧候选")
         snapshot = _snapshot(questions, diagnostics, indices, source_pages)
         provider = resolve_ocr_provider(os.getenv("OCR_PREFER_ENGINE", "siliconflow"))
         if not provider.api_key or not provider.chat_completions_url or not provider.supports_image_input:
             raise _VerificationError("识图模型未配置或不支持图片输入")
-        prompt_items = [{key: value for key, value in item.items() if key != "question_index"} for item in candidates]
-        if baseline is not None:
-            for item in prompt_items:
-                item["evidence_reused"] = True
-        content = [{"type": "text", "text": prompts.build_pdf_source_verification_prompt(prompt_items)},
-                   *_page_messages(page_urls, page_numbers, wanted_pages)]
+        page_content = _page_messages(page_urls, page_numbers, wanted_pages)
+        page_evidence_hash = hashlib.sha256(json.dumps(page_content, sort_keys=True).encode()).hexdigest()
+        image_evidence = _candidate_images(candidates, candidate_image_paths)
+        if not _complete_images(image_evidence):
+            raise _VerificationError("候选图片证据不完整，未发起核验")
+        prompt = _verification_prompt(candidates, baseline, image_evidence)
+        content = [{"type": "text", "text": prompt}, *page_content, *image_evidence["messages"]]
+        if _text_chars(content) > MAX_TOTAL_CHARS:
+            raise _VerificationError("完整核验请求超过文字额度")
         payload = {"model": provider.model_name, "messages": [{"role": "user", "content": content}],
                    "max_tokens": MAX_OUTPUT_TOKENS, "stream": False}
         payload = apply_model_thinking_policy(payload, provider=provider, task="ocr")
@@ -397,7 +619,8 @@ def verify_pdf_source_suspicions(
         check_cancelled()
         report["calls"] = 1
         try:
-            response = post_chat_completion(provider, payload, timeout=120, check_status=False, retry_connection=False)
+            response = post_chat_completion(provider, payload, timeout=DOCUMENT_AI_TIMEOUT_SECONDS,
+                                            check_status=False, retry_connection=False)
         except TaskCancelled:
             raise
         except Exception as exc:
@@ -422,41 +645,130 @@ def verify_pdf_source_suspicions(
         if not isinstance(raw, str) or not raw.strip() or len(raw) > MAX_RESPONSE_CHARS:
             raise _VerificationError("核验内容为空、格式无效或过长")
         try:
-            parsed = parse_ai_json(raw)
+            parsed = parse_review_response(raw)
         except Exception as exc:
             raise _VerificationError("核验结果无法解析") from exc
-        decisions = _valid_decisions(parsed, {item["id"] for item in candidates})
+        decisions, invalid_items = _valid_decisions(parsed, candidates)
         check_cancelled()
+        if page_evidence_hash != hashlib.sha256(json.dumps(_page_messages(page_urls, page_numbers, wanted_pages), sort_keys=True).encode()).hexdigest():
+            raise _VerificationError("核验期间原页图像已变化，旧结果未采用")
         if snapshot != _snapshot(questions, diagnostics, indices, source_pages):
             raise _VerificationError("核验期间题目或原文证据已变化，旧结果未采用")
-        if any(_candidate(item["question_index"], questions[item["question_index"]], diagnostics) != item for item in candidates):
+        if image_evidence["fingerprint"] != _candidate_images(candidates, candidate_image_paths)["fingerprint"]:
+            raise _VerificationError("核验期间候选图片已变化，旧结果未采用")
+        if any(_candidate(item["question_index"], questions[item["question_index"]], diagnostics,
+                          allow_image_changes=True) != item for item in candidates):
             raise _VerificationError("核验期间本地校验条件已变化，旧结果未采用")
-        staged = {}
+        def check_repair_evidence():
+            check_cancelled()
+            if (snapshot != _snapshot(questions, diagnostics, indices, source_pages)
+                    or page_evidence_hash != hashlib.sha256(json.dumps(
+                        _page_messages(page_urls, page_numbers, wanted_pages), sort_keys=True).encode()).hexdigest()
+                    or image_evidence["fingerprint"] != _candidate_images(candidates, candidate_image_paths)["fingerprint"]):
+                raise _VerificationError("修正期间题目、原页或候选图片证据发生变化")
+
+        original_candidates = {item["id"]: item for item in candidates}
+
+        def revised_candidates(items):
+            return [{**original_candidates[item["id"]], "output": item["output"]["content"],
+                     **({"output_answer": item["output"]["answer_markdown"]}
+                        if "source_answer_excerpt" in original_candidates[item["id"]] else {})} for item in items]
+
+        def repair_attachments(items):
+            changed = revised_candidates(items)
+            images = _candidate_images(changed, candidate_image_paths)
+            if not _complete_images(images):
+                raise RepairStopped("修正候选图片证据不完整，未继续请求。")
+            pages_needed = set().union(*(set(item["source_pages"]) for item in changed))
+            return [*_page_messages(page_urls, page_numbers, pages_needed), *images["messages"]]
+
+        def recheck_content(items):
+            changed = revised_candidates(items)
+            images = _candidate_images(changed, candidate_image_paths)
+            return [{"type": "text", "text": _verification_prompt(changed, baseline, images)}, *repair_attachments(items)]
+
+        def validate_repair(item, output):
+            if sum(len(value) for value in [*item["original"].values(), *output.values()]) > MAX_ITEM_CHARS:
+                raise RepairStopped("修正后的完整题文超出单题核验额度。")
+            if any(_visual_block_reason(item["original"][field], output[field], allow_image_changes=True)
+                   for field in ("content", "answer_markdown")):
+                raise RepairStopped("修正后仍有来源、缺字或图片完整性问题，未采用。")
+
+        repair = repair_verified_differences([
+            {key: item[key] for key in ("id", "source_number", "source_pages")} | {
+                "original": {"content": item["source_excerpt"], "answer_markdown": item.get("source_answer_excerpt", "")},
+                "output": {"content": item["output"], "answer_markdown": item.get("output_answer", "")}}
+            for item in candidates], decisions, provider=provider, request=post_chat_completion,
+            attachments=repair_attachments, verification_content=recheck_content,
+            parse_verdicts=lambda raw, items: _valid_decisions(parse_review_response(raw), revised_candidates(items))[0],
+            validate_output=validate_repair, check_evidence=check_repair_evidence,
+            check_cancelled=check_cancelled, budget=repair_budget if repair_budget is not None else {"remaining": MAX_EXTRA_CALLS},
+            max_chars=MAX_TOTAL_CHARS, max_output_tokens=MAX_OUTPUT_TOKENS, progress=progress,
+            timeout_seconds=DOCUMENT_AI_TIMEOUT_SECONDS)
+        report["calls"] += repair["calls"]
+        if repair["repairs"]:
+            report.update(repair_calls=repair["repair_calls"], recheck_calls=repair["recheck_calls"], repaired=0)
+        for key, value in repair["usage"].items():
+            report["usage"][key] = report["usage"].get(key, 0) + value
+        check_repair_evidence()
+        staged, staged_outputs, confirmed = {}, {}, set()
         for candidate in candidates:
-            decision = decisions[candidate["id"]]
+            if candidate["id"] not in decisions:
+                continue
+            decision = repair["decisions"].get(candidate["id"], decisions[candidate["id"]])
             index = candidate["question_index"]
             report["items"].append({key: value for key, value in candidate.items()
-                                    if key not in {"source_excerpt", "output"}} | decision)
+                                    if key not in {"source_excerpt", "output", "source_answer_excerpt", "output_answer"}} | decision)
             if baseline is not None:
                 report["items"][-1]["evidence_reused"] = True
+            review = deepcopy(questions[index]["source_review"])
+            if candidate["id"] in repair["repairs"]:
+                review["repair"] = repair["repairs"][candidate["id"]]
+            verification = {
+                **decision, "model": provider.model_name, "snapshot_hash": snapshot,
+                "page_evidence_hash": page_evidence_hash,
+                "source_number": candidate["source_number"], "source_pages": list(candidate["source_pages"]),
+            }
+            if image_evidence["per_item"][candidate["id"]]["images"]:
+                verification.update(candidate_images=image_evidence["per_item"][candidate["id"]]["images"],
+                                    candidate_image_evidence_hash=image_evidence["fingerprint"])
+            if baseline is not None:
+                verification.update(evidence_reused=True, source_baseline_hash=baseline["hash"])
             if decision["decision"] == "equivalent":
-                review = deepcopy(questions[index]["source_review"])
-                review.update(required=False, verified_by="vision", verification={
-                    **decision, "model": provider.model_name, "snapshot_hash": snapshot,
-                    "source_number": candidate["source_number"], "source_pages": list(candidate["source_pages"]),
-                })
-                if baseline is not None:
-                    review["verification"].update(evidence_reused=True, source_baseline_hash=baseline["hash"])
-                staged[index] = review
+                if candidate["id"] in repair["outputs"]:
+                    corrected = repair["outputs"][candidate["id"]]
+                    staged_outputs[index] = corrected
+                    verification["verified_output_sha256"] = output_hash(corrected)
+                    verification["output_before_repair_sha256"] = output_hash({
+                        "content": candidate["output"], "answer_markdown": candidate.get("output_answer", "")})
+                    corrected_images = _candidate_images(revised_candidates([{
+                        "id": candidate["id"], "output": corrected}]), candidate_image_paths)
+                    verification.update(candidate_images=corrected_images["per_item"][candidate["id"]]["images"],
+                                        candidate_image_evidence_hash=corrected_images["fingerprint"])
+                review.update(required=False, verified_by="vision", verification=verification)
+                confirmed.add(index)
+            else:
+                review["verification_attempt"] = verification
+                review["reasons"] = list(dict.fromkeys([*review.get("reasons", []), "原页自动核验：" + decision["evidence"]]))
+            staged[index] = review
         remaining_items = [item for item in diagnostics.get("pdf_review_items", [])
-                           if item.get("question_index") not in staged]
+                           if item.get("question_index") not in confirmed]
+        check_repair_evidence()
         # No await or fallible validation inside the commit block. Retain all
         # original reasons and excerpts as audit evidence for confirmed items.
         for index, review in staged.items():
+            if index in staged_outputs:
+                questions[index].update(staged_outputs[index])
             questions[index]["source_review"] = review
         diagnostics["pdf_review_items"] = remaining_items
-        diagnostics["source_review_count"] = len(required) - len(staged)
-        report.update(status="completed", checked=len(candidates), confirmed=len(staged), pending=len(required) - len(staged))
+        diagnostics["source_review_count"] = len(required) - len(confirmed)
+        if repair["repairs"]:
+            report["repaired"] = len(staged_outputs)
+        report["invalid_items"] = invalid_items
+        if invalid_items:
+            report["notes"] = [f"{len(invalid_items)} 题的核验结论缺失或无效，已逐题保留原核对提示；其他有效结论已独立采纳，未自动重试。"]
+        report.update(status=("partial" if invalid_items else "completed") if decisions else "failed",
+                      checked=len(decisions), confirmed=len(confirmed), pending=len(required) - len(confirmed))
         return report
     except TaskCancelled:
         raise

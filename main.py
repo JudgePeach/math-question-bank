@@ -48,7 +48,9 @@ from mathbank.question_duplicates import (
     QuestionDuplicateInput,
     build_question_fingerprint,
 )
-from mathbank.import_review import make_source_review_advisory
+from mathbank.import_review import (
+    make_source_review_advisory, prepare_word_extraction_reviews, finalize_word_extraction_reviews,
+)
 from mathbank.question_duplicate_service import (
     batch_local_matches,
     exact_duplicate_ids,
@@ -78,8 +80,11 @@ from mathbank.task_manager import (
 )
 from mathbank.docx_helper import extract_docx_markdown
 from mathbank.content_locks import lock_visible_math, reconcile_visible_math
-from mathbank.paper_parse import parse_paper_completion, finalize_source_answers
-from mathbank.math_markdown import normalize_question_math_markdown
+from mathbank.paper_parse import (
+    PAPER_SPLIT_TIMEOUT_SECONDS, PAPER_SPLIT_CACHE_MAX_CHARACTERS,
+    parse_paper_completion, finalize_source_answers, request_pdf_paper_completion,
+)
+from mathbank.math_markdown import normalize_question_math_markdown, normalize_table_math_wrappers
 from mathbank.fraction_style import normalize_fraction_style
 from mathbank.tex_helper import (
     MAX_TEX_BYTES,
@@ -111,6 +116,7 @@ from mathbank.curriculums import (
 )
 from mathbank.prompts import (
     COMMON_OCR_PROMPT,
+    PDF_VISUAL_FIDELITY_RULE,
     ILLUSTRATION_BOX_PROMPT,
     build_ai_solve_prompts,
     build_classification_system_prompt,
@@ -129,16 +135,20 @@ from mathbank.question_types import (
 import shutil
 from mathbank.pdf_inspector_helper import (
     is_pdf_inspector_available,
+    get_pdf_inspector_version,
     inspect_and_extract_pdf,
     merge_pdf_page_texts,
 )
 from mathbank.pdf_figures import (
     PDF_STRATEGIES,
     apply_pdf_layout_reviews,
+    refresh_pdf_review_items,
     enrich_pdf_with_figures,
     isolate_shared_pdf_figures,
 )
 from mathbank.pdf_layout import inspect_pdf_page
+from mathbank.document_requests import DOCUMENT_AI_TIMEOUT_SECONDS
+from mathbank.pdf_vision_request import completion_content, request_pdf_vision, collected_usage
 from mathbank.paths import (
     DATABASE_PATH,
     DATA_BACKUP_DIR,
@@ -168,6 +178,21 @@ from mathbank.asset_security import (
     read_stream_limited,
     resolve_upload_asset,
     write_private_text_atomic,
+)
+from mathbank.asset_lifecycle import (
+    AssetLifecycleError,
+    RetainedUploadStaticFiles,
+    quarantine_asset,
+    register_asset_store,
+    serialize_asset_lifecycle,
+)
+from mathbank.paths import RETAINED_UPLOADS_DIR
+from mathbank.question_assets import (
+    embedded_question_assets,
+    rewrite_image_layout_paths,
+    rewrite_question_asset_paths,
+    rewrite_structured_asset_paths,
+    structured_question_assets,
 )
 
 # Load environment variables
@@ -369,6 +394,7 @@ def heal_database_curriculum_names():
 
 UPLOAD_DIR_REL = "static/test_uploads" if IS_TESTING else "static/uploads"
 UPLOAD_DIR = str(TEST_UPLOADS_DIR if IS_TESTING else UPLOADS_DIR)
+register_asset_store(UPLOAD_DIR, RETAINED_UPLOADS_DIR / ("test" if IS_TESTING else "uploads"))
 
 def load_or_create_local_token() -> str:
     token_dir = str(SYSTEM_GENERATED_DIR)
@@ -477,23 +503,14 @@ def watchdog_loop():
 # threading.Thread(target=watchdog_loop, daemon=True).start()
 
 # ----------------- 启动自愈：后台静默清理孤儿临时图片 -----------------
+@serialize_asset_lifecycle
 def clean_orphaned_images():
-    """扫描 static/uploads 目录及其 tmp 子目录，安全彻底擦除未被数据库引用的孤儿图片与旧残留临时图片"""
+    """Retain unregistered images recoverably; old browser drafts remain usable."""
     try:
         from mathbank.database import SessionLocal, Question
         db = SessionLocal()
         try:
-            # 1. 搜集数据库中所有题目引用的图片路径
-            questions = db.query(Question._image_paths).all()
-            referenced_images = set()
-            for (img_paths_str,) in questions:
-                if img_paths_str:
-                    try:
-                        paths = json.loads(img_paths_str)
-                        for path in paths:
-                            referenced_images.add(path.lstrip("/").lower())
-                    except Exception:
-                        pass
+            referenced_images = _referenced_question_assets(db)
                         
             # 2. 遍历本地图片目录及 tmp 子目录
             upload_dir = UPLOAD_DIR
@@ -508,13 +525,14 @@ def clean_orphaned_images():
             for filename in os.listdir(upload_dir):
                 full_path = os.path.join(upload_dir, filename)
                 if os.path.isfile(full_path) and not filename.startswith("."):
-                    local_rel_path = f"{UPLOAD_DIR_REL}/{filename}".lower()
-                    if local_rel_path not in referenced_images:
+                    if Path(full_path).resolve() not in referenced_images:
                         try:
                             mtime = os.path.getmtime(full_path)
                             if now - mtime > one_hour_seconds:
-                                os.remove(full_path)
-                                cleaned_count += 1
+                                cleaned_count += int(quarantine_asset(
+                                    f"/{UPLOAD_DIR_REL}/{filename}", uploads_dir=UPLOAD_DIR,
+                                    url_prefix=UPLOAD_DIR_REL, reason="startup-unregistered",
+                                ))
                         except Exception:
                             pass
 
@@ -524,18 +542,19 @@ def clean_orphaned_images():
                 for filename in os.listdir(tmp_dir):
                     full_path = os.path.join(tmp_dir, filename)
                     if os.path.isfile(full_path) and not filename.startswith("."):
-                        local_rel_path = f"{UPLOAD_DIR_REL}/tmp/{filename}".lower()
-                        if local_rel_path not in referenced_images:
+                        if Path(full_path).resolve() not in referenced_images:
                             try:
                                 mtime = os.path.getmtime(full_path)
                                 if now - mtime > 600:  # 超过 10 分钟未被使用的 tmp 切片立即清理
-                                    os.remove(full_path)
-                                    cleaned_count += 1
+                                    cleaned_count += int(quarantine_asset(
+                                        f"/{UPLOAD_DIR_REL}/tmp/{filename}", uploads_dir=UPLOAD_DIR,
+                                        url_prefix=UPLOAD_DIR_REL, reason="startup-temporary",
+                                    ))
                             except Exception:
                                 pass
                         
             if cleaned_count > 0:
-                print(f"[Storage Cleanup] 成功检测并清除 {cleaned_count} 个残留的旧临时图片与孤儿文件，磁盘无痕瘦身成功！")
+                print(f"[Storage Retention] 已将 {cleaned_count} 个暂未登记图片移入可恢复保留区；原地址访问时自动恢复，未永久删除。")
         finally:
             db.close()
     except Exception as e:
@@ -643,17 +662,22 @@ def get_seq_mapping(db: Session, question_ids=None):
 def healthz():
     report = readiness_report(engine)
     report["server_instance_id"] = SERVER_INSTANCE_ID
+    report["pdf_inspector_version"] = get_pdf_inspector_version()
     return JSONResponse(report, status_code=200 if report["ready"] else 503)
 
 @app.get("/")
 def read_index():
+    from mathbank.ui_settings import community_qa_enabled, render_qa_visibility
+
     index_path = str(STATIC_DIR / "index.html")
     if os.path.exists(index_path):
         with open(index_path, "r", encoding="utf-8") as f:
             html_content = f.read()
+        qa_enabled = community_qa_enabled()
+        html_content = render_qa_visibility(html_content, enabled=qa_enabled)
         
         # Inject dynamic cache-busting version parameter based on file mtime
-        js_files = ["api.js", "editor.js", "ocr.js", "import.js", "paper.js", "dashboard.js"]
+        js_files = ["api.js", "editor.js", "ocr.js", "import.js", "paper.js", "dashboard.js", "qa-data.js", "qa.js"]
         for js in js_files:
             js_path = str(STATIC_JS_DIR / js)
             mtime = int(os.path.getmtime(js_path)) if os.path.exists(js_path) else 0
@@ -672,7 +696,7 @@ def read_index():
         html_content = html_content.replace('/static/favicon.png', f'/static/favicon.png?v={fav_mtime}')
             
         # Inject the token and server_instance_id directly into index.html to bypass any cookie blocking policies
-        token_script = f'<script>window.__localToken = "{LOCAL_TOKEN}"; window.__serverInstanceId = "{SERVER_INSTANCE_ID}";</script>'
+        token_script = f'<script>window.__localToken = "{LOCAL_TOKEN}"; window.__serverInstanceId = "{SERVER_INSTANCE_ID}"; window.__qaEnabled = {json.dumps(qa_enabled)};</script>'
         html_content = html_content.replace('<head>', f'<head>\n    {token_script}')
             
         res = HTMLResponse(content=html_content)
@@ -829,6 +853,8 @@ def ocr_via_provider(
     image_path: str,
     provider: MultimodalProviderConfig,
     include_illustration_box: bool = False,
+    *, pdf_page: bool = False, check_cancelled=lambda: None,
+    report_attempt=lambda _event: None, page_index: int = None,
 ) -> str:
     """Use one resolved multimodal provider for formula and text OCR."""
     import base64
@@ -850,6 +876,8 @@ def ocr_via_provider(
         raise RuntimeError(f"读取并对图片进行 Base64 编码失败: {str(e)}")
 
     prompt = COMMON_OCR_PROMPT
+    if pdf_page:
+        prompt += PDF_VISUAL_FIDELITY_RULE
     if include_illustration_box:
         prompt += ILLUSTRATION_BOX_PROMPT
 
@@ -877,6 +905,17 @@ def ocr_via_provider(
         provider=provider,
         task="ocr",
     )
+
+    if pdf_page:
+        def validate(body):
+            return {"markdown": completion_content(body, "PDF 页面识别", max_chars=200_000,
+                                                   allow_missing_finish=True).strip()}
+        result = request_pdf_vision(
+            provider, payload, post=post_chat_completion, validate=validate,
+            label="PDF 页面识别", stage="page_ocr", page_index=page_index,
+            check_cancelled=check_cancelled, report_attempt=report_attempt,
+        )
+        return result["markdown"]
 
     timeout = 240
     # Chat-completion POSTs are not idempotent: a read timeout can happen after
@@ -2592,6 +2631,7 @@ def prepare_question_assets(
     tikz_code: str = "",
     *,
     promotion_log: list[tuple[Path, Path]],
+    path_map: dict[str, str] | None = None,
 ) -> tuple[
     str,
     str,
@@ -2604,12 +2644,25 @@ def prepare_question_assets(
     """Promote and validate all visible and AI-only assets in one policy path."""
 
     parsed_img_paths = json.loads(image_paths) if image_paths else []
+    if not isinstance(parsed_img_paths, list):
+        raise AssetSecurityError("image_paths 必须是插图路径数组。")
+    parsed_img_paths.extend(structured_question_assets(
+        content_tikz_assets, answer_tikz_assets,
+        legacy_reference=tikz_reference_image_path,
+    ))
+    replacements: dict[str, str] = {}
     content, answer_markdown, parsed_img_paths = promote_question_temp_assets(
         content,
         answer_markdown,
         parsed_img_paths,
         promotion_log=promotion_log,
+        path_map=replacements,
     )
+    if path_map is not None:
+        path_map.update(replacements)
+    content_tikz_assets = rewrite_structured_asset_paths(content_tikz_assets, replacements)
+    answer_tikz_assets = rewrite_structured_asset_paths(answer_tikz_assets, replacements)
+    tikz_reference_image_path = replacements.get(tikz_reference_image_path, tikz_reference_image_path)
     parsed_img_paths = normalize_upload_asset_references(
         parsed_img_paths,
         uploads_dir=UPLOAD_DIR,
@@ -2745,6 +2798,7 @@ def duplicate_review_required_response(
 
 
 @app.post("/api/questions")
+@serialize_asset_lifecycle
 def create_question(
     background_tasks: BackgroundTasks,
     content: str = Form(...),
@@ -2772,6 +2826,7 @@ def create_question(
     db: Session = Depends(get_db)
 ):
     asset_promotions: list[tuple[Path, Path]] = []
+    asset_path_map: dict[str, str] = {}
     duplicate_warning = ""
     try:
         duplicate_snapshot_hash = str(duplicate_snapshot_hash or "").strip()
@@ -2807,6 +2862,7 @@ def create_question(
             answer_tikz_assets,
             tikz_code,
             promotion_log=asset_promotions,
+            path_map=asset_path_map,
         )
         
         # 1. Fallback if third level is empty, default to chapter
@@ -2830,7 +2886,7 @@ def create_question(
             figure_size=figure_size,
             tags=tags
         )
-        db_question.image_layouts = image_layouts
+        db_question.image_layouts = rewrite_image_layout_paths(image_layouts, asset_path_map)
         db_question.image_paths = parsed_img_paths
         db_question.content_tikz_assets = parsed_content_tikz_assets
         db_question.answer_tikz_assets = parsed_answer_tikz_assets
@@ -2933,9 +2989,12 @@ def create_question(
     )
     if duplicate_warning:
         response["warning"] = duplicate_warning
+    if asset_path_map:
+        response["asset_path_map"] = asset_path_map
     return response
 
 @app.put("/api/questions/{question_id}")
+@serialize_asset_lifecycle
 def update_question(
     question_id: int,
     background_tasks: BackgroundTasks,
@@ -2968,6 +3027,7 @@ def update_question(
         raise HTTPException(status_code=404, detail="未找到对应的题目")
         
     asset_promotions: list[tuple[Path, Path]] = []
+    asset_path_map: dict[str, str] = {}
     duplicate_warning = ""
     old_images = list(db_question.image_paths)
     try:
@@ -3005,6 +3065,7 @@ def update_question(
             answer_tikz_assets,
             tikz_code,
             promotion_log=asset_promotions,
+            path_map=asset_path_map,
         )
         
         # 1. Fallback if third level is empty, default to chapter
@@ -3032,7 +3093,10 @@ def update_question(
         # Physical cleanup happens only after the database commit succeeds.
         removed_images = set(old_images) - set(parsed_img_paths)
 
-        db_question.image_layouts = image_layouts if image_layouts is not None else db_question.image_layouts
+        db_question.image_layouts = rewrite_image_layout_paths(
+            image_layouts if image_layouts is not None else db_question.image_layouts,
+            asset_path_map,
+        )
         db_question.image_paths = parsed_img_paths
         db_question.content_tikz_assets = parsed_content_tikz_assets
         db_question.answer_tikz_assets = parsed_answer_tikz_assets
@@ -3159,6 +3223,8 @@ def update_question(
     )
     if duplicate_warning:
         response["warning"] = duplicate_warning
+    if asset_path_map:
+        response["asset_path_map"] = asset_path_map
     return response
 
 @app.post("/api/questions/{question_id}/figure_align")
@@ -3317,6 +3383,7 @@ def remove_association(
         raise HTTPException(status_code=400, detail=f"解除关联失败: {str(e)}")
 
 @app.delete("/api/questions/{question_id}")
+@serialize_asset_lifecycle
 def delete_question(
     question_id: int,
     background_tasks: BackgroundTasks,
@@ -4003,6 +4070,9 @@ def parse_paper_text_internal(
     *,
     diagnostics: dict | None = None,
     preserve_source_answers: bool = False,
+    pdf_retry: bool = False,
+    check_cancelled=lambda: None,
+    report_attempt=lambda _event: None,
 ) -> list:
     """内部通用函数：调用选定的 LLM 接口，将 LaTeX 试卷内容解析拆分为结构化 JSON 卡片"""
     parse_model = os.getenv("PREFER_PARSE_MODEL") or os.getenv("DEEPSEEK_PARSE_MODEL", "deepseek-flash")
@@ -4040,18 +4110,24 @@ def parse_paper_text_internal(
         task="parse",
     )
     
-    response = post_chat_completion(
-        provider,
-        data,
-        timeout=180,
-        provider_name=provider_name,
-    )
-        
-    parsed_questions = parse_paper_completion(
-        response.json(),
-        raw_markdown="" if preserve_source_answers else latex_content,
-        diagnostics=diagnostics,
-    )
+    if pdf_retry:
+        parsed_questions = request_pdf_paper_completion(
+            provider, data, post=post_chat_completion,
+            raw_markdown="" if preserve_source_answers else latex_content,
+            diagnostics=diagnostics, check_cancelled=check_cancelled, report_attempt=report_attempt,
+        )
+    else:
+        response = post_chat_completion(
+            provider,
+            data,
+            timeout=PAPER_SPLIT_TIMEOUT_SECONDS,
+            provider_name=provider_name,
+        )
+        parsed_questions = parse_paper_completion(
+            response.json(),
+            raw_markdown="" if preserve_source_answers else latex_content,
+            diagnostics=diagnostics,
+        )
     if preserve_source_answers:
         # Compare the original response before answer filtering or formula edits.
         return parsed_questions
@@ -4145,7 +4221,7 @@ def ai_parse_paper(
         response = post_chat_completion(
             provider,
             data,
-            timeout=180,
+            timeout=PAPER_SPLIT_TIMEOUT_SECONDS,
             provider_name=provider_name,
         )
             
@@ -4336,14 +4412,16 @@ def shutdown_server(
 
 # ----------------- Storage Promotion Engine -----------------
 
+@serialize_asset_lifecycle
 def rollback_question_asset_promotions(promotions: list[tuple[Path, Path]]) -> None:
     """Best-effort compensation when a DB transaction rejects promoted files."""
 
     for source, destination in reversed(promotions):
         try:
-            if destination.is_file() and not source.exists():
-                source.parent.mkdir(parents=True, exist_ok=True)
-                shutil.move(str(destination), str(source))
+            # Only newly created copies are logged. Reused permanent files
+            # can belong to another committed question and are never removed.
+            if destination.is_file() and source.is_file():
+                destination.unlink()
         except OSError as exc:
             print(f"[Storage Rollback] Failed to restore a promoted asset: {type(exc).__name__}")
 
@@ -4356,15 +4434,23 @@ def _referenced_question_assets(db: Session) -> set[Path]:
         Question._image_paths,
         Question.content,
         Question.answer_markdown,
+        Question._content_tikz_assets,
+        Question._answer_tikz_assets,
+        Question.tikz_reference_image_path,
     ).all()
-    for raw_paths, content, answer_markdown in rows:
+    for raw_paths, content, answer_markdown, content_assets, answer_assets, legacy_reference in rows:
         references = []
         try:
             parsed = json.loads(raw_paths or "[]")
-            if isinstance(parsed, list):
-                references.extend(parsed)
-        except (TypeError, json.JSONDecodeError):
-            pass
+            if not isinstance(parsed, list):
+                raise ValueError("题目图片清单不是数组，已停止清理")
+            references.extend(parsed)
+            references.extend(structured_question_assets(
+                content_assets, answer_assets, legacy_reference=legacy_reference,
+            ))
+        except (TypeError, ValueError) as exc:
+            raise ValueError("题目图片记录损坏，已停止清理") from exc
+        references.extend(embedded_question_assets(content, answer_markdown))
         references.extend(
             re.findall(
                 r'/static/(?:uploads|test_uploads)/[a-zA-Z0-9_./-]+',
@@ -4385,8 +4471,9 @@ def _referenced_question_assets(db: Session) -> set[Path]:
     return resolved_references
 
 
+@serialize_asset_lifecycle
 def delete_unreferenced_question_assets(db: Session, references) -> int:
-    """Delete committed-away images only when no remaining question uses them."""
+    """Retain committed-away images recoverably after checking every reference."""
 
     candidates: set[Path] = set()
     for reference in set(references or []):
@@ -4409,30 +4496,32 @@ def delete_unreferenced_question_assets(db: Session, references) -> int:
     for candidate in candidates:
         try:
             if candidate.is_file() and candidate not in referenced:
-                candidate.unlink()
-                removed += 1
-        except OSError:
+                relative = candidate.relative_to(Path(UPLOAD_DIR).resolve()).as_posix()
+                removed += int(quarantine_asset(
+                    f"/{UPLOAD_DIR_REL}/{relative}", uploads_dir=UPLOAD_DIR,
+                    url_prefix=UPLOAD_DIR_REL, reason="question-reference-removed",
+                ))
+        except (OSError, AssetLifecycleError):
             print("[Storage Cleanup] Skipped an unavailable legacy image path.")
     return removed
 
 
+@serialize_asset_lifecycle
 def promote_question_temp_assets(
     content: str,
     answer_markdown: str,
     image_paths_list: list,
     *,
     promotion_log: list[tuple[Path, Path]] | None = None,
+    path_map: dict[str, str] | None = None,
 ) -> tuple:
-    """物理移动临时图片到永久目录，并更新题干、解析和图片路径列表中的引用"""
+    """Copy temporary images durably, preserving drafts and shared import cards."""
     import shutil
 
     if not isinstance(image_paths_list, list):
         raise AssetSecurityError("image_paths 必须是插图路径数组。")
 
-    embedded_paths = re.findall(
-        r'/static/(?:uploads|test_uploads)/tmp/[a-zA-Z0-9_.-]+',
-        f"{content}\n{answer_markdown}",
-    )
+    embedded_paths = embedded_question_assets(content, answer_markdown)
     all_references = [value for value in image_paths_list if value] + embedded_paths
 
     # Validate the complete set before moving anything.  A bad second path must
@@ -4467,11 +4556,32 @@ def promote_question_temp_assets(
                 url_prefix=UPLOAD_DIR_REL,
                 require_file=False,
             )
+            # A previous card may already have copied this same shared image.
+            # Reuse only byte-identical content and never overwrite a collision.
+            from mathbank.asset_lifecycle import restore_asset
+            restore_asset(destination, uploads_dir=upload_root)
             if destination.exists():
-                raise AssetSecurityError("目标插图文件已存在，已停止覆盖。")
-            shutil.move(str(source), str(destination))
-            if promotion_log is not None:
-                promotion_log.append((source, destination))
+                with source.open("rb") as original, destination.open("rb") as existing:
+                    while True:
+                        left, right = original.read(1024 * 1024), existing.read(1024 * 1024)
+                        if left != right:
+                            raise AssetSecurityError("目标插图文件已存在且内容不同，已停止覆盖。")
+                        if not left:
+                            break
+            else:
+                # Exclusive creation plus the lifecycle lock makes rollback
+                # ownership unambiguous even under concurrent batch imports.
+                output = destination.open("xb")
+                try:
+                    with output, source.open("rb") as original:
+                        shutil.copyfileobj(original, output)
+                        output.flush()
+                        os.fsync(output.fileno())
+                except Exception:
+                    destination.unlink(missing_ok=True)
+                    raise
+                if promotion_log is not None:
+                    promotion_log.append((source, destination))
             promoted_by_canonical[canonical] = normalize_upload_asset_reference(
                 destination_url,
                 uploads_dir=upload_root,
@@ -4488,11 +4598,10 @@ def promote_question_temp_assets(
         replacements[original] = promoted
         replacements[canonical] = promoted
 
-    new_content = content
-    new_answer = answer_markdown
-    for old_path, new_path in replacements.items():
-        new_content = new_content.replace(old_path, new_path)
-        new_answer = new_answer.replace(old_path, new_path)
+    new_content = rewrite_question_asset_paths(content, replacements)
+    new_answer = rewrite_question_asset_paths(answer_markdown, replacements)
+    if path_map is not None:
+        path_map.update({old: new for old, new in replacements.items() if old != new})
 
     updated_paths: list[str] = []
     for original in image_paths_list:
@@ -4634,34 +4743,16 @@ def extract_title_from_latex(latex: str) -> str:
 
 # ----------------- PDF Import & AI Parsing Backend Logic -----------------
 
-def ocr_pdf_page_image(image_path: str) -> str:
-    """自动选择已配置的 VLM 识别引擎进行单页识别，支持故障转移（Fallback）与兜底识别"""
-    errors = []
+def ocr_pdf_page_image(image_path: str, *, check_cancelled=lambda: None,
+                       report_attempt=lambda _event: None, page_index: int = None) -> str:
+    """PDF pages share the configured provider's bounded retry budget."""
+    check_cancelled()
     prefer_engine = os.getenv("OCR_PREFER_ENGINE", "siliconflow")
-    providers_to_try = resolve_ocr_fallbacks(prefer_engine)
-
-    if not providers_to_try:
-        raise ValueError("未配置任何识图 Key，请在系统设置中配置所选识图平台的 DeepSeek、硅基流动、阿里百炼或中转站 API 密钥。")
-
-    for ocr_provider in providers_to_try:
-        label = ocr_provider.provider_label
-        try:
-            print(f"[PDF OCR Flow] 正在尝试调用识图引擎: {label}...")
-            return ocr_via_provider(image_path, ocr_provider)
-        except requests.exceptions.ReadTimeout as e_single:
-            # The first provider may already have accepted the image.  Sending
-            # it immediately to another provider can create a duplicate bill.
-            raise RuntimeError(
-                f"{label} 读取超时，请求是否已被处理尚不确定。"
-                "为避免重复计费，本次未自动切换到下一家模型，请稍后手动重试。"
-            ) from e_single
-        except Exception as e_single:
-            err_msg = f"{label} 出错: {str(e_single)}"
-            print(f"[PDF OCR Flow Warning] {err_msg}")
-            errors.append(err_msg)
-            
-    # 如果全部都失败了，抛出包含所有尝试错误细节的汇总异常
-    raise RuntimeError("所有配置的识图引擎均尝试失败。详情:\n" + "\n".join(errors))
+    provider = resolve_ocr_provider(prefer_engine)
+    if not provider.api_key or not provider.chat_completions_url:
+        raise ValueError("PDF 页面识别所用的识图服务未配置，请在系统设置中配置所选平台。")
+    return ocr_via_provider(image_path, provider, pdf_page=True, check_cancelled=check_cancelled,
+                            report_attempt=report_attempt, page_index=page_index)
 
 
 def process_ocr_illustrations(text: str) -> str:
@@ -4677,7 +4768,7 @@ def process_ocr_illustrations(text: str) -> str:
     cleaned = re.sub(r"(?i)\[ILLUSTRATION_BOX:.*?\]", "", cleaned)
     cleaned = re.sub(r"(?i)ILLUSTRATION_BOX\s*[:：\(（\[\s]*[^\]\)\n\r]+[\s\]\)]*", "", cleaned)
     
-    return cleaned.strip()
+    return normalize_table_math_wrappers(cleaned).strip()
 
 
 def find_source_page_by_overlap(q_text: str, ocr_results: list) -> int:
@@ -5060,7 +5151,7 @@ def run_pdf_parsing_task(
     generate_answers: bool = False,
     page_range: str = None,
     pdf_strategy: str = "native_preferred",
-    pdf_verify_suspicions: bool = False,
+    pdf_verify_suspicions: bool = True,
 ):
     """PDF parsing with bounded OCR concurrency and cooperative cancellation."""
 
@@ -5070,6 +5161,75 @@ def run_pdf_parsing_task(
     tmp_pdf_path = Path(TMP_UPLOAD_DIR) / f"{task_id}.pdf"
     diagnostics: dict = {}
     layout_result = None
+    page_urls = []
+    target_page_indices = []
+    ocr_results = []
+    source_pages = None
+    vision_lock = threading.Lock()
+
+    def check_pdf_cancelled():
+        DOCUMENT_TASKS.check_cancelled(task_id)
+        if not DOCUMENT_TASKS.exists(task_id):
+            raise TaskCancelled("PDF 任务已移除。")
+
+    def report_pdf_attempt(event):
+        check_pdf_cancelled()
+        with vision_lock:
+            report = diagnostics.setdefault("pdf_vision", {
+                "timeout_seconds": DOCUMENT_AI_TIMEOUT_SECONDS, "max_attempts": 2, "attempts": [],
+            })
+            event = {**event, "page_number": event["page_index"] + 1}
+            identity = (event["page_index"], event["stage"], event["attempt"])
+            previous = next((item for item in report["attempts"]
+                             if (item["page_index"], item["stage"], item["attempt"]) == identity), None)
+            if previous is None:
+                report["attempts"].append(event)
+            else:
+                previous.update(event)
+            report["calls"] = len(report["attempts"])
+            report["retries"] = sum(item["attempt"] > 1 for item in report["attempts"])
+            report["usage"] = collected_usage(report["attempts"])
+            report["usage_complete"] = all(all(key in item["usage"] for key in
+                                               ("prompt_tokens", "completion_tokens", "total_tokens"))
+                                           for item in report["attempts"])
+            if event["status"] == "running":
+                log = f"第 {event['page_number']} 页识别：第 {event['attempt']} / 2 次尝试，每次等待上限 {DOCUMENT_AI_TIMEOUT_SECONDS} 秒..."
+            elif event.get("retrying"):
+                log = f"第 {event['page_number']} 页识别失败，准备重试一次：{event['error']}"
+            else:
+                log = None
+            changes = {"diagnostics": copy.deepcopy(diagnostics)}
+            if log:
+                changes["log"] = log
+            DOCUMENT_TASKS.update(task_id, **changes)
+
+    def report_pdf_split_attempt(event):
+        check_pdf_cancelled()
+        if event.get("stream_progress"):
+            received = event.get("stream_content_characters", 0)
+            log = f"模型已返回 {received} 个正文字符，正在接收完整拆题结果..." if received else None
+        elif event["status"] == "running":
+            log = f"正在拆解已识别的试卷文本：第 {event['attempt']} / 2 次尝试，每次等待上限 {PAPER_SPLIT_TIMEOUT_SECONDS} 秒..."
+        elif event.get("retrying"):
+            log = f"试卷文本拆题失败，准备重试一次：{event['error']}"
+        else:
+            log = None
+        changes = {"diagnostics": copy.deepcopy(diagnostics)}
+        if log:
+            changes["log"] = log
+        DOCUMENT_TASKS.update(task_id, **changes)
+
+    def retain_split_input(source_content, model_source):
+        # Task-local diagnostic evidence; this is not a persistent response
+        # cache or a promise that a failed upload can be resumed automatically.
+        cache = {"source_sha256": hashlib.sha256(file_bytes).hexdigest(),
+                 "model_source_sha256": hashlib.sha256(model_source.encode("utf-8")).hexdigest(),
+                 "input_characters": len(model_source), "status": "complete",
+                 "source_markdown": source_content, "model_source": model_source}
+        if len(json.dumps(cache, ensure_ascii=False)) > PAPER_SPLIT_CACHE_MAX_CHARACTERS:
+            cache = {key: value for key, value in cache.items() if key not in ("source_markdown", "model_source")}
+            cache["status"] = "metadata_only"
+        DOCUMENT_TASKS.update(task_id, pdf_source_cache=cache)
 
     try:
         import pymupdf as fitz
@@ -5193,6 +5353,59 @@ def run_pdf_parsing_task(
                     plan = plan_pdf_regions(document[page_num], info)
                     if plan is not None:
                         regional_plans[local_idx] = plan
+
+        # Auxiliary views do not own text/slots and are not regional OCR or
+        # independent verification. Render from the original PDF serially;
+        # HTTP workers get only internally registered paths and metadata.
+        detail_results: dict[int, dict] = {}
+        if pdf_strategy == "layout_aware":
+            from mathbank.pdf_vision_details import render_pdf_detail_views
+            detail_bytes_remaining = 80 * 1024 * 1024
+
+            def register_detail_asset(path):
+                if path not in temp_assets:
+                    temp_assets.append(path)
+                if not DOCUMENT_TASKS.add_temp_asset(task_id, path):
+                    raise TaskCancelled("PDF 任务已移除。")
+                check_pdf_cancelled()
+
+            full_page_indices = [index for index in pages_requiring_ocr if index not in regional_plans]
+            if full_page_indices:
+                DOCUMENT_TASKS.update(task_id, log="正在准备原页局部放大视图，辅助精读小字和数学符号...")
+                with fitz.open(stream=file_bytes, filetype="pdf") as document:
+                    for local_idx in full_page_indices:
+                        check_pdf_cancelled()
+                        page_num = target_page_indices[local_idx]
+                        try:
+                            details = render_pdf_detail_views(
+                                document[page_num], page_index=page_num,
+                                output_dir=Path(TMP_UPLOAD_DIR),
+                                asset_prefix=f"pdf_detail_{task_id}_{page_num}",
+                                url_prefix=f"/{UPLOAD_DIR_REL}/tmp",
+                                register_asset=register_detail_asset,
+                                check_cancelled=check_pdf_cancelled,
+                                byte_budget=detail_bytes_remaining,
+                            )
+                        except TaskCancelled:
+                            raise
+                        except Exception:
+                            # Optional local preparation must not discard the
+                            # already rendered complete navigation page.
+                            details = {"status": "skipped", "views": [], "total_png_bytes": 0,
+                                       "notes": ["本页高清辅助视图无法准备，继续使用整页识图。"]}
+                        detail_results[local_idx] = details
+                        detail_bytes_remaining -= details.get("total_png_bytes", 0)
+            diagnostics["pdf_detail_views"] = {
+                "prepared_pages": sum(bool(item["views"]) for item in detail_results.values()),
+                "prepared_images": sum(len(item["views"]) for item in detail_results.values()),
+                "separate_detail_requests": 0, "independent_verification": False,
+                "pages": [{"page_number": target_page_indices[index] + 1,
+                           "status": item["status"], "notes": list(item["notes"]),
+                           "views": [{key: view[key] for key in
+                                      ("id", "page_index", "bbox", "actualdpi", "width", "height", "sha256")}
+                                     for view in item["views"]]}
+                          for index, item in detail_results.items()],
+            }
         extraction_pages = []
         for local_idx, page_num in enumerate(target_page_indices):
             plan = regional_plans.get(local_idx)
@@ -5271,9 +5484,9 @@ def run_pdf_parsing_task(
                 acquired = False
                 try:
                     while not acquired:
-                        DOCUMENT_TASKS.check_cancelled(task_id)
+                        check_pdf_cancelled()
                         acquired = PDF_OCR_SEMAPHORE.acquire(timeout=0.25)
-                    DOCUMENT_TASKS.check_cancelled(task_id)
+                    check_pdf_cancelled()
                     real_page_num = target_page_indices[local_idx] + 1
                     joint = None
                     if local_idx in regional_plans:
@@ -5281,18 +5494,23 @@ def run_pdf_parsing_task(
                         joint = request_pdf_regions(
                             image_path, page_layout_infos[real_page_num - 1], regional_plans[local_idx],
                             include_figures=pdf_strategy == "layout_aware",
-                            check_cancelled=lambda: DOCUMENT_TASKS.check_cancelled(task_id),
+                            check_cancelled=check_pdf_cancelled, report_attempt=report_pdf_attempt,
                         )
                         raw_text = joint["markdown"]
                     elif pdf_strategy == "layout_aware":
                         from mathbank.pdf_page_vision import request_pdf_page
+                        detail_kwargs = ({"detail_views": detail_results[local_idx]["views"]}
+                                         if detail_results.get(local_idx, {}).get("views") else {})
                         joint = request_pdf_page(
                             image_path, page_layout_infos[real_page_num - 1],
-                            check_cancelled=lambda: DOCUMENT_TASKS.check_cancelled(task_id),
+                            check_cancelled=check_pdf_cancelled, report_attempt=report_pdf_attempt,
+                            **detail_kwargs,
                         )
                         raw_text = joint["markdown"]
                     else:
-                        raw_text = ocr_pdf_page_image(image_path)
+                        raw_text = ocr_pdf_page_image(image_path, check_cancelled=check_pdf_cancelled,
+                                                     report_attempt=report_pdf_attempt,
+                                                     page_index=real_page_num - 1)
                     print(
                         f"[PDF OCR] 第 {real_page_num} 页识别完成 "
                         f"(characters={len(raw_text)})."
@@ -5319,20 +5537,22 @@ def run_pdf_parsing_task(
                     )
 
                 completed = 0
+                page_errors = []
                 for future in concurrent.futures.as_completed(futures):
-                    DOCUMENT_TASKS.check_cancelled(task_id)
+                    check_pdf_cancelled()
                     local_idx, text, error, joint = future.result()
                     if error:
                         real_page_num = target_page_indices[local_idx] + 1
-                        raise RuntimeError(f"解析第 {real_page_num} 页出错: {error}")
-                    processed_text = process_ocr_illustrations(text)
-                    real_page_num = target_page_indices[local_idx] + 1
-                    if joint is not None:
-                        joint_page_results[real_page_num - 1] = joint
-                    ocr_results[local_idx] = (
-                        f"<!-- MATHBANK_PDF_PAGE:{real_page_num} -->\n"
-                        f"{processed_text.strip()}"
-                    )
+                        page_errors.append({"page_number": real_page_num, "error": error})
+                    else:
+                        processed_text = process_ocr_illustrations(text)
+                        real_page_num = target_page_indices[local_idx] + 1
+                        if joint is not None:
+                            joint_page_results[real_page_num - 1] = joint
+                        ocr_results[local_idx] = (
+                            f"<!-- MATHBANK_PDF_PAGE:{real_page_num} -->\n"
+                            f"{processed_text.strip()}"
+                        )
                     completed += 1
                     progress = 30 + int(
                         (completed / len(pages_requiring_ocr)) * 40
@@ -5342,10 +5562,15 @@ def run_pdf_parsing_task(
                         progress=progress,
                         log=(
                             f"视觉转译进度: {completed} / "
-                            f"{len(pages_requiring_ocr)} 页已完成..." +
-                            (f"（局部识别 {len(regional_plans)} 页）" if regional_plans else "")
+                            f"{len(pages_requiring_ocr)} 页已处理..." +
+                            (f"（局部识别 {len(regional_plans)} 页）" if regional_plans else "") +
+                            (f"；{len(page_errors)} 页未完成，已保留其他页面结果。" if page_errors else "")
                         ),
                     )
+                if page_errors:
+                    diagnostics["pdf_failed_pages"] = sorted(page_errors, key=lambda item: item["page_number"])
+                    raise RuntimeError("；".join(f"解析第 {item['page_number']} 页出错: {item['error']}"
+                                                 for item in diagnostics["pdf_failed_pages"]))
             finally:
                 cancelled = DOCUMENT_TASKS.is_cancelled(task_id)
                 if cancelled:
@@ -5354,6 +5579,17 @@ def run_pdf_parsing_task(
                 executor.shutdown(wait=not cancelled, cancel_futures=True)
 
         regional_results = [joint_page_results[target_page_indices[index]] for index in regional_plans]
+        if "pdf_detail_views" in diagnostics:
+            successful_details = [item.get("detail_input", {}) for item in joint_page_results.values()
+                                  if item.get("detail_input", {}).get("status") == "included"]
+            diagnostics["pdf_detail_views"]["successful_input_pages"] = len(successful_details)
+            diagnostics["pdf_detail_views"]["successful_input_images"] = sum(
+                item["detail_count"] for item in successful_details)
+            for index, details in detail_results.items():
+                joint = joint_page_results.get(target_page_indices[index], {})
+                for note in [*details["notes"], *joint.get("detail_input", {}).get("notes", [])]:
+                    if joint.get("layout") is not None:
+                        joint["layout"].setdefault("notes", []).append(note)
         if regional_results:
             diagnostics["pdf_regional_usage"] = {
                 key: sum(item["usage"][key] for item in regional_results)
@@ -5381,26 +5617,23 @@ def run_pdf_parsing_task(
                     log=message,
                 )
 
-            # Share the existing process-wide paid vision concurrency bound.
-            acquired = False
-            try:
-                while not acquired:
-                    check_layout_cancelled()
-                    acquired = PDF_OCR_SEMAPHORE.acquire(timeout=0.25)
-                layout_result = enrich_pdf_with_figures(
-                    file_bytes, target_page_indices, page_images, page_urls,
-                    ocr_results, {target_page_indices[index] for index in pages_requiring_ocr},
-                    output_dir=Path(TMP_UPLOAD_DIR), url_prefix=f"/{UPLOAD_DIR_REL}/tmp",
-                    task_id=task_id, check_cancelled=check_layout_cancelled,
-                    register_asset=register_figure_asset, report_progress=report_layout_progress,
-                    precomputed_layouts={index: item["layout"] for index, item in joint_page_results.items()},
-                )
-            finally:
-                if acquired:
-                    PDF_OCR_SEMAPHORE.release()
+            # Each independent layout request shares the process-wide vision
+            # bound. Local validation/cropping never occupies an HTTP permit.
+            layout_result = enrich_pdf_with_figures(
+                file_bytes, target_page_indices, page_images, page_urls,
+                ocr_results, {target_page_indices[index] for index in pages_requiring_ocr},
+                output_dir=Path(TMP_UPLOAD_DIR), url_prefix=f"/{UPLOAD_DIR_REL}/tmp",
+                task_id=task_id, check_cancelled=check_layout_cancelled,
+                register_asset=register_figure_asset, report_progress=report_layout_progress,
+                report_attempt=report_pdf_attempt,
+                precomputed_layouts={index: item["layout"] for index, item in joint_page_results.items()},
+                precomputed_page_infos=page_layout_infos,
+                vision_semaphore=PDF_OCR_SEMAPHORE,
+            )
             ocr_results = layout_result["page_texts"]
             diagnostics["pdf_layout"] = layout_result["diagnostics"]
-            diagnostics["pdf_layout"]["regional_visual_calls"] = len(regional_results)
+            diagnostics["pdf_layout"]["joint_visual_calls"] = sum(item.get("visual_calls", 1) for item in joint_page_results.values())
+            diagnostics["pdf_layout"]["regional_visual_calls"] = sum(item.get("visual_calls", 1) for item in regional_results)
             diagnostics["pdf_joint_usage"] = {
                 key: sum(item["usage"][key] for item in joint_page_results.values())
                 for key in ("prompt_tokens", "completion_tokens", "total_tokens")
@@ -5412,7 +5645,6 @@ def run_pdf_parsing_task(
         # Retain the exact first-pass transcription used for splitting. Later
         # source review can check its ranges without re-running page recognition.
         # Keep complete pages or no page cache; never certify truncated evidence.
-        source_pages = None
         if sum(len(str(text or "")) for text in ocr_results) <= 500_000:
             source_pages = []
             for local_idx, page_num in enumerate(target_page_indices):
@@ -5449,8 +5681,10 @@ def run_pdf_parsing_task(
             source_content = re.sub(r"<!-- MATHBANK_PDF_PAGE:\d+ -->", "", full_latex_content)
             locked_source, math_locks = lock_visible_math(source_content, task_id.replace("-", "")[:16])
             diagnostics["math_locks_created"] = len(math_locks)
+            retain_split_input(source_content, locked_source)
             parsed_questions = parse_paper_text_internal(
                 locked_source, False, diagnostics=diagnostics, preserve_source_answers=True,
+                pdf_retry=True, check_cancelled=check_pdf_cancelled, report_attempt=report_pdf_split_attempt,
             )
             DOCUMENT_TASKS.check_cancelled(task_id)
             diagnostics.update(reconcile_visible_math(parsed_questions, math_locks, source_content))
@@ -5462,10 +5696,12 @@ def run_pdf_parsing_task(
                 check_cancelled=check_layout_cancelled,
             )
         else:
+            retain_split_input(full_latex_content, full_latex_content)
             parsed_questions = parse_paper_text_internal(
                 full_latex_content,
                 False,  # Extract original answers only; the frontend solves missing answers.
                 diagnostics=diagnostics,
+                pdf_retry=True, check_cancelled=check_pdf_cancelled, report_attempt=report_pdf_split_attempt,
             )
         DOCUMENT_TASKS.check_cancelled(task_id)
         final_questions = post_process_pdf_parsed_questions(
@@ -5475,15 +5711,20 @@ def run_pdf_parsing_task(
             None if layout_result is not None else ocr_results,
         )
         if layout_result is not None:
+            from mathbank.pdf_symbol_risks import annotate_pdf_symbol_risks
+            annotate_pdf_symbol_risks(final_questions, diagnostics)
+            # Refresh explanations only: reapplying layout attachment here
+            # would undo the independently cloned image identity above.
+            refresh_pdf_review_items(final_questions, layout_result, diagnostics)
             if pdf_verify_suspicions and diagnostics.get("source_review_count"):
-                from mathbank.pdf_source_verify import verify_pdf_source_suspicions
                 DOCUMENT_TASKS.update(
                     task_id, status="source_verification", progress=90,
-                    log="正在对照原页核验剩余疑点，无法确定的题目仍保留人工核对...",
+                    log="正在对照原页核验疑点，发现明确差异后将尝试修正并复核...",
                     diagnostics=diagnostics,
                 )
                 acquired = False
                 try:
+                    from mathbank.pdf_source_verify import verify_pdf_source_suspicions
                     while not acquired:
                         DOCUMENT_TASKS.check_cancelled(task_id)
                         acquired = PDF_OCR_SEMAPHORE.acquire(timeout=0.25)
@@ -5491,8 +5732,17 @@ def run_pdf_parsing_task(
                         final_questions, diagnostics, page_urls,
                         [number + 1 for number in target_page_indices],
                         source_pages=source_pages,
+                        candidate_image_paths=list(temp_assets),
+                        progress=lambda message: DOCUMENT_TASKS.update(task_id, log=message),
                         check_cancelled=lambda: DOCUMENT_TASKS.check_cancelled(task_id),
                     )
+                except TaskCancelled:
+                    raise
+                except Exception as exc:
+                    diagnostics["pdf_source_verification"] = {
+                        "status": "failed", "pending": diagnostics.get("source_review_count", 0),
+                        "notes": [f"原页核验未完成（{type(exc).__name__}），已保留拆题结果和原核对提示。"],
+                    }
                 finally:
                     if acquired:
                         PDF_OCR_SEMAPHORE.release()
@@ -5521,11 +5771,21 @@ def run_pdf_parsing_task(
     except TaskCancelled:
         _delete_task_temp_assets(temp_assets)
     except Exception as ex:
-        _delete_task_temp_assets(temp_assets)
+        # Keep source pages and completed transcripts available for inspection
+        # after a failed page. The task's normal expiry owns asset cleanup.
+        evidence = source_pages
+        if evidence is None:
+            evidence = [{"page_number": page_num + 1, "markdown": str(ocr_results[index] or ""),
+                         "status": "completed" if ocr_results[index] else "failed"}
+                        for index, page_num in enumerate(target_page_indices) if index < len(ocr_results)]
+            evidence = evidence if sum(len(item["markdown"]) for item in evidence) <= 500_000 else None
         DOCUMENT_TASKS.fail(
             task_id,
             f"PDF 智能拆解解析失败: {str(ex)}",
             document_type="pdf",
+            diagnostics=copy.deepcopy(diagnostics), pdf_source_pages=evidence,
+            page_images=list(page_urls), page_numbers=[number + 1 for number in target_page_indices],
+            temp_assets=list(temp_assets),
         )
     finally:
         tmp_pdf_path.unlink(missing_ok=True)
@@ -5580,7 +5840,7 @@ def upload_pdf_task(
     generate_answers: str = Form("false"),
     page_range: Optional[str] = Form(None),
     pdf_strategy: str = Form("native_preferred"),
-    pdf_verify_suspicions: bool = Form(False),
+    pdf_verify_suspicions: bool = Form(True),
 ):
     try:
         if pdf_strategy not in PDF_STRATEGIES:
@@ -5648,10 +5908,20 @@ def upload_pdf_task(
         )
 
 
+@serialize_asset_lifecycle
 def _delete_task_temp_assets(paths: list) -> int:
-    """Delete only explicit files below this instance's upload tmp directory."""
+    """Retain task files recoverably so old drafts and result URLs still work."""
     removed = 0
     tmp_root = Path(TMP_UPLOAD_DIR).resolve()
+    # Old clients/databases may still contain durable references into tmp.
+    # Keep them in place for exports and full backups as well as HTTP reads.
+    from mathbank.database import SessionLocal
+    try:
+        with SessionLocal() as db:
+            referenced = _referenced_question_assets(db)
+    except Exception as exc:
+        print(f"[Storage Retention] Could not verify task image references; kept files ({type(exc).__name__}).")
+        return 0
     for url in paths or []:
         try:
             full_path = resolve_upload_asset(
@@ -5662,13 +5932,15 @@ def _delete_task_temp_assets(paths: list) -> int:
             )
         except AssetSecurityError:
             continue
-        if full_path.parent != tmp_root:
+        if full_path.parent != tmp_root or full_path in referenced:
             continue
         if full_path.is_file():
             try:
-                full_path.unlink()
-                removed += 1
-            except OSError:
+                removed += int(quarantine_asset(
+                    str(url), uploads_dir=UPLOAD_DIR,
+                    url_prefix=UPLOAD_DIR_REL, reason="document-task-expired-or-cancelled",
+                ))
+            except (OSError, AssetLifecycleError):
                 pass
     return removed
 
@@ -5678,7 +5950,7 @@ def run_docx_parsing_task(
     file_bytes: bytes,
     filename: str,
     generate_answers: bool = False,
-    docx_verify_suspicions: bool = False,
+    docx_verify_suspicions: bool = True,
 ):
     temp_assets = []
     diagnostics = {}
@@ -5707,11 +5979,13 @@ def run_docx_parsing_task(
         full_markdown_content = docx_res["markdown"]
         img_count = docx_res.get("image_count", 0)
         diagnostics = docx_res.get("diagnostics", {})
+        diagnostics["word_extraction_warnings"] = list(diagnostics.get("warnings", []))
         converted_count = diagnostics.get("omml_converted", 0) + diagnostics.get("mtef_converted", 0)
         review_count = diagnostics.get("review_required", 0)
         extraction_log = (
             f"Word 提取完成：{converted_count} 个公式已转换，{img_count} 张图片已保留"
-            + (f"，{review_count} 处需人工核对。" if review_count else "，未发现需人工核对的内容。")
+            + ((f"，{review_count} 处提取疑点将在拆题后自动核验。" if docx_verify_suspicions
+                else f"，{review_count} 处提取疑点，自动核验已关闭。") if review_count else "。")
         )
 
         DOCUMENT_TASKS.check_cancelled(task_id)
@@ -5767,10 +6041,8 @@ def run_docx_parsing_task(
 
         DOCUMENT_TASKS.check_cancelled(task_id)
         final_questions = post_process_pdf_parsed_questions(parsed_questions, paper_title, task_id, [full_markdown_content])
+        prepare_word_extraction_reviews(final_questions, diagnostics, full_markdown_content)
         if docx_verify_suspicions and diagnostics.get("source_review_count"):
-            from mathbank.docx_source_evidence import prepare_docx_source_evidence
-            from mathbank.docx_source_verify import verify_docx_source_suspicions
-
             def check_word_cancelled():
                 DOCUMENT_TASKS.check_cancelled(task_id)
 
@@ -5783,18 +6055,23 @@ def run_docx_parsing_task(
                 log="正在将原 Word 渲染成页面，仅对剩余疑点进行原文核验...",
                 diagnostics=diagnostics,
             )
-            evidence = prepare_docx_source_evidence(
-                file_bytes, output_dir=Path(TMP_UPLOAD_DIR), url_prefix=f"/{UPLOAD_DIR_REL}/tmp",
-                task_id=task_id, register_asset=register_word_page, check_cancelled=check_word_cancelled,
-            )
-            DOCUMENT_TASKS.update(task_id, docx_source_evidence=evidence)
             acquired = False
             try:
+                from mathbank.docx_source_evidence import prepare_docx_source_evidence
+                from mathbank.docx_source_verify import verify_docx_source_suspicions
+
+                evidence = prepare_docx_source_evidence(
+                    file_bytes, output_dir=Path(TMP_UPLOAD_DIR), url_prefix=f"/{UPLOAD_DIR_REL}/tmp",
+                    task_id=task_id, register_asset=register_word_page, check_cancelled=check_word_cancelled,
+                )
+                DOCUMENT_TASKS.update(task_id, docx_source_evidence=evidence)
                 while not acquired:
                     check_word_cancelled()
                     acquired = PDF_OCR_SEMAPHORE.acquire(timeout=0.25)
                 diagnostics["docx_source_verification"] = verify_docx_source_suspicions(
                     final_questions, diagnostics, full_markdown_content, evidence,
+                    candidate_image_paths=list(temp_assets),
+                    progress=lambda message: DOCUMENT_TASKS.update(task_id, log=message),
                     check_cancelled=check_word_cancelled,
                 )
             except TaskCancelled:
@@ -5817,6 +6094,7 @@ def run_docx_parsing_task(
                 "calls": 0, "checked": 0, "confirmed": 0,
                 "pending": diagnostics.get("source_review_count", 0), "usage": {},
             }
+        finalize_word_extraction_reviews(final_questions, diagnostics, full_markdown_content)
         make_source_review_advisory(final_questions, diagnostics)
         DOCUMENT_TASKS.check_cancelled(task_id)
         completed = DOCUMENT_TASKS.complete(
@@ -5846,7 +6124,7 @@ def run_docx_parsing_task(
 def upload_docx_task(
     file: UploadFile = File(...),
     generate_answers: str = Form("false"),
-    docx_verify_suspicions: str = Form("false"),
+    docx_verify_suspicions: str = Form("true"),
 ):
     try:
         generate_answers_bool = generate_answers.lower() in ("true", "1", "yes")
@@ -5918,6 +6196,13 @@ def get_pdf_task_status(task_id: str):
             status_code=404
         )
     return task
+
+
+@app.post("/api/tasks/{task_id}/retain")
+def retain_document_task(task_id: str):
+    if DOCUMENT_TASKS.retain(task_id):
+        return {"status": "success"}
+    raise HTTPException(status_code=404, detail="任务已过期或不可续期；已生成图片仍可通过原地址恢复。")
 
 
 @app.post("/api/tasks/{task_id}/cancel")
@@ -6545,4 +6830,6 @@ def export_paper_word(payload: dict, db: Session = Depends(get_db)):
         )
 
 # ----------------- Mount Static Folder last to allow API override -----------------
-app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
+app.mount("/static", RetainedUploadStaticFiles(
+    directory=str(STATIC_DIR), uploads_dir=UPLOAD_DIR, url_prefix=UPLOAD_DIR_REL,
+), name="static")
