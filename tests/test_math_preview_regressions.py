@@ -75,6 +75,37 @@ assert.equal(normalizePreviewDollarSigns(protectedText), protectedText);
 ''')
 
 
+def test_dynamic_markdown_storage_fences_keep_examples_inert_in_preview():
+    from mathbank.markdown_helper import prepare_markdown_question_for_storage
+
+    literal_path = "/static/uploads/tmp/literal-fence.png"
+    visible_path = "/static/uploads/tmp/visible-fence.png"
+    examples = [
+        f"    ~~~~\n    ![源码图]({literal_path})\n    $x$",
+        f"<pre>~~~~\n![源码图]({literal_path})\n$x$</pre>",
+        f"<code>例子 ``` ![源码图]({literal_path}) $x$</code>",
+    ]
+    for example in examples:
+        question = {"content": example + f"\n\n求 $y$。\n\n![真图]({visible_path})", "answer_markdown": ""}
+        prepare_markdown_question_for_storage(question, {})
+        stored = question["content"]
+        run_preview_script(
+            "const source=" + json.dumps(stored) + ";\n"
+            "const html=preprocessFormulaForKaTeX(source);\n"
+            "assert.deepEqual(parsedFormulas(html), ['y']);\n"
+            "assert.equal((html.match(/<img\\b/g)||[]).length, 1);\n"
+            "assert(html.includes('src=" + json.dumps(visible_path) + "'));\n"
+            "assert(!html.includes('src=" + json.dumps(literal_path) + "'));\n"
+            "assert.equal(source," + json.dumps(stored) + ");\n"
+        )
+    run_preview_script(r'''
+const source = '~~~~~markdown\n~~~~\n![源码图](/static/uploads/tmp/literal-fence.png)\n$x$\n~~~~~info\n$z$\n~~~~~\n\n$y$';
+const html = preprocessFormulaForKaTeX(source);
+assert.deepEqual(parsedFormulas(html), ['y']);
+assert.equal((html.match(/<img\b/g)||[]).length, 0);
+''')
+
+
 def test_currency_at_line_end_preserves_math_in_the_next_sentence():
     run_preview_script(r'''
 for (const newline of ['\n', '\r\n', '\n\n']) {
@@ -208,7 +239,8 @@ for (const literal of [
     '![](/static/uploads/$5.png)', '[price](/help/$5)',
     'https://example.test/$5?total=10', 'HTTPS://example.test/$5?total=10', '[[MBM_scope-1_0001]]',
 ]) {
-    const source = literal + ' 计算 $2 xy+3$。';
+    const separator = literal.startsWith('```') || literal.startsWith('~~~') ? '\n' : ' ';
+    const source = literal + separator + '计算 $2 xy+3$。';
     const html = preprocessFormulaForKaTeX(source);
     assert.deepEqual(parsedFormulas(html), ['2 xy+3']);
     if (literal.startsWith('!')) assert(html.includes('/static/uploads/$5.png'), html);
@@ -240,7 +272,8 @@ const literals = [
     '`<img src=x onerror=alert(1)>$5</code>`',
 ];
 for (const literal of literals) {
-    const source = literal + ' 然后 $x^2$。';
+    const separator = literal.startsWith('```') || literal.startsWith('~~~') ? '\n' : ' ';
+    const source = literal + separator + '然后 $x^2$。';
     const html = preprocessFormulaForKaTeX(source);
     assert(html.includes('<code class="mb-preview-literal">'), html);
     assert.deepEqual(parsedFormulas(html), ['x^2']);

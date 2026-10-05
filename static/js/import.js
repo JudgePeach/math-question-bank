@@ -2112,6 +2112,39 @@
         }
 
 
+        window.currentImportSourceFormat = 'tex';
+
+        function setImportTextSourceFormat(format) {
+            const markdown = format === 'markdown';
+            window.currentImportSourceFormat = markdown ? 'markdown' : 'tex';
+            const selector = document.getElementById('importSourceFormat');
+            if (selector) selector.value = window.currentImportSourceFormat;
+            const sourceLabel = document.getElementById('importSourceLabel');
+            if (sourceLabel) sourceLabel.textContent = markdown ? '粘贴或编辑 Markdown 源文' : '粘贴或编辑 LaTeX 源码';
+            const textarea = document.getElementById('importLatexContent');
+            if (textarea) textarea.placeholder = markdown ? '在此粘贴试卷的 Markdown 内容...' : '在此粘贴试卷的 LaTeX 源代码...';
+            const imagesLabel = document.getElementById('importImagesLabel');
+            if (imagesLabel) imagesLabel.textContent = markdown ? 'Markdown 配套图片（可选）' : 'TeX 配套图片（可选）';
+            const imagesHint = document.getElementById('importImagesHint');
+            if (imagesHint) imagesHint.textContent = markdown
+                ? '支持 PNG、JPEG、GIF、WebP；请保留与 Markdown 图片引用相同的文件名'
+                : '支持 PNG、JPEG、GIF、WebP；请尽量保留与 \\includegraphics 相同的文件名';
+            const note = document.getElementById('importMarkdownNote');
+            if (note) note.hidden = !markdown;
+        }
+
+        function invalidateImportTextRead() {
+            const reading = Boolean(window.currentTexReadToken);
+            window.currentTexReadToken = null;
+            if (reading) {
+                const runBtn = document.getElementById('runParseBtn');
+                if (runBtn) {
+                    runBtn.disabled = false;
+                    runBtn.innerHTML = '<i class="fa-solid fa-wand-magic-sparkles"></i><span>开始解析</span>';
+                }
+            }
+        }
+
         function updateImportSourceView(kind) {
             const wordVerification = document.getElementById('docxVerificationContainer');
             if (wordVerification) {
@@ -2124,8 +2157,9 @@
             if (!details || !summary || !images) return;
             const binary = kind === 'pdf' || kind === 'docx';
             details.hidden = binary;
-            details.open = kind === 'tex';
-            images.hidden = kind !== 'tex';
+            const textSource = kind === 'tex' || kind === 'markdown';
+            details.open = textSource;
+            images.hidden = !textSource;
             summary.classList.toggle('hidden', !binary);
             summary.textContent = binary ? (kind === 'pdf' ? 'PDF 已选择。请设置页码范围与识别策略，然后开始解析。' : 'Word 已选择。将提取正文、公式和插图，结果可逐题校对。') : '';
         }
@@ -2597,7 +2631,7 @@
             const imagesFileIcon = document.getElementById('imagesFileIcon');
             const imagesListContainer = document.getElementById('importImagesList');
 
-            // LaTeX / PDF File drag & select
+            // LaTeX / Markdown / PDF / Word file drag & select
             if (!texDrop || !texInput || !texFileName || !texFileIcon || !latexTextarea) {
                 console.error('[Import] 试卷文件上传控件不完整，无法初始化文件选择。');
                 return;
@@ -2622,10 +2656,10 @@
             texDrop.addEventListener('drop', (e) => {
                 const file = e.dataTransfer.files[0];
                 const lowerFileName = file ? file.name.toLowerCase() : '';
-                if (file && (lowerFileName.endsWith('.tex') || lowerFileName.endsWith('.pdf') || lowerFileName.endsWith('.docx'))) {
+                if (file && (lowerFileName.endsWith('.tex') || lowerFileName.endsWith('.md') || lowerFileName.endsWith('.pdf') || lowerFileName.endsWith('.docx'))) {
                     handleTexFileSelect(file);
                 } else {
-                    showToast('请拖入有效的 .tex、.pdf 或 .docx (Word) 格式试卷文件！', 'warning');
+                    showToast('请拖入有效的 .tex、.md、.pdf 或 .docx (Word) 格式试卷文件！', 'warning');
                 }
             });
 
@@ -2644,8 +2678,9 @@
             async function decodeTexFileLocally(file) {
                 const buffer = await readFileAsArrayBuffer(file);
                 const bytes = new Uint8Array(buffer || new ArrayBuffer(0));
-                if (!bytes.length) throw new Error('TeX 文件为空');
-                if (bytes.length > 5 * 1024 * 1024) throw new Error('TeX 文件超过 5MB 上限');
+                const label = file.name.toLowerCase().endsWith('.md') ? 'Markdown' : 'TeX';
+                if (!bytes.length) throw new Error(`${label} 文件为空`);
+                if (bytes.length > 5 * 1024 * 1024) throw new Error(`${label} 文件超过 5MB 上限`);
 
                 const attempts = [];
                 if ((bytes[0] === 0xFF && bytes[1] === 0xFE) || (bytes[0] === 0xFE && bytes[1] === 0xFF)) {
@@ -2676,7 +2711,7 @@
                         // Continue through the explicit safe encoding fallbacks.
                     }
                 }
-                throw new Error('无法识别文件编码，请将 TeX 另存为 UTF-8 后重试');
+                throw new Error(`无法识别文件编码，请将 ${label} 另存为 UTF-8 后重试`);
             }
 
             function applyLocallyReadTex(file, source, diagnostics = null, serverTitle = '') {
@@ -2684,7 +2719,7 @@
                 latexTextarea.disabled = false;
                 window.currentTexDiagnostics = diagnostics;
                 const titleInput = document.getElementById('importPaperTitle');
-                const autoTitle = serverTitle || extractTitleFromLatex(source || '');
+                const autoTitle = serverTitle || extractTitleFromImportSource(source || '', window.currentImportSourceFormat);
                 if (autoTitle) {
                     titleInput.value = autoTitle;
                 } else if (!titleInput.value.trim()) {
@@ -2696,13 +2731,17 @@
             function handleTexFileSelect(file) {
                 if (!file) return;
                 const lowerFileName = file.name.toLowerCase();
-                if (!lowerFileName.endsWith('.tex') && !lowerFileName.endsWith('.pdf') && !lowerFileName.endsWith('.docx')) {
-                    showToast('仅支持 .tex、.pdf 或 .docx 试卷文件。', 'warning');
+                if (!lowerFileName.endsWith('.tex') && !lowerFileName.endsWith('.md') && !lowerFileName.endsWith('.pdf') && !lowerFileName.endsWith('.docx')) {
+                    showToast('仅支持 .tex、.md、.pdf 或 .docx 试卷文件。', 'warning');
                     texInput.value = '';
                     return;
                 }
-                updateImportSourceView(lowerFileName.endsWith('.pdf') ? 'pdf' : lowerFileName.endsWith('.docx') ? 'docx' : 'tex');
-                window.currentTexReadToken = null;
+                const sourceFormat = lowerFileName.endsWith('.md') ? 'markdown' : 'tex';
+                const sourceLabel = sourceFormat === 'markdown' ? 'Markdown' : 'TeX';
+                invalidateImportTextRead();
+                setImportTextSourceFormat(sourceFormat);
+                window.currentTexDiagnostics = null;
+                updateImportSourceView(lowerFileName.endsWith('.pdf') ? 'pdf' : lowerFileName.endsWith('.docx') ? 'docx' : sourceFormat);
                 const texImagesSection = document.getElementById('texImagesSection');
                 
                 if (lowerFileName.endsWith('.docx')) {
@@ -2747,7 +2786,7 @@
                     texFileName.className = "text-xs text-brand-600 font-bold";
                     texFileIcon.className = "fa-solid fa-file-circle-check text-brand-500 text-xl mb-1.5 animate-bounce";
                     latexTextarea.disabled = true;
-                    latexTextarea.value = '正在安全读取并检查 TeX 源码编码与结构...';
+                    latexTextarea.value = `正在安全读取并检查 ${sourceLabel} 源文编码与结构...`;
                     
                     const pdfRangeContainer = document.getElementById('pdfPageRangeContainer');
                     if (pdfRangeContainer) pdfRangeContainer.classList.add('hidden');
@@ -2756,7 +2795,7 @@
                     const runBtn = document.getElementById('runParseBtn');
                     if (runBtn) {
                         runBtn.disabled = true;
-                        runBtn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i><span>正在读取 TeX...</span>';
+                        runBtn.innerHTML = `<i class="fa-solid fa-spinner fa-spin"></i><span>正在读取 ${sourceLabel}...</span>`;
                     }
                     const readToken = `${Date.now()}-${Math.random()}`;
                     window.currentTexReadToken = readToken;
@@ -2770,7 +2809,8 @@
                         formData.append('file', file);
                         const controller = typeof AbortController === 'function' ? new AbortController() : null;
                         const timeoutId = controller ? setTimeout(() => controller.abort(), 8000) : null;
-                        return fetch('/api/upload/tex-source', {
+                        const sourceEndpoint = sourceFormat === 'markdown' ? '/api/upload/markdown-source' : '/api/upload/tex-source';
+                        return fetch(sourceEndpoint, {
                             method: 'POST',
                             headers: {'X-Local-Token': localStorage.getItem('local_token') || ''},
                             body: formData,
@@ -2792,24 +2832,26 @@
                                 data.title || ''
                             );
                             if (autoTitle && autoTitle !== localTitle) {
-                                showToast(`已自动从 TeX 文件中读取试卷标题：${autoTitle}`);
+                                showToast(`已自动从 ${sourceLabel} 文件中读取试卷标题：${autoTitle}`);
                             }
                             const diagnostics = data.diagnostics || {};
                             if (diagnostics.encoding_fallback) {
-                                showToast(`已按 ${diagnostics.encoding} 编码安全读取该 TeX 文件。`, 'info');
+                                showToast(`已按 ${diagnostics.encoding} 编码安全读取该 ${sourceLabel} 文件。`, 'info');
                             }
                             if (Array.isArray(diagnostics.warnings) && diagnostics.warnings.length) {
-                                showToast(`TeX 预检发现 ${diagnostics.warnings.length} 项需留意的结构，拆分后会继续提示。`, 'warning');
+                                showToast(`${sourceLabel} 预检发现 ${diagnostics.warnings.length} 项提示，拆分后会继续显示。`, 'warning');
                             }
                         })
                         .catch(error => {
                             if (window.currentTexReadToken !== readToken) return;
-                            console.warn('TeX 后端预检不可用，已保留浏览器本地读取结果:', error);
+                            console.warn(`${sourceLabel} 后端预检不可用，已保留浏览器本地读取结果:`, error);
                             window.currentTexDiagnostics = {
                                 local_read_fallback: true,
-                                warnings: ['后端 TeX 预检暂不可用，已使用浏览器本地读取结果']
+                                warnings: [`后端 ${sourceLabel} 预检暂不可用，已使用浏览器本地读取结果`]
                             };
-                            showToast('TeX 文件已读取；后端预检暂不可用，不影响继续编辑。', 'warning');
+                            showToast(sourceFormat === 'markdown'
+                                ? 'Markdown 文件已读取；后端预检暂不可用，不影响继续编辑。'
+                                : 'TeX 文件已读取；后端预检暂不可用，不影响继续编辑。', 'warning');
                         })
                         .finally(() => {
                             if (timeoutId) clearTimeout(timeoutId);
@@ -2820,11 +2862,13 @@
                         latexTextarea.value = '';
                         latexTextarea.disabled = false;
                         texInput.value = '';
-                        texFileName.textContent = 'TeX 文件读取失败，请重新选择';
+                        texFileName.textContent = `${sourceLabel} 文件读取失败，请重新选择`;
                         texFileName.className = 'text-xs text-red-500 font-bold';
-                        showToast(`TeX 文件读取失败：${error.message}`, 'error');
+                        showToast(`${sourceLabel} 文件读取失败：${error.message}`, 'error');
                     })
                     .finally(() => {
+                        if (window.currentTexReadToken !== readToken) return;
+                        window.currentTexReadToken = null;
                         if (runBtn) {
                             runBtn.disabled = false;
                             runBtn.innerHTML = '<i class="fa-solid fa-wand-magic-sparkles"></i><span>开始解析</span>';
@@ -2880,9 +2924,21 @@
                 }
             }
 
-            // Input event listener for pasted LaTeX or manual edits
+            const sourceFormatSelector = document.getElementById('importSourceFormat');
+            if (sourceFormatSelector) sourceFormatSelector.addEventListener('change', () => {
+                if (window.currentTexReadToken && latexTextarea.disabled) latexTextarea.value = '';
+                invalidateImportTextRead();
+                latexTextarea.disabled = false;
+                window.currentTexDiagnostics = null;
+                setImportTextSourceFormat(sourceFormatSelector.value);
+                updateImportSourceView(window.currentImportSourceFormat);
+            });
+
+            // Manual edits must keep a delayed source precheck from overwriting them.
             latexTextarea.addEventListener('input', () => {
-                const autoTitle = extractTitleFromLatex(latexTextarea.value);
+                invalidateImportTextRead();
+                window.currentTexDiagnostics = null;
+                const autoTitle = extractTitleFromImportSource(latexTextarea.value, window.currentImportSourceFormat);
                 if (autoTitle) {
                     const titleInput = document.getElementById('importPaperTitle');
                     if (titleInput.value.trim() === '') {
@@ -2937,9 +2993,11 @@
             const titleInput = document.getElementById('importPaperTitle');
             const title = titleInput.value.trim();
             const latex = document.getElementById('importLatexContent').value.trim();
+            const sourceFormat = window.currentImportSourceFormat === 'markdown' ? 'markdown' : 'tex';
+            const sourceLabel = sourceFormat === 'markdown' ? 'Markdown' : 'TeX';
 
             if (!latex && !window.currentPdfFile && !window.currentDocxFile) {
-                showToast('请粘贴或上传 LaTeX 试卷内容，或拖入 PDF、Word 文件！', 'warning');
+                showToast('请粘贴或上传 LaTeX、Markdown 试卷内容，或拖入 PDF、Word 文件！', 'warning');
                 return;
             }
 
@@ -3117,7 +3175,7 @@
                 return;
             }
 
-            // Normal LaTeX branch
+            // Text-source branch shares image upload, source review, and answer generation.
             document.getElementById('importLoadingText').textContent = '正在上传配套图片并整理文件名映射...';
             appendImportLog('开始检查配套图片...', 'current');
             document.getElementById('importProgressBarContainer').classList.add('hidden');
@@ -3162,6 +3220,7 @@
 
                     const parseFormData = new FormData();
                     parseFormData.append('latex_content', latex);
+                    parseFormData.append('source_format', sourceFormat);
                     parseFormData.append('paper_title', title);
                     parseFormData.append('image_mapping_json', JSON.stringify(imageMapping));
                     parseFormData.append('generate_answers', generateAnswers ? "true" : "false");
@@ -3192,13 +3251,13 @@
                         const estimatedCount = texDiagnostics.question_count_estimate || 0;
                         const actualCount = texDiagnostics.question_count_actual || parsedQuestionsData.length;
                         if (estimatedCount) {
-                            appendImportLog(`TeX 题数核对：源码约 ${estimatedCount} 题，实际拆分 ${actualCount} 题。`, estimatedCount === actualCount ? 'info' : 'warning');
+                            appendImportLog(`${sourceLabel} 题数核对：原文约 ${estimatedCount} 题，实际拆分 ${actualCount} 题。`, estimatedCount === actualCount ? 'info' : 'warning');
                         }
                         appendSourceIntegrityLog(texDiagnostics);
                         const texWarnings = Array.isArray(texDiagnostics.warnings) ? texDiagnostics.warnings : [];
-                        texWarnings.forEach(message => appendImportLog(`TeX 预检：${message}`, 'warning'));
+                        texWarnings.forEach(message => appendImportLog(`${sourceLabel} 预检：${message}`, 'warning'));
                         if (texWarnings.length) {
-                            showToast(`TeX 拆分完成，但有 ${texWarnings.length} 项结构提示需要核对。`, 'warning');
+                            showToast(`${sourceLabel} 拆分完成，但有 ${texWarnings.length} 项提示需要核对。`, 'warning');
                         }
                         
                         renderParsedQuestionsList(parsedQuestionsData);
@@ -3518,6 +3577,8 @@
             if (blockImportResetWhileSaving()) {
                 return false;
             }
+            invalidateImportTextRead();
+            setImportTextSourceFormat('tex');
             updateImportSourceView('empty');
             // 清空左侧输入栏
             const titleInput = document.getElementById('importPaperTitle');
@@ -3539,7 +3600,7 @@
             const texFileName = document.getElementById('texFileName');
             const texFileIcon = document.getElementById('texFileIcon');
             if (texFileName) {
-                texFileName.textContent = "点击或拖放 .tex / .pdf / .docx 试卷文件";
+                texFileName.textContent = "点击或拖放 .tex / .md / .pdf / .docx 试卷文件";
                 texFileName.className = "text-xs text-slate-600 font-medium";
             }
             if (texFileIcon) {
@@ -4500,7 +4561,7 @@
             document.getElementById('parsedCountBadge').textContent = `共 ${questions.length} 题`;
 
             if (questions.length === 0) {
-                container.innerHTML = '<div class="p-12 text-center text-slate-400 text-xs">AI 未能拆解出任何有效的题目，请检查 LaTeX 格式是否规整。</div>';
+                container.innerHTML = '<div class="p-12 text-center text-slate-400 text-xs">AI 未能拆解出任何有效的题目，请检查原文是否包含清晰的题号与题目内容。</div>';
                 if (typeof updateSelectedCount === 'function') updateSelectedCount();
                 return;
             }
@@ -5616,6 +5677,26 @@
                 }
             }
             return null;
+        }
+
+        function extractTitleFromImportSource(source, format) {
+            if (format !== 'markdown') return extractTitleFromLatex(source);
+            const lines = String(source || '').slice(0, 1500).split(/\r?\n/);
+            let fence = null;
+            for (const line of lines) {
+                const fenceMatch = line.match(/^ {0,3}(`{3,}|~{3,})([^\n]*)$/);
+                if (fenceMatch) {
+                    if (!fence) fence = {character: fenceMatch[1][0], length: fenceMatch[1].length};
+                    else if (fence.character === fenceMatch[1][0]
+                            && fenceMatch[1].length >= fence.length
+                            && /^[ \t]*$/.test(fenceMatch[2])) fence = null;
+                    continue;
+                }
+                if (fence) continue;
+                const heading = line.match(/^\s{0,3}#\s+(.+?)\s*#*\s*$/);
+                if (heading) return heading[1].replace(/\*\*([^*]+)\*\*/g, '$1').trim();
+            }
+            return '';
         }
 
         function extractTitleFromLatex(latex) {

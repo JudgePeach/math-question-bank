@@ -93,6 +93,14 @@ from mathbank.tex_helper import (
     tex_asset_basename,
     tex_asset_references_match,
 )
+from mathbank.markdown_helper import (
+    MAX_MARKDOWN_BYTES,
+    decode_and_prepare_markdown,
+    prepare_markdown_source,
+    markdown_image_references,
+    map_markdown_question_images,
+    prepare_markdown_question_for_storage,
+)
 from mathbank.latex_diagnostics import (
     build_local_latex_diagnostic,
     merge_ai_latex_diagnostic,
@@ -189,6 +197,7 @@ from mathbank.asset_lifecycle import (
 from mathbank.paths import RETAINED_UPLOADS_DIR
 from mathbank.question_assets import (
     embedded_question_assets,
+    markdown_literal_ranges,
     rewrite_image_layout_paths,
     rewrite_question_asset_paths,
     rewrite_structured_asset_paths,
@@ -4014,6 +4023,31 @@ def upload_tex_source(file: UploadFile = File(...)):
         return JSONResponse(content={"status": "error", "message": str(exc)}, status_code=400)
 
 
+@app.post("/api/upload/markdown-source")
+def upload_markdown_source(file: UploadFile = File(...)):
+    """Decode a bounded Markdown source without reading its linked assets."""
+    if not (file.filename or "").lower().endswith(".md"):
+        return JSONResponse(
+            content={"status": "error", "message": "上传文件格式不正确，必须为 .md 格式！"},
+            status_code=400,
+        )
+    try:
+        result = decode_and_prepare_markdown(read_stream_limited(file.file, MAX_MARKDOWN_BYTES))
+        return {
+            "status": "success",
+            "source": result["source"],
+            "title": result["title"],
+            "diagnostics": result["diagnostics"],
+        }
+    except UploadTooLargeError:
+        return JSONResponse(
+            content={"status": "error", "message": "Markdown 文件过大，请上传 5MB 以内的单文件试卷源码！"},
+            status_code=413,
+        )
+    except ValueError as exc:
+        return JSONResponse(content={"status": "error", "message": str(exc)}, status_code=400)
+
+
 @app.post("/api/upload/batch")
 def upload_batch_images(files: List[UploadFile] = File(...)):
     try:
@@ -4158,8 +4192,14 @@ def ai_parse_paper(
     latex_content: str = Form(...),
     paper_title: str = Form(""),
     image_mapping_json: str = Form("{}"),
-    generate_answers: str = Form("false")
+    generate_answers: str = Form("false"),
+    source_format: str = Form("tex"),
 ):
+    if source_format not in ("tex", "markdown"):
+        return JSONResponse(
+            content={"status": "error", "message": "源码格式仅支持 tex 或 markdown。"},
+            status_code=400,
+        )
     generate_answers_bool = generate_answers.lower() in ("true", "1", "yes")
     parse_model = os.getenv("PREFER_PARSE_MODEL") or os.getenv("DEEPSEEK_PARSE_MODEL", "deepseek-flash")
     provider = resolve_text_provider(parse_model)
@@ -4185,17 +4225,20 @@ def ai_parse_paper(
         image_mapping = {}
 
     try:
-        tex_result = prepare_tex_source(latex_content)
+        tex_result = (prepare_markdown_source(latex_content) if source_format == "markdown"
+                      else prepare_tex_source(latex_content))
         tex_diagnostics = tex_result["diagnostics"]
         model_source, math_locks = lock_visible_math(
             tex_result["model_source"],
-            "TEX_" + uuid.uuid4().hex[:16],
+            ("MD_" if source_format == "markdown" else "TEX_") + uuid.uuid4().hex[:16],
+            literal_ranges=(markdown_literal_ranges(tex_result["model_source"])
+                            if source_format == "markdown" else ()),
         )
         tex_diagnostics["math_locks_created"] = len(math_locks)
         if not paper_title.strip() and tex_result["title"]:
             paper_title = tex_result["title"]
 
-        system_instructions = build_import_parse_system_prompt(get_current_curriculum())
+        system_instructions = build_import_parse_system_prompt(get_current_curriculum(), source_format)
 
         max_output_tokens = 65536
 
@@ -4230,6 +4273,7 @@ def ai_parse_paper(
         )
         lock_report = reconcile_visible_math(
             parsed_questions, math_locks, tex_result["model_source"],
+            tex_comments=source_format != "markdown",
         )
         previous_warnings = list(tex_diagnostics.get("warnings", []))
         tex_diagnostics.update(lock_report)
@@ -4249,10 +4293,12 @@ def ai_parse_paper(
             graphic_ref = str(graphic_ref)
             candidates = []
             for question in parsed_questions:
-                content_graphics = re.findall(
+                content_graphics = (markdown_image_references(
+                    question.get("content", "") + "\n" + question.get("answer_markdown", ""),
+                ) if source_format == "markdown" else re.findall(
                     r"\\includegraphics(?:\s*\[[^\]]*\])?\s*\{([^}]+)\}",
                     question.get("content", ""),
-                )
+                ))
                 question_refs = content_graphics + [
                     str(value) for value in question.get("referenced_images", [])
                 ]
@@ -4292,8 +4338,14 @@ def ai_parse_paper(
                 if field in q and isinstance(q[field], str):
                     text = q[field]
                     # Replace literal "\n" safely using negative lookahead (so it doesn't touch commands like \normalsize or \nabla)
-                    text = re.sub(r'\\n(?![a-zA-Z])', '\n', text)
+                    if source_format == "tex":
+                        text = re.sub(r'\\n(?![a-zA-Z])', '\n', text)
                     q[field] = text
+
+            if source_format == "markdown":
+                map_markdown_question_images(q, image_mapping, tex_diagnostics)
+                prepare_markdown_question_for_storage(q, tex_diagnostics)
+                continue
             
             # Map images
             mapped_images = []
@@ -4336,7 +4388,7 @@ def ai_parse_paper(
         tex_diagnostics["unassigned_source_images"] = unassigned_images
         if unmapped_images:
             tex_diagnostics.setdefault("warnings", []).append(
-                "以下 TeX 配图未找到同名上传文件：" + "、".join(unmapped_images[:8])
+                f"以下 {'Markdown' if source_format == 'markdown' else 'TeX'} 配图未找到同名上传文件：" + "、".join(unmapped_images[:8])
             )
         if unassigned_images:
             tex_diagnostics.setdefault("warnings", []).append(
@@ -4347,6 +4399,7 @@ def ai_parse_paper(
             "status": "success",
             "questions": parsed_questions,
             "tex_diagnostics": tex_diagnostics,
+            "source_format": source_format,
         }
     except Exception as e:
         return JSONResponse(

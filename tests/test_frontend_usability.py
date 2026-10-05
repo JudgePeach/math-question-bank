@@ -1606,7 +1606,7 @@ def test_import_center_reuses_existing_pipeline_in_a_dedicated_workspace():
     ):
         assert marker in index_source
 
-    assert "PDF、Word 与 LaTeX 试卷的拆解、审查和批量入库" in index_source
+    assert "PDF、Word、LaTeX 与 Markdown 试卷的拆解、审查和批量入库" in index_source
     assert "runAIPaperParse()" in index_source
     assert "confirmClearAllParsed()" in index_source
     assert "saveAllParsedQuestions()" in index_source

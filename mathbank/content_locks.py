@@ -13,6 +13,8 @@ import re
 import unicodedata
 from typing import Any
 
+from mathbank.question_assets import markdown_literal_ranges
+
 
 _LOCK_TAG = "mathbank-math"
 
@@ -81,6 +83,18 @@ def _next_math_span(source: str, cursor: int) -> tuple[int, int] | None:
     return start, end
 
 
+def _literal_math_scan_source(value: str, literal_ranges) -> str:
+    """Keep offsets, but literal delimiter examples cannot stop real math scans."""
+    if not literal_ranges:
+        return value
+    chars = list(value)
+    for left, right in literal_ranges:
+        for index in range(max(0, left), min(len(value), right)):
+            if chars[index] not in "\r\n":
+                chars[index] = " "
+    return "".join(chars)
+
+
 def _is_choice_answer_blank(source: str, start: int, end: int) -> bool:
     """The empty answer bracket immediately before choices is layout, not math."""
     value = source[start:end].strip()
@@ -114,7 +128,7 @@ def _strip_choice_answer_blanks(value: str) -> str:
     return value
 
 
-def lock_visible_math(value: str, scope: str) -> tuple[str, list[ContentLock]]:
+def lock_visible_math(value: str, scope: str, *, literal_ranges=()) -> tuple[str, list[ContentLock]]:
     """Wrap common balanced TeX math forms while keeping formulas visible."""
     source = str(value or "")
     safe_scope = re.sub(r"[^A-Za-z0-9_-]", "", str(scope or "DOCX"))[:48] or "DOCX"
@@ -123,13 +137,19 @@ def lock_visible_math(value: str, scope: str) -> tuple[str, list[ContentLock]]:
     cursor = 0
     formula_index = 0
     metadata_ranges = _page_footer_ranges(source) + _preamble_instruction_ranges(source)
+    scan_source = _literal_math_scan_source(source, literal_ranges)
 
     while cursor < len(source):
-        span = _next_math_span(source, cursor)
+        span = _next_math_span(scan_source, cursor)
         if span is None:
             parts.append(source[cursor:])
             break
         start, end = span
+        literal_end = max((right for left, right in literal_ranges if left < end and start < right), default=None)
+        if literal_end is not None:
+            parts.append(source[cursor:literal_end])
+            cursor = literal_end
+            continue
         original = source[start:end]
         if (not original.strip() or _is_choice_answer_blank(source, start, end)
                 or any(left <= start and end <= right for left, right in metadata_ranges)):
@@ -147,7 +167,7 @@ def lock_visible_math(value: str, scope: str) -> tuple[str, list[ContentLock]]:
     return "".join(parts), locks
 
 
-def _reference_literal_ranges(value: str) -> list[tuple[int, int]]:
+def _reference_literal_ranges(value: str, *, tex_comments: bool = True) -> list[tuple[int, int]]:
     """Literal examples cannot supply a mathematical shell around an ID."""
     ranges = []
     for pattern in (
@@ -172,19 +192,20 @@ def _reference_literal_ranges(value: str) -> list[tuple[int, int]]:
                 depth += (value[end] == '{') - (value[end] == '}')
             end += 1
         ranges.append((match.start(), end))
-    ranges.extend(match.span() for match in re.finditer(r'%[^\n]*', value)
-                  if not _is_escaped(value, match.start()))
+    if tex_comments:
+        ranges.extend(match.span() for match in re.finditer(r'%[^\n]*', value)
+                      if not _is_escaped(value, match.start()))
     return ranges
 
 
-def _reference_shell_spans(value: str, references: list[re.Match]) -> dict[tuple[int, int], tuple[int, int]]:
+def _reference_shell_spans(value: str, references: list[re.Match], *, tex_comments: bool = True) -> dict[tuple[int, int], tuple[int, int]]:
     """Locate only whole whitespace-padded math shells containing one reference.
 
     Mask complete reference nodes before scanning, since their read-only XML
     bodies may already contain dollar delimiters. The returned offsets still
     refer to the untouched model text; no formula/source comparison is changed.
     """
-    literal_ranges = [span for span in _reference_literal_ranges(value)
+    literal_ranges = [span for span in _reference_literal_ranges(value, tex_comments=tex_comments)
                       if not any(match.start() <= span[0] < match.end() for match in references)]
     masked = list(value)
     for left, right in (match.span() for match in references):
@@ -577,14 +598,17 @@ def _preamble_instruction_starts(source: str) -> set[int]:
 
 
 def _formulas(value: str, by_id: dict[str, ContentLock] | None = None,
-              *, shell_ids: set[str] | None = None) -> list[_Formula]:
+              *, shell_ids: set[str] | None = None, tex_comments: bool = True,
+              literal_ranges=()) -> list[_Formula]:
     """Read model references before math so a tagged formula is one occurrence."""
     references = list(_REFERENCE.finditer(value)) if by_id is not None else []
+    references = [ref for ref in references if not any(left <= ref.start() < right for left, right in literal_ranges)]
     by_id = by_id or {}
-    shells = _reference_shell_spans(value, references) if shell_ids else {}
+    shells = _reference_shell_spans(value, references, tex_comments=tex_comments) if shell_ids else {}
     result: list[_Formula] = []
     cursor = 0
     metadata_ranges = _page_footer_ranges(value) + _preamble_instruction_ranges(value)
+    scan_value = _literal_math_scan_source(value, literal_ranges)
     for reference in [*references, None]:
         raw = reference.group() if reference else ''
         id_match = re.search(r'MBM_[A-Za-z0-9_-]+', raw)
@@ -594,10 +618,14 @@ def _formulas(value: str, by_id: dict[str, ContentLock] | None = None,
                           reference.span() if reference is not None else (len(value), len(value)))
         limit = reference_span[0]
         while cursor < limit:
-            span = _next_math_span(value[:limit], cursor)
+            span = _next_math_span(scan_value[:limit], cursor)
             if span is None:
                 break
             start, end = span
+            literal_end = max((right for left, right in literal_ranges if left < end and start < right), default=None)
+            if literal_end is not None:
+                cursor = literal_end
+                continue
             if (not _is_choice_answer_blank(value, start, end)
                     and not any(left <= start and end <= right for left, right in metadata_ranges)):
                 result.append(_Formula(start, end, value[start:end]))
@@ -1202,8 +1230,8 @@ def _comparable_answer(value: str, source: str) -> str:
     return value
 
 
-def _source_parts(source: str, locks: list[ContentLock]) -> list[_SourcePart]:
-    source_formulas = _formulas(source)
+def _source_parts(source: str, locks: list[ContentLock], *, excluded_literal_ranges=()) -> list[_SourcePart]:
+    source_formulas = _formulas(source, literal_ranges=excluded_literal_ranges)
     # The caller supplies the same source it locked. Do not guess if it differs.
     source_formulas = [
         _Formula(span.start, span.end, span.formula,
@@ -1214,6 +1242,7 @@ def _source_parts(source: str, locks: list[ContentLock]) -> list[_SourcePart]:
     literal_ranges = [(match.start(), match.end()) for match in re.finditer(
         r'\\begin\{(?:verbatim\*?|Verbatim|lstlisting|minted)\}[\s\S]*?\\end\{(?:verbatim\*?|Verbatim|lstlisting|minted)\}'
         r'|<!--[\s\S]*?-->', source)]
+    literal_ranges.extend(excluded_literal_ranges)
     fence_start = None
     for fence in re.finditer(r'^[ \t]{0,3}(`{3,}|~{3,})[^\n]*$', source, re.MULTILINE):
         marker = fence.group(1)
@@ -1291,6 +1320,8 @@ def _source_parts(source: str, locks: list[ContentLock]) -> list[_SourcePart]:
             answer_start = next((
                 match for match in _ANSWER_START.finditer(source, start, end)
                 if not any(formula.start <= match.start() < formula.end for formula in source_formulas)
+                and not any(left < match.end() and match.start() < right
+                            for left, right in excluded_literal_ranges)
             ), None)
             if answer_start:
                 owner = append(start, answer_start.start(), number, 'content')
@@ -1304,6 +1335,8 @@ def reconcile_visible_math(
     questions: list[dict[str, Any]],
     locks: list[ContentLock],
     source: str,
+    *,
+    tex_comments: bool = True,
 ) -> dict[str, Any]:
     """Reconcile formulas locally and return reviewable, never silently lost results.
 
@@ -1314,7 +1347,9 @@ def reconcile_visible_math(
     """
     source = str(source or '')
     by_id = {lock.lock_id: lock for lock in locks}
-    parts = _source_parts(source, locks)
+    parts = _source_parts(source, locks, excluded_literal_ranges=(
+        markdown_literal_ranges(source) if not tex_comments else ()
+    ))
     table_layout = _answer_table_comparison_layout(source)
     format_sources = {index: table_layout[part.source_start:part.source_end]
                       for index, part in enumerate(parts)}
@@ -1337,7 +1372,9 @@ def reconcile_visible_math(
     content_parts = [index for index, part in enumerate(parts) if part.field == 'content']
     staged = [dict(question) for question in questions]
     output_formulas = {
-        (index, field): _formulas(str(question.get(field) or ''), by_id)
+        (index, field): _formulas(str(question.get(field) or ''), by_id, literal_ranges=(
+            markdown_literal_ranges(str(question.get(field) or '')) if not tex_comments else ()
+        ))
         for index, question in enumerate(staged) for field in ('content', 'answer_markdown')
     }
     id_counts = Counter(formula.lock_id for formulas in output_formulas.values()
@@ -1347,7 +1384,9 @@ def reconcile_visible_math(
     shell_ids = {lock_id for lock_id, count in id_counts.items() if count == 1 and lock_id in by_id}
     if shell_ids:
         output_formulas = {
-            (index, field): _formulas(str(question.get(field) or ''), by_id, shell_ids=shell_ids)
+            (index, field): _formulas(str(question.get(field) or ''), by_id, shell_ids=shell_ids, tex_comments=tex_comments, literal_ranges=(
+                markdown_literal_ranges(str(question.get(field) or '')) if not tex_comments else ()
+            ))
             for index, question in enumerate(staged) for field in ('content', 'answer_markdown')
         }
     source_id_part = {formula.lock_id: index for index, part in enumerate(parts)

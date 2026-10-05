@@ -2417,6 +2417,29 @@ window.normalizeEditorFractions = normalizeEditorFractions;
 
         function previewLiteralEnd(text, match) {
             let end = match.index + match[0].length;
+            const tail = text.slice(match.index);
+            const opening = /^(`{3,}|~{3,})([^\r\n]*)/.exec(tail);
+            const lineStart = text.lastIndexOf('\n', match.index - 1) + 1;
+            if (opening && /^[ \t]{0,3}$/.test(text.slice(lineStart, match.index))
+                    && !(opening[1][0] === '`' && opening[2].includes('`'))) {
+                const newline = tail.indexOf('\n');
+                if (newline < 0) return text.length;
+                const bodyStart = match.index + newline + 1;
+                const closing = new RegExp('^[ \\t]{0,3}' + opening[1][0]
+                    + '{' + opening[1].length + ',}[ \\t]*\\r?$', 'm').exec(text.slice(bodyStart));
+                return closing ? bodyStart + closing.index + closing[0].length : text.length;
+            }
+            // Inline code may use three or more ticks; the broad fence token
+            // must not stop at a shorter run inside that literal payload.
+            const ticks = /^`+/.exec(tail);
+            if (ticks) {
+                const closing = new RegExp('`+', 'g');
+                closing.lastIndex = match.index + ticks[0].length;
+                let next;
+                while ((next = closing.exec(text))) {
+                    if (next[0].length === ticks[0].length) return closing.lastIndex;
+                }
+            }
             if (!match[0].endsWith('{') || !/^\\(?:detokenize|url|path|lstinline|mintinline)\b/.test(match[0])) return end;
             let depth = 1;
             while (end < text.length && depth > 0) {

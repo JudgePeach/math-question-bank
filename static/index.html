@@ -1949,7 +1949,7 @@
                     <span class="import-workspace-heading-icon" aria-hidden="true"><i class="fa-solid fa-file-import"></i></span>
                     <div>
                         <h3 id="importWorkspaceTitle" class="font-bold text-lg text-slate-800">导入中心</h3>
-                        <p>PDF、Word 与 LaTeX 试卷的拆解、审查和批量入库</p>
+                        <p>PDF、Word、LaTeX 与 Markdown 试卷的拆解、审查和批量入库</p>
                     </div>
                 </div>
             </div>
@@ -1963,7 +1963,7 @@
 
             <!-- Workspace Content (Split Pane) -->
             <div id="importWorkspaceContent" class="import-workspace-content flex-1 flex overflow-hidden">
-                <!-- Left Pane: Inputs (LaTeX and Images) -->
+                <!-- Left Pane: Inputs (Text sources and images) -->
                 <div id="importInputPane" class="import-source-pane w-5/12 border-r border-slate-200 p-6 overflow-y-auto space-y-4 bg-white/50 flex flex-col">
                     <!-- Step 1: Title -->
                     <div class="import-config-card space-y-1.5 shrink-0">
@@ -1972,27 +1972,35 @@
                                class="w-full px-3.5 py-2 border border-slate-200 rounded-xl outline-none focus:border-brand-500 focus:ring-1 focus:ring-brand-500 transition-all text-xs">
                     </div>
 
-                    <!-- Step 2: LaTeX code drag & drop / text area -->
+                    <!-- Step 2: Paper file drag & drop / text source area -->
                     <div class="import-config-card space-y-1.5 flex-1 flex flex-col min-h-[220px]">
                         <label class="block text-xs font-bold text-slate-500 shrink-0">上传试卷文件</label>
                         <div id="texDropzone" class="border-2 border-dashed border-slate-200 hover:border-brand-500/80 rounded-xl p-3.5 text-center cursor-pointer transition-all duration-200 bg-white hover:bg-brand-50/20 flex flex-col justify-center items-center shrink-0 mb-2">
                             <i class="fa-solid fa-file-lines text-slate-400 text-xl mb-1.5" id="texFileIcon"></i>
-                            <span class="text-xs text-slate-600 font-medium" id="texFileName">点击或拖放 .tex / .pdf / .docx 试卷文件</span>
+                            <span class="text-xs text-slate-600 font-medium" id="texFileName">点击或拖放 .tex / .md / .pdf / .docx 试卷文件</span>
                         </div>
-                        <input id="texFileInput" type="file" accept=".tex,.pdf,.docx,application/x-tex,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document" class="hidden">
-                        <details id="importSourceDetails" class="import-source-details"><summary>粘贴或编辑 LaTeX 源码</summary>
+                        <input id="texFileInput" type="file" accept=".tex,.md,.MD,.pdf,.docx,text/markdown,application/x-tex,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document" class="hidden">
+                        <details id="importSourceDetails" class="import-source-details"><summary id="importSourceLabel">粘贴或编辑 LaTeX 源码</summary>
+                        <div class="flex items-center gap-2 my-2">
+                            <label for="importSourceFormat" class="text-[11px] text-slate-500">文本格式</label>
+                            <select id="importSourceFormat" class="glass-select text-xs px-2 py-1 rounded-lg">
+                                <option value="tex">LaTeX / TeX</option>
+                                <option value="markdown">Markdown / MD</option>
+                            </select>
+                        </div>
+                        <p id="importMarkdownNote" class="text-[10px] text-amber-600 mb-2" hidden>MD 格式支持尚不完善，拆分可能有误，请谨慎使用并逐题校对。</p>
                         <textarea id="importLatexContent" placeholder="在此粘贴试卷的 LaTeX 源代码..." 
                                   class="w-full flex-1 p-3.5 border border-slate-200 rounded-xl outline-none focus:border-brand-500 focus:ring-1 focus:ring-brand-500 font-mono text-xs bg-slate-50/50 resize-none"></textarea>
                         </details><p id="importFileSummary" class="import-file-summary hidden" role="status"></p>
                     </div>
 
-                    <!-- Step 3: Optional assets referenced by single-file TeX -->
+                    <!-- Step 3: Optional assets referenced by single-file text sources -->
                     <div class="import-config-card space-y-1.5 shrink-0" id="texImagesSection" hidden>
-                        <label class="block text-xs font-bold text-slate-500">TeX 配套图片（可选）</label>
+                        <label id="importImagesLabel" class="block text-xs font-bold text-slate-500">TeX 配套图片（可选）</label>
                         <div id="imagesDropzone" class="border-2 border-dashed border-slate-200 hover:border-brand-500/80 rounded-xl p-3 text-center cursor-pointer transition-all duration-200 bg-white hover:bg-brand-50/20 flex flex-col justify-center items-center">
                             <i class="fa-solid fa-images text-slate-400 text-xl mb-1.5" id="imagesFileIcon"></i>
                             <span class="text-xs text-slate-600 font-medium" id="imagesCountName">点击或多选拖入试卷引用的所有图片</span>
-                            <span class="text-[9px] text-slate-400 mt-1">支持 PNG、JPEG、GIF、WebP；请尽量保留与 \includegraphics 相同的文件名</span>
+                            <span id="importImagesHint" class="text-[9px] text-slate-400 mt-1">支持 PNG、JPEG、GIF、WebP；请尽量保留与 \includegraphics 相同的文件名</span>
                         </div>
                         <input id="imagesFileInput" type="file" accept="image/png,image/jpeg,image/gif,image/webp" multiple class="hidden">
                         <div id="importImagesList" class="hidden flex flex-wrap gap-1.5"></div>
@@ -2081,7 +2089,7 @@
                         <div>
                             <h4 class="ui-state-title font-bold text-slate-700 text-sm">等待拆解</h4>
                             <p class="ui-state-description text-xs text-slate-500 max-w-sm mt-1.5 leading-relaxed">
-                                上传 PDF、Word 或 TeX 文件，或展开源码输入区粘贴内容，再点击“开始解析”。
+                                上传 PDF、Word、TeX 或 MD 文件，或展开文本输入区选择格式并粘贴内容，再点击“开始解析”。
                             </p>
                         </div>
                     </div>

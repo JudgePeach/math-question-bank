@@ -646,7 +646,7 @@ def test_document_poll_generation_rejects_old_terminal_callbacks_in_real_js():
     poll_start = import_source.index("function pollPdfTaskStatus(")
     poll_end = import_source.index("function renderImagesList()", poll_start)
     poll_source = import_source[poll_start:poll_end]
-    latex_start = import_source.index("// Normal LaTeX branch")
+    latex_start = import_source.index("// Text-source branch shares image upload, source review, and answer generation.")
     latex_end = import_source.index("let documentImportTaskGeneration = 0", latex_start)
     latex_source = import_source[latex_start:latex_end]
 

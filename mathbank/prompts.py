@@ -434,8 +434,17 @@ def build_pdf_parse_system_prompt(curriculum: dict, generate_answers_bool: bool)
     return system_instructions
 
 
-def build_import_parse_system_prompt(curriculum: dict) -> str:
-    """Prompt for pasted and uploaded single-file TeX paper parsing."""
+def build_import_parse_system_prompt(curriculum: dict, source_format: str = "tex") -> str:
+    """Prompt for pasted/uploaded single-file TeX or Markdown exam parsing."""
+    if source_format == "markdown":
+        return build_pdf_parse_system_prompt(curriculum, generate_answers_bool=False) + (
+            "\n【单文件 Markdown 源码专项规则】:\n"
+            "1. 输入是 Markdown 原文。标题、题型分节和分隔线不是题目；按正式题号拆分，所属小问保留在同一道题内。\n"
+            "2. 保留原正文、百分号、数学定界符、表格、选项顺序和图片所在位置，不能按 TeX 注释删除百分号后的文字。代码示例不得当成正式试题。\n"
+            "3. 图片链接的原始路径须保留并放入 referenced_images，题干、选项和答案中的图片均保留原位；不得下载、虚构或改名，不得把代码中的图片示例当成配图。\n"
+            "4. 原卷答案/解析按题号与对应题干关联，标记 [EXTRACTED_ORIGINAL]，不能拆成新题或自行补答；无法确定所属题目时保留核对提示。\n"
+            "5. 公式锁定协议沿用上述规则。不得把 Markdown 的格式符号与题号误当成数学内容；不确定的表格或扩展语法保留原文供核对。\n"
+        )
     return build_pdf_parse_system_prompt(curriculum, generate_answers_bool=False) + (
         "\n【单文件 TeX 源码专项规则】:\n"
         "1. 输入已由本地预处理器提取 document 正文并清除普通注释；不得把 documentclass、usepackage、页眉页脚或宏定义上下文当成题目。\n"
