@@ -25,6 +25,7 @@ def region_result(identifier, *, candidate="p3_raster_001", bbox=None):
 
 @pytest.fixture
 def setup(tmp_path, monkeypatch):
+    monkeypatch.setattr("mathbank.pdf_vision_request.PDF_VISION_RETRY_DELAY_SECONDS", 0)
     def no_network(*args, **kwargs):
         raise AssertionError("Unit tests must not contact a provider")
     monkeypatch.setattr(requests.sessions.Session, "request", no_network)
@@ -87,6 +88,17 @@ def test_two_regions_one_request_preserves_native_text_and_remaps_geometry_slots
     assert sent["max_tokens"] == vision.MAX_OUTPUT_TOKENS
     assert "PRIVATE_NATIVE" not in json.dumps(sent)
     assert list(setup.root.iterdir()) == [setup.root / "page.png"]
+
+
+def test_verified_siliconflow_qwen38_regions_use_json_mode_without_thinking(setup, monkeypatch):
+    provider = resolve_ocr_provider("siliconflow", {"SILICONFLOW_API_KEY": "unused-test-key",
+                                                  "SILICONFLOW_OCR_MODEL": "Pro/Qwen/Qwen3.8-27B"})
+    monkeypatch.setattr(vision, "resolve_ocr_provider", lambda _engine: provider)
+    call(setup)
+    sent = setup.calls[0][1]
+    assert sent["response_format"] == {"type": "json_object"}
+    assert sent["enable_thinking"] is False
+    assert "thinking_budget" not in sent
 
 
 def test_named_region_rectangle_is_normalized_before_page_transform_and_preserves_raw_space(setup):
@@ -186,16 +198,16 @@ def test_region_envelope_must_be_complete_and_unique(setup, malformation):
     elif malformation == "bad_id": data["regions"][0]["id"] = []
     with pytest.raises(ValueError):
         call(setup, data)
-    assert len(setup.calls) == 1
+    assert len(setup.calls) == 2
 
 
 @pytest.mark.parametrize("text", ["", "   ", None, 4, "![image](/static/uploads/model.png)", "<img src='bad'>", "file:///private/secret"])
-def test_bad_transcript_rejects_entire_merge_without_retry(setup, text):
+def test_bad_transcript_rejects_entire_merge_after_one_retry(setup, text):
     data = deepcopy(setup.data)
     data["regions"][0]["markdown"] = text
     with pytest.raises(ValueError):
         call(setup, data)
-    assert len(setup.calls) == 1
+    assert len(setup.calls) == 2
 
 
 @pytest.mark.parametrize("change", ["unknown_candidate", "other_region_candidate", "invalid_box", "outside_crop", "duplicate_slot", "missing_slot"])
@@ -241,7 +253,7 @@ def test_text_only_mode_omits_candidate_task_and_keeps_native_text(setup):
 def test_text_only_mode_rejects_unrequested_layout_fields(setup):
     with pytest.raises(ValueError):
         call(setup, include_figures=False)
-    assert len(setup.calls) == 1
+    assert len(setup.calls) == 2
 
 
 @pytest.mark.parametrize("change", ["duplicate_region", "missing_piece", "duplicate_piece", "unknown_piece", "native_slot",
@@ -268,9 +280,9 @@ def test_invalid_local_plan_rejected_before_model_call(setup, change):
 @pytest.mark.parametrize("finish", ["length", "content_filter", "tool_calls", None])
 def test_truncation_rejected_even_with_complete_json(setup, finish):
     setup.response["choices"][0]["finish_reason"] = finish
-    with pytest.raises(ValueError, match="未正常结束|截断"):
+    with pytest.raises(ValueError, match="未正常结束|截断|过滤"):
         call(setup)
-    assert len(setup.calls) == 1
+    assert len(setup.calls) == (1 if finish == "content_filter" else 2)
 
 
 @pytest.mark.parametrize("before_post", [True, False])
@@ -284,22 +296,22 @@ def test_cancellation_is_not_swallowed_or_retried(setup, before_post):
 
 
 @pytest.mark.parametrize("failure", [requests.ReadTimeout, requests.ConnectionError])
-def test_network_error_never_retried_or_echoed(setup, monkeypatch, failure):
+def test_network_error_retries_once_without_echo(setup, monkeypatch, failure):
     calls = []
     def fail(*args, **kwargs):
         calls.append(1)
         raise failure("secret provider/key")
     monkeypatch.setattr(vision, "post_chat_completion", fail)
-    with pytest.raises(ValueError, match="未自动重试") as caught:
+    with pytest.raises(ValueError, match="共尝试 2 次") as caught:
         call(setup)
-    assert "secret" not in str(caught.value) and calls == [1]
+    assert "secret" not in str(caught.value) and calls == [1, 1]
 
 
-def test_invalid_json_and_http_error_are_not_retried(setup, monkeypatch):
+def test_invalid_json_and_http_error_retry_once(setup, monkeypatch):
     setup.response["choices"][0]["message"]["content"] = "not JSON secret"
     with pytest.raises(ValueError, match="结构化") as caught:
         call(setup)
-    assert "secret" not in str(caught.value) and len(setup.calls) == 1
+    assert "secret" not in str(caught.value) and len(setup.calls) == 2
     monkeypatch.setattr(vision, "post_chat_completion", lambda *a, **kw: SimpleNamespace(
         status_code=503, json=lambda: pytest.fail("Must not read failed HTTP response")))
     with pytest.raises(ValueError, match="HTTP 503"):
@@ -344,4 +356,22 @@ def test_combined_source_cap_cannot_be_bypassed_by_multiple_regions(setup, monke
     monkeypatch.setattr(vision, "MAX_SOURCE_CHARS", 45)
     with pytest.raises(ValueError, match="正文过长"):
         call(setup)
-    assert len(setup.calls) == 1
+    assert len(setup.calls) == 2
+
+
+def test_region_protocol_failure_then_success_keeps_all_usage(setup, monkeypatch):
+    post = vision.post_chat_completion
+    calls = []
+    def retry(*args, **kwargs):
+        calls.append(kwargs)
+        if len(calls) == 1:
+            body = deepcopy(setup.response)
+            body["choices"][0]["finish_reason"] = "length"
+            return SimpleNamespace(status_code=200, json=lambda: body)
+        return post(*args, **kwargs)
+    monkeypatch.setattr(vision, "post_chat_completion", retry)
+    result = call(setup)
+    assert len(calls) == result["visual_calls"] == 2
+    assert all(item["timeout"] == 600 and item["retry_connection"] is False for item in calls)
+    assert result["usage"] == {key: value * 2 for key, value in setup.response["usage"].items()}
+    assert result["usage_complete"] is True

@@ -129,6 +129,30 @@ def test_normal_math_short_titles_and_foreign_accents_remain_native(markdown):
     assert helper.native_text_quality_reasons(markdown) == []
 
 
+@pytest.mark.parametrize("markdown", [
+    "已知 $x=1$，标记中的外文字母 ô、î 和 ö 保持原样。",
+    r"已知 $\text{ô、î、ö}=\text{标记}$，请阅读上述字符说明。",
+    "1. 说明代码 `函数 f=ôxô，关系 x \ufffd 1` 的字面内容。",
+    "1. 阅读下列字符示例。\n```text\n函数 f=ôxô；\uef04；0 /∈ A\n```\n2. 已知 $x=1$。",
+    "1. 阅读代码。\n~~~text\n函数 f=ôxô；\uef04；0 /∈ A\n~~~\n2. 已知 $x=1$。",
+    "1. 已知 $x=1$，参见 https://example.test/ôxô/\uef04 。",
+    "1. 已知 $x=1$，参见 [配图](static/uploads/\uef04.png)。",
+    "1. <span title='\uef04 ôxô'>已知 $x=1$，求值。</span>",
+])
+def test_formula_context_does_not_promote_literals_or_metadata_to_glyph_failures(markdown):
+    assert helper.native_text_quality_reasons(markdown) == []
+
+
+@pytest.mark.parametrize("markdown", [
+    r"函数 $f=ôxô$ 的定义域为实数集。",
+    "<span title='example'>函数 y=-x²+ôxô 的性质。</span>",
+    "1. 已知 $x<y$ 且 $z>x$，另有关系 x \ufffd 1。",
+    "1. [关系 x \uef04 1](https://example.test) 的含义。",
+])
+def test_literal_protection_keeps_visible_math_damage_detectable(markdown):
+    assert helper.native_text_quality_reasons(markdown)
+
+
 def test_per_page_gate_preserves_raw_evidence_and_only_routes_bad_pages(monkeypatch, capsys):
     corrupt = broken_exam_table()
     normal = "数学试卷\n1. 已知函数 $f(x)=x^2$，求其最小值。"

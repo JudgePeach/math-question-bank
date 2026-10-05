@@ -457,6 +457,8 @@ def test_asset_cleanup_loads_question_references_only_once(
 
     upload_dir = tmp_path / "uploads"
     upload_dir.mkdir()
+    from mathbank.asset_lifecycle import register_asset_store
+    register_asset_store(upload_dir, tmp_path / "retained")
     first = upload_dir / "first.png"
     second = upload_dir / "second.png"
     _write_png(first)

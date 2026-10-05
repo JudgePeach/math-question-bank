@@ -592,7 +592,10 @@ def _make_minimal_macos_tree(root):
     [
         "static/.DS_Store",
         "static/test_uploads/capture.png",
+        "docs/pdf-layout-upgrade.md",
         "tests/test_release.py",
+        "tests/artifacts/capture.png",
+        ".pytest_cache/v/cache/nodeids",
         "mathbank/__pycache__/module.pyc",
         ".env",
         "math_question_bank.db",
@@ -705,6 +708,36 @@ def test_finished_archive_crc_manifest_and_sidecar(tmp_path):
     assert not any(name.startswith("MathBank-") for name in names)
     if launcher.create_system == 3:
         assert launcher.external_attr >> 16 & 0o111
+
+
+@pytest.mark.parametrize(
+    "forbidden_path",
+    [
+        "docs/community-qa.md",
+        "tests/fixtures/school_math_symbols.json",
+        "tests/artifacts/capture.png",
+        ".pytest_cache/v/cache/nodeids",
+    ],
+)
+def test_finished_archive_rejects_documentation_and_test_artifacts(
+    tmp_path, forbidden_path
+):
+    staging = tmp_path / "staging"
+    _make_minimal_macos_tree(staging)
+    archive_path = build_release._build_archive(
+        staging,
+        str(tmp_path / "MathBank-macOS"),
+        "macos",
+        "启动题库系统.command",
+    )
+    with zipfile.ZipFile(archive_path, "a") as archive:
+        archive.writestr(forbidden_path, b"must not ship")
+
+    with pytest.raises(RuntimeError, match="forbidden artifacts"):
+        build_release.verify_zip_archive(
+            archive_path,
+            {"RELEASE-MANIFEST.json", "main.py", "启动题库系统.command"},
+        )
 
 
 def test_failed_final_verification_removes_archive_and_checksum(

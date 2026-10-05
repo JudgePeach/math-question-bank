@@ -519,6 +519,193 @@
             }
         };
         window.TikzState = TikzState;
+        // Markdown owns visible images. Asset arrays additionally own editable
+        // TikZ previews and private reference images, never the reverse.
+        window.MathBankImageAssets = (() => {
+            const safe = value => window.MathBankSafe.safeImageUrl(value);
+            const unique = paths => Array.from(new Set(paths.map(safe).filter(Boolean)));
+            function escaped(value, start) {
+                let cursor = start - 1;
+                while (cursor >= 0 && value[cursor] === '\\') cursor -= 1;
+                return (start - cursor - 1) % 2 === 1;
+            }
+            function braceEnd(value, start) {
+                let depth = 0;
+                for (let index = start; index < value.length; index += 1) {
+                    if (escaped(value, index)) continue;
+                    if (value[index] === '{') depth += 1;
+                    else if (value[index] === '}' && --depth === 0) return index + 1;
+                }
+                return value.length;
+            }
+            function maskLiterals(value, imageMatches) {
+                const chars = value.split('');
+                const starts = /<!--|^[ \t]{0,3}(`{3,}|~{3,})[^\n]*$|`+|%|\\begin\s*\{(verbatim\*?|Verbatim\*?|lstlisting|minted|tikzpicture)\}|\\(?:verb|Verb|lstinline|mintinline|detokenize|url|path)(?![A-Za-z])\*?/gm;
+                let match;
+                while ((match = starts.exec(value))) {
+                    const token = match[0];
+                    let end = starts.lastIndex;
+                    if (escaped(value, match.index)) continue;
+                    // A complete image is one authored structure. Percent signs
+                    // and backticks inside its alt/title/URL are not TeX/code
+                    // delimiters for the rest of the line.
+                    if (imageMatches.some(image => !escaped(value, image.index)
+                            && match.index >= image.index && match.index < image.index + image[0].length)) continue;
+                    if (token === '<!--') {
+                        const closing = value.indexOf('-->', end);
+                        end = closing >= 0 ? closing + 3 : value.length;
+                    } else if (token === '%') {
+                        const closing = value.indexOf('\n', end);
+                        end = closing >= 0 ? closing : value.length;
+                    } else if (match[1]) {
+                        const fence = match[1];
+                        const closing = new RegExp('^[ \\t]{0,3}' + fence[0] + '{' + fence.length + ',}[ \\t]*$', 'm')
+                            .exec(value.slice(end));
+                        end = closing ? end + closing.index + closing[0].length : value.length;
+                    } else if (token.startsWith('`')) {
+                        const closing = [...value.slice(end).matchAll(/`+/g)].find(part => part[0].length === token.length);
+                        if (!closing) continue;
+                        end += closing.index + closing[0].length;
+                    } else if (match[2]) {
+                        const environment = match[2].replace('*', '\\*');
+                        const closing = new RegExp('\\\\end\\s*\\{' + environment + '\\}').exec(value.slice(end));
+                        end = closing ? end + closing.index + closing[0].length : value.length;
+                    } else {
+                        const command = token.replace(/^\\/, '').replace(/\*$/, '');
+                        let argument = end;
+                        while (/[ \t]/.test(value[argument] || '') && argument < value.length) argument += 1;
+                        if (value[argument] === '[' && ['Verb', 'lstinline', 'mintinline'].includes(command)) {
+                            const closing = value.indexOf(']', argument + 1);
+                            argument = closing >= 0 ? closing + 1 : value.length;
+                        }
+                        if (command === 'mintinline' && value[argument] === '{') argument = braceEnd(value, argument);
+                        while (/[ \t]/.test(value[argument] || '') && argument < value.length) argument += 1;
+                        if (argument >= value.length) end = value.length;
+                        else if (value[argument] === '{' && !['verb', 'Verb'].includes(command)) end = braceEnd(value, argument);
+                        else if (!/[A-Za-z0-9\u4e00-\u9fff\s]/.test(value[argument])) {
+                            const closing = value.indexOf(value[argument], argument + 1);
+                            const newline = value.indexOf('\n', argument + 1);
+                            const lineEnd = newline >= 0 ? newline : value.length;
+                            end = closing >= 0 && closing < lineEnd ? closing + 1 : lineEnd;
+                        } else continue;
+                    }
+                    for (let index = match.index; index < end; index += 1) {
+                        if (chars[index] !== '\r' && chars[index] !== '\n') chars[index] = ' ';
+                    }
+                    starts.lastIndex = end;
+                }
+                return chars.join('');
+            }
+            function spans(text) {
+                const value = String(text || '');
+                const images = /(!\[(?:\\.|[^\]\\])*\]\(\s*)(?:<([^>\n]+)>|([^\s)]+))(?:[ \t]+[^)\n]*)?\s*\)|(\\includegraphics\*?\s*(?:\[[^\]]*\]\s*)?\{)([^{}]+)\}|(<img\b[^>]*?\bsrc\s*=\s*)(?:"([^"]+)"|'([^']+)'|([^\s>]+))[^>]*>/gi;
+                const matches = [...value.matchAll(images)];
+                const masked = maskLiterals(value, matches);
+                const result = [];
+                for (const match of matches) {
+                    if (masked.slice(match.index, match.index + 2) !== value.slice(match.index, match.index + 2)
+                            || escaped(value, match.index)) continue;
+                    const raw = match[2] || match[3] || match[5] || match[7] || match[8] || match[9];
+                    const path = safe(raw);
+                    if (!path) continue;
+                    const prefix = match[1] || match[4] || match[6];
+                    const start = match.index + prefix.length + (match[2] || match[7] || match[8] ? 1 : 0);
+                    result.push({ start: start + raw.length - raw.trimStart().length,
+                        end: start + raw.trimEnd().length, path });
+                }
+                return result;
+            }
+            function collect(markdown) {
+                return unique(spans(markdown).map(span => span.path));
+            }
+            function all(content, answer, ...groups) {
+                const paths = [...collect(content), ...collect(answer)];
+                groups.forEach(group => (Array.isArray(group) ? group : []).forEach(asset => {
+                    if (asset) paths.push(asset.image_path, asset.reference_image_path);
+                }));
+                return unique(paths);
+            }
+            function normalizeMap(raw) {
+                const result = Object.create(null);
+                if (raw && typeof raw === 'object' && !Array.isArray(raw)) {
+                    Object.entries(raw).forEach(([before, after]) => {
+                        const oldPath = safe(before);
+                        const newPath = safe(after);
+                        if (oldPath && newPath && oldPath !== newPath) result[oldPath] = newPath;
+                    });
+                }
+                return result;
+            }
+            function mapText(text, mapping) {
+                let result = String(text || '');
+                spans(result).reverse().forEach(span => {
+                    if (mapping[span.path]) result = result.slice(0, span.start)
+                        + mapping[span.path] + result.slice(span.end);
+                });
+                return result;
+            }
+            function mapInput(input, mapping) {
+                if (!input) return;
+                const before = String(input.value || '');
+                const after = mapText(before, mapping);
+                if (before === after) return;
+                const translate = position => {
+                    let delta = 0;
+                    for (const span of spans(before)) {
+                        const target = mapping[span.path];
+                        if (!target) continue;
+                        const { start, end } = span;
+                        if (position >= end) delta += target.length - (end - start);
+                        else if (position > start) return start + delta + Math.min(position - start, target.length);
+                    }
+                    return position + delta;
+                };
+                const start = translate(input.selectionStart || 0);
+                const end = translate(input.selectionEnd || 0);
+                const top = input.scrollTop;
+                const left = input.scrollLeft;
+                input.value = after;
+                if (typeof input.setSelectionRange === 'function') input.setSelectionRange(start, end);
+                input.scrollTop = top;
+                input.scrollLeft = left;
+            }
+            function mapRecord(record, mapping) {
+                const mapped = { ...record };
+                const path = value => mapping[safe(value)] || value;
+                const mapArray = (value, transform, deduplicate = false) => {
+                    const transformArray = values => {
+                        const result = values.map(transform);
+                        return deduplicate ? Array.from(new Set(result)) : result;
+                    };
+                    if (typeof value === 'string') {
+                        try { return JSON.stringify(transformArray(JSON.parse(value))); }
+                        catch (_) { return value; }
+                    }
+                    return Array.isArray(value) ? transformArray(value) : value;
+                };
+                ['content', 'answer_markdown'].forEach(key => {
+                    if (key in mapped) mapped[key] = mapText(mapped[key], mapping);
+                });
+                if ('image_paths' in mapped) mapped.image_paths = mapArray(mapped.image_paths, path, true);
+                ['content_tikz_assets', 'answer_tikz_assets'].forEach(key => {
+                    if (key in mapped) mapped[key] = mapArray(mapped[key], asset => asset && ({
+                        ...asset, image_path: path(asset.image_path),
+                        ...(asset.reference_image_path ? { reference_image_path: path(asset.reference_image_path) } : {})
+                    }));
+                });
+                if (mapped.tikz_reference_image_path) mapped.tikz_reference_image_path = path(mapped.tikz_reference_image_path);
+                if (mapped.image_layouts) {
+                    const keys = Object.create(null);
+                    Object.entries(mapping).forEach(([before, after]) => {
+                        keys[window.ImageLayoutTools.key(before)] = window.ImageLayoutTools.key(after);
+                    });
+                    mapped.image_layouts = Object.fromEntries(Object.entries(mapped.image_layouts)
+                        .map(([key, layout]) => [keys[key] || key, layout]));
+                }
+                return mapped;
+            }
+            return Object.freeze({ collect, all, normalizeMap, mapText, mapInput, mapRecord });
+        })();
         // Image references remain at their authored anchors; only the final cluster detaches.
         window.ImageLayoutTools = {
             key(path) { return String(path || '').trim().replace(/^\/?(?:static\/)?uploads\//, ''); },
@@ -2195,6 +2382,11 @@
                     if (btnPaper) btnPaper.classList.remove('font-medium');
                 }
             }
+
+            const checkQa = document.getElementById('ws-check-qa');
+            const btnQa = document.getElementById('ws-btn-qa');
+            if (checkQa) checkQa.classList.toggle('hidden', workspaceId !== 'qa');
+            if (btnQa) btnQa.classList.toggle('font-medium', workspaceId === 'qa');
 
             closeWorkspaceDropdown();
         };

@@ -19,11 +19,11 @@ def pdf_bytes():
 
 
 @pytest.mark.parametrize("strategy,field,expected", [
-    ("layout_aware", None, False), ("layout_aware", "true", True),
+    ("layout_aware", None, True), ("layout_aware", "true", True),
     ("layout_aware", "false", False), ("native_preferred", "true", False),
     ("force_ocr", "true", False),
 ])
-def test_pdf_upload_requires_explicit_smart_mode_verification_flag(client, monkeypatch, strategy, field, expected):
+def test_pdf_upload_defaults_to_smart_mode_verification_with_explicit_opt_out(client, monkeypatch, strategy, field, expected):
     import main
     submitted = []
     monkeypatch.setattr(main.DOCUMENT_TASKS, "submit", lambda *a, **k: submitted.append(a))
@@ -38,6 +38,36 @@ def test_pdf_upload_requires_explicit_smart_mode_verification_flag(client, monke
     try:
         assert len(submitted) == 1
         assert submitted[0][-2:] == (strategy, expected)
+    finally:
+        main.DOCUMENT_TASKS.remove(task_id)
+
+
+def test_default_pdf_visual_failure_keeps_split_result_and_original_review(monkeypatch):
+    import main
+    from mathbank import pdf_source_verify
+    source = '1. 求 $x+1$ 的值。'
+    monkeypatch.setattr(main, 'inspect_and_extract_pdf', lambda *a, **k: {
+        'pdf_type': 'text_based', 'pages': [{'page_index': 0, 'markdown': source, 'needs_ocr': False}]})
+    monkeypatch.setattr(main, 'parse_paper_text_internal', lambda *a, **k: [
+        {'content': '求 $x-1$ 的值。', 'answer_markdown': ''}])
+    calls = []
+
+    def verify(*a, **k):
+        calls.append('verify')
+        raise RuntimeError('fixture verification failure')
+
+    monkeypatch.setattr(pdf_source_verify, 'verify_pdf_source_suspicions', verify)
+    task_id = 'auto-verification-' + uuid.uuid4().hex
+    main.DOCUMENT_TASKS.create(task_id, document_type='pdf', temp_assets=[])
+    try:
+        main.run_pdf_parsing_task(task_id, pdf_bytes(), 'test.pdf', pdf_strategy='layout_aware')
+        task = main.DOCUMENT_TASKS.snapshot(task_id)
+        assert task['status'] == 'completed', task.get('error')
+        assert calls == ['verify']
+        assert task['data'][0]['content'] == '求 $x-1$ 的值。'
+        assert task['data'][0]['source_review']['required'] is True
+        assert task['diagnostics']['pdf_source_verification']['status'] == 'failed'
+        assert task['page_images']
     finally:
         main.DOCUMENT_TASKS.remove(task_id)
 

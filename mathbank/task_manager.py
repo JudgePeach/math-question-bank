@@ -31,6 +31,7 @@ class _TaskRecord:
     updated_at: dt.datetime = field(
         default_factory=lambda: dt.datetime.now(dt.timezone.utc)
     )
+    retained_at: dt.datetime | None = None
     future: Future | None = None
     submitted: bool = False
 
@@ -175,6 +176,16 @@ class TaskManager:
             result["updated_at"] = record.updated_at.isoformat().replace("+00:00", "Z")
             return result
 
+    def retain(self, task_id: str) -> bool:
+        """Keep an active import result without changing its evidence or progress."""
+
+        with self._lock:
+            record = self._records.get(task_id)
+            if record is None or record.state.get("status") in {"error", "cancelled"}:
+                return False
+            record.retained_at = dt.datetime.now(dt.timezone.utc)
+            return True
+
     def submit(
         self,
         task_id: str,
@@ -283,7 +294,7 @@ class TaskManager:
             for task_id, record in self._records.items()
             if record.state.get("status") in TERMINAL_STATUSES
             and record.future is None
-            and now - record.updated_at >= self._terminal_ttl
+            and now - self._retention_time(record) >= self._terminal_ttl
         ]
         for task_id in expired:
             record = self._records.pop(task_id, None)
@@ -291,17 +302,30 @@ class TaskManager:
                 self._cleanup_temp_assets_locked(record)
         return len(expired)
 
+    @staticmethod
+    def _retention_time(record: _TaskRecord) -> dt.datetime:
+        # Failed/cancelled work cannot keep resources alive via earlier activity.
+        if record.state.get("status") == "completed" and record.retained_at is not None:
+            return max(record.updated_at, record.retained_at)
+        return record.updated_at
+
     def _make_record_capacity_locked(self) -> None:
         """Evict the oldest finished records before rejecting new work."""
 
         if len(self._records) < self._max_records:
             return
+        now = dt.datetime.now(dt.timezone.utc)
         terminal_records = sorted(
             (
                 (task_id, record)
                 for task_id, record in self._records.items()
                 if record.state.get("status") in TERMINAL_STATUSES
                 and record.future is None
+                and not (
+                    record.state.get("status") == "completed"
+                    and record.retained_at is not None
+                    and now - self._retention_time(record) < self._terminal_ttl
+                )
             ),
             key=lambda item: item[1].updated_at,
         )

@@ -99,6 +99,57 @@ def _normalized(rect, page_rect) -> list[float]:
     ]
 
 
+def scan_background_candidate_ids(page_info: dict) -> set[str]:
+    """Reject native shortcuts for scan strips, without removing any candidate.
+
+    A full-page raster background plus several nearly page-long raster strips
+    covering most of the page is evidence of tiled scanning, not independent
+    diagrams. A single tall illustration, ordinary small figures, and layouts
+    without the full-page background evidence retain their native geometry.
+    """
+    if not isinstance(page_info, dict) or page_info.get("full_page_image") is not True:
+        return set()
+    candidates = page_info.get("candidates", [])
+    if not isinstance(candidates, (list, tuple)):
+        return set()
+    strips = []
+    for candidate in candidates:
+        if not isinstance(candidate, dict) or candidate.get("type") != "raster" or not isinstance(candidate.get("id"), str):
+            continue
+        box = candidate.get("bbox")
+        if (not isinstance(box, (list, tuple)) or len(box) != 4
+                or any(isinstance(value, bool) or not isinstance(value, (int, float))
+                       or not 0 <= value <= 1000 or not math.isfinite(value) for value in box)):
+            continue
+        x0, y0, x1, y1 = box
+        if x1 <= x0 or y1 <= y0:
+            continue
+        width, height = x1 - x0, y1 - y0
+        if (height >= 950 and width >= 150) or (width >= 950 and height >= 150):
+            strips.append((candidate["id"], tuple(box)))
+    if len(strips) < 2:
+        return set()
+    # Sweep disjoint x bands and merge their y intervals. Summed image areas
+    # would mistake overlapping/repeated images for full-page coverage.
+    xs = sorted({value for _, box in strips for value in (box[0], box[2])})
+    area = 0.0
+    for left, right in zip(xs, xs[1:]):
+        intervals = sorted((box[1], box[3]) for _, box in strips if box[0] <= left and right <= box[2])
+        start, end, height = None, None, 0.0
+        for low, high in intervals:
+            if start is None:
+                start, end = low, high
+            elif low <= end:
+                end = max(end, high)
+            else:
+                height += end - start
+                start, end = low, high
+        if start is not None:
+            height += end - start
+        area += (right - left) * height
+    return {identifier for identifier, _ in strips} if area >= 850_000 else set()
+
+
 def inspect_pdf_page(page, page_index: int) -> dict[str, Any]:
     """Return visible raster occurrences, vector clusters and native text boxes.
 

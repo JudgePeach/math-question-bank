@@ -647,7 +647,7 @@ window.normalizeEditorFractions = normalizeEditorFractions;
             button.setAttribute('aria-disabled', isAvailable ? 'false' : 'true');
         }
 
-        function openQuestionEditorModal(panelId = 'classification') {
+        function openQuestionEditorModal(panelId = 'content') {
             const modal = document.getElementById('editorSection');
             const editButton = document.getElementById('editQuestionFromPreviewBtn');
             if (!modal) return;
@@ -658,6 +658,9 @@ window.normalizeEditorFractions = normalizeEditorFractions;
 
             questionEditorRestoreFocus = document.activeElement;
             switchQuestionEditorPanel(panelId);
+            if (panelId === 'content' && typeof switchContentTab === 'function') {
+                switchContentTab('ocr');
+            }
             modal.classList.remove('hidden');
             modal.setAttribute('aria-hidden', 'false');
             document.body.classList.add('question-editor-open');
@@ -739,8 +742,7 @@ window.normalizeEditorFractions = normalizeEditorFractions;
                         modal.dataset.returnQuestionId = String(returnQuestionId);
                     }
                 }
-                openQuestionEditorModal('content');
-                if (typeof switchContentTab === 'function') switchContentTab('manual');
+                openQuestionEditorModal();
                 setQuestionDetailEditAvailability(false);
             });
         }
@@ -803,6 +805,7 @@ window.normalizeEditorFractions = normalizeEditorFractions;
             if (window.blockEditorSessionChangeWhileSaving && window.blockEditorSessionChangeWhileSaving()) {
                 return false;
             }
+            if (typeof window.syncEditorImageReferences === 'function') window.syncEditorImageReferences();
             const content = document.getElementById('editContent').value;
             const qtype = document.getElementById('editQType').value;
             const compulsory = document.getElementById('editCompulsory').value;
@@ -826,7 +829,8 @@ window.normalizeEditorFractions = normalizeEditorFractions;
                 answer_markdown: answerMarkdown,
                 review: review,
                 tags: tags,
-                image_paths: Array.from(new Set([
+                image_paths: typeof window.editorAssetReferences === 'function'
+                    ? window.editorAssetReferences() : Array.from(new Set([
                     ...uploadedImages,
                     ...(typeof uploadedAnswerImages !== 'undefined' ? uploadedAnswerImages : []),
                     ...TikzState.referencePaths()
@@ -1936,8 +1940,11 @@ window.normalizeEditorFractions = normalizeEditorFractions;
                 const previewContainer = document.getElementById('contentPreview');
                 const paperContainer = document.getElementById('paperContent');
                 
-                // Automatically sync illustrations list with text content
-                if (uploadedImages.length > 0) {
+                // Rebuild after every edit, including undo and pasted Markdown.
+                if (typeof window.syncEditorImageReferences === 'function') {
+                    window.syncEditorImageReferences();
+                    renderIllustrationBadges();
+                } else if (uploadedImages.length > 0) {
                     uploadedImages = uploadedImages.filter(path => text.includes(path));
                     renderIllustrationBadges();
                 }
@@ -2066,7 +2073,8 @@ window.normalizeEditorFractions = normalizeEditorFractions;
             cleaned = cleaned.replace(/(?:<br\s*\/?>\s*)+$/i, '').trim();
 
             cleaned = normalizePreviewDollarSigns(cleaned);
-            const sanitizedDollars = cleaned.replace(/\\\$/g, '');
+            const outsideMath = replaceDelimitedMathForPreview(cleaned, () => '');
+            const sanitizedDollars = outsideMath.replace(previewLiteralPattern(), '').replace(/\\\$/g, '');
             const dollarCount = (sanitizedDollars.match(/\$/g) || []).length;
             if (dollarCount % 2 !== 0) {
                 cleaned += '$';
@@ -2078,52 +2086,69 @@ window.normalizeEditorFractions = normalizeEditorFractions;
 
         function transformFillinMacro(clean) {
             if (!clean) return "";
-            return clean.replace(/(\$?)\\fillin(?:\[([^\]]*?)\])?(?:\[([^\]]*?)\])?(\$?)/g, function(match, preDollar, p1, p2, postDollar, offset, fullString) {
-                // 计算当前 \fillin 之前未转义 $ 的数量
-                const preString = fullString.substring(0, offset).replace(/\\\$/g, '');
-                const dollarsBefore = (preString.match(/\$/g) || []).length;
-                const isInsideMath = (dollarsBefore % 2 !== 0) || (preDollar === '$');
-                
-                function isLengthStr(str) {
-                    return /^\s*\d+(?:\.\d+)?\s*(?:cm|mm|in|pt|pc|em|ex)\s*$/i.test(str || '');
+            const saved = [];
+            const prefix = previewGuardPrefix(clean, 'F');
+            const save = (original, kind = 'literal') => {
+                const marker = prefix + saved.length + '\uE003';
+                saved.push({marker, original, kind});
+                return marker;
+            };
+            function optionMath(value) {
+                if (value === undefined) return {value, safe: true};
+                let option = value;
+                if (option.includes(prefix)) {
+                    const item = saved.find(entry => entry.marker === option.trim());
+                    if (!item || item.kind !== 'math') return {value, safe: false};
+                    option = item.original;
                 }
-
-                let innerTex = '\\underline{\\hspace{1.5cm}}';
-                if (p1 !== undefined && p2 !== undefined) {
-                    const len = isLengthStr(p1) ? p1 : '1.5cm';
-                    innerTex = '\\underline{\\hspace{' + len + '}' + p2 + '\\hspace{' + len + '}}';
-                } else if (p1 !== undefined) {
-                    if (isLengthStr(p1)) {
-                        innerTex = '\\underline{\\hspace{' + p1 + '}}';
-                    } else {
-                        innerTex = '\\underline{\\quad ' + p1 + ' \\quad}';
+                let complete = false;
+                const normalized = replaceDelimitedMathForPreview(option, (whole, inner) => {
+                    if (whole !== option.trim()) return whole;
+                    complete = true;
+                    return inner;
+                });
+                if (!complete) {
+                    for (let index = 0; index < option.length; index++) {
+                        if ((option[index] === '$' || option.startsWith('\\(', index) || option.startsWith('\\[', index))
+                                && !isLatexTokenEscaped(option, index)) return {value, safe: false};
                     }
                 }
-
-                // 检查从当前位置往后，本行内是否还有未转义的 $
-                const postString = fullString.substring(offset + match.length).replace(/\\\$/g, '');
-                const nextDollarIdx = postString.indexOf('$');
-                const nextNewlineIdx = postString.indexOf('\n');
-                const hasClosingDollarInLine = (nextDollarIdx !== -1 && (nextNewlineIdx === -1 || nextDollarIdx < nextNewlineIdx));
-
-                if (isInsideMath) {
-                    if (postDollar === '$') {
-                        // 紧跟 postDollar 为 $ 时必须将闭合 $ 重新补回，绝对不能将其吞掉
-                        return innerTex + '$';
-                    } else if (hasClosingDollarInLine) {
-                        return innerTex;
-                    } else {
-                        // 句末漏写闭合 $ 时自动补齐闭合
-                        return innerTex + '$';
+                return {value: normalized, safe: true};
+            }
+            function replaceMacros(source, insideMath) {
+                return source.replace(/\\fillin(?:\[([^\]]*?)\])?(?:\[([^\]]*?)\])?/g, function(match, p1, p2, offset) {
+                    if (isLatexTokenEscaped(source, offset)) return match;
+                    const first = optionMath(p1), second = optionMath(p2);
+                    if (!first.safe || !second.safe) return match;
+                    function isLengthStr(str) {
+                        return /^\s*\d+(?:\.\d+)?\s*(?:cm|mm|in|pt|pc|em|ex)\s*$/i.test(str || '');
                     }
-                } else {
-                    // 处于非数学环境中：防错隔离！若后方紧跟着 $（如 \fillin$. 且后续文本以 $ 开头），避免产生双 $$
-                    if (postDollar === '$' || postString.trim().startsWith('$')) {
-                        return '$' + innerTex;
+
+                    let innerTex = '\\underline{\\hspace{1.5cm}}';
+                    if (p1 !== undefined && p2 !== undefined) {
+                        const len = isLengthStr(p1) ? p1 : '1.5cm';
+                        innerTex = '\\underline{\\hspace{' + len + '}' + second.value + '\\hspace{' + len + '}}';
+                    } else if (p1 !== undefined) {
+                        if (isLengthStr(p1)) {
+                            innerTex = '\\underline{\\hspace{' + p1 + '}}';
+                        } else {
+                            innerTex = '\\underline{\\quad ' + first.value + ' \\quad}';
+                        }
                     }
-                    return '$' + innerTex + '$';
-                }
+
+                    // Complete math keeps its original delimiters. A prose
+                    // blank owns separate delimiters, even next to $x$.
+                    return insideMath ? innerTex : '\\(' + innerTex + '\\)';
+                });
+            }
+            let source = replacePreviewLiteralSpans(clean, original => save(original));
+            source = replaceDelimitedMathForPreview(source, (whole, inner, opening, closing) =>
+                save(opening + replaceMacros(inner, true) + closing, 'math'));
+            source = replaceMacros(source, false);
+            saved.slice().reverse().forEach(({marker, original}) => {
+                source = source.split(marker).join(original);
             });
+            return source;
         }
 
         function createMathMLSymbol(symbol, attributes = {}) {
@@ -2298,11 +2323,15 @@ window.normalizeEditorFractions = normalizeEditorFractions;
                 });
             }
 
+            source = replacePreviewLiteralSpans(source, save);
+
             [
                 /```[\s\S]*?```/g,
                 /`[^`\n]*`/g,
                 /\\begin\{tikzpicture\}[\s\S]*?\\end\{tikzpicture\}/g,
                 /!\[[^\]\n]*\]\([^\n)]*\)/g,
+                /\]\([^\n)]*\)/g,
+                /<mathbank-math\b[^>]*>[\s\S]*?<\/mathbank-math\s*>/g,
                 /\[\[MBM_[A-Za-z0-9_:-]+\]\]/g,
                 /\[ILLUSTRATION_BOX:\s*[^\]\n]*\]/gi,
                 // Cells already contain these tokens when table rendering
@@ -2329,6 +2358,9 @@ window.normalizeEditorFractions = normalizeEditorFractions;
                 }
                 return save('$' + (name === 'math' ? body : environment) + '$');
             });
+            // Save dollar math and native math environments before URLs, so a
+            // URL inside either cannot conceal its closing delimiter/environment.
+            protect(/[hH][tT][tT][pP][sS]?:\/\/[^\s<>"']+/g);
 
             // Bold prose is unpacked after normalization. Normalize geometry
             // within that text now, while keeping the outer textbf protected.
@@ -2379,13 +2411,66 @@ window.normalizeEditorFractions = normalizeEditorFractions;
             return source;
         }
 
+        function previewLiteralPattern() {
+            return /```[\s\S]*?(?:```|$)|~~~[\s\S]*?(?:~~~|$)|(`+)[^\n]*?\1(?!`)|\\begin\{(tikzpicture|verbatim\*?|Verbatim\*?|lstlisting|minted|comment)\}[\s\S]*?(?:\\end\{\2\}|$)|\\(?:verb|Verb|lstinline)\*?(?:\[[^\]\n]*\])?([^\w\s{])[^\n]*?(?:\3|(?=\r?\n)|$)|\\mintinline(?:\[[^\]\n]*\])?\{[^{}\n]*\}([^\w\s{])[^\n]*?(?:\4|(?=\r?\n)|$)|\\(?:detokenize|url|path|lstinline\*?(?:\[[^\]\n]*\])?|mintinline(?:\[[^\]\n]*\])?\{[^{}\n]*\})\s*\{|<(?:[cC][oO][dD][eE]|[pP][rR][eE])\b[^>]*>[\s\S]*?(?:<\/(?:[cC][oO][dD][eE]|[pP][rR][eE])\s*>|$)|!\[[^\]\n]*\]\([^\n)]*\)|\]\([^\n)]*\)|[hH][tT][tT][pP][sS]?:\/\/[^\s<>"']+|<mathbank-math\b[^>]*>[\s\S]*?<\/mathbank-math\s*>|<\/?[A-Za-z][^>\n]*>|\[\[MBM_[A-Za-z0-9_:-]+\]\]/g;
+        }
+
+        function previewLiteralEnd(text, match) {
+            let end = match.index + match[0].length;
+            if (!match[0].endsWith('{') || !/^\\(?:detokenize|url|path|lstinline|mintinline)\b/.test(match[0])) return end;
+            let depth = 1;
+            while (end < text.length && depth > 0) {
+                if (!isLatexTokenEscaped(text, end)) depth += (text[end] === '{') - (text[end] === '}');
+                end++;
+            }
+            return end;
+        }
+
+        function previewGuardPrefix(text, kind) {
+            let prefix = '\uE002' + kind;
+            while (text.includes(prefix)) prefix += kind;
+            return prefix;
+        }
+
+        function replacePreviewLiteralSpans(text, replace) {
+            // The existing scanner gives an earlier math opener precedence.
+            // Mask complete math first, then visit only actual literal spans.
+            const guards = [];
+            const prefix = previewGuardPrefix(text, 'G');
+            const saveMath = whole => {
+                const marker = prefix + guards.length + '\uE003';
+                guards.push({marker, whole});
+                return marker;
+            };
+            let source = replaceDelimitedMathForPreview(text, saveMath);
+            source = replaceLatexEnvironmentsForPreview(source, (environment, name) =>
+                /^(tabular\*?|tabularx|longtable|tblr|longtblr|talltblr)$/.test(name) ? environment : saveMath(environment));
+            const pattern = previewLiteralPattern();
+            const parts = [];
+            let copied = 0, match;
+            while ((match = pattern.exec(source))) {
+                const end = previewLiteralEnd(source, match);
+                parts.push(source.slice(copied, match.index), replace(source.slice(match.index, end)));
+                copied = pattern.lastIndex = end;
+            }
+            parts.push(source.slice(copied));
+            source = parts.join('');
+            guards.slice().reverse().forEach(({marker, whole}) => {
+                source = source.split(marker).join(whole);
+            });
+            return source;
+        }
+
         function normalizePreviewDollarSigns(text) {
             const literal = '\\(\\text{\\$}\\)';
-            const tokens = /```[\s\S]*?```|`[^`\n]*`|\\begin\{tikzpicture\}[\s\S]*?\\end\{tikzpicture\}|!\[[^\]\n]*\]\([^\n)]*\)|\[\[MBM_[A-Za-z0-9_:-]+\]\]|\$\$[\s\S]*?\$\$|\\\([\s\S]*?\\\)|\\\[[\s\S]*?\\\]|\\textdollar\b(?:\{\})?|\$/g;
+            const tokens = new RegExp(previewLiteralPattern().source + '|'
+                + /\$\$[\s\S]*?\$\$|\\\([\s\S]*?\\\)|\\\[[\s\S]*?\\\]|\\textdollar\b(?:\{\})?|\$/.source, 'g');
             let result = '', copied = 0, match;
             while ((match = tokens.exec(text))) {
                 const token = match[0], start = match.index;
                 if (isLatexTokenEscaped(text, start)) continue;
+                const literalEnd = previewLiteralEnd(text, match);
+                if (literalEnd > tokens.lastIndex) tokens.lastIndex = literalEnd;
                 if (token.startsWith('\\textdollar')) {
                     result += text.slice(copied, start) + literal;
                     copied = tokens.lastIndex;
@@ -2393,13 +2478,26 @@ window.normalizeEditorFractions = normalizeEditorFractions;
                     let end = text.indexOf('$', start + 1);
                     while (end >= 0 && isLatexTokenEscaped(text, end)) end = text.indexOf('$', end + 1);
                     const tail = text.slice(start + 1);
+                    // A complete numerical product such as $2 xy+3$ is math,
+                    // even though its first variable looks like a prose word.
+                    // Money-list connectors still identify $5 and $10 as prose.
+                    const paired = end >= 0
+                        ? /^\d[\d,]*(?:\.\d+)?[ \t]+([A-Za-z][A-Za-z0-9]*)([\s\S]*)$/.exec(text.slice(start + 1, end))
+                        : null;
+                    const remainder = paired ? paired[2].trim() : '';
+                    const mathContinuation = remainder
+                        && /^[+\-*/^_=<>\\([{]|^[A-Za-z0-9](?:\b|[_^])/.test(remainder)
+                        && !/[.!?;:][ \t\r\n]+[A-Za-z]{2,}\b/.test(remainder);
+                    const productMath = paired
+                        && (mathContinuation || (!remainder
+                            && !/^(?:and|or|to|for|at|each|per|costs?|price|total|dollars?|tax)$/i.test(paired[1])));
                     // Prose amounts are currency; $5$, $2+3$ and multiline
                     // formulas retain their original mathematical meaning.
                     const currency = /^\d[\d,]*(?:\.\d+)?(?:[.,!?;:]?\s+[A-Za-z]{2,}\b|[.,!?;:][ \t]*\r?\n|[.,!?;:]?(?:\s*$))/.test(tail);
                     const isolated = (start === 0 || text[start - 1] === '\n')
                         && /^[ \t]*(?:\n[ \t]*\n|\n[ \t]*\\begin\{choices\}|$)/.test(tail);
                     const amountList = /^\d[\d,]*(?:\.\d+)?[.,;:]?[ \t]+\$\d/.test(tail);
-                    if (currency || isolated || amountList || end < 0) {
+                    if ((!productMath && (currency || amountList)) || isolated || end < 0) {
                         result += text.slice(copied, start) + literal;
                         copied = start + 1;
                     } else {
@@ -2418,9 +2516,24 @@ window.normalizeEditorFractions = normalizeEditorFractions;
 
         function replaceDelimitedMathForPreview(text, replace) {
             const parts = [];
+            // Paths and literal examples cannot open a math span that ends in
+            // a later real formula. A math opener encountered first still owns
+            // its complete contents, including URL-looking text inside math.
+            const literalPattern = previewLiteralPattern();
+            let literal = literalPattern.exec(text);
             let cursor = 0;
             let copied = 0;
             while (cursor < text.length) {
+                if (literal && literal.index < cursor) {
+                    literalPattern.lastIndex = cursor;
+                    literal = literalPattern.exec(text);
+                }
+                if (literal && literal.index === cursor) {
+                    cursor = previewLiteralEnd(text, literal);
+                    literalPattern.lastIndex = cursor;
+                    literal = literalPattern.exec(text);
+                    continue;
+                }
                 const opening = ['$$', '$', '\\(', '\\['].find(token => text.startsWith(token, cursor));
                 if (!opening || isLatexTokenEscaped(text, cursor)) {
                     cursor++;
@@ -2448,10 +2561,22 @@ window.normalizeEditorFractions = normalizeEditorFractions;
         function replaceLatexEnvironmentsForPreview(text, replace) {
             const recognized = /^(tabular\*?|tabularx|longtable|tblr|longtblr|talltblr|equation\*?|align\*?|alignat\*?|gather\*?|multline\*?|displaymath|math|cases|aligned|alignedat|gathered|matrix|pmatrix|bmatrix|Bmatrix|vmatrix|Vmatrix|smallmatrix|array|split)$/;
             const tokenPattern = /\\(begin|end)\{([^{}\n]+)\}/g;
+            const literalPattern = previewLiteralPattern();
+            let literal = literalPattern.exec(text);
             const parts = [];
             let copied = 0;
             let match;
             while ((match = tokenPattern.exec(text))) {
+                while (literal && literal.index <= match.index) {
+                    const end = previewLiteralEnd(text, literal);
+                    if (end > match.index) {
+                        tokenPattern.lastIndex = end;
+                        break;
+                    }
+                    literalPattern.lastIndex = end;
+                    literal = literalPattern.exec(text);
+                }
+                if (literal && literal.index <= match.index && previewLiteralEnd(text, literal) > match.index) continue;
                 const name = match[2];
                 if (match[1] !== 'begin' || !recognized.test(name) || isLatexTokenEscaped(text, match.index)) continue;
                 const bodyStart = tokenPattern.lastIndex;
@@ -2481,16 +2606,34 @@ window.normalizeEditorFractions = normalizeEditorFractions;
 
         function preprocessFormulaForKaTeX(text, imageLayouts = {}) {
             if (!text) return "";
+
+            const literalEntries = [];
+            const literalPrefix = previewGuardPrefix(text, 'L');
+            const protectedText = replacePreviewLiteralSpans(text, original => {
+                // Images retain the existing safe conversion and asset path.
+                // Other raw HTML continues through the existing sanitizer.
+                if (original.startsWith('![') || (original.startsWith('<')
+                    && !/^<(?:code|pre)\b/i.test(original))) return original;
+                const marker = literalPrefix + literalEntries.length + '\uE003';
+                const htmlCode = /^<(?:code|pre)\b/i.test(original);
+                const visible = htmlCode ? original.replace(/^<(?:code|pre)\b[^>]*>/i, '')
+                    .replace(/<\/(?:code|pre)\s*>$/i, '') : original;
+                literalEntries.push({marker, visible});
+                return marker;
+            });
             
             // Clean up any historical \vphantom{...} or \strut from underline text to prevent KaTeX rendering artifact letters
-            let clean = text.replace(/\\vphantom\s*\{\s*[^}]*?\}/g, '')
+            let clean = protectedText.replace(/\\vphantom\s*\{\s*[^}]*?\}/g, '')
                             .replace(/\\strut\b/g, '');
 
             clean = normalizeNakedMathForPreview(clean);
 
-            // Auto-heal punctuation inside math environment between \fillin and closing dollar (e.g. $ \fillin, $ -> $ \fillin $,) using safe replacer function
-            clean = clean.replace(/(\$[^$]*?\\fillin)\s*([。，,；;！？!?\.]+)\s*\$/g, function(match, p1, p2) {
-                return p1 + '$' + p2;
+            // Move terminal blank punctuation only within a complete math
+            // span. The closing $ of $x$ cannot open a prose \fillin span.
+            clean = replaceDelimitedMathForPreview(clean, (whole, inner, opening, closing) => {
+                const punctuation = /^([\s\S]*?\\fillin(?:\[[^\]]*?\])?(?:\[[^\]]*?\])?)\s*([。，,；;！？!?\.]+)\s*$/.exec(inner);
+                if (!punctuation || isLatexTokenEscaped(inner, punctuation[1].lastIndexOf('\\fillin'))) return whole;
+                return opening + punctuation[1] + closing + punctuation[2];
             });
 
             // Transform exam-zh \fillin macro into KaTeX compatible \underline with math environment awareness
@@ -2512,14 +2655,18 @@ window.normalizeEditorFractions = normalizeEditorFractions;
                 return '$' + p1 + p2 + p3 + '$';
             });
             
-            // If \underline{\hspace{...}} is directly exposed outside math environments, wrap it inside '$...$' so KaTeX scanner can parse it!
-            clean = clean.replace(/(\$?)\\underline\s*\{\s*\\hspace\s*\{([^}]+?)\}\s*\}(\$?)/g, function(match, p1, p2, p3, offset, fullString) {
-                const preString = fullString.substring(0, offset).replace(/\\\$/g, '');
-                const dollarsBefore = (preString.match(/\$/g) || []).length;
-                if (dollarsBefore % 2 !== 0 || p1 === '$' || p3 === '$') {
-                    return match;
-                }
-                return '$\\underline{\\hspace{' + p2 + '}}$';
+            // Protect every complete math shell before wrapping a bare blank;
+            // dollar counting cannot identify \( ... \) or an adjacent $x$.
+            const underlineMath = [];
+            const underlinePrefix = previewGuardPrefix(clean, 'U');
+            clean = replaceDelimitedMathForPreview(clean, whole => {
+                const marker = underlinePrefix + underlineMath.length + '\uE003';
+                underlineMath.push({marker, whole});
+                return marker;
+            });
+            clean = clean.replace(/\\underline\s*\{\s*\\hspace\s*\{([^}]+?)\}\s*\}/g, match => '\\(' + match + '\\)');
+            underlineMath.slice().reverse().forEach(({marker, whole}) => {
+                clean = clean.split(marker).join(whole);
             });
             
             // Protect math blocks to avoid replacing spacing commands inside math environments
@@ -2792,7 +2939,11 @@ window.normalizeEditorFractions = normalizeEditorFractions;
                                .replace(/\\\\quad/g, '&nbsp;&nbsp;')
                                .replace(/\\qquad/g, '&nbsp;&nbsp;&nbsp;&nbsp;')
                                .replace(/\\quad/g, '&nbsp;&nbsp;')
-                               .replace(/\\ /g, '&nbsp;');
+                               .replace(/(\\+) /g, function(match, slashes) {
+                                   // Only an unpaired final slash is a TeX space;
+                                   // paired slashes remain available as hard breaks.
+                                   return slashes.length % 2 === 0 ? match : slashes.slice(0, -1) + '&nbsp;';
+                               });
                                
             // Replace LaTeX line breaks with HTML br tags outside math environments
             tempText = tempText.replace(/\\\\/g, '<br>');
@@ -2852,6 +3003,12 @@ window.normalizeEditorFractions = normalizeEditorFractions;
             // the outer placeholder is expanded before its nested token.
             placeholders.slice().reverse().forEach(({ placeholder, original }) => {
                 tempText = tempText.replace(placeholder, () => escapeHtml(original));
+            });
+            literalEntries.forEach(({marker, visible}) => {
+                // DOMPurify allows code, and every KaTeX auto-render entrance
+                // ignores code by default. Keep the contents inert and exact.
+                const html = '<code class="mb-preview-literal">' + escapeHtml(visible) + '</code>';
+                tempText = tempText.split(marker).join(html);
             });
             
             return tempText;

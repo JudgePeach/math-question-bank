@@ -147,6 +147,95 @@ def lock_visible_math(value: str, scope: str) -> tuple[str, list[ContentLock]]:
     return "".join(parts), locks
 
 
+def _reference_literal_ranges(value: str) -> list[tuple[int, int]]:
+    """Literal examples cannot supply a mathematical shell around an ID."""
+    ranges = []
+    for pattern in (
+        r"```[\s\S]*?(?:```|$)", r"~~~[\s\S]*?(?:~~~|$)", r"(`+)[^\n]*?\1(?!`)",
+        r"\\begin\{(tikzpicture|verbatim\*?|Verbatim\*?|lstlisting|minted|comment)\}[\s\S]*?(?:\\end\{\1\}|$)",
+        r"(?i)<(code|pre)\b[^>]*>[\s\S]*?(?:</\1\s*>|$)",
+        r"\\(?:verb|Verb|lstinline)\*?(?:\[[^\]\n]*\])?([^\w\s{])[^\n]*?\1",
+        r"\\mintinline(?:\[[^\]\n]*\])?\{[^{}\n]*\}([^\w\s{])[^\n]*?\1",
+        r"!?\[[^\[\]\n]*\]\([^\n)]*\)", r"(?i)https?://[^\s<>]+",
+    ):
+        ranges.extend(match.span() for match in re.finditer(pattern, value))
+    literal = re.compile(
+        r"\\(?:(?:detokenize|url|path)|lstinline\*?(?:\[[^\]\n]*\])?"
+        r"|mintinline(?:\[[^\]\n]*\])?\{[^{}\n]*\})\s*\{"
+    )
+    for match in literal.finditer(value):
+        if _is_escaped(value, match.start()):
+            continue
+        depth, end = 1, match.end()
+        while end < len(value) and depth:
+            if not _is_escaped(value, end):
+                depth += (value[end] == '{') - (value[end] == '}')
+            end += 1
+        ranges.append((match.start(), end))
+    ranges.extend(match.span() for match in re.finditer(r'%[^\n]*', value)
+                  if not _is_escaped(value, match.start()))
+    return ranges
+
+
+def _reference_shell_spans(value: str, references: list[re.Match]) -> dict[tuple[int, int], tuple[int, int]]:
+    """Locate only whole whitespace-padded math shells containing one reference.
+
+    Mask complete reference nodes before scanning, since their read-only XML
+    bodies may already contain dollar delimiters. The returned offsets still
+    refer to the untouched model text; no formula/source comparison is changed.
+    """
+    literal_ranges = [span for span in _reference_literal_ranges(value)
+                      if not any(match.start() <= span[0] < match.end() for match in references)]
+    masked = list(value)
+    for left, right in (match.span() for match in references):
+        masked[left:right] = ['\n' if char == '\n' else ' ' for char in value[left:right]]
+    probe = ''.join(masked)
+    # Prefer whichever complete construct opens first. A URL inside genuine
+    # math must not conceal its closing dollar, including in the strict path
+    # after an earlier reference has already been restored to that math.
+    literals = sorted(literal_ranges, key=lambda span: (span[0], -span[1]))
+    spans, literal_ranges, cursor, index = set(), [], 0, 0
+    opening_pattern = re.compile(r'\$|\\[([]|\\begin\{(?:' + '|'.join(map(re.escape, _MATH_ENVIRONMENTS)) + r')\}')
+    while cursor < len(probe):
+        while index < len(literals) and literals[index][0] < cursor:
+            index += 1
+        literal = literals[index] if index < len(literals) else None
+        span = _next_math_span(probe, cursor)
+        if literal is not None and (span is None or literal[0] <= span[0]):
+            if span is None and any(not _is_escaped(probe, match.start())
+                                    for match in opening_pattern.finditer(probe, cursor, literal[0])):
+                break  # An earlier unterminated math opener stays uncertain.
+            literal_ranges.append(literal)
+            cursor = literal[1]
+        elif span is not None:
+            spans.add(span)
+            cursor = span[1]
+        else:
+            break
+    result = {}
+    for reference in references:
+        start, end = reference.span()
+        if any(left <= start and end <= right for left, right in literal_ranges):
+            continue
+        left, right = start, end
+        while left and value[left - 1].isspace():
+            left -= 1
+        while right < len(value) and value[right].isspace():
+            right += 1
+        for opening, closing in (('$$', '$$'), ('$', '$'), (r'\(', r'\)'), (r'\[', r'\]')):
+            begin, finish = left - len(opening), right + len(closing)
+            if (begin < 0 or value[begin:left] != opening or value[right:finish] != closing
+                    or _is_escaped(value, begin) or _is_escaped(value, right)
+                    or (begin, finish) not in spans):
+                continue
+            if opening.startswith('$') and ((begin and value[begin - 1] == '$')
+                                            or (finish < len(value) and value[finish] == '$')):
+                continue
+            result[start, end] = begin, finish
+            break
+    return result
+
+
 def _restore_lock_in_text(value: str, lock: ContentLock) -> tuple[str, int, bool]:
     text = str(value or "")
     token_pattern = re.compile(r"\[\[\s*" + re.escape(lock.lock_id) + r"\s*\]\]")
@@ -161,10 +250,10 @@ def _restore_lock_in_text(value: str, lock: ContentLock) -> tuple[str, int, bool
     count = len(token_matches) + len(tag_matches)
     modified = any(match.group(2) != lock.original for match in tag_matches)
     if count == 1:
-        if token_matches:
-            text = token_pattern.sub(lambda _match: lock.original, text, count=1)
-        else:
-            text = tag_pattern.sub(lambda _match: lock.original, text, count=1)
+        reference = (token_matches or tag_matches)[0]
+        shells = _reference_shell_spans(text, list(_REFERENCE.finditer(text)))
+        start, end = shells.get(reference.span(), reference.span())
+        text = text[:start] + lock.original + text[end:]
     return text, count, modified
 
 
@@ -487,15 +576,23 @@ def _preamble_instruction_starts(source: str) -> set[int]:
     return {start for start, _ in _preamble_instruction_ranges(source)}
 
 
-def _formulas(value: str, by_id: dict[str, ContentLock] | None = None) -> list[_Formula]:
+def _formulas(value: str, by_id: dict[str, ContentLock] | None = None,
+              *, shell_ids: set[str] | None = None) -> list[_Formula]:
     """Read model references before math so a tagged formula is one occurrence."""
     references = list(_REFERENCE.finditer(value)) if by_id is not None else []
     by_id = by_id or {}
+    shells = _reference_shell_spans(value, references) if shell_ids else {}
     result: list[_Formula] = []
     cursor = 0
     metadata_ranges = _page_footer_ranges(value) + _preamble_instruction_ranges(value)
     for reference in [*references, None]:
-        limit = reference.start() if reference else len(value)
+        raw = reference.group() if reference else ''
+        id_match = re.search(r'MBM_[A-Za-z0-9_-]+', raw)
+        lock_id = id_match.group() if id_match else '__unknown_reference__'
+        reference_span = (shells.get(reference.span(), reference.span())
+                          if reference is not None and shell_ids and lock_id in shell_ids else
+                          reference.span() if reference is not None else (len(value), len(value)))
+        limit = reference_span[0]
         while cursor < limit:
             span = _next_math_span(value[:limit], cursor)
             if span is None:
@@ -507,22 +604,31 @@ def _formulas(value: str, by_id: dict[str, ContentLock] | None = None) -> list[_
             cursor = end
         if reference is None:
             break
-        raw = reference.group()
-        id_match = re.search(r'MBM_[A-Za-z0-9_-]+', raw)
-        lock_id = id_match.group() if id_match else '__unknown_reference__'
         lock = by_id.get(lock_id)
         inner = re.search(r'>(.*?)</', raw, re.DOTALL)
         result.append(_Formula(
-            reference.start(), reference.end(),
+            reference_span[0], reference_span[1],
             lock.original if lock else '〔无法识别的公式来源，请对照原文〕',
             lock_id, bool(lock and inner and inner.group(1) != lock.original),
         ))
-        cursor = reference.end()
+        cursor = reference_span[1]
     return result
 
 
+_MATH_RELATION_SPELLINGS = {
+    r'\le': r'\leq', '≤': r'\leq',
+    r'\ge': r'\geq', '≥': r'\geq',
+    r'\ne': r'\neq', '≠': r'\neq',
+    r'\lt': '<', r'\gt': '>',
+}
+_MATH_LITERAL_COMMANDS = {
+    r'\verb', r'\Verb', r'\lstinline', r'\mintinline', r'\detokenize',
+    r'\url', r'\nolinkurl', r'\path', r'\href',
+}
+
+
 def _math_key(value: str) -> tuple[str, ...]:
-    """Only presentation changes; never simplify signs, braces or expressions."""
+    """Compare literal math spellings, preserving expressions and script extent."""
     value = value.strip()
     for opening, closing in (('$$', '$$'), ('$', '$'), (r'\(', r'\)'), (r'\[', r'\]')):
         if value.startswith(opening) and value.endswith(closing):
@@ -534,6 +640,12 @@ def _math_key(value: str) -> tuple[str, ...]:
     tokens: list[str] = []
     cursor = 0
     token_pattern = re.compile(r'\\[A-Za-z]+|\\.|[^\s]', re.DOTALL)
+    # These commands expose token spellings as literal text/paths, and their
+    # argument/delimiter syntax varies. Keep the entire formula opaque rather
+    # than treating braces, aliases or spaces inside them as math formatting.
+    # Do not attempt to parse or infer arbitrary custom TeX macro expansion.
+    if any(match.group() in _MATH_LITERAL_COMMANDS for match in token_pattern.finditer(value)):
+        return ('literal-math-source', value)
     while cursor < len(value):
         match = token_pattern.search(value, cursor)
         if not match:
@@ -553,8 +665,24 @@ def _math_key(value: str) -> tuple[str, ...]:
                 if depth == 0:
                     token += value[opening:end]
                     cursor = end
-        tokens.append(r'\frac' if token == r'\dfrac' else token)
-    return tuple(tokens)
+        tokens.append(r'\frac' if token == r'\dfrac' else _MATH_RELATION_SPELLINGS.get(token, token))
+    # TeX permits one ASCII letter/digit script without braces. Only remove
+    # this optional wrapper, never general groups or multi-token script scopes:
+    # x^{2} == x^2, whereas x^{12} != x^12 and x_{a+b} != x_a+b.
+    # Text/operator macro arguments above stay opaque. Visible \{...\}, font
+    # and vector macros, slanted relations and unknown commands stay distinct.
+    key: list[str] = []
+    cursor = 0
+    while cursor < len(tokens):
+        if (tokens[cursor] in ('^', '_') and cursor + 3 < len(tokens)
+                and tokens[cursor + 1] == '{' and tokens[cursor + 3] == '}'
+                and re.fullmatch(r'[A-Za-z0-9]', tokens[cursor + 2])):
+            key.extend((tokens[cursor], tokens[cursor + 2]))
+            cursor += 4
+        else:
+            key.append(tokens[cursor])
+            cursor += 1
+    return tuple(key)
 
 
 def _plain_key(value: str) -> str:
@@ -922,18 +1050,6 @@ def _delimited_equivalence(source: str, expected: tuple[_Formula, ...], value: s
         return None
     keys = [_math_key(formula.formula) for formula in actual]
     real_domain = _real_domain_context(source if context is None else context)
-    paths: list[list[int]] = [[]]
-    for formula in expected:
-        next_paths = []
-        key = _math_key(formula.formula)
-        for path in paths:
-            next_paths.extend([*path, index] for index in range(path[-1] + 1 if path else 0, len(actual))
-                              if locate_only or keys[index] == key)
-            if len(next_paths) > 32:
-                return None
-        paths = next_paths
-        if not paths:
-            return None
     def projection(text: str, formulas, chosen: dict[int, int]) -> str | None:
         text = _delimited_prose_layout(text, formulas, chosen)
         chunks, cursor = [], 0
@@ -957,6 +1073,38 @@ def _delimited_equivalence(source: str, expected: tuple[_Formula, ...], value: s
     expected_key = projection(source, expected, {index: index for index in range(len(expected))})
     if expected_key is None:
         return None
+    paths: list[list[int]] = [[]]
+    projection_budget = 10_000_000
+    for slot, formula in enumerate(expected):
+        # Repeated Word formulas are common. Bound *locally compatible* paths,
+        # not all combinations of equal formulas: even seven occurrences of x
+        # otherwise exhaust the path limit after one bare x gains delimiters.
+        # The prefix ends after a protected slot so it retains its full prose,
+        # option and numeric context. Locating still does not use formula values.
+        expected_prefix = projection(source[:formula.end], expected[:slot + 1],
+                                     {index: index for index in range(slot + 1)})
+        if expected_prefix is None:
+            return None
+        next_paths = []
+        key = _math_key(formula.formula)
+        for path in paths:
+            stop = len(actual) - (len(expected) - slot) + 1
+            for index in range(path[-1] + 1 if path else 0, stop):
+                if not locate_only and keys[index] != key:
+                    continue
+                selection = [*path, index]
+                projection_budget -= actual[index].end
+                if projection_budget < 0:
+                    return None
+                actual_prefix = projection(value[:actual[index].end], actual[:index + 1],
+                                           {chosen: position for position, chosen in enumerate(selection)})
+                if actual_prefix == expected_prefix:
+                    next_paths.append(selection)
+                    if len(next_paths) > 32:
+                        return None
+        paths = next_paths
+        if not paths:
+            return None
     matches = []
     for path in paths:
         chosen = {index: slot for slot, index in enumerate(path)}
@@ -1194,6 +1342,14 @@ def reconcile_visible_math(
     }
     id_counts = Counter(formula.lock_id for formulas in output_formulas.values()
                         for formula in formulas if formula.lock_id)
+    # Exactly-once counting is taken from the raw model references, before any
+    # optional shell span is consumed. Unknown/duplicate IDs keep their old spans.
+    shell_ids = {lock_id for lock_id, count in id_counts.items() if count == 1 and lock_id in by_id}
+    if shell_ids:
+        output_formulas = {
+            (index, field): _formulas(str(question.get(field) or ''), by_id, shell_ids=shell_ids)
+            for index, question in enumerate(staged) for field in ('content', 'answer_markdown')
+        }
     source_id_part = {formula.lock_id: index for index, part in enumerate(parts)
                       for formula in part.formulas if formula.lock_id}
     skeletons = {index: _skeleton(part.text, part.formulas) for index, part in enumerate(parts)}

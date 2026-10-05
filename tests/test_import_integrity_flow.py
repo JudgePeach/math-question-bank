@@ -43,10 +43,12 @@ def import_flow(client, monkeypatch):
 
     def run(channel, source, questions, *, finish_reason="stop", generate_answers=False):
         sent = []
+        request_options = []
         raw_response = json.dumps({"questions": questions}, ensure_ascii=False)
 
         def fake_completion(_provider, payload, **_kwargs):
             sent.append(payload)
+            request_options.append(_kwargs)
             choice = {"message": {"content": raw_response}}
             if finish_reason is not None:
                 choice["finish_reason"] = finish_reason
@@ -67,7 +69,8 @@ def import_flow(client, monkeypatch):
             task_id = "integrity-flow-" + uuid.uuid4().hex
             main.DOCUMENT_TASKS.create(task_id, document_type="docx", temp_assets=[])
             try:
-                main.run_docx_parsing_task(task_id, b"mock-docx", "保真核对.docx", generate_answers)
+                main.run_docx_parsing_task(task_id, b"mock-docx", "保真核对.docx", generate_answers,
+                                           docx_verify_suspicions=False)
                 state = main.DOCUMENT_TASKS.snapshot(task_id)
             finally:
                 main.DOCUMENT_TASKS.remove(task_id)
@@ -98,6 +101,8 @@ def import_flow(client, monkeypatch):
                 state=state,
             )
         assert len(sent) == 1, "Import must not silently issue another model request."
+        assert request_options[0]["timeout"] == 600
+        assert "retry_connection" not in request_options[0] and "allow_redirects" not in request_options[0]
         result.payload = sent[0]
         result.raw_response = raw_response
         return result
@@ -119,6 +124,27 @@ def test_import_accepts_unchanged_formulas_when_model_omits_all_ids(import_flow,
     assert result.diagnostics["finish_reason"] == "stop"
     assert result.diagnostics["output_characters"] == len(result.raw_response)
     assert result.diagnostics["usage"]["completion_tokens"] == 240
+
+
+@pytest.mark.parametrize("source_metadata", [["某校试卷"], {"title": "某校试卷"}, 17, True])
+def test_word_import_preserves_content_when_optional_model_metadata_has_wrong_types(import_flow, source_metadata):
+    import main
+
+    image = f"/{main.UPLOAD_DIR_REL}/tmp/word_metadata_fixture.png"
+    content = f"已知 $x^2+1$，如图求最小值。 ![图]({image})"
+    result = import_flow("word", "1. " + content, [_question(
+        content, source=source_metadata,
+        referenced_images=[None, {"path": image}, 17, [image], image, image, ""],
+    )])
+
+    assert result.success, result.error
+    question = result.questions[0]
+    assert question["content"] == content
+    assert question["source"] == "保真核对"
+    assert question["referenced_images"] == [image]
+    assert question["image_paths"] == [image]
+    assert not question.get("source_review", {}).get("required")
+    assert result.diagnostics["math_locks_restored"] == 1
 
 
 @pytest.mark.parametrize("channel", ["word", "tex"])

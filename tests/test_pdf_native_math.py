@@ -107,3 +107,61 @@ def test_ambiguous_trace_cannot_certify_a_zero_width_overlay():
         (0x338, 1, (90,100),(90,91,90,102)),(0x338, 2, (91,100),(91,91,91,102))]}]
     result = repair_native_page(original)
     assert result["status"] == "unsupported" and result["markdown"] == ""
+
+
+@pytest.mark.parametrize(("symbol", "command"), [
+    ("≤", r"\le "), ("≥", r"\ge "), ("≠", r"\neq "), ("∉", r"\notin "),
+    ("⊃", r"\supset "), ("⊇", r"\supseteq "), ("∪", r"\cup "), ("∩", r"\cap "),
+    ("∅", r"\varnothing "), ("∞", r"\infty "), ("±", r"\pm "), ("∓", r"\mp "),
+    ("÷", r"\div "), ("⋅", r"\cdot "), ("≈", r"\approx "), ("≡", r"\equiv "),
+    ("⊥", r"\perp "), ("∥", r"\parallel "),
+])
+def test_decoded_basic_cm_symbols_do_not_block_an_otherwise_proven_script_repair(symbol, command):
+    # Recovering x squared previously failed just because another, fully
+    # decoded one-dimensional symbol appeared elsewhere on the same page.
+    original = page([line(expression()), line([
+        glyph("A", 80, 150), glyph(symbol, 86, 150, "CMSY10"), glyph("B", 92, 150),
+    ])])
+    result = repair_native_page(original)
+    assert result["status"] == "repaired", result["reason"]
+    assert command in result["markdown"]
+    assert "x^{2}=1" in result["markdown"]
+    assert result["stats"]["glyphs_consumed"] == result["stats"]["glyphs_total"]
+
+
+@pytest.mark.parametrize("symbol", ["√", "∑", "∫", "\ue123", "\ufffd"])
+def test_structural_or_unknown_symbols_still_require_supported_evidence(symbol):
+    original = page([line(expression()), line([
+        glyph(symbol, 80, 150, "CMSY10"), glyph("x", 86, 150),
+    ])])
+    result = repair_native_page(original)
+    assert result["status"] == "unsupported" and result["markdown"] == ""
+
+
+@pytest.mark.parametrize("font", ["CambriaMath", "Symbol", "MathType"])
+def test_basic_symbol_support_does_not_relax_unverified_font_geometry(font):
+    original = page([line(expression()), line([glyph("≤", 80, 150, font)])])
+    result = repair_native_page(original)
+    assert result["status"] == "unsupported" and result["markdown"] == ""
+
+
+def test_equality_with_an_exact_negation_overlay_remains_not_equal():
+    original = page([line([
+        glyph("A", 80, 100), glyph("=", 90, 100, "CMR10"),
+        glyph("\u0338", 90, 100, "CMSY10"), glyph("B", 101, 100),
+    ])])
+    result = repair_native_page(original)
+    assert result["status"] == "repaired", result["reason"]
+    assert r"A\neq B" in result["markdown"]
+    assert result["stats"]["negations"] == 1
+    assert result["stats"]["glyphs_consumed"] == 4
+
+
+def test_negation_cannot_choose_between_two_overlapping_equality_signs():
+    original = page([line([
+        glyph("A", 80, 100), glyph("=", 90, 100, "CMR10"),
+        glyph("=", 91, 100, "CMR10"), glyph("\u0338", 90, 100, "CMSY10"),
+        glyph("B", 101, 100),
+    ])])
+    result = repair_native_page(original)
+    assert result["status"] == "unsupported" and result["markdown"] == ""

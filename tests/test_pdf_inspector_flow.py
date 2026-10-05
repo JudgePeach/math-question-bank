@@ -7,7 +7,7 @@ from unittest.mock import ANY, MagicMock, patch
 import pytest
 
 from mathbank import pdf_inspector_helper
-from mathbank.prompts import build_pdf_parse_system_prompt
+from mathbank.prompts import build_pdf_parse_system_prompt, build_import_parse_system_prompt
 
 
 def _page(page: int, markdown: str, needs_ocr: bool = False):
@@ -98,6 +98,18 @@ def test_empty_per_page_result_keeps_legacy_text_path():
         )
     assert result["is_text_based"] is True
     assert "已知函数" in result["markdown"]
+    inspector.process_pdf.assert_called_once_with(ANY, pages=[1])
+
+
+def test_native_engine_rejection_reason_is_preserved(monkeypatch):
+    monkeypatch.setattr(pdf_inspector_helper, '_PDF_INSPECTOR_AVAILABLE', True)
+    monkeypatch.setattr(pdf_inspector_helper, 'pdf_inspector', SimpleNamespace(
+        extract_pages_markdown=lambda *a, **k: SimpleNamespace(pages=[
+            SimpleNamespace(page=0, markdown='', needs_ocr=True, ocr_reason='suspected_garbled_text')]),
+    ))
+    result = pdf_inspector_helper.inspect_and_extract_pdf(b'isolated-test-pdf')
+    assert result['pages'][0]['inspector_ocr_reason'] == 'suspected_garbled_text'
+    assert result['pages'][0]['needs_ocr'] is True
 
 
 def test_cross_page_text_is_merged_without_question_terminator():
@@ -128,6 +140,21 @@ def test_pdf_parse_system_prompt_includes_formula_and_cross_page_rules():
     assert "若原试卷缺答案，请自动推导生成标准解答步骤" in generated_prompt
     assert "MATHBANK_PDF_PAGE:N" in prompt
     assert "必须按上下文合并为同一道完整题目" in prompt
+
+
+@pytest.mark.parametrize("builder", [
+    lambda: build_pdf_parse_system_prompt({}, False),
+    lambda: build_pdf_parse_system_prompt({}, True),
+    lambda: build_import_parse_system_prompt({}),
+])
+def test_all_paper_prompts_preserve_original_answer_scoring_points(builder):
+    prompt = builder()
+    assert "净化仅限content题号旁" in prompt
+    assert "answer_markdown中的原版评分点、评分说明" in prompt
+    assert all(value in prompt for value in ["……3分", "……6分", "……13分", "……15分"])
+    assert "在原位置逐字保留" in prompt
+    assert "原文没有的评分点不得推测或补写" in prompt
+    assert "普通数学的定界排版规则不适用于这些协议引用" in prompt
 
 
 def test_pdf_inspector_detects_formula_loss_and_triggers_ocr_fallback():
@@ -198,7 +225,7 @@ def test_pdf_cancel_during_ocr_prevents_paid_split_and_stays_cancelled():
         DOCUMENT_TASKS.remove(task_id)
     DOCUMENT_TASKS.create(task_id, document_type="pdf", temp_assets=[])
 
-    def cancel_during_ocr(_image_path):
+    def cancel_during_ocr(_image_path, **kwargs):
         DOCUMENT_TASKS.cancel(task_id)
         return "1. 不应继续拆题"
 

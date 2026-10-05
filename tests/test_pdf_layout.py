@@ -18,7 +18,37 @@ from mathbank.pdf_layout import (
     inspect_pdf_page,
     normalize_model_bbox,
     refine_figure_bbox,
+    scan_background_candidate_ids,
 )
+
+
+def test_scan_strip_native_shortcut_uses_union_coverage_not_overlapping_area_sum():
+    boxes = [[0.5308, 0, 309.564, 999.7505], [309.564, 0, 654.6812, 999.7505],
+             [654.6812, 0, 999.7984, 999.7505]]
+    candidates = [{"id": f"p1_raster_{index + 1:03d}", "type": "raster", "bbox": box}
+                  for index, box in enumerate(boxes)]
+    info = {"full_page_image": True, "candidates": candidates}
+    assert scan_background_candidate_ids(info) == {candidate["id"] for candidate in candidates}
+    assert all(candidate["bbox"] == box for candidate, box in zip(candidates, boxes))
+    assert scan_background_candidate_ids({**info, "full_page_image": False}) == set()
+    repeated = [{**candidate, "bbox": [0, 0, 500, 1000]} for candidate in candidates]
+    assert scan_background_candidate_ids({**info, "candidates": repeated}) == set()
+
+
+def test_independent_tall_image_and_full_native_diagram_group_keep_their_shortcut():
+    info = {"full_page_image": True, "candidates": [
+        {"id": "tall", "type": "raster", "bbox": [100, 0, 300, 980]},
+        {"id": "group", "type": "raster", "bbox": [87.9358, 270.5839, 569.1897, 430.9316]},
+        {"id": "small", "type": "raster", "bbox": [600, 600, 800, 800]},
+    ]}
+    assert scan_background_candidate_ids(info) == set()
+
+
+def test_rotated_horizontal_scan_strips_are_not_independent_native_figures():
+    candidates = [{"id": f"strip{index}", "type": "raster", "bbox": [0, index * 250, 1000, (index + 1) * 250]}
+                  for index in range(4)]
+    assert scan_background_candidate_ids({"full_page_image": True, "candidates": candidates}) == {
+        candidate["id"] for candidate in candidates}
 
 
 def test_model_named_rectangle_is_xyxy_independent_of_key_order_and_legacy_arrays_are_unchanged():

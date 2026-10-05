@@ -1,6 +1,7 @@
 """Joint OCR/figure protocol checks without network, model fees or app state."""
 
 from copy import deepcopy
+from pathlib import Path
 import json
 from types import SimpleNamespace
 
@@ -26,6 +27,7 @@ def page_result():
 
 @pytest.fixture
 def setup(tmp_path, monkeypatch):
+    monkeypatch.setattr("mathbank.pdf_vision_request.PDF_VISION_RETRY_DELAY_SECONDS", 0)
     def no_network(*args, **kwargs):
         raise AssertionError("Unit tests must not contact any model")
     monkeypatch.setattr(requests.sessions.Session, "request", no_network)
@@ -63,6 +65,90 @@ def call(setup, result=None, **kwargs):
     return vision.request_pdf_page(setup.image, setup.info, **kwargs)
 
 
+def _detail_views_for_page(setup):
+    import pymupdf as fitz
+    from mathbank.pdf_vision_details import render_pdf_detail_views
+    navigation = Path(setup.image).with_name("pdf_page_detailtest_2.png")
+    navigation.write_bytes(Path(setup.image).read_bytes())
+    setup.image = str(navigation)
+    with fitz.open() as document:
+        for _ in range(3):
+            document.new_page(width=600, height=800)
+        rendered = render_pdf_detail_views(
+            document[2], page_index=2, output_dir=navigation.parent,
+            asset_prefix="pdf_detail_detailtest_2", url_prefix="/static/test_uploads/tmp",
+            register_asset=lambda _url: True,
+        )
+    assert rendered["status"] == "prepared" and len(rendered["views"]) == 2
+    return rendered["views"]
+
+
+def test_detail_views_share_one_request_and_preserve_page_coordinates(setup):
+    views = _detail_views_for_page(setup)
+    result = call(setup, detail_views=views)
+    sent = setup.calls[0][1]["messages"][0]["content"]
+    assert len(setup.calls) == 1
+    assert sum(item["type"] == "image_url" for item in sent) == 3
+    assert result["layout"]["figures"][0]["model_bbox"] == [100, 200, 400, 500]
+    assert result["layout"]["figures"][0]["slot_id"] == "p3-s1"
+    assert result["detail_input"]["status"] == "included"
+    assert result["detail_input"]["detail_count"] == 2
+    assert "path" not in str(result["detail_input"])
+    assert "只写一次" in "".join(item.get("text", "") for item in sent)
+
+
+@pytest.mark.parametrize("change", ["page", "task", "snapshot", "count", "budget"])
+def test_invalid_details_fall_back_before_post_without_partial_inputs(setup, monkeypatch, change):
+    views = _detail_views_for_page(setup)
+    if change == "page":
+        views[0]["page_index"] = 1
+    elif change == "task":
+        wrong = Path(views[0]["path"]).with_name(Path(views[0]["path"]).name.replace("detailtest", "othertask"))
+        wrong.write_bytes(Path(views[0]["path"]).read_bytes())
+        views[0]["path"] = str(wrong)
+        views[0]["url"] = "/static/test_uploads/tmp/" + wrong.name
+    elif change == "snapshot":
+        Path(views[1]["path"]).write_bytes(b"changed")
+    elif change == "count":
+        views.append(deepcopy(views[0]))
+    else:
+        monkeypatch.setattr(vision, "MAX_PAGE_INPUT_PNG_BYTES", 1)
+    result = call(setup, detail_views=views)
+    sent = setup.calls[0][1]["messages"][0]["content"]
+    assert len(setup.calls) == 1 and sum(item["type"] == "image_url" for item in sent) == 1
+    assert result["detail_input"]["status"] == "skipped"
+    assert result["detail_input"]["detail_count"] == 0
+    assert result["markdown"] == page_result()["markdown"]
+
+
+def test_retry_reuses_all_detail_bytes_and_does_not_rerender(setup, monkeypatch):
+    views = _detail_views_for_page(setup)
+    count = 0
+    def post(provider, payload, **kwargs):
+        nonlocal count
+        count += 1
+        setup.calls.append((provider, deepcopy(payload), kwargs))
+        body = deepcopy(setup.response)
+        if count == 1:
+            body["choices"][0]["finish_reason"] = "length"
+        return SimpleNamespace(status_code=200, json=lambda: body)
+    monkeypatch.setattr(vision, "post_chat_completion", post)
+    result = call(setup, detail_views=views)
+    assert len(setup.calls) == result["visual_calls"] == 2
+    assert setup.calls[0][1] == setup.calls[1][1]
+
+
+def test_cancellation_while_preparing_details_never_posts(setup, monkeypatch):
+    from mathbank.task_manager import TaskCancelled
+    views = _detail_views_for_page(setup)
+    def cancel(*_args, **_kwargs):
+        raise TaskCancelled("cancelled")
+    monkeypatch.setattr("mathbank.pdf_vision_details.prepare_detail_messages", cancel)
+    with pytest.raises(TaskCancelled):
+        call(setup, detail_views=views)
+    assert setup.calls == []
+
+
 def test_joint_page_uses_one_configured_call_and_server_owned_slot(setup):
     original = page_result()
     result = call(setup, original)
@@ -84,6 +170,18 @@ def test_joint_page_uses_one_configured_call_and_server_owned_slot(setup):
         **setup.info, "figure_slots": describe_figure_slots(result["markdown"], 2),
     })
     assert checked[0]["slot_id"] == "p3-s1" and warnings == []
+
+
+def test_verified_siliconflow_qwen38_page_uses_json_mode_without_thinking(setup, monkeypatch):
+    provider = resolve_ocr_provider("siliconflow", {"SILICONFLOW_API_KEY": "unused-test-key",
+                                                  "SILICONFLOW_OCR_MODEL": "Qwen/Qwen3.8-27B"})
+    monkeypatch.setattr(vision, "resolve_ocr_provider", lambda _engine: provider)
+    call(setup)
+    sent = setup.calls[0][1]
+    assert sent["model"] == "Qwen/Qwen3.8-27B"
+    assert sent["response_format"] == {"type": "json_object"}
+    assert sent["enable_thinking"] is False
+    assert "thinking_budget" not in sent and "reasoning_effort" not in sent
 
 
 def test_named_nonsquare_model_bbox_uses_named_axes_and_retains_raw_audit(setup):
@@ -167,9 +265,9 @@ def test_no_figure_page_returns_transcript_without_placeholder(setup):
 @pytest.mark.parametrize("finish", ["length", "max_tokens", "content_filter", "tool_calls", None])
 def test_truncated_or_unknown_completion_is_rejected_even_with_valid_json(setup, finish):
     setup.response["choices"][0]["finish_reason"] = finish
-    with pytest.raises(ValueError, match="未正常结束|截断"):
+    with pytest.raises(ValueError, match="未正常结束|截断|过滤"):
         call(setup)
-    assert len(setup.calls) == 1
+    assert len(setup.calls) == (1 if finish == "content_filter" else 2)
 
 
 @pytest.mark.parametrize("field,value", [
@@ -182,11 +280,11 @@ def test_invalid_transcript_or_envelope_is_not_accepted(setup, field, value):
     data[field] = value
     with pytest.raises(ValueError):
         call(setup, data)
-    assert len(setup.calls) == 1
+    assert len(setup.calls) == 2
 
 
 @pytest.mark.parametrize("change", ["unknown", "missing", "not_object", "invalid_json"])
-def test_unknown_page_fields_and_invalid_json_fail_once_without_echo(setup, change):
+def test_unknown_page_fields_and_invalid_json_retry_once_without_echo(setup, change):
     data = page_result()
     if change == "unknown":
         data["image_path"] = "/private/do-not-echo-secret.png"
@@ -199,7 +297,7 @@ def test_unknown_page_fields_and_invalid_json_fail_once_without_echo(setup, chan
     with pytest.raises(ValueError) as caught:
         call(setup, None if change == "invalid_json" else data)
     assert "do-not-echo-secret" not in str(caught.value)
-    assert len(setup.calls) == 1
+    assert len(setup.calls) == 2
 
 
 @pytest.mark.parametrize("markup", [
@@ -212,7 +310,7 @@ def test_model_cannot_write_asset_paths_into_transcript(setup, markup):
     data["markdown"] += markup
     with pytest.raises(ValueError, match="图片路径"):
         call(setup, data)
-    assert len(setup.calls) == 1
+    assert len(setup.calls) == 2
 
 
 @pytest.mark.parametrize("bbox", [
@@ -243,6 +341,45 @@ def test_unique_raster_uses_its_full_native_occurrence_not_estimated_corners(set
     assert figure["native_box"] is True
     assert figure["slot_id"] == "p3-s1"
     assert result["layout"]["page_complete"] is True
+
+
+@pytest.mark.parametrize("estimate", [{"left": 620, "top": 740, "right": 860, "bottom": 860}, None])
+def test_case11_scan_background_candidate_cannot_replace_independent_figure_frame(setup, estimate):
+    boxes = [[0.5308, 0, 309.564, 999.7505], [309.564, 0, 654.6812, 999.7505],
+             [654.6812, 0, 999.7984, 999.7505]]
+    setup.info.update(page_index=0, width=595.276, height=841.89, full_page_image=True,
+                      candidates=[{"id": f"p1_raster_{index + 1:03d}", "type": "raster", "bbox": box}
+                                  for index, box in enumerate(boxes)])
+    data = page_result()
+    data["figures"][0].update(bbox=estimate, candidate_ids=["p1_raster_003"])
+    data["ignored_candidates"] = [{"id": f"p1_raster_{index:03d}", "reason": "page_background"} for index in (1, 2)]
+    result = call(setup, data)
+    assert len(setup.calls) == 1 and result["markdown"] == data["markdown"]
+    assert all(candidate["native_box_eligible"] is False for candidate in setup.prompt_inputs[0]["candidates"])
+    if estimate is None:
+        assert result["layout"]["figures"] == []
+        assert result["layout"]["page_complete"] is False
+        assert any("扫描背景切片" in message for message in result["layout"]["notes"])
+    else:
+        figure = result["layout"]["figures"][0]
+        assert figure["bbox"] == figure["model_bbox"] == [620, 740, 860, 860]
+        assert figure["native_box"] is False and figure["review_required"] is True
+        checked, warnings = _validate_layout(result["layout"], {
+            **setup.info, "figure_slots": describe_figure_slots(result["markdown"], 0)})
+        assert checked[0]["model_bbox"] == [620, 740, 860, 860]
+        assert checked[0]["bbox"][1] > 700 and checked[0]["bbox"][3] < 900
+        assert any("扫描背景切片" in message for message in warnings)
+
+
+def test_single_real_tall_raster_preserves_exact_native_frame_even_with_background(setup):
+    setup.info.update(full_page_image=True)
+    setup.info["candidates"][0]["bbox"] = [100, 0, 300, 980]
+    data = page_result()
+    data["figures"][0]["bbox"] = None
+    result = call(setup, data)
+    assert result["layout"]["figures"][0]["native_box"] is True
+    assert result["layout"]["figures"][0]["bbox"] == [100, 0, 300, 980]
+    assert setup.prompt_inputs[0]["candidates"][0]["native_box_eligible"] is True
 
 
 @pytest.mark.parametrize("bad_box", [None, [], [0, 0, 1001, 200], [0, 0, float("nan"), 200],
@@ -369,7 +506,7 @@ def test_cancellation_after_post_discards_the_result_without_retry(setup):
 
 
 @pytest.mark.parametrize("failure", [requests.ReadTimeout, requests.ConnectionError])
-def test_transport_failure_is_not_retried_or_echoed(setup, monkeypatch, failure):
+def test_transport_failure_retries_once_without_echo(setup, monkeypatch, failure):
     attempts = []
     def fail(*args, **kwargs):
         attempts.append(1)
@@ -378,11 +515,11 @@ def test_transport_failure_is_not_retried_or_echoed(setup, monkeypatch, failure)
     with pytest.raises(ValueError) as caught:
         call(setup)
     assert "secret" not in str(caught.value)
-    assert "未自动重试" in str(caught.value)
-    assert attempts == [1]
+    assert "共尝试 2 次" in str(caught.value)
+    assert attempts == [1, 1]
 
 
-def test_http_failure_does_not_read_or_echo_body_and_never_retries(setup, monkeypatch):
+def test_http_failure_does_not_read_or_echo_body_and_retries_once(setup, monkeypatch):
     calls = []
     def post(*args, **kwargs):
         calls.append(1)
@@ -390,7 +527,7 @@ def test_http_failure_does_not_read_or_echo_body_and_never_retries(setup, monkey
     monkeypatch.setattr(vision, "post_chat_completion", post)
     with pytest.raises(ValueError, match="HTTP 503"):
         call(setup)
-    assert calls == [1]
+    assert calls == [1, 1]
 
 
 @pytest.mark.parametrize("changes", [{"api_key": ""}, {"chat_completions_url": ""}, {"supports_image_input": False}])
@@ -422,8 +559,26 @@ def test_text_and_response_size_caps(setup, monkeypatch):
     monkeypatch.setattr(vision, "MAX_SOURCE_CHARS", 10)
     with pytest.raises(ValueError, match="过长"):
         call(setup)
-    assert len(setup.calls) == 1
+    assert len(setup.calls) == 2
     monkeypatch.setattr(vision, "MAX_RESPONSE_CHARS", 10)
     with pytest.raises(ValueError, match="过长"):
         call(setup)
-    assert len(setup.calls) == 2
+    assert len(setup.calls) == 4
+
+
+def test_page_timeout_then_success_reports_actual_attempts(setup, monkeypatch):
+    post = vision.post_chat_completion
+    calls, events = [], []
+    def retry(*args, **kwargs):
+        calls.append(kwargs)
+        if len(calls) == 1:
+            raise requests.ReadTimeout("private")
+        return post(*args, **kwargs)
+    monkeypatch.setattr(vision, "post_chat_completion", retry)
+    result = call(setup, report_attempt=events.append)
+    assert result["markdown"] == page_result()["markdown"]
+    assert len(calls) == result["visual_calls"] == 2
+    assert all(item["timeout"] == 600 and item["retry_connection"] is False for item in calls)
+    assert result["usage_complete"] is False
+    assert [item["status"] for item in result["attempts"]] == ["failed", "succeeded"]
+    assert any(item.get("retrying") for item in events)

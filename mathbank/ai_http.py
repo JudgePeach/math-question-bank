@@ -88,6 +88,7 @@ def post_chat_completion(
     check_status: bool = True,
     provider_name: Optional[str] = None,
     retry_connection: bool = True,
+    allow_redirects: bool = True,
 ):
     """Send one OpenAI-compatible chat completion request.
 
@@ -110,6 +111,8 @@ def post_chat_completion(
         request_kwargs["stream"] = True
     if not retry_connection:
         request_kwargs["retry_connection"] = False
+    if not allow_redirects:
+        request_kwargs["allow_redirects"] = False
 
     response = robust_request_post(
         provider.chat_completions_url,

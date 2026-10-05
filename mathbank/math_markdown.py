@@ -217,6 +217,122 @@ def _wrap_math_run(match: re.Match[str]) -> str:
     return f"{leading}${core}${trailing}"
 
 
+def normalize_table_math_wrappers(value: str) -> str:
+    """Remove a math shell containing exactly one complete text-mode table.
+
+    Model OCR occasionally places a whole tabular inside dollars. Only its
+    outer delimiters are removed; cells, their math, images and whitespace are
+    unchanged. Mixed formulas, malformed tables and literal source stay intact.
+    """
+    if not isinstance(value, str) or not value:
+        return value or ""
+    placeholders: list[tuple[str, str]] = []
+    protected = value
+    marker_prefix = "\ue000OCR_TABLE_"
+    while marker_prefix in value:
+        marker_prefix += "_"
+
+    def protect_literal(match: re.Match[str]) -> str:
+        if (match.group(0).startswith(("[", "!["))
+                and _is_escaped(protected, match.start())):
+            return match.group(0)
+        marker = f"{marker_prefix}{len(placeholders)}\ue001"
+        placeholders.append((marker, match.group(0)))
+        return marker
+
+    for pattern in (
+        r"```[\s\S]*?(?:```|$)", r"~~~[\s\S]*?(?:~~~|$)", r"`[^`\n]*`",
+        r"\\begin\{(?P<literal_env>tikzpicture|verbatim\*?|Verbatim\*?|lstlisting|minted|comment)\}[\s\S]*?(?:\\end\{(?P=literal_env)\}|$)",
+        r"<mathbank-math\b[^>]*>[\s\S]*?</mathbank-math>",
+        r"(?i)<(?P<html_literal>code|pre)\b[^>]*>[\s\S]*?(?:</(?P=html_literal)\s*>|$)",
+        r"<[!/]?[A-Za-z][^>\n]*>",
+        r"!?\[[^\[\]\n]*\]\([^\n)]*\)", r"https?://[^\s<>]+",
+        r"\\(?:verb|Verb|lstinline)\*?(?:\[[^\]\n]*\])?(?P<separator>[^\w\s{])[\s\S]*?(?P=separator)",
+        r"\\mintinline(?:\[[^\]\n]*\])?\{[^{}\n]*\}(?P<separator>[^\w\s{])[\s\S]*?(?P=separator)",
+    ):
+        protected = re.sub(pattern, protect_literal, protected)
+    # Brace-delimited literal commands can contain table-looking source.
+    literal = re.compile(r"\\(?:(?:detokenize|url|path)|lstinline\*?(?:\[[^\]\n]*\])?|mintinline(?:\[[^\]\n]*\])?\{[^{}\n]*\})\s*\{")
+    pieces, copied, cursor = [], 0, 0
+    while match := literal.search(protected, cursor):
+        cursor = match.end()
+        if _is_escaped(protected, match.start()):
+            continue
+        depth = 1
+        end = cursor
+        while end < len(protected) and depth:
+            if not _is_escaped(protected, end):
+                depth += (protected[end] == "{") - (protected[end] == "}")
+            end += 1
+        if depth:
+            end = len(protected)  # An unfinished literal protects its remainder.
+        marker = f"{marker_prefix}{len(placeholders)}\ue001"
+        placeholders.append((marker, protected[match.start():end]))
+        pieces.extend((protected[copied:match.start()], marker))
+        cursor = copied = end
+    pieces.append(protected[copied:])
+    protected = "".join(pieces)
+    # A TeX comment remains literal, including any dollars within that line.
+    def save_comment(match: re.Match[str]) -> str:
+        if _is_escaped(protected, match.start()):
+            return match.group(0)
+        marker = f"{marker_prefix}{len(placeholders)}\ue001"
+        placeholders.append((marker, match.group(0)))
+        return marker
+    protected = re.sub(r"%[^\n]*", save_comment, protected)
+    parts, copied, cursor = [], 0, 0
+    while cursor < len(protected):
+        opening = next((token for token in ("$$", "$", r"\[", r"\(")
+                        if protected.startswith(token, cursor)), None)
+        if opening is None or _is_escaped(protected, cursor):
+            cursor += 1
+            continue
+        begin = cursor + len(opening)
+        body = begin
+        while body < len(protected) and protected[body].isspace():
+            body += 1
+        table = _ENVIRONMENT_TOKEN_RE.match(protected, body)
+        if not table or table.group(1) != "begin" or table.group(2) not in _TABLE_ENVIRONMENTS:
+            closing = {r"\[": r"\]", r"\(": r"\)"}.get(opening, opening)
+            end = protected.find(closing, begin)
+            while end >= 0 and _is_escaped(protected, end):
+                end = protected.find(closing, end + len(closing))
+            cursor = end + len(closing) if end >= 0 else len(protected)
+            continue
+        stack = [table.group(2)]
+        end = None
+        for token in _ENVIRONMENT_TOKEN_RE.finditer(protected, table.end()):
+            if _is_escaped(protected, token.start()):
+                continue
+            action, name = token.groups()
+            if action == "begin":
+                stack.append(name)
+            elif name != stack[-1]:
+                break
+            else:
+                stack.pop()
+            if not stack:
+                end = token.end()
+                break
+        close = end
+        if close is not None:
+            while close < len(protected) and protected[close].isspace():
+                close += 1
+        closing = {r"\[": r"\]", r"\(": r"\)"}.get(opening, opening)
+        if (close is None or not protected.startswith(closing, close)
+                or (closing == "$" and protected.startswith("$$", close))):
+            ending = protected.find(closing, end) if end is not None else -1
+            cursor = ending + len(closing) if ending >= 0 else len(protected)
+            continue
+        parts.extend((protected[copied:cursor], protected[begin:close]))
+        cursor = copied = close + len(closing)
+    parts.append(protected[copied:])
+    result = "".join(parts)
+    for marker, original in reversed(placeholders):
+        result = result.replace(marker, original)
+    return result
+
+
 def normalize_question_math_markdown(value: str) -> str:
     """Wrap high-confidence naked LaTeX/math runs in inline delimiters.
 

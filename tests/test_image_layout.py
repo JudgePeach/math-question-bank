@@ -151,10 +151,21 @@ def test_mixed_word_keeps_positions_and_individual_alignment(tmp_path):
     assert diagnostics['missing_images'] == 0
 
 
-def test_api_saves_image_layout_and_rejects_invalid_update(client):
+def test_api_saves_image_layout_and_rejects_invalid_update(client, tmp_path, monkeypatch):
+    import main
+    from mathbank.asset_lifecycle import register_asset_store
     from main import LOCAL_TOKEN
     headers={'X-Local-Token':LOCAL_TOKEN}
-    # References need not exist to test layout metadata; no user assets are touched.
+    # Persistence now validates visible image references independently of the
+    # client list. Use real isolated fixtures instead of nonexistent URLs.
+    uploads = tmp_path / 'uploads'
+    uploads.mkdir()
+    for name in ('a.png', 'b.png'):
+        Image.new('RGB', (4, 4), 'white').save(uploads / name)
+    monkeypatch.setattr(main, 'UPLOAD_DIR', str(uploads))
+    monkeypatch.setattr(main, 'TMP_UPLOAD_DIR', str(uploads / 'tmp'))
+    monkeypatch.setattr(main, 'UPLOAD_DIR_REL', 'static/uploads')
+    register_asset_store(uploads, tmp_path / 'retained')
     payload={'content':SOURCE,'question_type':'detailed_answer','difficulty':'medium',
              'image_layouts': json.dumps({'a.png':{'align':'right','size':'large'}})}
     response=client.post('/api/questions',data=payload,headers=headers)

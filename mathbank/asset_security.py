@@ -119,6 +119,13 @@ def resolve_upload_asset(
 
     if resolved.exists() and not resolved.is_file():
         raise AssetSecurityError("插图路径不是普通文件。")
+    if require_file and not resolved.exists():
+        from mathbank.asset_lifecycle import AssetLifecycleError, restore_asset
+
+        try:
+            restore_asset(resolved, uploads_dir=root)
+        except AssetLifecycleError as exc:
+            raise AssetSecurityError(str(exc)) from exc
     if require_file and (not resolved.exists() or not resolved.is_file()):
         raise AssetSecurityError("插图文件不存在或不是普通文件。")
     return resolved

@@ -11,7 +11,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
 def run_preview_script(assertions):
     source = (PROJECT_ROOT / "static/js/editor.js").read_text(encoding="utf-8")
-    start = source.index("function transformFillinMacro(clean)")
+    start = source.index("function cleanChoiceStemParentheses(text)")
     marker = "window.preprocessFormulaForKaTeX = preprocessFormulaForKaTeX;"
     end = source.index(marker, start) + len(marker)
     katex_path = str(PROJECT_ROOT / "static/lib/katex/katex.min.js")
@@ -91,6 +91,195 @@ for (const newline of ['\n', '\r\n', '\n\n']) {
         assert.deepEqual(parsedFormulas(preprocessFormulaForKaTeX(formula)), [formula.slice(1, -1)]);
     }
 }
+''')
+
+def test_prose_fillin_keeps_adjacent_math_comparisons_and_later_table_independent():
+    run_preview_script(r'''
+const source = '则$\\bar{x}$\\fillin 91（填“$>$”“$=$”或“$<$”）\n\n'
+    + '随后评分表：\\begin{tabular}{cc}甲 & 93 \\\\ 丙 & $k$\\end{tabular}。';
+const html = preprocessFormulaForKaTeX(source);
+assert.deepEqual(parsedFormulas(html),
+    ['\\bar{x}', '\\underline{\\hspace{1.5cm}}', '\\gt ', '=', '\\lt ', 'k']);
+assert.equal((html.match(/<table\b/g) || []).length, 1);
+assert(html.includes('随后评分表') && html.includes('甲') && html.includes('丙'));
+assert(!html.includes('\\begin{tabular}'));
+assert.deepEqual(parsedFormulas(preprocessFormulaForKaTeX('$x$\\fillin$y$')),
+    ['x', '\\underline{\\hspace{1.5cm}}', 'y']);
+''')
+
+
+def test_fillin_preserves_all_complete_math_shells_and_macro_options():
+    run_preview_script(r'''
+for (const [opening, closing] of [['$', '$'], ['$$', '$$'], ['\\(', '\\)'], ['\\[', '\\]']]) {
+    const source = opening + 'x+\\fillin[2cm][y]' + closing;
+    const formatted = transformFillinMacro(source);
+    assert.equal(formatted, opening + 'x+\\underline{\\hspace{2cm}y\\hspace{2cm}}' + closing);
+    assert.deepEqual(parsedFormulas(preprocessFormulaForKaTeX(source)),
+        ['x+\\underline{\\hspace{2cm}y\\hspace{2cm}}']);
+}
+const blanks = '\\fillin[3cm]，\\fillin[a]；$x$\\fillin。$y$';
+assert.deepEqual(parsedFormulas(preprocessFormulaForKaTeX(blanks)), [
+    '\\underline{\\hspace{3cm}}', '\\underline{\\quad a \\quad}', 'x',
+    '\\underline{\\hspace{1.5cm}}', 'y',
+]);
+const tick = String.fromCharCode(96);
+const protectedExamples = [
+    tick + '\\fillin' + tick, tick.repeat(3) + 'tex\n\\fillin\n' + tick.repeat(3),
+    '\\verb|\\fillin|', '\\detokenize{\\fillin}',
+    '\\begin{tikzpicture}\\node{\\fillin};\\end{tikzpicture}',
+    '![](/static/uploads/fillin.png)', '[[MBM_scope_0001]]',
+    '<mathbank-math id="MBM_scope_0001">\\fillin</mathbank-math>',
+    '\\\\fillin',
+];
+for (const literal of protectedExamples) assert.equal(transformFillinMacro(literal), literal);
+for (let count=1; count<=6; count++) {
+    assert.deepEqual(parsedFormulas(preprocessFormulaForKaTeX('11'+'\\fillin'.repeat(count))),
+        Array(count).fill('\\underline{\\hspace{1.5cm}}'));
+}
+''')
+
+def test_fillin_only_unwraps_a_complete_math_hint_within_its_own_option():
+    run_preview_script(r'''
+assert.deepEqual(parsedFormulas(preprocessFormulaForKaTeX('\\fillin[$2$]')),
+    ['\\underline{\\quad 2 \\quad}']);
+assert.deepEqual(parsedFormulas(preprocessFormulaForKaTeX('\\fillin[2cm][$\\frac{1}{2}$]')),
+    ['\\underline{\\hspace{2cm}\\frac{1}{2}\\hspace{2cm}}']);
+assert.deepEqual(parsedFormulas(preprocessFormulaForKaTeX('\\(x+\\fillin[$2$]\\)')),
+    ['x+\\underline{\\quad 2 \\quad}']);
+const compound='\\fillin[$x$+$y$]';
+assert.equal(transformFillinMacro(compound), compound);
+const adjacent='\\fillin[$2$]$z$';
+assert.deepEqual(parsedFormulas(preprocessFormulaForKaTeX(adjacent)),
+    ['\\underline{\\quad 2 \\quad}', 'z']);
+''')
+
+def test_fillin_in_table_cells_and_text_math_keeps_their_boundaries():
+    run_preview_script(r'''
+const table = '\\begin{tabular}{cc}$x$\\fillin & $y+\\fillin$\\end{tabular}';
+const html = preprocessFormulaForKaTeX(table);
+assert.equal((html.match(/<td\b/g) || []).length, 2);
+assert.deepEqual(parsedFormulas(html),
+    ['x', '\\underline{\\hspace{1.5cm}}', 'y+\\underline{\\hspace{1.5cm}}']);
+assert.deepEqual(parsedFormulas(preprocessFormulaForKaTeX('$\\text{已知}\\fillin$')),
+    ['\\text{已知}\\underline{\\hspace{1.5cm}}']);
+for (const [opening, closing] of [['$', '$'], ['$$', '$$'], ['\\(', '\\)'], ['\\[', '\\]']]) {
+    const punctuation = preprocessFormulaForKaTeX(opening + '\\fillin，' + closing);
+    assert.deepEqual(parsedFormulas(punctuation), ['\\underline{\\hspace{1.5cm}}']);
+    assert(punctuation.endsWith('，'));
+}
+// The established path renders an unmatched dollar literally; this fix must
+// not guess a formula or remove that visible dollar in old incomplete input.
+assert.deepEqual(parsedFormulas(preprocessFormulaForKaTeX('$x+\\fillin')),
+    ['\\text{\\$}', '\\underline{\\hspace{1.5cm}}']);
+''')
+
+
+def test_currency_recognition_preserves_closed_numerical_products():
+    run_preview_script(r'''
+for (const formula of [
+    '$2 xy+3$', '$2 xy + 3$', '$2 xy$', '$2 AB$', '$2 xyz$', '$2 xy z+3$',
+    '$2 xy_{1}+3$', String.raw`$2 xy\cdot 3$`, '$2 tax+3$', '$2 xy +\n3$',
+    '$2 xy+3.5$', '$2 xy+3.$', '$2 xy+3; z$',
+]) {
+    const html = preprocessFormulaForKaTeX(formula);
+    assert.equal(html, formula, html);
+    assert.deepEqual(parsedFormulas(html), [formula.slice(1, -1)]);
+}
+const mixture = 'Price $5 and $10; compute $2 xy+3$ or $5$.';
+assert.deepEqual(parsedFormulas(preprocessFormulaForKaTeX(mixture)),
+    [String.raw`\text{\$}`, String.raw`\text{\$}`, '2 xy+3', '5']);
+const taxSentence = 'Cost $5 total + tax. Compute $x+1$.';
+assert.deepEqual(parsedFormulas(preprocessFormulaForKaTeX(taxSentence)), [String.raw`\text{\$}`, 'x+1']);
+''')
+
+
+def test_currency_normalization_keeps_literal_paths_code_and_locks():
+    run_preview_script(r'''
+for (const source of [
+    '`$2 xy+3$ and $5`', '```text\n$5 and $10\n```',
+    String.raw`\begin{tikzpicture}\node {$5 and $10};\end{tikzpicture}`,
+    '![](/static/uploads/$5.png)', '[price](https://example.test/$5)',
+    'https://example.test/$5?total=10', '[[MBM_scope-1_0001]]',
+    '<mathbank-math id="MBM_scope_0001">$5 and $10</mathbank-math>',
+    String.raw`\($2 xy+3$\)`, String.raw`\[$5 and $10\]`, '$$2 xy+3$$',
+]) assert.equal(normalizePreviewDollarSigns(source), source, source);
+for (const literal of [
+    '`$5 and $10`', '```text\n$5 and $10\n```',
+    '![](/static/uploads/$5.png)', '[price](/help/$5)',
+    'https://example.test/$5?total=10', 'HTTPS://example.test/$5?total=10', '[[MBM_scope-1_0001]]',
+]) {
+    const source = literal + ' 计算 $2 xy+3$。';
+    const html = preprocessFormulaForKaTeX(source);
+    assert.deepEqual(parsedFormulas(html), ['2 xy+3']);
+    if (literal.startsWith('!')) assert(html.includes('/static/uploads/$5.png'), html);
+    if (literal.startsWith('http')) assert(html.includes(literal), html);
+    assert.equal(cleanChoiceStemParentheses(source), source, source);
+}
+assert.deepEqual(parsedFormulas(preprocessFormulaForKaTeX('[$2 xy+3$](/help/$5)')),
+    ['2 xy+3']);
+const mathWithUrl = String.raw`$\text{https://example.test/x}$`;
+assert.equal(normalizeNakedMathForPreview(mathWithUrl), mathWithUrl);
+assert.deepEqual(parsedFormulas(preprocessFormulaForKaTeX(mathWithUrl)), [mathWithUrl.slice(1, -1)]);
+const environmentWithUrl = String.raw`\begin{align}x&=\text{https://example.test/x}\end{align}`;
+assert.deepEqual(parsedFormulas(preprocessFormulaForKaTeX(environmentWithUrl)),
+    [String.raw`\begin{aligned}x&=\text{https://example.test/x}\end{aligned}`]);
+''')
+
+
+def test_preview_literals_are_safe_inert_nodes_with_exact_visible_content():
+    run_preview_script(r'''
+const literals = [
+    '`$5 and $10`', '``literal ` $5 and $10``', '~~~tex\n$5 and $10\n~~~',
+    String.raw`\verb|$5 and $10|`, String.raw`\lstinline[language=TeX]|$5 and $10|`,
+    String.raw`\mintinline{tex}|$5 and $10|`, String.raw`\mintinline{tex}{$5 and ${10}}`,
+    String.raw`\detokenize{$5 and ${10}}`, String.raw`\path{dir/$5}`,
+    String.raw`\begin{verbatim*}$5 and $10\end{verbatim*}`,
+    String.raw`\begin{Verbatim*}$5 and $10\end{Verbatim*}`,
+    String.raw`\begin{tikzpicture}\node {$5};\draw (0,0)--(1,1);\end{tikzpicture}`,
+    'HTTPS://example.test/$5?total=10',
+    '`<img src=x onerror=alert(1)>$5</code>`',
+];
+for (const literal of literals) {
+    const source = literal + ' 然后 $x^2$。';
+    const html = preprocessFormulaForKaTeX(source);
+    assert(html.includes('<code class="mb-preview-literal">'), html);
+    assert.deepEqual(parsedFormulas(html), ['x^2']);
+    const visible = html.match(/<code class="mb-preview-literal">([\s\S]*?)<\/code>/)[1]
+        .replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&');
+    assert.equal(visible, literal);
+    assert(!html.includes('<img src=x'), html);
+}
+for (const [literal, visible] of [
+    ['<CODE class="x">$5 and $10</code>', '$5 and $10'],
+    ['<pre>$5 and $10</PRE>', '$5 and $10'],
+]) {
+    const html = preprocessFormulaForKaTeX(literal + ' 然后 $x^2$。');
+    assert(html.includes('<code class="mb-preview-literal">' + visible + '</code>'), html);
+    assert.deepEqual(parsedFormulas(html), ['x^2']);
+}
+const collision = '\uE002L0\uE003 $2 xy+3$ ' + '`$5`';
+const collisionHtml = preprocessFormulaForKaTeX(collision);
+assert(collisionHtml.includes('\uE002L0\uE003'), collisionHtml);
+assert.deepEqual(parsedFormulas(collisionHtml), ['2 xy+3']);
+''')
+
+
+def test_tex_spaces_do_not_consume_paired_hard_line_breaks():
+    run_preview_script(r'''
+for (const spaces of [' ', '  ', ' \t']) {
+    const source = String.raw`甲\\` + spaces + '乙 $2 xy+3$';
+    const html = preprocessFormulaForKaTeX(source);
+    assert.equal((html.match(/<br>/g) || []).length, 1, html);
+    assert(html.includes('<br>' + spaces + '乙'), html);
+    assert.deepEqual(parsedFormulas(html), ['2 xy+3']);
+}
+assert.equal(preprocessFormulaForKaTeX(String.raw`甲\\\\ 乙`), '甲<br><br> 乙');
+assert.equal(preprocessFormulaForKaTeX(String.raw`甲\ 乙`), '甲&nbsp;乙');
+assert.equal(preprocessFormulaForKaTeX(String.raw`甲\\\ 乙`), '甲<br>&nbsp;乙');
+const formula = String.raw`$\begin{aligned}x&=1\\ y&=2\end{aligned}$`;
+assert.equal(normalizePreviewDollarSigns(formula), formula);
+assert.equal((preprocessFormulaForKaTeX(formula).match(/<br>/g) || []).length, 0);
+assert.deepEqual(parsedFormulas(preprocessFormulaForKaTeX(formula)), [formula.slice(1, -1)]);
 ''')
 
 

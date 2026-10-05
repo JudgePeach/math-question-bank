@@ -21,8 +21,13 @@ _BOLD_FONT = re.compile(r"^LMRomanDemi\d+(?:-Regular)?(?:-Identity-H)?$")
 _PARTS = {"\uf8f1": "top", "\uf8f2": "middle", "\uf8f3": "bottom"}
 _SYMBOLS = {"−": "-", "∗": "*", "×": r"\times ", "·": r"\cdot ", "∈": r"\in ",
             "⊂": r"\subset ", "⊆": r"\subseteq ", "{": r"\{", "}": r"\}",
-            "°": r"\circ "}
-_NEGATED = {"∈": r"\notin ", "⊂": r"\not\subset "}
+            "°": r"\circ ", "≤": r"\le ", "≥": r"\ge ", "≠": r"\neq ",
+            "∉": r"\notin ", "⊃": r"\supset ", "⊇": r"\supseteq ",
+            "∪": r"\cup ", "∩": r"\cap ", "∅": r"\varnothing ",
+            "∞": r"\infty ", "±": r"\pm ", "∓": r"\mp ",
+            "÷": r"\div ", "⋅": r"\cdot ", "≈": r"\approx ",
+            "≡": r"\equiv ", "⊥": r"\perp ", "∥": r"\parallel "}
+_NEGATED = {"∈": r"\notin ", "⊂": r"\not\subset ", "=": r"\neq "}
 
 
 class _Unsupported(ValueError):

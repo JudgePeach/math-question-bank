@@ -122,8 +122,8 @@ def test_pdf_strategy_markup_defaults_to_layout_aware():
     parser.feed((ROOT / "static/index.html").read_text(encoding="utf-8"))
     assert [r["value"] for r in parser.radios] == ["layout_aware", "native_preferred", "force_ocr"]
     assert [r["value"] for r in parser.radios if "checked" in r] == ["layout_aware"]
-    assert parser.verification is not None and "checked" not in parser.verification
-    assert parser.docx_verification is not None and "checked" not in parser.docx_verification
+    assert parser.verification is not None and "checked" in parser.verification
+    assert parser.docx_verification is not None and "checked" in parser.docx_verification
     assert parser.answer_generation is not None and "checked" not in parser.answer_generation
     assert parser.docx_container is not None and "hidden" in parser.docx_container
     assert all(r.get("onchange") == "updatePdfVerificationOption()" for r in parser.radios)
@@ -144,12 +144,28 @@ def pdf_script(review_script):
         "const appendImportLog = message => logs.push(message);",
         "const logTypes = []; const appendImportLog = (message, type) => { logs.push(message); logTypes.push(type); };",
     )
+    base = base.replace(
+        "const fetch = (url, options) => new Promise(resolve => requests.push({url, options, resolve}));",
+        """const retentionRequests = [];
+const fetch = (url, options) => {
+  if (/^\\/api\\/tasks\\/[^/]+\\/retain$/.test(url)) {
+    retentionRequests.push({url, options});
+    return Promise.resolve({ok:true,status:200});
+  }
+  return new Promise(resolve => requests.push({url, options, resolve}));
+};""",
+    )
     setup = r"""
 window.addEventListener = () => {};
 let checkedStrategy = null;
 document.querySelector = selector => selector === 'input[name="pdfStrategy"]:checked' ? checkedStrategy : null;
 const intervals = new Map();
 let nextInterval = 0;
+function assertCompletedPollingStopped() {
+  assert.equal(activeDocumentPoll,null,'completed document status polling stops');
+  assert.equal(intervals.size,retainedDocumentResult?.timer?1:0,'only the resource retention timer may remain');
+  if (retainedDocumentResult?.timer) assert.ok(intervals.has(retainedDocumentResult.timer));
+}
 const setInterval = fn => { intervals.set(++nextInterval, fn); return nextInterval; };
 const clearInterval = id => intervals.delete(id);
 const flush = () => new Promise(resolve => setImmediate(resolve));
@@ -184,7 +200,7 @@ const pdfScenarios = {
         pendingQuestion(),{content:'有原答案的题',answer_markdown:'C'}],generate_answers:requested,
         diagnostics:{source_review_count:1,unmatched_source:[]}})});
       await flush();
-      assert.equal(intervals.size,0);
+      assertCompletedPollingStopped();
       if (!requested) {
         assert.equal(requests.length,1,'generate_answers=false sends no solve request for empty pending answers');
         assert.equal(parsedQuestionsData[0].answer_markdown,'');
@@ -217,7 +233,7 @@ const pdfScenarios = {
     }
     document.getElementById('docxVerifySuspicions').remove();
     runAIPaperParse();
-    assert.equal(requests.at(-1).options.body.get('docx_verify_suspicions'),'false','old markup adds no hidden verification call');
+    assert.equal(requests.at(-1).options.body.get('docx_verify_suspicions'),'true','missing markup keeps automatic verification enabled');
     window.currentDocxFile=null;
     window.currentPdfFile=new Blob(['pdf']);
     runAIPaperParse();
@@ -230,6 +246,8 @@ const pdfScenarios = {
     assert.equal(card.querySelector('.card-source-review-status').textContent,'查看原文自动核验记录');
     const panel=card.querySelector('.card-source-review-panel');
     assert.equal(panel.open,false);assert.equal(panel.querySelector('img'),null,'evidence is plain text');
+    assert.ok(panel.querySelector('.card-source-review-explanation').textContent.includes('已对照原文确认本题'));
+    assert.equal(panel.querySelector('.card-source-review-explanation').textContent.includes('未能自动确认'),false);
     assert.equal(card.querySelector('.card-source-review-confirm'),null);
     assert.deepEqual(getCheckedUnsavedIndices(),[0,1]);
     assert.equal(validateParsedQuestionBeforeImport(0),true);
@@ -259,6 +277,71 @@ const pdfScenarios = {
     assert.ok(report.querySelector('.pdf-source-verification-summary').textContent.includes('有 1 题保留提取说明'));
     assert.equal(requests.length,0);
   },
+  async docx_extraction_warnings_survive_successful_source_comparison() {
+    const q={content:'题干中保留 [插图待补]。',answer_markdown:'',source_review:{required:false}};
+    const card=show([q]);
+    const warning='图片格式无法安全转换，已跳过：image1.emf <img src=x onerror=bad()>';
+    const diagnostics={omml_converted:0,review_required:1,source_review_count:0,unmatched_source:[],
+      word_extraction_warnings:[warning,warning,' '+warning+' ','',null,{}],
+      warnings:[warning,'来源比对汇总不应重复广播'],docx_source_verification:{status:'disabled'}};
+    const before=JSON.stringify({q,diagnostics});
+    renderSourceIntegrityReport(diagnostics);
+    const report=document.getElementById('parsedSourceIntegrityReport');
+    assert.ok(report,'an extraction warning needs an inspectable report even without source mismatches');
+    assert.equal(report.open,false);
+    const notes=report.querySelector('.pdf-layout-notes');
+    assert.equal(notes.open,false);
+    assert.deepEqual(notes.querySelectorAll('p').map(p=>p.textContent),['Word 提取：'+warning]);
+    assert.equal(report.querySelector('img'),null,'extraction messages remain plain text');
+    assert.equal(report.querySelector('.pdf-review-question-list'),null,'extraction warnings are not assigned to every question');
+    assert.equal(card.querySelector('.card-source-review-confirm'),null);
+    assert.equal(parsedQuestionNeedsSourceReview(0),false);
+    assert.equal(validateParsedQuestionBeforeImport(0),true);
+    assert.deepEqual(getCheckedUnsavedIndices(),[0]);
+    assert.equal(JSON.stringify({q,diagnostics}),before,'showing diagnostics does not change evidence');
+    assert.equal(requests.length,0,'showing extraction evidence adds no model requests');
+    for (const unrelated of [
+      {warnings:[warning],source_review_count:0},
+      {warnings:[warning],pdf_extraction:{native_pages:1}},
+      {warnings:[warning],pdf_layout:{notes:['已有PDF处理说明']}},
+    ]) {
+      renderSourceIntegrityReport(unrelated);
+      const otherReport=document.getElementById('parsedSourceIntegrityReport');
+      assert.ok(!otherReport || !otherReport.querySelectorAll('p').some(p=>p.textContent.includes(warning)),
+        'general PDF and TeX warnings are not relabeled or broadcast as Word extraction warnings');
+    }
+    for (const invalid of [null,{},'not an array',[null,{},'']]) {
+      renderSourceIntegrityReport({word_extraction_warnings:invalid});
+      assert.equal(document.getElementById('parsedSourceIntegrityReport'),null);
+    }
+  },
+  async partial_verification_preserves_confirmed_cards_and_explains_invalid_items() {
+    for (const reportKey of ['pdf_source_verification','docx_source_verification']) {
+      const good={content:'计算 $1+1$。',answer_markdown:'',source_review:{required:false,verified_by:'vision',
+        verification:{document_type:reportKey.startsWith('docx')?'docx':'pdf',evidence:'原页公式和题目内容一致。'},
+        reasons:['原公式疑点'],source_excerpt:'1. 计算 $1+1$。'}};
+      const pending={content:'计算 $2+2$。',answer_markdown:'',source_review:{required:true,
+        reasons:['原公式疑点'],source_excerpt:'2. 计算 $2+2$。'}};
+      show([good,pending]);
+      const diagnostics={source_review_count:1,source_matches:[{question_index:1,source_number:2}],
+        [reportKey]:{status:'partial',calls:1,checked:1,confirmed:1,pending:1,skipped:0,
+          invalid_items:[{id:'item_002',question_index:1,source_number:2,source_pages:[1],
+            code:'missing_result',reason:'本题没有返回有效结论 <img src=x onerror=bad()>。'}]}};
+      renderSourceIntegrityReport(diagnostics);
+      const report=document.getElementById('parsedSourceIntegrityReport');
+      assert.equal(report.open,false);
+      assert.ok(report.querySelector('.pdf-source-verification-summary').textContent.includes('有效结论已逐题保留'));
+      const notes=report.querySelector('.pdf-layout-notes').querySelectorAll('p').map(p=>p.textContent).join('\n');
+      assert.ok(notes.includes('第2题'));
+      assert.ok(notes.includes('没有返回有效结论'));
+      assert.equal(report.querySelector('img'),null);
+      assert.deepEqual(report.querySelector('.pdf-review-question-list').querySelectorAll('button').map(b=>b.textContent),['第2题']);
+      assert.equal(parsedQuestionNeedsSourceReview(0),false);
+      assert.equal(parsedQuestionNeedsSourceReview(1),true);
+      assert.deepEqual(getCheckedUnsavedIndices(),[0,1]);
+    }
+    assert.equal(requests.length,0);
+  },
   async docx_verification_polling_and_completion() {
     const generation=beginDocumentImportTask();
     pollPdfTaskStatus('docx-1',generation);
@@ -268,21 +351,99 @@ const pdfScenarios = {
       log:'正在核验 Word 疑点',progress:90})});
     await flush();
     assert.equal(document.getElementById('importSubLoadingText').textContent,
-      '正在按所选设置核验 Word 原文；结果保留在可选提取说明中。');
+      '正在自动核验 Word 原文疑点，确认无误后不再提示。');
     tick();
     const q={content:'Word 已确认题',answer_markdown:'C',source_review:{required:false,verified_by:'vision',
       verification:{document_type:'docx',evidence:'与原文一致。'}}};
     requests.at(-1).resolve({ok:true,json:async()=>({status:'completed',document_type:'docx',log:'完成',data:[q],
-      generate_answers:false,diagnostics:{source_review_count:0,review_required:2,docx_source_verification:{status:'completed',calls:1,
+      generate_answers:false,diagnostics:{source_review_count:0,review_required:2,word_extraction_review_count:0,
+        word_extraction_warnings:[],docx_source_verification:{status:'completed',calls:1,
         checked:1,confirmed:1,pending:0,skipped:0,notes:[]}}})});
     await flush();
-    assert.equal(intervals.size,0);
+    assertCompletedPollingStopped();
     assert.equal(parsedQuestionNeedsSourceReview(0),false);
     assert.deepEqual(getCheckedUnsavedIndices(),[0]);
     assert.ok(document.getElementById('parsedSourceIntegrityReport').querySelector('.pdf-source-verification-summary').textContent.includes('已确认 1 题，保留提取说明 0 题'));
-    assert.ok(logs.some(line=>line.includes('提取阶段标记 2 处疑点')));
-    assert.ok(toasts.some(line=>line.includes('不影响导入')));
+    assert.ok(logs.every(line=>!line.includes('2 处')&&!line.includes('提取疑点')),
+      'resolved extraction warnings must not leak the original extraction count');
+    assert.equal(toasts.length,0,'verified formula suspicions do not trigger a warning toast');
+    assert.equal(document.getElementById('parsedSourceIntegrityReport').querySelector('.pdf-review-question-list'),null);
     assert.equal(requests.length,2,'only mocked task polling, no AI or save requests');
+  },
+  async source_review_states_prefer_latest_evidence_and_revoke_on_edit() {
+    const make=(decision,evidence)=>({content:'求 $x+1$。',answer_markdown:'',source_review:{required:true,
+      source_number:1,source_excerpt:'1. 求 $x-1$。',reasons:['公式位置不能对应。'],
+      ...(decision?{verification_attempt:{decision,evidence,document_type:'docx'}}:{})}});
+    const different=make('different','原文是 $x-1$，提取成 $x+1$。 <img src=x onerror=bad()>');
+    different.source_review.repair={status:'exhausted',attempts:3,reason:'修复候选仍未通过核验。',
+      history:[{round:1,decision:'different',verification_evidence:'修正草稿仍有差异 <script>bad()</script>',
+        patches:[{field:'content',before:'$x+1$',after:'$x-2$'}]}]};
+    const uncertain=make('uncertain','原页右下角模糊，无法判断指数。');
+    const notChecked=make();
+    const good=make('different','旧内容有误');good.source_review.required=false;good.source_review.verified_by='vision';
+    good.source_review.verification={decision:'equivalent',document_type:'docx',evidence:'修复后的公式和原页一致。'};
+    good.source_review.repair={status:'confirmed',attempts:2};
+    show([different,uncertain,notChecked,good]);
+    const before=JSON.stringify([different,uncertain,notChecked,good]);
+    const diagnostics={source_review_count:3,pdf_review_items:[{question_index:0,source_number:1,reasons:['旧的泛化提示']}],
+      docx_source_verification:{status:'partial',calls:4,checked:3,confirmed:1,pending:3,skipped:1,
+        skipped_reasons:[{question_index:2,reason:'未找到可用的原始页面。'}]}};
+    renderSourceIntegrityReport(diagnostics);
+    const card=index=>document.getElementById('parsed-card-'+index);
+    assert.deepEqual([0,1,2,3].map(i=>card(i).querySelector('.card-source-review-panel').dataset.reviewState),
+      ['different','uncertain','not_checked','confirmed']);
+    assert.equal(card(0).querySelector('.card-source-review-reasons').textContent,different.source_review.verification_attempt.evidence);
+    assert.ok(card(0).querySelector('.card-source-review-repair').textContent.includes('3 轮'));
+    const repairAudit=card(0).querySelector('.card-source-review-repair-history');
+    assert.equal(repairAudit.open,false);
+    assert.ok(repairAudit.querySelector('div').textContent.includes('未通过复核的修正稿不会替换题文'));
+    assert.ok(repairAudit.querySelector('div').textContent.includes('修正稿：$x-2$'));
+    assert.equal(repairAudit.querySelector('script'),null);
+    assert.equal(card(1).querySelector('.card-source-review-reasons').textContent,'原页右下角模糊，无法判断指数。');
+    assert.equal(card(2).querySelector('.card-source-review-reasons').textContent,'未找到可用的原始页面。');
+    assert.equal(card(3).querySelector('.card-source-review-reasons').textContent,'修复后的公式和原页一致。');
+    assert.ok(card(3).querySelector('.card-source-review-repair').textContent.includes('自动修复后已核验'));
+    assert.equal(card(3).querySelector('.card-source-review-panel').open,false);
+    let report=document.getElementById('parsedSourceIntegrityReport');
+    let lines=report.querySelector('.pdf-review-question-list').querySelectorAll('span').map(span=>span.textContent);
+    assert.ok(lines[0].startsWith('：模型发现差异：原文是'));
+    assert.ok(lines[1].startsWith('：模型尚无法确认：原页右下角'));
+    assert.equal(lines[2],'：未完成视觉核验：未找到可用的原始页面。');
+    assert.equal(lines.join('').includes('旧的泛化提示'),false);
+    assert.equal(report.querySelector('img'),null);
+    assert.deepEqual(getCheckedUnsavedIndices(),[0,1,2,3]);
+    assert.equal(JSON.stringify([different,uncertain,notChecked,good]),before,'display never edits model evidence or content');
+    edit(card(0),'.card-content-textarea','求 $x-1$。');
+    assert.equal(card(0).querySelector('.card-source-review-panel').dataset.reviewState,'edited');
+    assert.equal(card(0).querySelector('.card-source-review-repair').textContent,'');
+    report=document.getElementById('parsedSourceIntegrityReport');
+    assert.equal(report.querySelector('.pdf-review-question-list').querySelector('span').textContent,
+      '：内容已修改，先前的自动核验仅适用于旧内容。');
+    edit(card(0),'.card-content-textarea','求 $x+1$。');
+    replaceParsedQuestions([different]);renderParsedQuestionsList(parsedQuestionsData);
+    assert.equal(card(0).querySelector('.card-source-review-panel').dataset.reviewState,'edited','undo and re-render cannot revive stale different verdict');
+    const replacement=make('uncertain','新任务中的判断。');
+    show([replacement]);
+    assert.equal(card(0).querySelector('.card-source-review-panel').dataset.reviewState,'uncertain','new objects at old card indexes retain their own snapshots');
+    assert.equal(requests.length,0,'view and edits never trigger model calls');
+  },
+  async docx_completion_uses_remaining_extraction_count_and_legacy_fallback() {
+    for (const [diagnostics,expected] of [
+      [{review_required:7,word_extraction_review_count:1,source_review_count:1},1],
+      [{review_required:2,source_review_count:1},2],
+    ]) {
+      const generation=beginDocumentImportTask();
+      pollPdfTaskStatus('docx-pending-'+expected,generation);
+      [...intervals.values()][0]();
+      requests.at(-1).resolve({ok:true,json:async()=>({status:'completed',document_type:'docx',log:'完成',
+        data:[pendingQuestion()],generate_answers:false,diagnostics})});
+      await flush();
+      assertCompletedPollingStopped();
+      assert.ok(logs.some(line=>line.includes(`仍有 ${expected} 处提取疑点`)));
+      assert.ok(toasts.at(-1).includes(`仍有 ${expected} 处提取疑点`));
+      assert.equal(parsedQuestionNeedsSourceReview(0),true,'unconfirmed evidence remains available');
+    }
+    assert.ok(logs.every(line=>!line.includes('7 处')),'historical count is not the final warning count');
   },
   async strategy_request() {
     window.currentPdfFile = new Blob(['pdf']);
@@ -306,7 +467,7 @@ const pdfScenarios = {
     assert.equal(requests.at(-1).options.body.get('pdf_verify_suspicions'),'false');
     document.getElementById('pdfVerifySuspicions').remove();
     runAIPaperParse();
-    assert.equal(requests.at(-1).options.body.get('pdf_verify_suspicions'),'false','old markup never silently adds paid verification');
+    assert.equal(requests.at(-1).options.body.get('pdf_verify_suspicions'),'true','missing markup keeps automatic verification enabled');
   },
   async vision_confirmation_and_edit_invalidation() {
     const q={content:'计算 $1+1$。',answer_markdown:'',source_review:{required:false,verified_by:'vision',
@@ -323,7 +484,7 @@ const pdfScenarios = {
     assert.equal(card.querySelector('.card-select-checkbox').disabled,false);
     assert.ok(card.querySelector('.card-source-review-reasons').textContent.includes('先前的自动核验仅适用于旧内容'));
     assert.equal(validateParsedQuestionBeforeImport(0),true);
-    assert.equal(card.querySelector('.card-source-review-status').textContent,'查看原文与提取说明（可选）');
+    assert.equal(card.querySelector('.card-source-review-status').textContent,'内容已修改 · 查看旧核验记录');
     edit(card,'.card-answer-textarea','教师补充解析');
     replaceParsedQuestions([q]);renderParsedQuestionsList(parsedQuestionsData);
     assert.equal(parsedQuestionNeedsSourceReview(0),true,'reusing the object is not a new model verification');
@@ -607,6 +768,14 @@ const pdfScenarios = {
     assert.deepEqual(getCheckedUnsavedIndices(),[0]);
     appendSourceIntegrityLog(diagnostics);
     assert.ok(logs.some(line=>line.includes('局部识别 3 页')));
+    const retried={...diagnostics,pdf_vision:{calls:5,retries:1,timeout_seconds:600}};
+    renderSourceIntegrityReport(retried);
+    assert.ok(document.getElementById('parsedSourceIntegrityReport').querySelector('.pdf-extraction-summary').textContent.includes('逐页识别请求 5 次，其中失败后重试 1 次；每次超时设为 600 秒。'));
+    appendSourceIntegrityLog(retried);
+    assert.ok(logs.some(line=>line.includes('失败后重试 1 次')));
+    assert.equal(parsedQuestionNeedsSourceReview(0),false,'retry success is a processing note, not an unresolved source issue');
+    assert.equal(pdfExtractionReportSummary(diagnostics.pdf_extraction,{calls:undefined,retries:0}).includes('识别请求'),false,'missing calls are unknown, not zero');
+    assert.equal(pdfExtractionReportSummary(diagnostics.pdf_extraction,{calls:3,retries:3}).includes('失败后重试'),false,'invalid retry counts must not be reported');
     const generation=beginDocumentImportTask();
     pollPdfTaskStatus('regional-1',generation);
     [...intervals.values()][0]();
@@ -678,9 +847,15 @@ const pdfScenarios = {
     assert.ok(document.getElementById('importSubLoadingText').textContent.includes('核对归属'));
     assert.deepEqual(window.pdfPageNumbers,[2,5]);
     tick();
+    requests.at(-1).resolve({ok:true,json:async()=>({status:'ai_splitting',log:'PDF 整卷拆题：第 2 / 2 次尝试...',progress:80,
+      diagnostics:{pdf_splitting:{calls:2,retries:1,timeout_seconds:600}}})});
+    await flush();
+    assert.ok(document.getElementById('importSubLoadingText').textContent.includes('每次超时 600 秒'));
+    assert.ok(document.getElementById('importSubLoadingText').textContent.includes('复用已提取内容'));
+    tick();
     requests.at(-1).resolve({ok:true,json:async()=>({status:'source_verification',log:'正在对照原页核验...',progress:90})});
     await flush();
-    assert.ok(document.getElementById('importSubLoadingText').textContent.includes('按所选设置核验'));
+    assert.ok(document.getElementById('importSubLoadingText').textContent.includes('自动核验原页疑点'));
     tick();
     requests.at(-1).resolve({ok:true,json:async()=>({status:'completed',log:'完成',document_type:'pdf',data:[],
       diagnostics:{pdf_layout:{pages_checked:2,figures_extracted:1,figures_attached:1,visual_calls:2,warnings:[]},
@@ -690,6 +865,34 @@ const pdfScenarios = {
     assert.ok(logs.some(line=>line.includes('配图核对调用 2 次')));
     assert.ok(logs.some(line=>line.includes('公式核对：3 处')),'PDF formula report also appears');
     assert.ok(document.getElementById('parsedSourceIntegrityReport'));
+  },
+  async splitting_retry_report_and_failure_keep_page_evidence() {
+    show([{content:'正常题目',answer_markdown:''}]);
+    const diagnostics={pdf_splitting:{calls:2,retries:1,timeout_seconds:600}};
+    renderSourceIntegrityReport(diagnostics);
+    const panel=document.getElementById('parsedSourceIntegrityReport');
+    assert.equal(panel.open,false);
+    assert.equal(panel.querySelector('.pdf-splitting-summary').textContent,
+      'PDF 整卷拆题请求 2 次，其中失败后重试 1 次；每次超时设为 600 秒。');
+    assert.equal(parsedQuestionNeedsSourceReview(0),false);
+    assert.equal(paperSplittingReportSummary({retries:1}),'','missing calls remain unknown');
+    assert.ok(paperSplittingReportSummary({calls:1,retries:0,timeout_seconds:360}).includes('360 秒'),'legacy task reports retain their actual timeout');
+    for (const timeout_seconds of [null,'600',NaN,Infinity,-1,0,0.5,true,3601]) {
+      assert.equal(paperSplittingReportSummary({calls:1,retries:0,timeout_seconds}).includes('超时设为'),false);
+    }
+    const generation=beginDocumentImportTask();
+    pollPdfTaskStatus('split-failed',generation);
+    [...intervals.values()][0]();
+    requests.at(-1).resolve({ok:true,json:async()=>({status:'error',document_type:'pdf',error:'PDF 整卷拆题超时',
+      page_images:['/static/uploads/tmp/page1.png'],page_numbers:[1],diagnostics})});
+    await flush();
+    assert.equal(intervals.size,0);
+    assert.deepEqual(window.pdfPageNumbers,[1]);
+    assert.deepEqual(window.pdfPageImages,['/static/uploads/tmp/page1.png']);
+    assert.ok(document.getElementById('importSubLoadingText').textContent.includes('逐页提取已经完成，整卷拆题未完成'));
+    assert.ok(logs.some(line=>line.includes('整卷拆题请求 2 次')));
+    assert.equal(document.getElementById('runParseBtn').disabled,false);
+    assert.ok(requests.every(request=>request.url.endsWith('/status')),'reporting failure cannot restart paid extraction');
   },
   async stale_poll_does_not_replace_pages_or_report() {
     const generation = beginDocumentImportTask();
@@ -728,8 +931,13 @@ pdfScenarios[process.argv[1]]().catch(error=>{console.error(error);process.exitC
 @pytest.mark.parametrize("scenario", [
     "completion_respects_explicit_answer_generation_choice",
     "docx_verification_controls_and_request", "docx_verification_confirmation_report_and_revocation",
+    "docx_extraction_warnings_survive_successful_source_comparison",
+    "partial_verification_preserves_confirmed_cards_and_explains_invalid_items",
     "docx_verification_polling_and_completion",
+    "source_review_states_prefer_latest_evidence_and_revoke_on_edit",
+    "docx_completion_uses_remaining_extraction_count_and_legacy_fallback",
     "strategy_request", "warnings_and_unmatched_images", "polling_progress_and_completion",
+    "splitting_retry_report_and_failure_keep_page_evidence",
     "vision_confirmation_and_edit_invalidation", "vision_snapshot_revocation_does_not_gate_import",
     "source_verification_report_success_pending_and_failure",
     "stale_poll_does_not_replace_pages_or_report", "crop_uses_original_pdf_page",
@@ -1234,8 +1442,7 @@ def test_pdf_source_verification_control_and_revocable_result(browser, tmp_path)
     })()
     """)
     browser.command('check', 'input[name="pdfStrategy"][value="layout_aware"]')
-    browser.command('check', '#pdfVerifySuspicions')
-    assert browser.evaluate('selectedPdfSourceVerification()')
+    assert browser.evaluate("document.getElementById('pdfVerifySuspicions').checked && selectedPdfSourceVerification()")
     for strategy in ('native_preferred', 'force_ocr'):
         browser.command('check', f'input[name="pdfStrategy"][value="{strategy}"]')
         assert browser.evaluate("document.getElementById('pdfVerifySuspicions').disabled")
@@ -1280,7 +1487,7 @@ def test_pdf_source_verification_control_and_revocable_result(browser, tmp_path)
         browser.command('scrollintoview', '#parsed-card-0 .card-source-review-status')
         browser.command('screenshot', str(tmp_path / 'pdf-auto-verification-revoked.png'))
         assert browser.evaluate('parsedQuestionNeedsSourceReview(0)')
-        assert browser.evaluate("document.querySelector('#parsed-card-0 .card-source-review-status').textContent") == '查看原文与提取说明（可选）'
+        assert browser.evaluate("document.querySelector('#parsed-card-0 .card-source-review-status').textContent") == '内容已修改 · 查看旧核验记录'
         assert browser.evaluate("!document.querySelector('#parsed-card-0 .card-select-checkbox').disabled")
         browser.command('check', '#parsed-card-0 .card-select-checkbox')
         assert browser.evaluate('getCheckedUnsavedIndices()') == [0, 1]
@@ -1316,9 +1523,12 @@ def test_docx_source_verification_upload_poll_and_revocable_result(browser, tmp_
                 reasons:['原 Word 中有未能可靠提取的公式结构，请对照原文件核对。']}};
         window.__docxUiCompleted={status:'completed',document_type:'docx',log:'拆分完成，请核对原文提示。',progress:100,
             data:[confirmed,pending],generate_answers:false,diagnostics:{omml_converted:4,images_extracted:0,
-                review_required:1,source_review_count:1,docx_source_verification:{status:'completed',calls:1,
-                    checked:1,confirmed:1,pending:1,skipped:1,notes:[],skipped_reasons:[{question_index:1,
-                        source_number:2,source_pages:[],code:'other_review_reason',reason:'仍有未解析的公式结构，保留人工核对。'}]}}};
+                review_required:4,word_extraction_review_count:1,source_review_count:1,
+                word_extraction_warnings:['OMML 含不支持的公式结构，已保留原文提示。',
+                    'OMML 含不支持的公式结构，已保留原文提示。'],
+                docx_source_verification:{status:'partial',calls:1,
+                    checked:1,confirmed:1,pending:1,skipped:0,notes:[],invalid_items:[{id:'word_002',question_index:1,
+                        source_number:2,source_pages:[1],code:'missing_result',reason:'本题未返回有效核验结论，已保留原提示。'}]}}};
         const reply=value=>Promise.resolve(new Response(JSON.stringify(value),{status:200,headers:{'Content-Type':'application/json'}}));
         window.fetch=(input,options={})=>{
             const url=typeof input==='string' ? input : input.url;
@@ -1350,8 +1560,7 @@ def test_docx_source_verification_upload_poll_and_revocable_result(browser, tmp_
         browser.command('upload', '#texFileInput', str(word_file))
         browser.command('wait', '--fn', "document.getElementById('docxVerificationContainer').checkVisibility()")
         browser.command('fill', '#importPaperTitle', 'Word 原文核验示例')
-        assert browser.evaluate("!document.getElementById('docxVerifySuspicions').checked && !selectedDocxSourceVerification()")
-        browser.command('check', '#docxVerifySuspicions')
+        assert browser.evaluate("document.getElementById('docxVerifySuspicions').checked && selectedDocxSourceVerification()")
         assert browser.evaluate('window.__docxUiNetwork.uploads') == [], 'selecting a file starts no task'
         for width, height in [(1600, 1100), (375, 812)]:
             browser.command('set', 'viewport', str(width), str(height))
@@ -1370,10 +1579,14 @@ def test_docx_source_verification_upload_poll_and_revocable_result(browser, tmp_
             {'verify': 'true', 'answers': 'false', 'file': word_file.name}]
         assert browser.evaluate('window.__docxUiNetwork.polls') == 2
         summary = browser.evaluate("document.querySelector('#parsedSourceIntegrityReport .pdf-source-verification-summary').textContent")
-        assert 'AI 核验 1 题，已确认 1 题，保留提取说明 1 题' in summary
+        assert '收到 1 题的有效核验结论，已确认 1 题，保留提取说明 1 题' in summary
+        assert '有效结论已逐题保留' in summary
+        assert browser.evaluate("document.querySelector('#parsedSourceIntegrityReport .pdf-layout-notes').textContent.includes('本题未返回有效核验结论')")
         assert browser.evaluate("document.querySelector('#parsedSourceIntegrityReport .pdf-review-question-link').textContent") == '第2题'
-        assert browser.evaluate("document.getElementById('importLogsConsole').textContent.includes('提取阶段标记 1 处疑点')")
+        assert browser.evaluate("document.getElementById('importLogsConsole').textContent.includes('仍有 1 处提取疑点')")
+        assert not browser.evaluate("document.getElementById('importLogsConsole').textContent.includes('4 处')")
         assert not browser.evaluate("document.querySelector('#parsed-card-1 .card-source-review-panel').className.includes('amber')")
+        assert browser.evaluate("!document.getElementById('parsedSourceIntegrityReport').open && !document.querySelector('#parsedSourceIntegrityReport .pdf-layout-notes').open")
         for width, height in [(1600, 1100), (375, 812)]:
             browser.command('set', 'viewport', str(width), str(height))
             browser.command('scrollintoview', '#parsedSourceIntegrityReport')
@@ -1383,6 +1596,20 @@ def test_docx_source_verification_upload_poll_and_revocable_result(browser, tmp_
             assert browser.evaluate("document.querySelector('#parsed-card-0 .card-source-review-confirm') === null")
             assert not browser.evaluate("document.querySelector('#parsed-card-1 .card-select-checkbox').disabled")
             browser.command('screenshot', str(tmp_path / f'docx-verification-result-{width}.png'))
+            _open_source_report(browser)
+            browser.command('scrollintoview', '#parsedSourceIntegrityReport .pdf-layout-notes > summary')
+            assert browser.evaluate("!document.querySelector('#parsedSourceIntegrityReport .pdf-layout-notes').open")
+            browser.command('click', '#parsedSourceIntegrityReport .pdf-layout-notes > summary')
+            browser.settle()
+            assert browser.evaluate("[...document.querySelectorAll('#parsedSourceIntegrityReport .pdf-layout-notes p')].filter(p=>p.textContent==='Word 提取：OMML 含不支持的公式结构，已保留原文提示。').length") == 1
+            assert browser.evaluate("document.querySelector('#parsedSourceIntegrityReport .pdf-layout-notes p').checkVisibility()")
+            assert browser.evaluate('parsedQuestionNeedsSourceReview(0)') is False
+            assert browser.evaluate('parsedQuestionNeedsSourceReview(1)') is True
+            assert browser.evaluate('getCheckedUnsavedIndices()') == [0, 1]
+            browser.command('screenshot', str(tmp_path / f'docx-extraction-warning-expanded-{width}.png'))
+            browser.command('click', '#parsedSourceIntegrityReport .pdf-layout-notes > summary')
+            browser.command('scrollintoview', '#parsedSourceIntegrityReport > summary')
+            browser.command('click', '#parsedSourceIntegrityReport > summary')
             browser.command('scrollintoview', '#parsed-card-0 .card-source-review-status')
             browser.settle()
             assert browser.evaluate("(() => {const r=document.querySelector('#parsed-card-0 .card-source-review-status').getBoundingClientRect();return r.bottom>120 && r.top<innerHeight-80 && r.left>=0 && r.right<=innerWidth;})()")
@@ -1410,3 +1637,70 @@ def test_docx_source_verification_upload_poll_and_revocable_result(browser, tmp_
         browser.evaluate('stopCurrentDocumentPoll(); window.fetch=window.__docxUiOriginalFetch; true')
         browser.command('set', 'viewport', '1600', '1100')
     print(f'Word automatic source verification visual QA: {tmp_path}')
+
+
+@pytest.mark.skipif(os.environ.get('MATHBANK_TEST_BROWSER') != '1', reason='opt-in actual browser regression')
+def test_visual_review_states_and_repair_evidence_are_specific_and_revocable(browser, tmp_path):
+    browser.evaluate(r"""
+    (() => {
+        selectWorkspace('import', '导入中心');
+        stopCurrentDocumentPoll();
+        window.__reviewStatesFetch=window.fetch;
+        window.__reviewStatesBlocked=[];
+        window.fetch=(input,options={})=>{
+            const url=typeof input==='string'?input:input.url;
+            if (url.includes('/api/ai/') || url.includes('/api/upload/') ||
+                (String(options.method || 'GET').toUpperCase()!=='GET' && /\/api\/questions(?:\/|$)/.test(url))) {
+                window.__reviewStatesBlocked.push(url);
+                return Promise.reject(Error('No model calls or writes in review state regression'));
+            }
+            return window.__reviewStatesFetch(input,options);
+        };
+        const make=(number,decision,evidence)=>({content:'第 '+number+' 题，求 $x+1$。',answer_markdown:'',question_type:'detailed_answer',
+            source_review:{required:true,source_number:number,source_excerpt:'原文：求 $x-1$。',reasons:['公式位置不能对应。'],
+                ...(decision?{verification_attempt:{decision,evidence,document_type:'docx'}}:{})}});
+        const bad=make(1,'different','原文是 x-1，当前是 x+1。<img src=x onerror=bad()>');
+        bad.source_review.repair={status:'exhausted',attempts:3,reason:'修复候选仍未通过核验，保留初始题文。'};
+        const unsure=make(2,'uncertain','原页指数太模糊，无法确定。');
+        const unchecked=make(3);
+        const good=make(4,'different','修复前的旧差异');
+        good.source_review.required=false;good.source_review.verified_by='vision';
+        good.source_review.verification={decision:'equivalent',document_type:'docx',evidence:'修复后与原文一致。'};
+        good.source_review.repair={status:'confirmed',attempts:2};
+        replaceParsedQuestions([bad,unsure,unchecked,good]);renderParsedQuestionsList(parsedQuestionsData);
+        updateImportSourceView('result');
+        renderSourceIntegrityReport({source_review_count:3,pdf_review_items:[{question_index:0,source_number:1,reasons:['旧的泛化警告']}],
+            docx_source_verification:{status:'partial',calls:3,checked:3,confirmed:1,pending:3,skipped:1,
+                skipped_reasons:[{question_index:2,reason:'缺少原页，未发送模型。'}]}});
+        return true;
+    })()
+    """)
+    try:
+        assert browser.evaluate("[...document.querySelectorAll('.card-source-review-panel')].map(p=>p.dataset.reviewState)") == [
+            'different', 'uncertain', 'not_checked', 'confirmed']
+        assert browser.evaluate("[...document.querySelectorAll('.card-source-review-panel')].every(p=>!p.open)")
+        assert browser.evaluate('getCheckedUnsavedIndices()') == [0, 1, 2, 3]
+        assert '原文是 x-1' in browser.evaluate("document.querySelector('.pdf-review-question-list li span').textContent")
+        assert '旧的泛化警告' not in browser.evaluate("document.querySelector('.pdf-review-question-list').textContent")
+        assert browser.evaluate("document.querySelector('#parsed-card-2 .card-source-review-reasons').textContent") == '缺少原页，未发送模型。'
+        assert browser.evaluate("document.querySelector('#parsed-card-3 .card-source-review-repair').textContent") == '自动修复后已核验（尝试 2 轮）。'
+        for width, height in [(1600, 1100), (375, 812)]:
+            browser.command('set', 'viewport', str(width), str(height))
+            browser.command('scrollintoview', '#parsed-card-0 .card-source-review-status')
+            if not browser.evaluate("document.querySelector('#parsed-card-0 .card-source-review-panel').open"):
+                browser.command('click', '#parsed-card-0 .card-source-review-status')
+            browser.settle()
+            assert browser.evaluate("document.querySelector('#parsed-card-0 .card-source-review-reasons').checkVisibility()")
+            assert browser.evaluate("!document.querySelector('#parsed-card-0 .card-source-review-history').open")
+            assert browser.evaluate("document.querySelector('#parsed-card-0 .card-source-review-panel img')===null")
+            assert browser.evaluate("(() => {const r=document.querySelector('#parsed-card-0 .card-source-review-panel').getBoundingClientRect();return r.left>=0&&r.right<=innerWidth;})()")
+            browser.command('screenshot', str(tmp_path / f'visual-review-difference-{width}.png'))
+        browser.command('fill', '#parsed-card-0 .card-content-textarea', '第 1 题，求 $x-1$。')
+        assert browser.evaluate("document.querySelector('#parsed-card-0 .card-source-review-panel').dataset.reviewState") == 'edited'
+        assert '旧核验记录' in browser.evaluate("document.querySelector('#parsed-card-0 .card-source-review-status').textContent")
+        assert '模型发现差异' not in browser.evaluate("document.querySelector('.pdf-review-question-list li').textContent")
+        assert browser.evaluate('window.__reviewStatesBlocked') == []
+    finally:
+        browser.evaluate('window.fetch=window.__reviewStatesFetch; true')
+        browser.command('set', 'viewport', '1600', '1100')
+    print(f'Visual review status QA: {tmp_path}')

@@ -475,6 +475,95 @@ def test_docx_keeps_text_inside_word_text_box():
     assert "文本框中的题目条件" in result["markdown"]
 
 
+def _alternate_content(choice: str, fallback: str) -> str:
+    return (
+        '<mc:AlternateContent xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006" '
+        'xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main">'
+        f'<mc:Choice Requires="a">{choice}</mc:Choice>'
+        f'<mc:Fallback>{fallback}</mc:Fallback></mc:AlternateContent>'
+    )
+
+
+@pytest.mark.parametrize("location", ["inline", "body", "table", "drawing"])
+def test_docx_alternate_image_representations_are_extracted_once(tmp_path, location):
+    modern = '<w:r><w:drawing><a:blip r:embed="modern"/></w:drawing></w:r>'
+    legacy = '<w:r><w:pict><v:shape><v:imagedata r:id="legacy"/></v:shape></w:pict></w:r>'
+    if location == "body":
+        body = _alternate_content(f"<w:p>{modern}</w:p>", f"<w:p>{legacy}</w:p>")
+    elif location == "drawing":
+        body = '<w:p><w:r><w:drawing>' + _alternate_content(
+            '<a:blip r:embed="modern"/>', '<v:imagedata r:id="legacy"/>'
+        ) + '</w:drawing></w:r></w:p>'
+    else:
+        body = '<w:p><w:r><w:t>如图</w:t></w:r>' + _alternate_content(modern, legacy) + '</w:p>'
+        if location == "table":
+            body = f"<w:tbl><w:tr><w:tc>{body}</w:tc></w:tr></w:tbl>"
+    result = extract_docx_markdown(_create_docx_package(
+        body,
+        '<Relationship Id="modern" Target="media/modern.png"/>'
+        '<Relationship Id="legacy" Target="media/legacy.png"/>',
+        {"word/media/modern.png": _tiny_png(),
+         "word/media/legacy.png": b"unreadable fallback" if location == "drawing" else _tiny_png()},
+    ), output_dir=tmp_path)
+    assert result["success"] is True
+    assert result["markdown"].count("![](") == 1
+    assert result["image_count"] == len(result["image_paths"]) == 1
+    assert len(list(tmp_path.iterdir())) == 1
+    assert result["diagnostics"]["review_required"] == 0
+
+
+@pytest.mark.parametrize("formula, expected_reviews", [("x+1", 0), ("x&#xEC09;y", 1)])
+def test_docx_native_formula_does_not_parse_its_legacy_ole_fallback(tmp_path, formula, expected_reviews):
+    body = '<w:p>' + _alternate_content(
+        f'<m:oMath><m:r><m:t>{formula}</m:t></m:r></m:oMath>',
+        '<w:r><w:object><v:shape><v:imagedata r:id="preview"/></v:shape>'
+        '<o:OLEObject ProgID="Equation.3" r:id="equation"/></w:object></w:r>',
+    ) + '</w:p>'
+    result = extract_docx_markdown(_create_docx_package(
+        body,
+        '<Relationship Id="preview" Target="media/preview.png"/>'
+        '<Relationship Id="equation" Target="embeddings/formula.bin"/>',
+        {"word/media/preview.png": _tiny_png(), "word/embeddings/formula.bin": b"unsupported"},
+    ), output_dir=tmp_path)
+    assert result["success"] is True
+    assert result["diagnostics"]["omml_converted"] == 1
+    assert result["diagnostics"]["review_required"] == expected_reviews
+    assert result["diagnostics"]["mtef_fallback_images"] == 0
+    assert "MathType" not in result["markdown"]
+    assert result["image_paths"] == []
+    assert list(tmp_path.iterdir()) == []
+
+
+@pytest.mark.parametrize("valid_fallback", [True, False])
+def test_docx_unsupported_drawing_uses_only_its_raster_fallback(tmp_path, valid_fallback):
+    body = '<w:p>' + _alternate_content(
+        '<w:r><w:drawing><a:blip r:embed="vector"/></w:drawing></w:r>',
+        '<w:r><w:pict><v:shape><v:imagedata r:id="preview"/></v:shape></w:pict></w:r>',
+    ) + '</w:p>'
+    result = extract_docx_markdown(_create_docx_package(
+        body,
+        '<Relationship Id="vector" Target="media/vector.svg"/>'
+        '<Relationship Id="preview" Target="media/preview.png"/>',
+        {"word/media/vector.svg": b'<svg xmlns="http://www.w3.org/2000/svg"/>',
+         "word/media/preview.png": _tiny_png() if valid_fallback else b"bad image"},
+    ), output_dir=tmp_path)
+    assert result["success"] is True
+    assert result["image_count"] == (1 if valid_fallback else 0)
+    assert result["diagnostics"]["review_required"] == (0 if valid_fallback else 1)
+    assert result["diagnostics"]["images_unavailable"] == (0 if valid_fallback else 1)
+    assert all("vector.svg" not in warning for warning in result["diagnostics"]["warnings"])
+
+
+def test_docx_alternate_text_box_keeps_its_text_once():
+    text_box = ('<w:r><w:pict><w:txbxContent><w:p><w:r>'
+                '<w:t>文本框中的条件</w:t></w:r></w:p></w:txbxContent></w:pict></w:r>')
+    result = extract_docx_markdown(_create_docx_package(
+        '<w:p>' + _alternate_content(text_box, text_box) + '</w:p>'
+    ))
+    assert result["markdown"] == "文本框中的条件"
+    assert result["diagnostics"]["review_required"] == 0
+
+
 def test_mathtype_failure_keeps_preview_image_and_review_marker(tmp_path):
     body = """
     <w:p><w:r><w:object>
