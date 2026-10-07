@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import base64
 from collections import Counter
+import hashlib
 import math
 import os
 from pathlib import Path
@@ -246,10 +247,12 @@ def request_pdf_page(
     image_path: str, page_info: dict, *, check_cancelled: Callable[[], None] = _no_cancel,
     report_attempt: Callable[[dict], None] = lambda _event: None,
     detail_views: list[dict] | None = None,
+    include_transcription_evidence: bool = False,
 ) -> dict:
     """Recognize a page with one bounded retry of the configured provider."""
     check_cancelled()
     clean_info = _prompt_page_info(page_info)
+    witness = None
     provider = resolve_ocr_provider(os.getenv("OCR_PREFER_ENGINE", "siliconflow"))
     if not provider.api_key or not provider.chat_completions_url:
         raise ValueError("PDF 页面联合识别所用的识图服务未配置。")
@@ -305,6 +308,15 @@ def request_pdf_page(
     payload = apply_model_thinking_policy(payload, provider=provider, task="ocr")
     payload = apply_structured_output_policy(payload, provider=provider,
                                             system_instruction=prompts.PDF_STRUCTURED_OUTPUT_INSTRUCTIONS)
+    if include_transcription_evidence:
+        from .pdf_transcription_scopes import begin_pdf_transcription_witness
+        try:
+            witness = begin_pdf_transcription_witness(image_path, clean_info,
+                expected_image_sha256=hashlib.sha256(source_png).hexdigest(),
+                detail_views=detail_views if detail_input["status"] == "included" else (),
+                request_inputs=payload)
+        except (ValueError, OSError):
+            pass
     def validate(body):
         raw = completion_content(body, "PDF 页面联合识别", max_chars=MAX_RESPONSE_CHARS)
         try:
@@ -320,4 +332,10 @@ def request_pdf_page(
     )
     result["model"] = provider.model_name
     result["detail_input"] = detail_input
+    if witness is not None:
+        from .pdf_transcription_scopes import finish_pdf_transcription_witness
+        try:
+            result["_transcription_witness"] = finish_pdf_transcription_witness(witness, result)
+        except (ValueError, OSError):
+            pass
     return result

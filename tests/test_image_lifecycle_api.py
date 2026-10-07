@@ -15,7 +15,7 @@ from pathlib import Path
 
 from PIL import Image
 import pytest
-from sqlalchemy import event
+from sqlalchemy import create_engine, event
 from sqlalchemy.orm import sessionmaker
 
 from mathbank.database import Question, QuestionCurriculum, get_db
@@ -72,6 +72,61 @@ def headers():
     from main import LOCAL_TOKEN
 
     return {"X-Local-Token": LOCAL_TOKEN}
+
+
+@pytest.fixture
+def concurrent_file_db(client, tmp_path, monkeypatch):
+    """Give concurrent requests independent connections, as production does.
+
+    The default StaticPool fixture shares one sqlite3 connection. Closing an
+    export/dependency Session can then roll back another request's flushed
+    question before its fingerprint insert, even though CRUD bodies are locked.
+    Keep this storage change local to the actual concurrent lifecycle test.
+    """
+    import main
+    from mathbank import database, sync_helper
+
+    file_engine = create_engine(
+        f"sqlite:///{tmp_path / 'concurrent-lifecycle.sqlite'}",
+        connect_args={"check_same_thread": False},
+    )
+    sessions = sessionmaker(autocommit=False, autoflush=False, bind=file_engine)
+    previous_override = main.app.dependency_overrides.get(get_db)
+
+    def independent_session():
+        with sessions() as session:
+            yield session
+
+    try:
+        assert database.configure_sqlite_wal(file_engine) == "wal"
+        with file_engine.connect() as connection:
+            assert connection.exec_driver_sql("PRAGMA journal_mode").scalar_one() == "wal"
+            assert connection.exec_driver_sql("PRAGMA foreign_keys").scalar_one() == 1
+            assert connection.exec_driver_sql("PRAGMA busy_timeout").scalar_one() == 5000
+        database.Base.metadata.create_all(file_engine)
+        with monkeypatch.context() as patch:
+            patch.setattr(database, "engine", file_engine)
+            patch.setattr(database, "SessionLocal", sessions)
+            patch.setattr(main, "engine", file_engine)
+            patch.setattr(sync_helper, "SessionLocal", sessions)
+            patch.setattr(sync_helper, "BACKUP_DIR", str(tmp_path / "exports"))
+            patch.setattr(sync_helper, "JSON_BACKUP_PATH", str(tmp_path / "exports/questions.json"))
+            patch.setattr(sync_helper, "MD_BACKUP_PATH", str(tmp_path / "exports/questions.md"))
+            main.app.dependency_overrides[get_db] = independent_session
+            try:
+                with sessions() as assertion_session:
+                    yield assertion_session
+            finally:
+                # TestClient responses await BackgroundTasks; the test's pool
+                # also joins both requests. Confirm no export is still active
+                # before restoring its session factory and output paths.
+                with sync_helper._export_lock:
+                    if previous_override is None:
+                        main.app.dependency_overrides.pop(get_db, None)
+                    else:
+                        main.app.dependency_overrides[get_db] = previous_override
+    finally:
+        file_engine.dispose()
 
 
 def _age(path):
@@ -323,10 +378,11 @@ def test_same_filename_with_different_content_never_overwrites_destination(clien
 
 
 def test_concurrent_delete_and_create_preserve_the_new_questions_shared_image(
-    client, db_session, headers, assets,
+    client, concurrent_file_db, headers, assets,
 ):
     import main
 
+    db_session = concurrent_file_db
     path, url = assets("concurrent")
     original = path.read_bytes()
     first = _created(client.post(

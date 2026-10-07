@@ -5,6 +5,7 @@
 import os
 import math
 import tempfile
+import time
 from collections import Counter
 from importlib.metadata import PackageNotFoundError, version as package_version
 from typing import Any, Dict, List, Optional
@@ -59,6 +60,14 @@ _FONT_GLYPH_WRAPPER = re.compile(
     r"(?<![A-Za-zÀ-ÖØ-öø-ÿ])([ôîöËä])\s*\*{0,2}[+-]?[A-Za-z0-9]"
     r"[^\n\u3400-\u9fff，。；：]{0,60}?\1(?![A-Za-zÀ-ÖØ-öø-ÿ])"
 )
+_PAINT_VISIBILITY_REASON = "原生提取保留了被原页后绘制的不透明矩形完全遮挡的文字，请对照原页识别。"
+_PAINT_MAX_PATHS = 3000
+_PAINT_MAX_COVERS = 256
+_PAINT_MAX_SPANS = 2000
+_PAINT_MAX_CHARS = 30000
+_PAINT_MAX_COMPARISONS = 20000
+_PAINT_MAX_SECONDS = .10
+_NON_LAYOUT_CONTROL = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f-\x9f]")
 _NATIVE_HTML_TAG = re.compile(
     r"</?(?:a|b|br|code|div|em|i|img|p|span|strong|sub|sup|table|tbody|td|th|thead|tr|u)"
     r"(?:\s+[^<>]*?)?\s*/?>", re.IGNORECASE,
@@ -176,6 +185,24 @@ def _has_misdecoded_pound_relation(text: str) -> bool:
                 and re.search(r"(?:\d|[A-Za-z])\s*£\s*£\s*(?:\d|[A-Za-z])", text))
 
 
+def _has_misdecoded_set_membership(text: str) -> bool:
+    """Require a domain declaration, not an accented letter near mathematics.
+
+    Some Symbol-font memberships arrive as uppercase I-circumflex. The
+    variable/domain shape and Chinese declaration must both be present;
+    neither the letter itself nor a neighbouring formula is sufficient.
+    """
+    membership = re.compile(
+        r"(?<![A-Za-zÀ-ÖØ-öø-ÿ\\])([A-Za-z])\s*Î\s*([RZNQC])"
+        r"(?![A-Za-zÀ-ÖØ-öø-ÿ])"
+    )
+    for match in membership.finditer(text):
+        prefix = text[max(0, match.start() - 80):match.start()]
+        if re.search(r"集合|定义域|(?:设|任意)\s*(?:[（(\[$]|\\\()?\s*$", prefix):
+            return True
+    return False
+
+
 def _has_local_brace_components(text: str) -> bool:
     """A page-wide inventory cannot establish a single broken cases layout."""
     # Do not combine an upper, middle and lower piece from different questions.
@@ -205,7 +232,7 @@ def _table_cells(line: str) -> list[str]:
 
 
 def _has_scrambled_sparse_table(markdown: str) -> bool:
-    """Reject a wide table only with question-order or prose-fragment evidence."""
+    """Require question-order, prose-fragment or collapsed graph-option evidence."""
     lines = markdown.splitlines()
     for index, line in enumerate(lines):
         separator = _table_cells(line)
@@ -228,6 +255,28 @@ def _has_scrambled_sparse_table(markdown: str) -> bool:
             return True
         if len(separator) < 8:
             continue  # Other broad-table heuristics retain their old scope.
+        # A graph question followed by only the four bare option labels is a
+        # lost option row, not evidence supplied by width or empty cells. In
+        # a synthesized exam table, Inspector can fuse A/C and B/D into two
+        # cells while discarding the graph payloads. Require the original
+        # four-option instruction and several numbered questions as well.
+        question_numbers = {
+            int(match.group(1)) for row in plain_rows for cell in row
+            for match in _QUESTION_IN_CELL.finditer(cell)
+        }
+        four_option_exam = bool(re.search(r"四(?:个)?选项", " ".join(header)))
+        if four_option_exam and len(question_numbers) >= 3:
+            for previous_row, row in zip(plain_rows, plain_rows[1:]):
+                if not re.search(r"图(?:象|像|形|标).{0,12}(?:是|为|如下|正确)", " ".join(previous_row)):
+                    continue
+                option_cells = [cell.strip() for cell in row if cell.strip()]
+                if len(option_cells) != 2:
+                    continue
+                if not all(re.fullmatch(r"[A-D][.．、]\s*[A-D][.．、]", cell) for cell in option_cells):
+                    continue
+                labels = re.findall(r"([A-D])[.．、]", " ".join(option_cells))
+                if len(labels) == 4 and set(labels) == set("ABCD"):
+                    return True
         # A long paragraph plus many tiny cells is insufficient by itself:
         # require fused subquestion starts, or a new question embedded in the
         # previous question's unfinished sentence. Real comparison/data tables
@@ -297,6 +346,8 @@ def native_text_quality_reasons(markdown: str) -> list[str]:
     reasons = []
     if not raw.strip():
         return ["原生提取未得到有效文字。"]
+    if _NON_LAYOUT_CONTROL.search(raw):
+        reasons.append("原生文字含非排版控制字符，需对照原页识别。")
     text = _native_diagnostic_text(raw)
     if _PRIVATE_OR_MISSING_GLYPH.search(text):
         reasons.append("原生文字含缺字或未解码的私用字体符号。")
@@ -317,6 +368,9 @@ def native_text_quality_reasons(markdown: str) -> list[str]:
         angle = angle or re.search(r"Ð\s*[A-Z]\s*(?:[=<>≤≥]\s*\d+(?:\.\d+)?\s*°|的(?:度数|大小))", plain)
         angle = angle or re.search(r"(?:平分|角平分线)\s*Ð\s*[A-Z]{1,3}(?![A-Za-z])", plain)
         triangle = re.search(r"(?:在|如图[，,]?|三角形)\s*(?:Rt\s*)?V\s*[A-Z]{3}(?![A-Za-z])\s*(?:中|和|与|[，,。；;])", plain)
+        membership_reason = "原生数学表达式中的集合归属符存在字体错解迹象。"
+        if membership_reason not in reasons and _has_misdecoded_set_membership(plain):
+            reasons.append(membership_reason)
         if angle or triangle or _has_misdecoded_pound_relation(plain):
             reasons.append("原生数学表达式中的角、三角形或不等号存在字体错解迹象。")
             break
@@ -332,6 +386,87 @@ def native_text_quality_reasons(markdown: str) -> list[str]:
             reasons.append("原生数学表达式含未正确解码的括号、绝对值或其他字体符号。")
             break
     return reasons
+
+
+def _multicolumn_table_order_reasons(markdown: str, headings: list[dict], rows: list[dict]) -> list[str]:
+    """Reject proved within-column inversions hidden in synthesized tables.
+
+    Physical table headings were excluded by the caller. Cross-column reading
+    order is deliberately not inferred: row-major and column-major text can
+    both be valid. At least two separate physical lanes must independently
+    invert their own vertical order, with unique matching prose prefixes and
+    all relevant headings actually placed in Markdown table cells.
+    """
+    diagnostic = _native_diagnostic_text(markdown)
+    lines = diagnostic.splitlines()
+    table_lines = []
+    for index, value in enumerate(lines):
+        cells = _table_cells(value)
+        if index == 0 or len(cells) < 2 or not all(_TABLE_DIVIDER.fullmatch(cell) for cell in cells):
+            continue
+        table_lines.append(lines[index - 1])
+        for following in lines[index + 1:]:
+            if len(_table_cells(following)) < 2:
+                break
+            table_lines.append(following)
+    if not table_lines or not rows:
+        return []
+    # Bare inequalities can span cells/lines; only actual known HTML tags
+    # may be removed, never an arbitrary <...> mathematical fragment.
+    plain = re.sub(r"\s+", "", re.sub(r"[*_]", "", _NATIVE_HTML_TAG.sub("", diagnostic)))
+    table_plain = re.sub(r"\s+", "", re.sub(r"[*_]", "", _NATIVE_HTML_TAG.sub("", "\n".join(table_lines))))
+    physical_counts = Counter(item["number"] for item in headings)
+    positions = {}
+    for match in _QUESTION_IN_CELL.finditer(plain):
+        positions.setdefault(int(match.group(1)), []).append(match.start())
+    table_numbers = Counter(int(match.group(1)) for match in _QUESTION_IN_CELL.finditer(table_plain))
+    height = sorted(row["box"][3] - row["box"][1] for row in rows)[len(rows) // 2]
+    if not math.isfinite(height) or height <= 0:
+        return []
+    matched = []
+    for item in headings:
+        number = item["number"]
+        direction = item.get("direction", (1, 0))
+        if (not isinstance(direction, (list, tuple)) or len(direction) != 2
+                or any(not isinstance(value, (int, float)) or not math.isfinite(value) for value in direction)
+                or abs(direction[0] - 1) > .01 or abs(direction[1]) > .01):
+            continue
+        if physical_counts[number] != 1 or len(positions.get(number, [])) != 1 or table_numbers[number] != 1:
+            continue
+        physical_prefix = re.match(r"^\d{1,3}[.．、]([^\s]{4})", item["text"])
+        if not physical_prefix:
+            continue
+        position = positions[number][0]
+        extracted_prefix = _QUESTION_IN_CELL.match(plain, position)
+        if not extracted_prefix or not plain[extracted_prefix.end():].startswith(physical_prefix.group(1)):
+            continue
+        matched.append({**item, "markdown_position": position})
+    if len(matched) < 4:
+        return []
+    lanes = []
+    for item in sorted(matched, key=lambda value: value["box"][0]):
+        if not lanes or item["box"][0] - lanes[-1][0]["box"][0] > height * 2:
+            lanes.append([item])
+        else:
+            lanes[-1].append(item)
+    lanes = [lane for lane in lanes if len(lane) >= 2]
+    inverted = []
+    for lane in lanes:
+        physical = sorted(lane, key=lambda value: (value["box"][1], value["box"][0]))
+        if any(second["box"][1] - first["box"][1] < height * 1.5
+               for first, second in zip(physical, physical[1:])):
+            continue
+        extracted = sorted(lane, key=lambda value: value["markdown_position"])
+        if [item["number"] for item in physical] != [item["number"] for item in extracted]:
+            inverted.append(physical)
+    for index, first in enumerate(inverted):
+        for second in inverted[index + 1:]:
+            if max(item["box"][2] for item in first) >= min(item["box"][0] for item in second) - height * .5:
+                continue
+            if min(first[-1]["box"][3], second[-1]["box"][3]) <= max(first[0]["box"][1], second[0]["box"][1]):
+                continue
+            return ["原生表格在多个独立栏内逆转了原页题号的上下次序，存在跨题混排。"]
+    return []
 
 
 def _native_table_position_reasons(markdown: str, page) -> list[str]:
@@ -366,7 +501,8 @@ def _native_table_position_reasons(markdown: str, page) -> list[str]:
             if (not box or len(box) != 4 or any(not isinstance(v, (int, float)) or not math.isfinite(v) for v in box)
                     or box[3] <= box[1]):
                 continue
-            rows.append({"text": re.sub(r"\s+", "", text), "box": box})
+            rows.append({"text": re.sub(r"\s+", "", text), "box": box,
+                         "direction": line.get("dir", (1, 0))})
     if len(rows) > 800 or sum(len(row["text"]) for row in rows) > 60000:
         return []
     headings = []
@@ -398,7 +534,7 @@ def _native_table_position_reasons(markdown: str, page) -> list[str]:
     height = sorted(row["box"][3] - row["box"][1] for row in rows)[len(rows) // 2]
     xs = [heading["box"][0] for heading in headings]
     if max(xs) - min(xs) > height * 2 or min(xs) > page.rect.width * .35:
-        return []  # A question-per-cell or genuine multi-column layout is not proved single-column.
+        return _multicolumn_table_order_reasons(markdown, headings, rows)
     physical_counts = Counter(heading["number"] for heading in headings)
     plain = re.sub(r"<[^>]*>|[*_]", "", markdown)
     positions = {}
@@ -500,25 +636,159 @@ def _native_brace_geometry_reasons(markdown: str, page=None) -> list[str]:
     return []
 
 
-def _native_position_quality_reasons(markdown: str, page_index: int, pdf_path: str | None) -> list[str]:
+def _simple_paint_resources(page) -> bool:
+    """Unknown Form/blending/crop resources cannot prove opaque overpaint."""
+    try:
+        if page.rotation or page.cropbox != page.mediabox or page.get_xobjects():
+            return False
+        document = page.parent
+        if document.xref_get_key(page.xref, "Resources")[0] not in {"dict", "xref"}:
+            return False  # Inherited resource ownership is not proved here.
+        if document.xref_get_key(page.xref, "Group")[0] != "null":
+            return False
+        kind, value = document.xref_get_key(page.xref, "Resources/ExtGState")
+        if kind == "null":
+            return True
+        if kind not in {"dict", "xref"}:
+            return False
+        values, pending, visited = [], [value], set()
+        while pending:
+            value = pending.pop()
+            if len(value) > 8192 or "#" in value:
+                return False
+            values.append(value)
+            for reference, generation in re.findall(r"(\d+)\s+(\d+)\s+R", value):
+                if generation != "0" or len(visited) >= 16:
+                    return False
+                number = int(reference)
+                if number not in visited:
+                    visited.add(number)
+                    pending.append(document.xref_object(number, compressed=True))
+        resource = "\n".join(values)
+        names = re.findall(r"/(BM|SMask|ca|CA|OP|op|AIS)(?=[\s/<>\[\]()])", resource)
+        states = re.findall(
+            r"/(BM|SMask|ca|CA|OP|op|AIS)(?=[\s/<>\[\]()])\s*"
+            r"(/[A-Za-z]+|[+-]?(?:\d+(?:\.\d*)?|\.\d+)|true|false|null)(?=[\s/<>\[\]()]|$)", resource)
+        if len(states) != len(names):
+            return False
+        for name, value in states:
+            if name == "BM" and value != "/Normal":
+                return False
+            if name == "SMask" and value not in {"/None", "null"}:
+                return False
+            if name in {"ca", "CA"} and abs(float(value) - 1) > 1e-6:
+                return False
+            if name in {"OP", "op", "AIS"} and value != "false":
+                return False
+        return True
+    except (AttributeError, TypeError, ValueError, OverflowError, RuntimeError):
+        return False
+
+
+def _native_covered_text_evidence(page) -> list[str]:
+    """Bounded physical evidence only; never remove text or guess a new value."""
+    started = time.monotonic()
+    try:
+        if not _simple_paint_resources(page):
+            return []
+        paths = page.get_drawings(extended=True)
+        if len(paths) > _PAINT_MAX_PATHS:
+            return []
+        height = float(page.rect.height)
+        if not math.isfinite(height) or height <= 0:
+            return []
+        covers = []
+        for path in paths:
+            if time.monotonic() - started > _PAINT_MAX_SECONDS:
+                return []
+            if (not isinstance(path, dict) or path.get("type") not in {"s", "f", "fs"}
+                    or path.get("level", 0) != 0 or path.get("layer")):
+                return []  # Clip/group/optional-content ownership is uncertain.
+            items, seqno = path.get("items"), path.get("seqno")
+            if (path.get("type") not in {"f", "fs"} or path.get("fill") is None
+                    or path.get("fill_opacity") != 1 or type(seqno) is not int
+                    or not isinstance(items, list) or len(items) != 1
+                    or not isinstance(items[0], tuple) or len(items[0]) != 3 or items[0][0] != "re"):
+                continue
+            rectangle, declared = tuple(items[0][1]), tuple(path.get("rect", ()))
+            if (len(rectangle) != 4 or len(declared) != 4 or not all(math.isfinite(v) for v in rectangle)
+                    or rectangle[0] >= rectangle[2] or rectangle[1] >= rectangle[3]
+                    or any(abs(a-b) > .001 for a,b in zip(rectangle, declared))):
+                continue
+            covers.append((seqno, rectangle))
+            if len(covers) > _PAINT_MAX_COVERS:
+                return []
+        if not covers:
+            return []
+        buckets = [set() for _ in range(64)]
+        for index, (_seqno, box) in enumerate(covers):
+            top = max(0, min(63, int(box[1] / height * 64)))
+            bottom = max(0, min(63, int(box[3] / height * 64)))
+            for bucket in range(top, bottom + 1):
+                buckets[bucket].add(index)
+        spans = page.get_texttrace()
+        if len(spans) > _PAINT_MAX_SPANS or sum(len(span.get("chars", ())) for span in spans) > _PAINT_MAX_CHARS:
+            return []
+        comparisons = 0
+        covered = []
+        for span in spans:
+            if time.monotonic() - started > _PAINT_MAX_SECONDS:
+                return []
+            box, seqno = span.get("bbox"), span.get("seqno")
+            if (not isinstance(box, (list, tuple)) or len(box) != 4 or type(seqno) is not int
+                    or not all(math.isfinite(v) for v in box) or box[0] >= box[2] or box[1] >= box[3]
+                    or span.get("type") not in {0, 1, 2} or span.get("opacity", 1) <= 0 or span.get("layer")):
+                continue
+            bucket = max(0, min(63, int((box[1]+box[3]) / 2 / height * 64)))
+            for index in buckets[bucket]:
+                comparisons += 1
+                if comparisons > _PAINT_MAX_COMPARISONS:
+                    return []
+                later, cover = covers[index]
+                if later > seqno and cover[0] <= box[0] and cover[1] <= box[1] and cover[2] >= box[2] and cover[3] >= box[3]:
+                    text = "".join(chr(char[0]) for char in span.get("chars", ()) if 0 <= char[0] <= 0x10FFFF)
+                    if len(re.sub(r"\s", "", text)) >= 2:
+                        covered.append(text)
+                    break
+        return list(dict.fromkeys(covered))
+    except (AttributeError, TypeError, ValueError, OverflowError, RuntimeError, KeyError):
+        return []
+
+
+def _native_paint_visibility_reasons(markdown: str, page=None, *, evidence: list[str] | None = None) -> list[str]:
+    if evidence is None:
+        evidence = _native_covered_text_evidence(page)
+    if not evidence or len(markdown) > 60000:
+        return []
+    plain = re.sub(r"\s+", "", _NATIVE_HTML_TAG.sub("", _native_diagnostic_text(markdown)))
+    for text in evidence[:64]:
+        value = re.sub(r"\s+", "", text)
+        if len(value) >= 2 and plain.count(value) == 1:
+            return [_PAINT_VISIBILITY_REASON]
+    return []
+
+
+def _native_position_quality_reasons(markdown: str, page_index: int, pdf_path: str | None, *, page=None,
+                                     paint_evidence: list[str] | None = None) -> list[str]:
     brace_fallback = _native_brace_geometry_reasons(markdown)
     has_table = any(
         len(cells := _table_cells(line)) >= 2 and all(_TABLE_DIVIDER.fullmatch(cell) for cell in cells)
         for line in markdown.splitlines()
     )
-    if not has_table and not brace_fallback:
-        return []
-    if not _FITZ_AVAILABLE or not pdf_path:
+    if not _FITZ_AVAILABLE or page is None and not pdf_path:
         return brace_fallback
     try:
+        if page is not None:
+            reasons = _native_brace_geometry_reasons(markdown, page)
+            if has_table:
+                reasons.extend(_native_table_position_reasons(markdown, page))
+            reasons.extend(_native_paint_visibility_reasons(markdown, page, evidence=paint_evidence))
+            return reasons
         with fitz.open(pdf_path) as document:
             if not 0 <= page_index < len(document):
                 return brace_fallback
             page = document[page_index]
-            reasons = _native_brace_geometry_reasons(markdown, page)
-            if has_table:
-                reasons.extend(_native_table_position_reasons(markdown, page))
-            return reasons
+            return _native_position_quality_reasons(markdown, page_index, None, page=page)
     except Exception:
         # Unknown brace structure retains its original conservative diagnosis;
         # missing table geometry alone is not invented evidence of disorder.
@@ -695,6 +965,7 @@ def _extract_fitz_pages(
                 text = page.get_text("text").strip()
                 quality_reasons = native_text_quality_reasons(text)
                 quality_reasons.extend(_native_brace_geometry_reasons(text, page))
+                quality_reasons.extend(_native_paint_visibility_reasons(text, page))
                 if len(text) < 30 and not quality_reasons:
                     quality_reasons.append("原生文字过少，需通过原页识别。")
                 pages.append({
@@ -752,7 +1023,8 @@ def _build_result(
     }
 
 
-def _repair_native_pages(file_bytes: bytes, pages: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+def _repair_native_pages(file_bytes: bytes, pages: List[Dict[str, Any]], *, document=None,
+                         paint_evidence: dict[int, list[str]] | None = None) -> List[Dict[str, Any]]:
     """Try geometric math recovery before paying for rejected native pages.
 
     Only a complete, validated page is adopted. The original Markdown remains
@@ -764,7 +1036,9 @@ def _repair_native_pages(file_bytes: bytes, pages: List[Dict[str, Any]]) -> List
     try:
         from mathbank.pdf_native_math import repair_native_page
 
-        with fitz.open(stream=file_bytes, filetype="pdf") as document:
+        from contextlib import nullcontext
+
+        with (nullcontext(document) if document is not None else fitz.open(stream=file_bytes, filetype="pdf")) as document:
             for page in pages:
                 index = page.get("page_index")
                 if (not page.get("needs_ocr") or type(index) is not int
@@ -779,6 +1053,13 @@ def _repair_native_pages(file_bytes: bytes, pages: List[Dict[str, Any]]) -> List
                     result = {"status": "unsupported", "reason": "本地公式结构修复未完成，保留原识别流程。"}
                 markdown = result.get("markdown")
                 remaining = native_text_quality_reasons(markdown) if isinstance(markdown, str) else []
+                if isinstance(markdown, str):
+                    visible_reasons = _native_paint_visibility_reasons(
+                        markdown, document[index], evidence=(paint_evidence or {}).get(index))
+                    remaining.extend(visible_reasons)
+                    for reason in visible_reasons:
+                        if reason not in page.setdefault("quality_reasons", []):
+                            page["quality_reasons"].append(reason)
                 complete = (result.get("status") == "repaired" and isinstance(markdown, str)
                             and bool(markdown.strip()) and not remaining
                             and not _has_math_formula_loss(markdown))
@@ -801,7 +1082,7 @@ def _repair_native_pages(file_bytes: bytes, pages: List[Dict[str, Any]]) -> List
     return pages
 
 
-def inspect_and_extract_pdf(
+def _inspect_and_extract_pdf(
     file_bytes: bytes,
     task_id: Optional[str] = None,
     page_indices: Optional[List[int]] = None,
@@ -829,6 +1110,8 @@ def inspect_and_extract_pdf(
         )
 
     tmp_path = None
+    native_document = None
+    paint_evidence = {}
     try:
         with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as tmp_file:
             tmp_file.write(file_bytes)
@@ -838,12 +1121,23 @@ def inspect_and_extract_pdf(
         if callable(extract_pages):
             extracted = extract_pages(tmp_path, pages=page_indices)
             raw_pages = list(getattr(extracted, "pages", []) or [])
+            if raw_pages and _FITZ_AVAILABLE:
+                try:
+                    native_document = fitz.open(tmp_path)
+                except Exception:
+                    native_document = None
             pages = []
             for raw_page in raw_pages:
                 page_index = int(getattr(raw_page, "page"))
                 markdown = str(getattr(raw_page, "markdown", "") or "").strip()
                 quality_reasons = native_text_quality_reasons(markdown)
-                quality_reasons.extend(_native_position_quality_reasons(markdown, page_index, tmp_path))
+                physical_page = (native_document[page_index] if native_document is not None
+                                 and 0 <= page_index < len(native_document) else None)
+                if physical_page is not None:
+                    paint_evidence[page_index] = _native_covered_text_evidence(physical_page)
+                quality_reasons.extend(_native_position_quality_reasons(
+                    markdown, page_index, None, page=physical_page,
+                    paint_evidence=paint_evidence.get(page_index)))
                 # pdf-inspector 的逐页结论是首要依据；短标题页不能仅因字符少就被误送 OCR。
                 needs_ocr = bool(getattr(raw_page, "needs_ocr", False)) or not markdown
                 if not needs_ocr and markdown:
@@ -864,7 +1158,8 @@ def inspect_and_extract_pdf(
                     pages[-1]["inspector_ocr_reason"] = engine_reason[:160]
 
             if pages:
-                pages = _repair_native_pages(file_bytes, pages)
+                pages = _repair_native_pages(file_bytes, pages, document=native_document,
+                                             paint_evidence=paint_evidence)
                 ocr_count = sum(1 for page in pages if page["needs_ocr"])
                 if ocr_count == 0:
                     pdf_type = "text_based"
@@ -900,6 +1195,19 @@ def inspect_and_extract_pdf(
             # Legacy Markdown can contain multiple pages, so its first page
             # cannot establish where every component belongs.
             quality_reasons.extend(_native_brace_geometry_reasons(markdown))
+            if native_document is None and _FITZ_AVAILABLE:
+                try:
+                    native_document = fitz.open(tmp_path)
+                except Exception:
+                    native_document = None
+            if native_document is not None:
+                selected = page_indices if page_indices is not None else list(range(len(native_document)))
+                if len(selected) <= 100:
+                    for index in selected:
+                        if type(index) is int and 0 <= index < len(native_document):
+                            quality_reasons.extend(_native_paint_visibility_reasons(markdown, native_document[index]))
+                            if _PAINT_VISIBILITY_REASON in quality_reasons:
+                                break
             if has_loss:
                 quality_reasons.append("原生提取出现公式丢失或空选项迹象。")
             pages = [{
@@ -937,8 +1245,33 @@ def inspect_and_extract_pdf(
             error=str(ex),
         )
     finally:
+        if native_document is not None:
+            try:
+                native_document.close()
+            except Exception:
+                pass
         if tmp_path and os.path.exists(tmp_path):
             try:
                 os.remove(tmp_path)
             except Exception:
                 pass
+
+
+def inspect_and_extract_pdf(
+    file_bytes: bytes,
+    task_id: Optional[str] = None,
+    page_indices: Optional[List[int]] = None,
+    *,
+    include_source_review_evidence: bool = False,
+) -> Dict[str, Any]:
+    """Preserve the existing extraction; optionally attest original native pages."""
+    result = _inspect_and_extract_pdf(file_bytes, task_id, page_indices)
+    if include_source_review_evidence:
+        from mathbank.pdf_source_scopes import _capture_native_source_evidence
+        evidence = None
+        try:
+            evidence = _capture_native_source_evidence(file_bytes, result.get("pages", []), page_indices)
+        except Exception:
+            pass  # Missing proof preserves the original route and diagnostics.
+        result["_native_source_review_evidence"] = evidence
+    return result

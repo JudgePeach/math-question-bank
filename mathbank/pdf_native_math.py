@@ -101,14 +101,29 @@ def _collect(page):
     trace_used = set()
     glyphs, spaces = [], []
     raw_count = line_id = 0
-    for block in data.get("blocks", []):
+    blocks = data.get("blocks") if isinstance(data, dict) else None
+    if not isinstance(blocks, list):
+        raise _Unsupported("页面文字块证据不完整，不能证明原文完整恢复。")
+    for block in blocks:
+        if not isinstance(block, dict):
+            raise _Unsupported("页面文字块证据无效，不能证明原文完整恢复。")
         if block.get("type", 0) != 0:
             raise _Unsupported("页面含非文字内容，无法完整证明字形消费。")
-        for line in block.get("lines", []):
+        lines = block.get("lines")
+        if not isinstance(lines, list) or not lines:
+            raise _Unsupported("页面文字块缺少行证据，不能跳过后证明原文完整恢复。")
+        for line in lines:
+            if not isinstance(line, dict):
+                raise _Unsupported("页面文字行证据无效，不能证明原文完整恢复。")
             line_id += 1
             if line.get("wmode", 0) or tuple(line.get("dir", (1, 0))) != (1, 0):
                 raise _Unsupported("页面含竖排或倾斜文字，当前阅读顺序不适用。")
-            for span in line.get("spans", []):
+            spans = line.get("spans")
+            if not isinstance(spans, list) or not spans:
+                raise _Unsupported("页面文字行缺少字形片段，不能证明原文完整恢复。")
+            for span in spans:
+                if not isinstance(span, dict):
+                    raise _Unsupported("页面字形片段证据无效，不能证明原文完整恢复。")
                 font = _font_name(str(span.get("font", "")))
                 size = span.get("size")
                 if not _finite([size]) or not 3 <= size <= 60 or span.get("alpha", 255) == 0:
@@ -117,7 +132,12 @@ def _collect(page):
                 kind = "math" if family else "bold_math" if _BOLD_FONT.fullmatch(font) else "text"
                 if not font or any(word in font.lower() for word in ("symbol", "math", "mathtype")) and not family:
                     raise _Unsupported("页面使用尚未验证的数学字体。")
-                for char in span.get("chars", []):
+                characters = span.get("chars")
+                if not isinstance(characters, list) or not characters:
+                    raise _Unsupported("页面字形片段缺少字符证据，不能证明原文完整恢复。")
+                for char in characters:
+                    if not isinstance(char, dict):
+                        raise _Unsupported("页面字符证据无效，不能证明原文完整恢复。")
                     raw_count += 1
                     if raw_count > MAX_GLYPHS:
                         raise _Unsupported("页面字形数量超过本地恢复上限。")

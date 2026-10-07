@@ -65,6 +65,54 @@ def test_visual_confirmation_preserves_content_evidence_and_unrelated_unmatched(
     assert state.calls[0][0]['max_tokens'] == 4096
 
 
+def _signed_footer_evidence(state, tmp_path, monkeypatch):
+    from mathbank import docx_source_evidence as renderer
+    from test_docx_footer_cache_render_evidence import package
+    import pymupdf as fitz
+    monkeypatch.setattr(renderer, 'SYSTEM_GENERATED_DIR', tmp_path / 'isolated-system')
+    monkeypatch.setattr(renderer, 'find_docx_renderer', lambda explicit=None: '/test/native')
+    def native(_renderer, _source, work, _cancel):
+        path = work / 'original.pdf'
+        with fitz.open() as doc:
+            page = doc.new_page(width=200, height=300)
+            page.insert_text((10, 20), state.source)
+            doc.save(path)
+        return path
+    monkeypatch.setattr(renderer, '_native_pdf', native)
+    state.evidence = renderer.prepare_docx_source_evidence(package(), output_dir=verify.UPLOADS_DIR / 'tmp',
+        url_prefix='/static/uploads/tmp', task_id='footer_check', register_asset=lambda _: None)
+    assert renderer.validate_docx_body_render_evidence(state.evidence)
+    return renderer
+
+
+def test_signed_footer_cache_runs_body_verification_with_explicit_scope(state, tmp_path, monkeypatch):
+    _signed_footer_evidence(state, tmp_path, monkeypatch)
+    report = run(state)
+    assert report['calls'] == 1 and report['confirmed'] == 1 and report['evidence_scope'] == 'body_only'
+    prompt = state.calls[0][0]['messages'][0]['content'][0]['text']
+    assert '仅微小页脚图的外链被隔离' in prompt and '不能确认页脚原内容' in prompt
+
+
+def test_modified_footer_receipt_is_not_model_input(state, tmp_path, monkeypatch):
+    _signed_footer_evidence(state, tmp_path, monkeypatch)
+    state.evidence['footer_cache_receipt']['body_parts_unchanged'] = False
+    assert run(state)['status'] == 'unavailable'
+    assert state.calls == [] and state.questions[0]['source_review']['required']
+
+
+def test_footer_evidence_changed_during_model_call_cannot_confirm(state, tmp_path, monkeypatch):
+    _signed_footer_evidence(state, tmp_path, monkeypatch)
+    normal_post = verify.post_chat_completion
+    def changed(*args, **kwargs):
+        response = normal_post(*args, **kwargs)
+        state.evidence['derivative_sha256'] = '0' * 64
+        return response
+    monkeypatch.setattr(verify, 'post_chat_completion', changed)
+    report = run(state)
+    assert report['calls'] == 1 and report['confirmed'] == 0 and report['status'] == 'failed'
+    assert state.questions[0]['source_review']['required']
+
+
 @pytest.mark.parametrize('decision', ['different', 'uncertain'])
 def test_not_equivalent_stays_review(state, decision):
     state.decision['decision'] = decision
@@ -393,6 +441,41 @@ def test_unknown_or_missing_formula_glyphs_cannot_clear_structure_label(state, f
     report = run(state)
     assert report['calls'] == 1 and report['confirmed'] == 0
     assert state.questions[0]['content'] == original
+
+
+@pytest.mark.parametrize('field', ['content', 'answer_markdown'])
+@pytest.mark.parametrize('formula', [r'$x\text{[字符待核对]}y$',
+                                   '$x\\text \t{ \n[ 字符待核对 ] \t}y$'])
+def test_explicit_unknown_character_marker_cannot_clear_structure_or_accept_equivalent(state, field, formula):
+    state.questions[0][field] += ' ' + formula + '[公式结构待核对]'
+    original = deepcopy(state.questions[0])
+    report = run(state)
+    assert report['calls'] == 1 and report['confirmed'] == 0 and report['pending'] == 1
+    assert report['items'][0]['decision'] == 'uncertain'
+    assert report['items'][0]['checks']['complete_content'] is False
+    assert state.questions[0][field] == original[field]
+    review = state.questions[0]['source_review']
+    assert review['required'] is True and 'verification' not in review
+    assert review['verification_attempt']['model_decision'] == 'equivalent'
+    assert review['verification_attempt']['diagnostic_labels_removed'] == 0
+
+
+@pytest.mark.parametrize('marker', [r'$x\text{[字符待核对]}y$', '[字符待核对]'])
+def test_unknown_character_marker_is_pending_even_without_structure_note(state, marker):
+    state.questions[0]['content'] += ' ' + marker
+    original = state.questions[0]['content']
+    report = run(state)
+    assert report['confirmed'] == 0 and report['pending'] == 1
+    assert state.questions[0]['content'] == original
+    assert state.questions[0]['source_review']['required']
+
+
+def test_literal_original_question_mark_is_not_treated_as_an_extractor_placeholder(state):
+    state.questions[0]['content'] += ' $x?y$ [公式结构待核对]'
+    report = run(state)
+    assert report['confirmed'] == 1 and report['pending'] == 0
+    assert '$x?y$' in state.questions[0]['content']
+    assert '[公式结构待核对]' not in state.questions[0]['content']
 
 
 @pytest.mark.parametrize('reason', [

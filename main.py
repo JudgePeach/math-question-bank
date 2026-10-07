@@ -80,6 +80,8 @@ from mathbank.task_manager import (
 )
 from mathbank.docx_helper import extract_docx_markdown
 from mathbank.content_locks import lock_visible_math, reconcile_visible_math
+from mathbank.source_metadata import prepare_word_source_metadata, source_metadata_diagnostics, normalize_source_fillin
+from mathbank.source_metadata_request import request_word_source_metadata
 from mathbank.paper_parse import (
     PAPER_SPLIT_TIMEOUT_SECONDS, PAPER_SPLIT_CACHE_MAX_CHARACTERS,
     parse_paper_completion, finalize_source_answers, request_pdf_paper_completion,
@@ -4107,8 +4109,10 @@ def parse_paper_text_internal(
     pdf_retry: bool = False,
     check_cancelled=lambda: None,
     report_attempt=lambda _event: None,
+    connection_retry: bool = True,
 ) -> list:
     """内部通用函数：调用选定的 LLM 接口，将 LaTeX 试卷内容解析拆分为结构化 JSON 卡片"""
+    check_cancelled()
     parse_model = os.getenv("PREFER_PARSE_MODEL") or os.getenv("DEEPSEEK_PARSE_MODEL", "deepseek-flash")
     provider = resolve_text_provider(parse_model)
     api_key = provider.api_key
@@ -4151,12 +4155,17 @@ def parse_paper_text_internal(
             diagnostics=diagnostics, check_cancelled=check_cancelled, report_attempt=report_attempt,
         )
     else:
+        check_cancelled()
+        transport_kwargs = ({"retry_connection": False, "allow_redirects": False}
+                            if not connection_retry else {})
         response = post_chat_completion(
             provider,
             data,
             timeout=PAPER_SPLIT_TIMEOUT_SECONDS,
             provider_name=provider_name,
+            **transport_kwargs,
         )
+        check_cancelled()
         parsed_questions = parse_paper_completion(
             response.json(),
             raw_markdown="" if preserve_source_answers else latex_content,
@@ -5075,7 +5084,7 @@ def ai_select_paper(payload: dict, db: Session = Depends(get_db)):
         return JSONResponse(content={"status": "error", "message": f"AI 智能选题失败: {str(e)}"}, status_code=500)
 
 
-def post_process_pdf_parsed_questions(parsed_questions: list, paper_title: str, task_id: str = None, ocr_results: list = None) -> list:
+def post_process_pdf_parsed_questions(parsed_questions: list, paper_title: str, task_id: str = None, ocr_results: list = None, *, source_body_preserved: bool = False, preserved_indices=None) -> list:
     """PDF/Word 解析卡片后处理：修复图片路径并登记资产，保留正文中的图片锚点。
 
     image_paths 负责资产生命周期，不能替代选项、表格或正文中的图片位置。
@@ -5083,11 +5092,15 @@ def post_process_pdf_parsed_questions(parsed_questions: list, paper_title: str, 
     import re
     import os
     import glob
+    preserved = (set(range(len(parsed_questions))) if source_body_preserved else set(preserved_indices or ()))
+    if any(type(index) is not int or not 0 <= index < len(parsed_questions) for index in preserved):
+        raise ValueError("保真题目位置无效。")
 
     # 0. 规范化所有拆解题目的填空下划线为 \fillin 宏
-    for q in parsed_questions:
+    for index, q in enumerate(parsed_questions):
         if q.get("content"):
-            q["content"] = normalize_fillin_macro(q.get("content", ""))
+            q["content"] = (normalize_source_fillin(q["content"], normalize_fillin_macro)
+                            if index in preserved else normalize_fillin_macro(q["content"]))
 
     # 1. 搜集该 PDF 任务在 tmp 文件夹中生成的所有物理裁剪图片，按生成时间（mtime）进行排序
     task_crop_urls = []
@@ -5107,7 +5120,9 @@ def post_process_pdf_parsed_questions(parsed_questions: list, paper_title: str, 
     # 匹配 LaTeX 图片格式: \includegraphics[...]{path}
     latex_pattern = r'\\includegraphics(?:\[.*?\])?\{([^}]+)\}'
     
-    for q in parsed_questions:
+    for index, q in enumerate(parsed_questions):
+        if index in preserved:
+            continue
         for field in ["content", "answer_markdown"]:
             text_val = q.get(field, "")
             if isinstance(text_val, str):
@@ -5133,21 +5148,22 @@ def post_process_pdf_parsed_questions(parsed_questions: list, paper_title: str, 
         print(f"[PDF PostProcess] 成功建立占位符修复映射: {mapping}")
 
     # 4. 对每个题目卡片进行字段修补、占位符替换与资源晋升准备
-    for q in parsed_questions:
+    for index, q in enumerate(parsed_questions):
         q["source"] = (q.get("source") or paper_title).strip()
         
         # 清理多余的双重转义 \n
-        for field in ["content", "answer_markdown"]:
-            if field in q and isinstance(q[field], str):
-                text = q[field]
-                text = re.sub(r'\\n(?![a-zA-Z])', '\n', text)
-                q[field] = text
+        if index not in preserved:
+            for field in ["content", "answer_markdown"]:
+                if field in q and isinstance(q[field], str):
+                    text = q[field]
+                    text = re.sub(r'\\n(?![a-zA-Z])', '\n', text)
+                    q[field] = text
 
         # 智能替换 Markdown 和 LaTeX 字段中的图片占位符
         for field in ["content", "answer_markdown"]:
             if field in q and isinstance(q[field], str):
                 # 替换已建立映射的非标准路径
-                for ph, real_url in mapping.items():
+                for ph, real_url in (() if index in preserved else mapping.items()):
                     if ph in q[field]:
                         q[field] = q[field].replace(ph, real_url)
                         # 如果是 LaTeX 的 \includegraphics 语法，顺带转换为 Markdown 图片语法以供前端预览渲染
@@ -5156,13 +5172,20 @@ def post_process_pdf_parsed_questions(parsed_questions: list, paper_title: str, 
 
         # 寻找本题正文中夹带的所有临时图片 URL (注意：UUID 中含有 -，所以 regex 必须支持 [a-zA-Z0-9_-]+)
         found_crops = {}
-        for field in ["content", "answer_markdown"]:
-            if field in q and isinstance(q[field], str):
-                for match in re.finditer(r'/static/(?:uploads|test_uploads)/tmp/[a-zA-Z0-9_.-]+', q[field]):
-                    found_crops[match.group(0)] = None
+        if index in preserved:
+            # Literal source examples are not live image references. The
+            # optimizer already conserves real anchors in both source fields.
+            for path in embedded_question_assets(q.get("content", ""), q.get("answer_markdown", "")):
+                if "/tmp/" in path:
+                    found_crops[path] = None
+        else:
+            for field in ["content", "answer_markdown"]:
+                if field in q and isinstance(q[field], str):
+                    for match in re.finditer(r'/static/(?:uploads|test_uploads)/tmp/[a-zA-Z0-9_.-]+', q[field]):
+                        found_crops[match.group(0)] = None
                     
         # 顺带检查 referenced_images 属性并应用修复映射
-        ref_imgs = q.get("referenced_images", [])
+        ref_imgs = [] if index in preserved else q.get("referenced_images", [])
         for ref in ref_imgs:
             mapped_ref = mapping.get(ref, ref)
             if "/tmp/" in mapped_ref:
@@ -5174,7 +5197,7 @@ def post_process_pdf_parsed_questions(parsed_questions: list, paper_title: str, 
 
     # 5. 极致兜底机制：如果大模型在拆题时完全删除了图片占位标记或路径，导致最终题目关联的图片为空，
     # 我们利用 3-shingle 文本重合度，将原始 PDF 物理页面产生的物理插图自动关联绑定回拆分出的题目！
-    if ocr_results and task_id:
+    if ocr_results and task_id and len(preserved) < len(parsed_questions):
         page_crops = {}
         for p_idx, page_text in enumerate(ocr_results):
             # 获取当前页生成的所有 pdf_crop_ 临时文件 URL
@@ -5183,7 +5206,9 @@ def post_process_pdf_parsed_questions(parsed_questions: list, paper_title: str, 
             
         print(f"[PDF PostProcess Failsafe] 每页识别到的插图关系: {page_crops}")
         
-        for q in parsed_questions:
+        for index, q in enumerate(parsed_questions):
+            if index in preserved:
+                continue
             if not q.get("image_paths"):
                 p_source = find_source_page_by_overlap(q.get("content", ""), ocr_results)
                 crops = page_crops.get(p_source, [])
@@ -5359,6 +5384,7 @@ def run_pdf_parsing_task(
                 file_bytes,
                 task_id,
                 page_indices=target_page_indices,
+                include_source_review_evidence=True,
             )
             inspector_pages = {
                 int(page.get("page_index")): page
@@ -5548,6 +5574,7 @@ def run_pdf_parsing_task(
                             image_path, page_layout_infos[real_page_num - 1], regional_plans[local_idx],
                             include_figures=pdf_strategy == "layout_aware",
                             check_cancelled=check_pdf_cancelled, report_attempt=report_pdf_attempt,
+                            include_transcription_evidence=True,
                         )
                         raw_text = joint["markdown"]
                     elif pdf_strategy == "layout_aware":
@@ -5558,6 +5585,7 @@ def run_pdf_parsing_task(
                             image_path, page_layout_infos[real_page_num - 1],
                             check_cancelled=check_pdf_cancelled, report_attempt=report_pdf_attempt,
                             **detail_kwargs,
+                            include_transcription_evidence=True,
                         )
                         raw_text = joint["markdown"]
                     else:
@@ -5698,8 +5726,8 @@ def run_pdf_parsing_task(
         # Retain the exact first-pass transcription used for splitting. Later
         # source review can check its ranges without re-running page recognition.
         # Keep complete pages or no page cache; never certify truncated evidence.
+        source_pages = []
         if sum(len(str(text or "")) for text in ocr_results) <= 500_000:
-            source_pages = []
             for local_idx, page_num in enumerate(target_page_indices):
                 page = next((item for item in (layout_result or {}).get("pages", [])
                              if item["page_index"] == page_num), {})
@@ -5735,12 +5763,49 @@ def run_pdf_parsing_task(
             locked_source, math_locks = lock_visible_math(source_content, task_id.replace("-", "")[:16])
             diagnostics["math_locks_created"] = len(math_locks)
             retain_split_input(source_content, locked_source)
-            parsed_questions = parse_paper_text_internal(
-                locked_source, False, diagnostics=diagnostics, preserve_source_answers=True,
-                pdf_retry=True, check_cancelled=check_pdf_cancelled, report_attempt=report_pdf_split_attempt,
-            )
+            from mathbank.pdf_hybrid_request import prepare_pdf_task_plan, request_pdf_hybrid
+            from mathbank.pdf_hybrid_plan import pdf_hybrid_plan_diagnostics
+            source_assets = {}
+            for page in layout_result.get("pages", []):
+                for figure in page.get("figures", []):
+                    url = figure.get("image_path")
+                    if isinstance(url, str):
+                        source_assets[url] = str(resolve_upload_asset(url, uploads_dir=UPLOAD_DIR,
+                            url_prefix=UPLOAD_DIR_REL))
+            pdf_plan = prepare_pdf_task_plan(source_content, diagnostics, source_pages=source_pages,
+                layout_result=layout_result, task_id=task_id, generation=0,
+                source_document_sha256=hashlib.sha256(file_bytes).hexdigest(),
+                native_evidence=inspector_result.get("_native_source_review_evidence"),
+                witnesses={index: value.get("_transcription_witness") for index, value in joint_page_results.items()},
+                transcript_normalizer=process_ocr_illustrations, figure_assets=source_assets)
+            diagnostics["pdf_hybrid"] = pdf_hybrid_plan_diagnostics(pdf_plan)
+            pdf_preserved_indices = frozenset()
+            if pdf_plan["mode"] in {"hybrid", "whole_metadata"}:
+                parse_model = os.getenv("PREFER_PARSE_MODEL") or os.getenv("DEEPSEEK_PARSE_MODEL", "deepseek-flash")
+                hybrid_result = request_pdf_hybrid(pdf_plan, get_current_curriculum(),
+                    provider=resolve_text_provider(parse_model), post=post_chat_completion, diagnostics=diagnostics,
+                    normalize_fillin=normalize_fillin_macro, task_id=task_id, generation=0,
+                    check_cancelled=check_pdf_cancelled,
+                    full_source_fallback=lambda: parse_paper_text_internal(locked_source, False,
+                        diagnostics=diagnostics, preserve_source_answers=True, pdf_retry=False,
+                        connection_retry=False, check_cancelled=check_pdf_cancelled))
+                parsed_questions = hybrid_result.questions
+                pdf_preserved_indices = hybrid_result.preserved_indices
+                diagnostics["pdf_hybrid"]["partial"] = hybrid_result.partial
+            else:
+                parsed_questions = parse_paper_text_internal(
+                    locked_source, False, diagnostics=diagnostics, preserve_source_answers=True,
+                    pdf_retry=True, check_cancelled=check_pdf_cancelled, report_attempt=report_pdf_split_attempt,
+                )
             DOCUMENT_TASKS.check_cancelled(task_id)
-            diagnostics.update(reconcile_visible_math(parsed_questions, math_locks, source_content))
+            staged = copy.deepcopy(parsed_questions) if pdf_preserved_indices else parsed_questions
+            diagnostics.update(reconcile_visible_math(staged, math_locks, source_content))
+            if pdf_preserved_indices:
+                for index, candidate in enumerate(staged):
+                    if index not in pdf_preserved_indices:
+                        parsed_questions[index] = candidate
+                    elif candidate.get("source_review"):
+                        parsed_questions[index]["source_review"] = candidate["source_review"]
             finalize_source_answers(parsed_questions, source_content)
             apply_pdf_layout_reviews(parsed_questions, layout_result, diagnostics)
             isolate_shared_pdf_figures(
@@ -5749,6 +5814,7 @@ def run_pdf_parsing_task(
                 check_cancelled=check_layout_cancelled,
             )
         else:
+            pdf_preserved_indices = frozenset()
             retain_split_input(full_latex_content, full_latex_content)
             parsed_questions = parse_paper_text_internal(
                 full_latex_content,
@@ -5762,6 +5828,7 @@ def run_pdf_parsing_task(
             paper_title,
             task_id,
             None if layout_result is not None else ocr_results,
+            preserved_indices=pdf_preserved_indices,
         )
         if layout_result is not None:
             from mathbank.pdf_symbol_risks import annotate_pdf_symbol_risks
@@ -5808,9 +5875,13 @@ def run_pdf_parsing_task(
                 }
         make_source_review_advisory(final_questions, diagnostics)
         DOCUMENT_TASKS.check_cancelled(task_id)
+        partial = bool(diagnostics.get("pdf_hybrid", {}).get("partial"))
+        completion_log = (f"PDF 已保留 {len(final_questions)} 道完整题目；部分疑点题组未完成，原文与未匹配题段可展开核对。"
+                          if partial else "拆分完成，可选择题目导入；原文和配图说明可按需展开查看。")
         completed = DOCUMENT_TASKS.complete(
             task_id,
-            log="拆分完成，可选择题目导入；原文和配图说明可按需展开查看。",
+            log=completion_log,
+            partial=partial,
             data=final_questions,
             generate_answers=generate_answers,
             page_images=list(page_urls),
@@ -6024,6 +6095,8 @@ def run_docx_parsing_task(
             output_dir=TMP_UPLOAD_DIR,
             url_prefix=f"/{UPLOAD_DIR_REL}/tmp",
             asset_prefix=f"word_{task_id}",
+            include_source_asset_evidence=True,
+            include_source_review_evidence=True,
         )
         temp_assets = docx_res.get("image_paths", [])
         if not docx_res.get("success") or not docx_res.get("markdown"):
@@ -6032,6 +6105,9 @@ def run_docx_parsing_task(
         full_markdown_content = docx_res["markdown"]
         img_count = docx_res.get("image_count", 0)
         diagnostics = docx_res.get("diagnostics", {})
+        extraction_diagnostics = copy.deepcopy(diagnostics)
+        extraction_review_evidence = docx_res.get("_source_review_evidence")
+        source_document_sha256 = hashlib.sha256(file_bytes).hexdigest()
         diagnostics["word_extraction_warnings"] = list(diagnostics.get("warnings", []))
         converted_count = diagnostics.get("omml_converted", 0) + diagnostics.get("mtef_converted", 0)
         review_count = diagnostics.get("review_required", 0)
@@ -6067,12 +6143,79 @@ def run_docx_parsing_task(
         )
         diagnostics["math_locks_created"] = len(math_locks)
         DOCUMENT_TASKS.check_cancelled(task_id)
-        parsed_questions = parse_paper_text_internal(
-            locked_markdown_content,
-            False,  # Extract original answers; solve reviewed questions in the frontend.
-            diagnostics=diagnostics,
-            preserve_source_answers=True,
-        )
+        from mathbank.word_hybrid_plan import build_word_hybrid_plan, word_hybrid_plan_diagnostics
+        from mathbank.word_hybrid_request import request_word_hybrid
+        hybrid_plan = None
+        preserved_indices = frozenset()
+        if docx_res.get("_source_review_evidence") is not None:
+            hybrid_plan = build_word_hybrid_plan(full_markdown_content, diagnostics,
+                task_id=task_id, generation=0, source_document_sha256=hashlib.sha256(file_bytes).hexdigest(),
+                min_metadata_source_fraction=0.5,
+                asset_evidence=docx_res.get("_source_asset_evidence"),
+                source_review_evidence=docx_res.get("_source_review_evidence"))
+            diagnostics["word_hybrid"] = word_hybrid_plan_diagnostics(hybrid_plan)
+        # Keep verified independent source bodies local. A single metadata-only
+        # request can avoid copying every formula/image/answer through the LLM.
+        # Ambiguous or damaged source structure continues through full splitting.
+        source_plan = None
+        try:
+            source_plan = prepare_word_source_metadata(full_markdown_content, diagnostics,
+                asset_evidence=docx_res.get("_source_asset_evidence"))
+            if hybrid_plan is not None:
+                if hybrid_plan["mode"] == "whole_metadata":
+                    source_plan = hybrid_plan["_whole_source_metadata_plan"]
+                elif source_plan["eligible"]:
+                    source_plan["eligible"] = False
+                    source_plan["fallback_reasons"] = hybrid_plan["global_reasons"] or ["native_scope_not_whole_reliable"]
+            diagnostics["word_source_metadata"] = source_metadata_diagnostics(source_plan)
+        except Exception as exc:
+            # The optimization must never block an otherwise usable import.
+            diagnostics["word_source_metadata"] = {
+                "status": "fallback", "eligible": False, "calls": 0,
+                "error_type": type(exc).__name__,
+            }
+        parsed_questions = None
+        if hybrid_plan is not None and hybrid_plan["mode"] == "hybrid":
+            parse_model = os.getenv("PREFER_PARSE_MODEL") or os.getenv("DEEPSEEK_PARSE_MODEL", "deepseek-flash")
+            result = request_word_hybrid(hybrid_plan, get_current_curriculum(),
+                provider=resolve_text_provider(parse_model), post=post_chat_completion, diagnostics=diagnostics,
+                normalize_fillin=normalize_fillin_macro, task_id=task_id, generation=0,
+                check_cancelled=lambda: DOCUMENT_TASKS.check_cancelled(task_id),
+                full_source_fallback=lambda: parse_paper_text_internal(locked_markdown_content, False,
+                    diagnostics=diagnostics, preserve_source_answers=True, connection_retry=False,
+                    check_cancelled=lambda: DOCUMENT_TASKS.check_cancelled(task_id)))
+            parsed_questions = result.questions
+            preserved_indices = result.preserved_indices
+            diagnostics["word_hybrid"]["partial"] = result.partial
+        if parsed_questions is None and source_plan is not None and source_plan["eligible"]:
+            parse_model = os.getenv("PREFER_PARSE_MODEL") or os.getenv("DEEPSEEK_PARSE_MODEL", "deepseek-flash")
+            try:
+                parsed_questions = request_word_source_metadata(
+                    source_plan, get_current_curriculum(), provider=resolve_text_provider(parse_model),
+                    post=post_chat_completion, diagnostics=diagnostics,
+                    normalize_fillin=normalize_fillin_macro,
+                    check_cancelled=lambda: DOCUMENT_TASKS.check_cancelled(task_id),
+                )
+            except TaskCancelled:
+                raise
+            except Exception as exc:
+                diagnostics["word_source_metadata"].update(
+                    status="fallback", error_type=type(exc).__name__,
+                )
+        if parsed_questions is None:
+            DOCUMENT_TASKS.check_cancelled(task_id)
+            fallback_kwargs = {}
+            if diagnostics["word_source_metadata"].get("calls"):
+                # At most one metadata POST followed by one ordinary split POST.
+                fallback_kwargs["connection_retry"] = False
+                fallback_kwargs["check_cancelled"] = lambda: DOCUMENT_TASKS.check_cancelled(task_id)
+            parsed_questions = parse_paper_text_internal(
+                locked_markdown_content,
+                False,  # Extract original answers; solve reviewed questions in the frontend.
+                diagnostics=diagnostics,
+                preserve_source_answers=True,
+                **fallback_kwargs,
+            )
         # Keep a bounded task-local baseline before local validation. A local
         # post-processing failure must not erase the already paid split output.
         # This is not a cross-upload model cache and is never a normal log entry.
@@ -6083,7 +6226,21 @@ def run_docx_parsing_task(
         }
         if len(json.dumps(word_source_cache, ensure_ascii=False)) <= 500_000:
             DOCUMENT_TASKS.update(task_id, docx_source_cache=copy.deepcopy(word_source_cache))
-        lock_report = reconcile_visible_math(parsed_questions, math_locks, full_markdown_content)
+        staged = copy.deepcopy(parsed_questions) if preserved_indices else parsed_questions
+        lock_report = reconcile_visible_math(staged, math_locks, full_markdown_content)
+        if preserved_indices:
+            for index, candidate in enumerate(staged):
+                if index not in preserved_indices:
+                    parsed_questions[index] = candidate
+                    continue
+                original = parsed_questions[index]
+                changed = any(original.get(field) != candidate.get(field) for field in ("content", "answer_markdown"))
+                if candidate.get("source_review"):
+                    original["source_review"] = candidate["source_review"]
+                if changed:
+                    review = original.setdefault("source_review", {})
+                    review["required"] = True
+                    review.setdefault("reasons", []).append("全卷来源比对未唯一对应，已保留局部认证原文，请对照原卷核对。")
         previous_warnings = list(diagnostics.get("warnings", []))
         diagnostics.update(lock_report)
         diagnostics["warnings"] = previous_warnings + lock_report.get("warnings", [])
@@ -6093,8 +6250,22 @@ def run_docx_parsing_task(
         )
 
         DOCUMENT_TASKS.check_cancelled(task_id)
-        final_questions = post_process_pdf_parsed_questions(parsed_questions, paper_title, task_id, [full_markdown_content])
-        prepare_word_extraction_reviews(final_questions, diagnostics, full_markdown_content)
+        if preserved_indices:
+            final_questions = post_process_pdf_parsed_questions(
+                parsed_questions, paper_title, task_id, [full_markdown_content], preserved_indices=preserved_indices)
+        elif diagnostics["word_source_metadata"].get("status") == "used":
+            final_questions = post_process_pdf_parsed_questions(
+                parsed_questions, paper_title, task_id, [full_markdown_content],
+                source_body_preserved=True,
+            )
+        else:
+            final_questions = post_process_pdf_parsed_questions(parsed_questions, paper_title, task_id, [full_markdown_content])
+        prepare_word_extraction_reviews(
+            final_questions, diagnostics, full_markdown_content,
+            extraction_diagnostics=extraction_diagnostics,
+            source_review_evidence=extraction_review_evidence,
+            source_document_sha256=source_document_sha256,
+        )
         if docx_verify_suspicions and diagnostics.get("source_review_count"):
             def check_word_cancelled():
                 DOCUMENT_TASKS.check_cancelled(task_id)
@@ -6147,12 +6318,21 @@ def run_docx_parsing_task(
                 "calls": 0, "checked": 0, "confirmed": 0,
                 "pending": diagnostics.get("source_review_count", 0), "usage": {},
             }
-        finalize_word_extraction_reviews(final_questions, diagnostics, full_markdown_content)
+        finalize_word_extraction_reviews(
+            final_questions, diagnostics, full_markdown_content,
+            extraction_diagnostics=extraction_diagnostics,
+            source_review_evidence=extraction_review_evidence,
+            source_document_sha256=source_document_sha256,
+        )
         make_source_review_advisory(final_questions, diagnostics)
         DOCUMENT_TASKS.check_cancelled(task_id)
+        partial = bool(diagnostics.get("word_hybrid", {}).get("partial"))
+        completion_log = (f"Word 已保留 {len(final_questions)} 道完整题目；部分疑点题组未完成，原文与未匹配题段可展开核对。"
+                          if partial else "Word 拆分完成，可选择题目导入；原文说明可按需展开查看。")
         completed = DOCUMENT_TASKS.complete(
             task_id,
-            log="Word 拆分完成，可选择题目导入；原文说明可按需展开查看。",
+            log=completion_log,
+            partial=partial,
             data=final_questions,
             generate_answers=generate_answers,
             document_type="docx",

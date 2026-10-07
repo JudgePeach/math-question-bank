@@ -262,10 +262,12 @@ def request_pdf_regions(
     image_path: str, page_info: dict, plan: dict, *, include_figures: bool = True,
     check_cancelled: Callable[[], None] = _no_cancel,
     report_attempt: Callable[[dict], None] = lambda _event: None,
+    include_transcription_evidence: bool = False,
 ) -> dict:
     """Recognize all planned crops together, with at most one retry."""
     check_cancelled()
     regions, pieces = _validated_plan(page_info, plan)
+    witness = None
     provider = resolve_ocr_provider(os.getenv("OCR_PREFER_ENGINE", "siliconflow"))
     if not provider.api_key or not provider.chat_completions_url:
         raise ValueError("PDF 局部识别所用的识图服务未配置。")
@@ -278,6 +280,14 @@ def request_pdf_regions(
     payload = apply_model_thinking_policy(payload, provider=provider, task="ocr")
     payload = apply_structured_output_policy(payload, provider=provider,
                                             system_instruction=prompts.PDF_STRUCTURED_OUTPUT_INSTRUCTIONS)
+    if include_transcription_evidence:
+        from .pdf_transcription_scopes import begin_pdf_transcription_witness
+        try:
+            witness = begin_pdf_transcription_witness(image_path, page_info,
+                request_inputs={"payload": payload, "regions": regions, "pieces": pieces,
+                                "include_figures": include_figures})
+        except (ValueError, OSError):
+            pass
     def validate(body):
         raw = completion_content(body, "PDF 局部识别", max_chars=MAX_RESPONSE_CHARS)
         try:
@@ -297,4 +307,10 @@ def request_pdf_regions(
                   region_count=len(regions),
                   image_area_ratio=sum((region["bbox"][2] - region["bbox"][0]) *
                                        (region["bbox"][3] - region["bbox"][1]) / 1_000_000 for region in regions))
+    if witness is not None:
+        from .pdf_transcription_scopes import finish_pdf_transcription_witness
+        try:
+            result["_transcription_witness"] = finish_pdf_transcription_witness(witness, result)
+        except (ValueError, OSError):
+            pass
     return result

@@ -29,6 +29,7 @@ class MtefDecodeResult:
     success: bool = False
     confidence: str = "none"
     warning: str = ""
+    ignored_spacing_codes: tuple[str, ...] = ()
 
 
 @dataclass
@@ -52,11 +53,23 @@ def _looks_like_mtef(data: bytes) -> bool:
     return b"\x00" in data[5:256]
 
 
+def _looks_like_legacy_mtef(data: bytes) -> bool:
+    """Identify a legacy header for diagnostics, never for v5 conversion.
+
+    Equation Editor 3 and MathType 3.5 use a five-byte header and record
+    options packed into the type byte. Accepting that header must not make
+    their different record grammar look like a successful v5 equation.
+    """
+    return (len(data) >= 6 and data[0] in (3, 4)
+            and data[1] in (0, 1) and data[2] in (0, 1)
+            and data[3] == 3 and data[4] <= 99)
+
+
 def _unwrap_equation_native(stream: bytes) -> bytes:
     """Remove the 28-byte EQNOLEFILEHDR when present."""
     if not stream or len(stream) > MAX_MTEF_BYTES + 28:
         return b""
-    if _looks_like_mtef(stream):
+    if _looks_like_mtef(stream) or _looks_like_legacy_mtef(stream):
         return stream
     if len(stream) < 28:
         return b""
@@ -72,7 +85,7 @@ def _unwrap_equation_native(stream: bytes) -> bytes:
     if cb_object <= 0 or cb_object > available or cb_object > MAX_MTEF_BYTES:
         return b""
     payload = stream[cb_hdr : cb_hdr + cb_object]
-    return payload if _looks_like_mtef(payload) else b""
+    return payload if (_looks_like_mtef(payload) or _looks_like_legacy_mtef(payload)) else b""
 
 
 def extract_mtef_from_ole(ole_bytes: bytes) -> bytes:
@@ -256,8 +269,16 @@ class _MtefParser:
             embellishments: list[MtefNode] = []
             if options & 0x01:
                 embellishments = self.object_list(depth)
-                if any(node.kind != "embell" for node in embellishments):
+                # MTEF v5 object lists may contain formatting records. In
+                # particular, MathType writes COLOR between a CHAR and its
+                # over-arrow EMBELL. Parse these known SIZE/COLOR records
+                # normally, then keep only actual character embellishments.
+                # Definitions, future records and visible nested structures
+                # remain unsupported here; silently dropping them could lose
+                # source mathematics.
+                if any(node.kind not in {"embell", "style"} for node in embellishments):
                     raise MtefParseError("CHAR 修饰记录无效")
+                embellishments = [node for node in embellishments if node.kind == "embell"]
             return MtefNode("char", {
                 "typeface": typeface,
                 "mtcode": mtcode,
@@ -401,19 +422,34 @@ _UNICODE_LATEX = {
     0x2235: r"\because", 0x223C: r"\sim", 0x2248: r"\approx", 0x2260: r"\ne",
     0x2261: r"\equiv", 0x2264: r"\le", 0x2265: r"\ge", 0x2282: r"\subset",
     0x2283: r"\supset", 0x2286: r"\subseteq", 0x2287: r"\supseteq", 0x22A5: r"\perp",
+    # These are standard Unicode identities, not inferred private-font glyphs.
+    # Keep operator/ellipsis spellings explicit across web and native exports.
+    0x2201: r"\complement", 0x220B: r"\ni", 0x2213: r"\mp",
+    0x2216: r"\setminus", 0x2217: r"\ast", 0x2218: r"\circ",
+    0x2223: r"\mid", 0x2224: r"\nmid", 0x2226: r"\nparallel",
+    0x222C: r"\iint", 0x222D: r"\iiint", 0x222E: r"\oint",
+    0x2284: r"\not\subset", 0x2285: r"\not\supset",
+    0x2288: r"\nsubseteq", 0x2289: r"\nsupseteq",
+    0x2295: r"\oplus", 0x2296: r"\ominus", 0x2297: r"\otimes",
+    0x2298: r"\oslash", 0x2299: r"\odot", 0x22C5: r"\cdot",
+    0x22EE: r"\vdots", 0x22EF: r"\cdots", 0x22F1: r"\ddots",
 }
 
-_SYMBOL_FONT = {
-    **{ord(k): v for k, v in {
-        "a": r"\alpha", "b": r"\beta", "c": r"\chi", "d": r"\delta",
-        "e": r"\varepsilon", "f": r"\varphi", "g": r"\gamma", "h": r"\eta",
-        "i": r"\iota", "j": r"\phi", "k": r"\kappa", "l": r"\lambda",
-        "m": r"\mu", "n": r"\nu", "p": r"\pi", "q": r"\theta",
-        "r": r"\rho", "s": r"\sigma", "t": r"\tau", "u": r"\upsilon",
-        "w": r"\omega", "x": r"\xi", "y": r"\psi", "z": r"\zeta",
-    }.items()},
-    0xB1: r"\pm", 0xB4: r"\times", 0xB9: r"\ne", 0xA3: r"\le",
-    0xB3: r"\ge", 0xA5: r"\infty", 0xCE: r"\in", 0xCF: r"\notin",
+# MTEF MTCode is an explicit, font-independent character identity. This entry
+# is scoped to actual CHAR records, never arbitrary Word/OMML private glyphs.
+# DocVortex v0.5.9 mtef_v5 maps E98F to the same medium-dot operator.
+_MTCODE_PRIVATE_LATEX = {0xE98F: r"\centerdot"}
+
+# Wiris MTEF v5 defines typeface 24 as fnSPACE. The explicit MTCode spellings
+# here follow DocVortex v0.5.9's finite table. Other proven fnSPACE EFxx
+# records use natural formula layout without guessing an exact width.
+# EF02 -> thin space, EF03 -> thick space, EF04 -> control space,
+# EF05/EF06 -> quad/double quad, EF22 -> negative thin space.
+# Group the control space so the existing formula-edge strip cannot leave a
+# dangling backslash. This map never applies to arbitrary Word/OMML PUA text.
+_MTCODE_SPACE_LATEX = {
+    0xEF02: r"\,", 0xEF03: r"\;", 0xEF04: r"{\ }",
+    0xEF05: r"\quad", 0xEF06: r"\qquad", 0xEF22: r"\!",
 }
 
 _FUNCTIONS = {
@@ -427,20 +463,47 @@ def _escape_ascii_character(char: str) -> str:
     return {"{": r"\{", "}": r"\}", "%": r"\%", "#": r"\#", "&": r"\&"}.get(char, char)
 
 
+def _is_unmapped_spacing_character(node: MtefNode) -> bool:
+    """Recognize an explicit spacing category, never arbitrary PUA content."""
+    attrs = node.attrs
+    code = attrs.get("mtcode")
+    return (node.kind == "char" and attrs.get("typeface") == 24
+            and type(code) is int and 0xEF00 <= code <= 0xEFFF
+            and code not in _MTCODE_SPACE_LATEX
+            and attrs.get("char8") is None and attrs.get("char16") is None
+            and not attrs.get("function_start") and not attrs.get("embellishments"))
+
+
 def _character_latex(node: MtefNode) -> str:
     attrs = node.attrs
     mtcode = attrs.get("mtcode")
     encoded = attrs.get("char16") if attrs.get("char16") is not None else attrs.get("char8")
     typeface = attrs.get("typeface")
     value = ""
-    if mtcode in _UNICODE_LATEX:
+    if _is_unmapped_spacing_character(node):
+        # The record proves spacing, not its exact width. Natural TeX spacing
+        # preserves the mathematical symbols; report its code out of band.
+        return ""
+    if mtcode is None and encoded is not None:
+        # Typeface numbers are redefinable style slots, not a verified Symbol
+        # encoding. Font-position bytes alone cannot establish mathematical
+        # identity, including seemingly printable ASCII positions.
+        raise MtefParseError("字符缺少 MTCode，尚未验证字体编码，须核对原公式预览")
+    if mtcode == 0x22F0:
+        # The semantic identity is known (ascending diagonal ellipsis), but
+        # \iddots is unavailable in the bundled web/native export contract.
+        # Keep the original formula preview rather than certify plain Unicode.
+        raise MtefParseError("暂不支持升序对角省略号的统一渲染，请核对原公式预览")
+    if (node.kind == "char" and typeface == 24 and mtcode in _MTCODE_SPACE_LATEX
+            and encoded is None and not attrs.get("embellishments")
+            and not attrs.get("function_start")):
+        value = _MTCODE_SPACE_LATEX[mtcode]
+    elif mtcode in _MTCODE_PRIVATE_LATEX:
+        value = _MTCODE_PRIVATE_LATEX[mtcode]
+    elif mtcode in _UNICODE_LATEX:
         value = _UNICODE_LATEX[mtcode]
     elif mtcode is not None and 0x20 <= mtcode <= 0x10FFFF and not 0xD800 <= mtcode <= 0xDFFF:
         value = _escape_ascii_character(chr(mtcode))
-    elif encoded is not None and typeface in (4, 5, 6):
-        value = _SYMBOL_FONT.get(encoded, "")
-    elif encoded is not None and 0x20 <= encoded < 0x7F:
-        value = _escape_ascii_character(chr(encoded))
     if not value:
         raise MtefParseError(f"无法转换 MathType 字符编码：{mtcode!r}/{encoded!r}")
 
@@ -590,6 +653,11 @@ def _render_template(node: MtefNode) -> str:
 
     if 15 <= selector <= 22:
         main, upper, lower = _slot(children, 0), _slot(children, 1), _slot(children, 2)
+        # Actual tmSUM/tmSUMOP 0x70 streams, independently checked against
+        # their original WMF glyph positions, place the lower slot first.
+        # Preserve the older SDK ordering for other unproved variants.
+        if selector in (16, 22) and variation == 0x70 and node.attrs.get("template_options", 0) == 0:
+            lower, upper = _slot(children, 1), _slot(children, 2)
         operator_child = _slot(children, 3)
         defaults = {
             15: r"\int", 16: r"\sum", 17: r"\prod", 18: r"\coprod",
@@ -757,6 +825,12 @@ def decode_mtef_formula(ole_bytes: bytes) -> MtefDecodeResult:
     payload = extract_mtef_from_ole(ole_bytes)
     if not payload:
         return MtefDecodeResult(warning="未找到 MathType Equation Native 数据流")
+    if payload[0] in (3, 4):
+        format_name = "旧微软 Equation Editor 3" if payload[0] == 3 else "MathType 3.5"
+        return MtefDecodeResult(warning=(
+            f"{format_name}（MTEF {payload[0]}）尚未支持可靠结构转换，"
+            "已保留原公式预览图供视觉或人工核对"
+        ))
 
     text = payload.decode("utf-8", errors="ignore")
     match = re.search(
@@ -772,9 +846,26 @@ def decode_mtef_formula(ole_bytes: bytes) -> MtefDecodeResult:
     structural_error = ""
     try:
         nodes = _MtefParser(payload).parse()
+        # Resolving or ignoring a spacing PUA must not remove the last review signal
+        # from an equation whose future extension was previously invisible.
+        # Leave other existing equations' extension policy unchanged.
+        all_nodes, pending = [], list(reversed(nodes))
+        while pending:
+            node = pending.pop()
+            all_nodes.append(node)
+            pending.extend(reversed(node.children))
+        if (any(node.kind == "future" for node in all_nodes)
+                and any(node.kind == "char" and node.attrs.get("typeface") == 24
+                        and (node.attrs.get("mtcode") in _MTCODE_SPACE_LATEX
+                             or _is_unmapped_spacing_character(node))
+                        for node in all_nodes)):
+            raise MtefParseError("空间字符所在公式含尚未支持的 MTEF 扩展记录")
         latex = _render_sequence(_visible_children(MtefNode("root", children=nodes))).strip()
         if _balanced_latex(latex):
-            return MtefDecodeResult(latex=latex, success=True, confidence="structural")
+            ignored = tuple(dict.fromkeys(f"U+{node.attrs['mtcode']:04X}" for node in all_nodes
+                                          if _is_unmapped_spacing_character(node)))
+            return MtefDecodeResult(latex=latex, success=True, confidence="structural",
+                                    ignored_spacing_codes=ignored)
         structural_error = "结构解析结果为空或括号不完整"
     except MtefParseError as exc:
         structural_error = str(exc)

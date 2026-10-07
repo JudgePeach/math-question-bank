@@ -80,13 +80,29 @@ def _text_rows(page, visible_rect):
     import pymupdf as fitz
 
     raw = page.get_text("dict", flags=fitz.TEXTFLAGS_DICT & ~fitz.TEXT_PRESERVE_IMAGES)
+    blocks = raw.get("blocks") if isinstance(raw, dict) else None
+    if not isinstance(blocks, list):
+        return None
     lines = []
-    for block in raw.get("blocks", []):
+    for block in blocks:
+        if not isinstance(block, dict):
+            return None
         if block.get("type", 0) != 0:
             continue
-        for line in block.get("lines", []):
-            spans = line.get("spans", [])
-            text = "".join(str(span.get("text", "")) for span in spans)
+        block_lines = block.get("lines")
+        if not isinstance(block_lines, list) or not block_lines:
+            # A text block can still contain visible content without usable
+            # line evidence. Omitting it would leave the planned crop blind.
+            return None
+        for line in block_lines:
+            if not isinstance(line, dict):
+                return None
+            spans = line.get("spans")
+            if (not isinstance(spans, list) or not spans
+                    or any(not isinstance(span, dict) or not isinstance(span.get("text"), str)
+                           for span in spans)):
+                return None
+            text = "".join(span["text"] for span in spans)
             if not text.strip():
                 continue
             direction = line.get("dir", (1, 0))

@@ -4820,13 +4820,15 @@
                     }
                     let html = parseMarkdownWithMath(processedContent);
                     
-                    // Automatically append associated image thumbnails to preview if not already rendered in markdown HTML
+                    // Only supplement images absent from both current text fields.
+                    // image_paths also contains answer images for asset retention.
                     if (q && q.image_paths && q.image_paths.length > 0) {
+                        const answerImagePaths = new Set(window.collectAnswerImagePaths(answerText));
                         let hasUnrenderedImage = false;
                         let imgHtml = '<div class="flex flex-wrap gap-2 mt-3 pt-2.5 border-t border-dashed border-slate-200/60">';
                         q.image_paths.forEach(p => {
                             const safePath = window.MathBankSafe.safeImageUrl(p);
-                            if (safePath && !html.includes(safePath)) {
+                            if (safePath && !answerImagePaths.has(safePath) && !html.includes(safePath)) {
                                 hasUnrenderedImage = true;
                                 imgHtml += `
                                     <div class="relative group border border-slate-200 rounded-lg overflow-hidden bg-white max-w-[120px] aspect-[4/3] flex items-center justify-center shadow-sm hover:shadow-sm transition-all duration-300">

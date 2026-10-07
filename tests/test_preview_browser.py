@@ -836,6 +836,59 @@ def test_reload_returns_home_without_losing_cart_metadata_or_drafts(browser):
     assert browser.evaluate("localStorage.getItem('mathbank_local_drafts')") == saved['draft']
 
 
+def test_paper_reload_recovers_missing_selection_from_preview_button(browser):
+    browser.command('set', 'viewport', '1600', '1100')
+    browser.evaluate("selectWorkspace('paper', '组卷排版工作台'); true")
+    browser.command('wait', '--fn', "PaperStore.activeWorkspace === 'paper' && document.getElementById('paperCanvasSection').getClientRects().length > 0 && !PaperStore.cartQuestionLoad.loading")
+    fixture = browser.evaluate(r"""
+    (async () => {
+        const questions = [];
+        for (let i = 1; i <= 6; i++) {
+            const form = new FormData();
+            form.set('content', `重新加载回归题 ${i}：计算 $${i}+1$。`);
+            form.set('question_type', 'detailed_answer');
+            form.set('difficulty', 'normal');
+            const response = await fetch('/api/questions', {method:'POST',body:form});
+            if (!response.ok) throw new Error('fixture question creation failed');
+            questions.push((await response.json()).question);
+        }
+        const deletedId = questions[5].id;
+        const deletion = await fetch('/api/questions/' + deletedId, {method:'DELETE'});
+        if (!deletion.ok) throw new Error('fixture question deletion failed');
+        PaperStore.cart = questions.map((q, i) => ({id:q.id,score:i+3,solution_space:'0'}));
+        questions.forEach(q => { PaperStore.questionsMap[q.id] = q; });
+        PaperStore.filters.tab = 'all';
+        localStorage.setItem('mathbank_paper_cart', JSON.stringify(PaperStore.cart));
+        const draft = JSON.stringify([{id:'reload-recovery-draft',content:'保留未保存草稿'}]);
+        localStorage.setItem('mathbank_local_drafts', draft);
+        await renderPaperWorkspace();
+        window.__reloadOriginalConfirm = window.confirm;
+        window.__reloadConfirmCalls = 0;
+        window.confirm = () => { window.__reloadConfirmCalls++; return true; };
+        return {cart:PaperStore.cart.slice(0,5),deletedId,draft};
+    })()
+    """)
+    try:
+        assert browser.evaluate("PaperStore.cartQuestionLoad.confirmedMissingIds") == [fixture['deletedId']]
+        assert browser.evaluate("PaperStore.cart.length") == 6
+        assert browser.evaluate("document.getElementById('paperCanvasSection').textContent.includes('卷面题目尚未完整加载')")
+        assert browser.evaluate("[...document.querySelectorAll('#paperCanvasSection .paper-export-actions button')].every(button => button.disabled)")
+
+        browser.command('click', '#paperCanvasSection button[onclick="window.retryPaperCartQuestions()"]')
+        browser.command('wait', '--fn', "!PaperStore.cartQuestionLoad.loading && PaperStore.cart.length === 5")
+        browser.settle()
+        assert browser.evaluate("PaperStore.cart") == fixture['cart']
+        assert browser.evaluate("JSON.parse(localStorage.getItem('mathbank_paper_cart'))") == fixture['cart']
+        assert browser.evaluate("localStorage.getItem('mathbank_local_drafts')") == fixture['draft']
+        assert browser.evaluate("window.__reloadConfirmCalls") == 0
+        assert browser.evaluate("PaperStore.cartQuestionLoad.error") == ''
+        assert browser.evaluate("!document.getElementById('paperCanvasSection').textContent.includes('卷面题目尚未完整加载')")
+        assert browser.evaluate("[...document.querySelectorAll('#paperCanvasSection .paper-export-actions button')].every(button => !button.disabled)")
+        assert browser.evaluate("document.querySelectorAll('#a4PaperPreviewSheet [data-qid]').length > 0")
+    finally:
+        browser.evaluate("window.confirm = window.__reloadOriginalConfirm; delete window.__reloadOriginalConfirm; true")
+
+
 def test_paper_answers_preserve_reading_position_focus_and_late_page_changes(browser):
     browser.command('set', 'viewport', '1600', '1000')
     browser.evaluate((ROOT / 'tests' / 'browser_preview_fixture.js').read_text())

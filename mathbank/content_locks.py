@@ -13,7 +13,7 @@ import re
 import unicodedata
 from typing import Any
 
-from mathbank.question_assets import markdown_literal_ranges
+from mathbank.question_assets import _mask_literals, markdown_literal_ranges
 
 
 _LOCK_TAG = "mathbank-math"
@@ -397,6 +397,142 @@ _ANSWER_START = re.compile(
     r'(?:\n\s*|(?=【))(?:' + _ANSWER_LABEL + r'|(?:参考答案|答案|解答|解)[：:])'
     r'|\\begin\{(?:solution|answer)\}',
 )
+_SOURCE_ANSWER_TOKEN = re.compile(
+    _ANSWER_LABEL + r'|(?:参考答案|答案|解析|详解|分析|解答|解)[：:]'
+    r'|\\begin\{(?:solution|answer)\}',
+)
+_SOURCE_ANSWER_STYLE = re.compile(r'\\(?:textbf|textit|textrm)[ \t]*\{[ \t\r\n]*$')
+
+
+@dataclass(frozen=True)
+class SourceAnswerBoundary:
+    """An exact source event, including owned label wrappers and line whitespace."""
+
+    start: int
+    end: int
+    label_start: int
+    label_end: int
+    wrappers: tuple[tuple[int, int, int, int], ...] = ()
+
+
+def _source_style_group_end(source: str, opening: int, end: int) -> int | None:
+    depth = 0
+    escaped = False
+    for position in range(opening, end):
+        character = source[position]
+        if character == '\\':
+            escaped = not escaped
+            continue
+        if escaped:
+            escaped = False
+            continue
+        if character == '{':
+            depth += 1
+        elif character == '}':
+            depth -= 1
+            if depth == 0:
+                return position + 1
+    return None
+
+
+def _source_answer_table_ranges(source: str) -> list[tuple[int, int]]:
+    stack = []
+    ranges = []
+    for match in re.finditer(r'\\(begin|end)\{(tabular\*?|tabularx|longtable|tblr|longtblr|talltblr)\}', source):
+        action, name = match.groups()
+        if action == 'begin':
+            stack.append((name, match.start()))
+        elif stack and stack[-1][0] == name:
+            _, start = stack.pop()
+            if not stack:
+                ranges.append((start, match.end()))
+        elif stack:
+            # An unbalanced table does not license a plain label inside it.
+            ranges.append((stack[0][1], len(source)))
+            stack.clear()
+    if stack:
+        ranges.append((stack[0][1], len(source)))
+    return ranges
+
+
+def find_source_answer_start(
+    source: str, start: int = 0, end: int | None = None, *,
+    excluded_ranges=None, table_ranges=None, literal_mask: str | None = None,
+) -> SourceAnswerBoundary | None:
+    """Locate one source answer role without changing text or offsets.
+
+    Bare labels are roles only at a physical line start, including complete
+    textbf/textit/textrm or **/__ wrappers. Explicit bracket/environment labels
+    retain their historical inline behavior; callers can then reject an inline
+    boundary. New plain labels never split a table cell. Known legacy bracket
+    labels remain available for the existing one-cell answer-table comparison.
+    """
+    end = len(source) if end is None else end
+    if excluded_ranges is None:
+        literal = markdown_literal_ranges(source)
+        excluded_ranges = [*literal, *[(item.start, item.end) for item in _formulas(source, literal_ranges=literal)]]
+    if table_ranges is None:
+        table_ranges = _source_answer_table_ranges(source)
+    if literal_mask is None:
+        literal_mask = _mask_literals(source, tex_comments=False)
+    for label in _SOURCE_ANSWER_TOKEN.finditer(source, start, end):
+        if (literal_mask[label.start():label.end()] != source[label.start():label.end()]
+                or any(left < label.end() and label.start() < right for left, right in excluded_ranges)):
+            continue
+        left = label.start()
+        wrappers = []
+        for _ in range(4):
+            prefix_start = max(start, left - 96)
+            style = _SOURCE_ANSWER_STYLE.search(source[prefix_start:left])
+            if style:
+                wrapper_start = prefix_start + style.start()
+                if _is_escaped(source, wrapper_start):
+                    break
+                opening = source.find('{', wrapper_start, left)
+                closing = _source_style_group_end(source, opening, end)
+                if closing is None or closing < label.end():
+                    break
+                wrappers.append((wrapper_start, closing, opening + 1, closing - 1))
+                left = wrapper_start
+                continue
+            marker = source[left - 2:left] if left - 2 >= start else ''
+            if marker in ('**', '__') and not _is_escaped(source, left - 2):
+                if left - 3 >= start and source[left - 3] == marker[0]:
+                    break
+                closing = source.find(marker, label.end(), end)
+                if closing >= 0:
+                    wrappers.append((left - 2, closing + 2, left, closing))
+                    left -= 2
+                    continue
+            break
+        line_start = source.rfind('\n', start, left) + 1
+        line_start = max(start, line_start)
+        at_line_start = not source[line_start:left].strip()
+        explicit = label.group().startswith(('【', r'\begin'))
+        if not explicit and (not at_line_start or any(a <= label.start() < b for a, b in table_ranges)):
+            continue
+        boundary_start = left
+        if at_line_start:
+            while boundary_start > start and source[boundary_start - 1].isspace():
+                boundary_start -= 1
+        removed_start, boundary_end = label.start(), label.end()
+        for wrapper_start, wrapper_end, body_start, body_end in wrappers:
+            if not (source[body_start:removed_start] + source[boundary_end:body_end]).strip():
+                removed_start, boundary_end = wrapper_start, wrapper_end
+        return SourceAnswerBoundary(boundary_start, boundary_end, label.start(), label.end(), tuple(wrappers))
+    return None
+
+
+def strip_source_answer_label(value: str) -> str:
+    """Consume only a leading owned role label, preserving real body emphasis."""
+    boundary = find_source_answer_start(value)
+    if boundary is None or value[:boundary.start].strip():
+        return value
+    left, right = boundary.label_start, boundary.label_end
+    for start, end, body_start, body_end in boundary.wrappers:
+        if not (value[body_start:left] + value[right:body_end]).strip():
+            left, right = start, end
+    return (value[:left] + value[right:]).strip()
 _FOOTER_DOT_CONTENT = r'(?:\\(?:cdot|bullet)(?![A-Za-z])|[·•⋅∙])'
 _FOOTER_DOT = (
     r'(?:' + _FOOTER_DOT_CONTENT + r'|\$\$[ \t]*' + _FOOTER_DOT_CONTENT + r'[ \t]*\$\$'
@@ -725,6 +861,7 @@ def _plain_key(value: str) -> str:
     number_match = _NUMBER.match(value)
     if number_match:
         value = value[number_match.end():]
+    value = strip_source_answer_label(value)
     value = re.sub(r'^\s*\\(?:item|question|qitem)\b(?:\[[^\]]*\])?', '', value)
     value = re.sub(r'!\[[^\]]*\]\([^\n)]*\)', '', value)
     value = re.sub(r'\\includegraphics(?:\[[^\]]*\])?\{[^{}]*\}', '', value)
@@ -1220,11 +1357,35 @@ def _comparable_answer(value: str, source: str) -> str:
     header = re.match(r'^\s*(?:\[EXTRACTED_ORIGINAL\]\s*)?(' + token + r')[ \t]*\n(?:[ \t]*\n)?', value)
     if not header or not value[header.end():].strip():
         return value
+    source_value = source.lstrip()
+    source_number = _NUMBER.match(source_value)
+    if source_number:
+        source_value = source_value[source_number.end():]
+    source_value = strip_source_answer_label(source_value).lstrip()
+    first_line = source_value.splitlines()[0].strip() if source_value else ''
+    # The source's own summary is part of the evidence, including when its
+    # value differs. Never discard a candidate summary and accidentally hide
+    # that difference. Only explicit, complete presentation wrappers qualify.
+    source_summary = re.fullmatch(token, first_line) or re.fullmatch(
+        r'\\(?:textbf|textit|textrm)\{[ \t]*' + token + r'[ \t]*\}'
+        r'|\*\*' + token + r'\*\*|__' + token + r'__', first_line,
+    )
+    if source_summary:
+        return value
     explicit = re.compile(
         r'(?:故[ \t]*选|(?:故[ \t]*)?答案[ \t]*(?:为|是))[ \t]*[:：]?[ \t]*'
         r'(?:\$[ \t]*(' + token + r')[ \t]*\$|(' + token + r')(?=[ \t]*[。．.,，\n]|[ \t]*$))'
     )
-    results = {match.group(1) or match.group(2) for match in explicit.finditer(_comparison_layout(source))}
+    layout = _comparison_layout(source)
+    literal = markdown_literal_ranges(layout)
+    literal_mask = _mask_literals(layout, tex_comments=False)
+    formulas = _formulas(layout, literal_ranges=literal)
+    results = {
+        match.group(1) or match.group(2) for match in explicit.finditer(layout)
+        if literal_mask[match.start():match.end()] == layout[match.start():match.end()]
+        and not any(left < match.end() and match.start() < right for left, right in literal)
+        and not any(formula.start <= match.start() < formula.end for formula in formulas)
+    }
     if results == {header.group(1)}:
         return ' ' * header.end() + value[header.end():]
     return value
@@ -1253,6 +1414,12 @@ def _source_parts(source: str, locks: list[ContentLock], *, excluded_literal_ran
             fence_start = None
     if fence_start is not None:
         literal_ranges.append((fence_start[0], len(source)))
+    answer_excluded_ranges = [
+        *literal_ranges, *markdown_literal_ranges(source),
+        *[(formula.start, formula.end) for formula in source_formulas],
+    ]
+    answer_table_ranges = _source_answer_table_ranges(source)
+    answer_literal_mask = _mask_literals(source, tex_comments=False)
     events: list[tuple[int, int | None, str]] = [
         (match.start(), int(match.group(1) or match.group(2)), 'content')
         for match in _NUMBER.finditer(source) if match.start() not in ignored_instructions
@@ -1317,15 +1484,13 @@ def _source_parts(source: str, locks: list[ContentLock], *, excluded_literal_ran
                                        source[start + heading.end():end]):
                 append(start, end, number, 'placeholder')
                 continue
-            answer_start = next((
-                match for match in _ANSWER_START.finditer(source, start, end)
-                if not any(formula.start <= match.start() < formula.end for formula in source_formulas)
-                and not any(left < match.end() and match.start() < right
-                            for left, right in excluded_literal_ranges)
-            ), None)
+            answer_start = find_source_answer_start(
+                source, start, end, excluded_ranges=answer_excluded_ranges,
+                table_ranges=answer_table_ranges, literal_mask=answer_literal_mask,
+            )
             if answer_start:
-                owner = append(start, answer_start.start(), number, 'content')
-                append(answer_start.start(), end, number, 'answer_markdown', owner)
+                owner = append(start, answer_start.start, number, 'content')
+                append(answer_start.start, end, number, 'answer_markdown', owner)
             else:
                 append(start, end, number, 'content')
     return parts
@@ -1588,9 +1753,11 @@ def reconcile_visible_math(
 
     unmatched = [
         {'source_excerpt': part.text, 'reason': ('这段原文未匹配到拆分题目，可能整题遗漏。'
-                                               if part.field == 'content' else '这段含公式的原文未匹配到题目或原版答案，请人工核对。')}
+                                               if part.field == 'content' else '这段原版答案未匹配到拆分题目，请人工核对。'
+                                               if part.field == 'answer_markdown' else '这段含公式的原文未匹配到题目或原版答案，请人工核对。')}
         for index, part in enumerate(parts) if index not in matched_parts
-        and (part.field == 'content' and (_plain_key(part.text) or _image_positions(part.text, part.formulas)) or part.formulas)
+        and (part.field in {'content', 'answer_markdown'}
+             and (_plain_key(part.text) or _image_positions(part.text, part.formulas)) or part.formulas)
     ]
     for q_index, messages in reasons.items():
         existing = staged[q_index].get('source_review') or {}

@@ -216,9 +216,9 @@ def test_omml_to_latex_conversions():
     acc_xml = """<m:oMath xmlns:m="http://schemas.openxmlformats.org/officeDocument/2006/math"><m:acc><m:accPr><m:chr m:val="→"/></m:accPr><m:e><m:r><m:t>AB</m:t></m:r></m:e></m:acc></m:oMath>"""
     assert "\\vec{AB}" in omml_to_latex(acc_xml)
 
-    # 4. 方程组
+    # 4. 方程数组：只有源 XML 的外层 m:d 才能添加花括号。
     cases_xml = """<m:oMath xmlns:m="http://schemas.openxmlformats.org/officeDocument/2006/math"><m:eqArr><m:e><m:r><m:t>x+y=3</m:t></m:r></m:e><m:e><m:r><m:t>x-y=1</m:t></m:r></m:e></m:eqArr></m:oMath>"""
-    assert "\\begin{cases}" in omml_to_latex(cases_xml)
+    assert "\\begin{aligned}" in omml_to_latex(cases_xml)
     assert "x+y=3 \\\\ x-y=1" in omml_to_latex(cases_xml)
 
     # 5. 上划线与下极限不得压平成普通文字
@@ -286,8 +286,16 @@ def test_omml_unknown_private_use_character_is_visible_and_requires_review():
     """
     diagnostics = {}
     latex = omml_element_to_latex(ET.fromstring(unknown_xml), diagnostics)
-    assert latex == r"x\text{?}y"
+    assert latex == r"xy"
     assert diagnostics["unsupported_omml_tags"] == ["privateUse:U+EC09"]
+
+
+def test_unknown_character_marker_preserves_real_source_question_marks():
+    diagnostics = {}
+    original = "x?+2" + chr(0xEF0A) + "y"
+    assert normalize_word_formula_latex(original, diagnostics) == r"x?+2y"
+    assert diagnostics["unsupported_math_tokens"] == ["privateUse:U+EF0A"]
+    assert normalize_word_formula_latex(r"\text{?}") == r"\text{?}"
 
 
 def _create_mock_docx(paragraphs, tables=None) -> bytes:
@@ -408,7 +416,7 @@ def test_docx_unknown_private_math_character_is_never_silently_preserved():
     <w:p><m:oMath><m:r><m:t>x&#xEC09;y</m:t></m:r></m:oMath></w:p>
     """
     result = extract_docx_markdown(_create_docx_package(body))
-    assert r"$x\text{?}y$ [公式结构待核对]" in result["markdown"]
+    assert r"$xy$" in result["markdown"]
     assert "privateUse:U+EC09" in result["diagnostics"]["unsupported_omml_tags"]
     assert result["diagnostics"]["review_required"] == 1
 
@@ -590,8 +598,8 @@ def test_mathtype_failure_keeps_preview_image_and_review_marker(tmp_path):
         asset_prefix="word_test",
     )
     assert result["success"] is True
-    assert "[公式待核对]" in result["markdown"]
-    assert "![MathType 公式待核对]" in result["markdown"]
+    assert "[公式待核对]" not in result["markdown"]
+    assert "![](" in result["markdown"]
     assert result["diagnostics"]["mtef_fallback_images"] == 1
     assert result["diagnostics"]["review_required"] == 1
     assert len(list(tmp_path.glob("word_test_*.png"))) == 1
@@ -651,8 +659,8 @@ def test_docx_tabbed_mathtype_interval_converts_or_preserves_preview(valid, tmp_
         assert result["diagnostics"]["mtef_structural_converted"] == 1
         assert result["diagnostics"]["review_required"] == 0
     else:
-        assert "[公式待核对]" in result["markdown"]
-        assert "![MathType 公式待核对]" in result["markdown"]
+        assert "[公式待核对]" not in result["markdown"]
+        assert "![](" in result["markdown"]
         assert result["diagnostics"]["mtef_fallback_images"] == 1
         assert result["diagnostics"]["review_required"] == 1
         assert len(result["image_paths"]) == 1

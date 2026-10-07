@@ -22,6 +22,9 @@ MAX_FIGURE_AREA_RATIO = 0.80
 MAX_CROP_SIDE = 2400
 MAX_CROP_PIXELS = 4_000_000
 CROP_DPI = 200
+MAX_LABEL_SEGMENTS = 6000
+MAX_LABEL_GEOMETRY_WORK = 20000
+MAX_LABEL_ANCHORS = 24
 
 
 def normalize_model_bbox(value) -> list:
@@ -150,6 +153,102 @@ def scan_background_candidate_ids(page_info: dict) -> set[str]:
     return {identifier for identifier, _ in strips} if area >= 850_000 else set()
 
 
+def _vector_label_segments(page, drawings, visible):
+    """Read bounded visible stroke geometry once, without inferring labels."""
+    import pymupdf as fitz
+
+    segments = []
+    for drawing in drawings:
+        if drawing.get("type") not in {"s", "fs"} or drawing.get("stroke_opacity", 1) <= 0:
+            continue
+        for item in drawing.get("items", []):
+            if item[0] == "l" and len(item) == 3:
+                pairs, curved = [(item[1], item[2])], False
+            elif item[0] == "c" and len(item) == 5:
+                pairs, curved = [(item[1], item[4])], True
+            elif item[0] == "re" and len(item) == 3:
+                box = fitz.Rect(item[1])
+                points = (box.tl, box.tr, box.br, box.bl)
+                pairs, curved = list(zip(points, (*points[1:], points[0]))), False
+            else:
+                continue
+            for start, end in pairs:
+                first, second = fitz.Point(start) * page.rotation_matrix, fitz.Point(end) * page.rotation_matrix
+                if (not all(math.isfinite(v) for v in (*first, *second))
+                        or not visible.contains(first) or not visible.contains(second)
+                        or math.hypot(second.x-first.x, second.y-first.y) < .5):
+                    continue
+                segments.append(((first.x, first.y), (second.x, second.y), curved))
+                if len(segments) > MAX_LABEL_SEGMENTS:
+                    return None
+    return segments
+
+
+def _candidate_label_geometry(candidate, segments, visible, work):
+    """Only outer stroke junctions support detached-label ownership."""
+    if segments is None:
+        return None
+    points = {}
+    directional = 0
+    curved = False
+    for first, second, is_curve in segments:
+        work[0] += 1
+        if work[0] > MAX_LABEL_GEOMETRY_WORK:
+            return None
+        if any(not (candidate.x0-.25 <= point[0] <= candidate.x1+.25
+                    and candidate.y0-.25 <= point[1] <= candidate.y1+.25) for point in (first, second)):
+            continue
+        if abs(first[0]-second[0]) > .5 and abs(first[1]-second[1]) > .5:
+            directional += 1
+        curved = curved or is_curve
+        keys = [tuple(round(value/.25) for value in point) for point in (first, second)]
+        signature = tuple(sorted(keys))
+        for key, point in zip(keys, (first, second)):
+            record = points.setdefault(key, {"point": point, "segments": set()})
+            record["segments"].add(signature)
+    if not curved and directional < 2:
+        return {"complete": True, "anchors": []}  # Plain frames/grids are ambiguous.
+    anchors = []
+    for record in points.values():
+        x, y = record["point"]
+        if min(abs(x-candidate.x0), abs(x-candidate.x1), abs(y-candidate.y0), abs(y-candidate.y1)) > .75:
+            continue
+        lengths=[math.hypot((first[0]-second[0])*.25,(first[1]-second[1])*.25)
+                 for first,second in record["segments"]]
+        arrow=sum(length<=6 for length in lengths)>=2 and any(length>=12 for length in lengths)
+        anchors.append({"point": [round((x-visible.x0)/visible.width*1000,4),
+                                   round((y-visible.y0)/visible.height*1000,4)],
+                        "degree": len(record["segments"]), "kind":"arrow" if arrow else "vertex"})
+    anchors.sort(key=lambda value: (-value["degree"], value["point"][1], value["point"][0]))
+    if len(anchors) > MAX_LABEL_ANCHORS:
+        return None
+    return {"complete": True, "anchors": anchors}
+
+
+def _drawn_short_label_evidence(page, visible):
+    """Exclude invisible/optional-layer text, without decoding unknown fonts."""
+    try:
+        spans=page.get_texttrace()
+        if len(spans)>2000 or sum(len(span.get("chars",())) for span in spans)>MAX_TEXT_CHARS:
+            return None
+        output=[]
+        for span in spans:
+            if span.get("type") not in {0,1,2} or span.get("opacity",1)<=0 or span.get("layer"):
+                continue
+            chars=span.get("chars",())
+            if len(chars)!=1 or type(chars[0][0]) is not int or not 0<=chars[0][0]<=0x10FFFF:
+                continue
+            text=chr(chars[0][0])
+            if not re.fullmatch(r"[A-Za-z]",text):
+                continue
+            rectangle=_display_rect(page,span.get("bbox"))
+            if rectangle is not None:
+                output.append((text,_normalized(rectangle,visible)))
+        return output
+    except (ValueError,TypeError,KeyError,AttributeError,RuntimeError):
+        return None
+
+
 def inspect_pdf_page(page, page_index: int) -> dict[str, Any]:
     """Return visible raster occurrences, vector clusters and native text boxes.
 
@@ -164,6 +263,7 @@ def inspect_pdf_page(page, page_index: int) -> dict[str, Any]:
     warnings: list[str] = []
     raw_candidates: list[tuple[str, Any]] = []
     full_page_image = False
+    label_segments = None
 
     try:
         for item in page.get_image_info():
@@ -204,6 +304,10 @@ def inspect_pdf_page(page, page_index: int) -> dict[str, Any]:
                     warnings.append("存在覆盖大部分页面的矢量结构，请核对其插图或表格范围。")
                     continue
                 raw_candidates.append(("vector", cluster_rect))
+            try:
+                label_segments = _vector_label_segments(page, usable, rect)
+            except (ValueError, TypeError, KeyError, AttributeError, RuntimeError):
+                label_segments = None  # Optional evidence does not fail inspection.
     except Exception:
         warnings.append("矢量插图位置提取不完整，请对照原页核对。")
 
@@ -214,16 +318,23 @@ def inspect_pdf_page(page, page_index: int) -> dict[str, Any]:
         warnings.append(f"本页插图候选超过 {MAX_CANDIDATES} 个，未显示的区域仍需核对。")
     counts: dict[str, int] = {}
     candidates = []
+    label_work = [0]
     for kind, candidate_rect in raw_candidates[:MAX_CANDIDATES]:
         counts[kind] = counts.get(kind, 0) + 1
-        candidates.append({
+        candidate = {
             "id": f"p{page_index + 1}_{kind}_{counts[kind]:03d}",
             "bbox": _normalized(candidate_rect, rect),
             "type": kind,
-        })
+        }
+        if kind == "vector":
+            geometry = _candidate_label_geometry(candidate_rect, label_segments, rect, label_work)
+            if geometry is not None:
+                candidate["_label_geometry"] = geometry
+        candidates.append(candidate)
 
     text_blocks = []
     text_chars = 0
+    drawn_labels=_drawn_short_label_evidence(page,rect)
     try:
         import pymupdf as fitz
 
@@ -239,7 +350,13 @@ def inspect_pdf_page(page, page_index: int) -> dict[str, Any]:
                 warnings.append("本页文字位置清单已截断，原始正文仍由文字提取链路保留。")
                 break
             text_chars += len(text)
-            text_blocks.append({"bbox": _normalized(text_rect, rect), "text": text})
+            block_info={"bbox":_normalized(text_rect,rect),"text":text}
+            if re.fullmatch(r"[A-Za-z]",text.strip()) and drawn_labels is not None:
+                a,b,c,d=block_info["bbox"]
+                block_info["_label_visible"]=any(value==text.strip() and a<=(x+z)/2<=c and b<=(y+end)/2<=d
+                    and max(0,min(c,z)-max(a,x))*max(0,min(d,end)-max(b,y))>=.95*(z-x)*(end-y)
+                    for value,(x,y,z,end) in drawn_labels)
+            text_blocks.append(block_info)
     except Exception:
         warnings.append("本页文字坐标提取不完整，请对照原页核对。")
 
@@ -271,6 +388,104 @@ def _validated_bbox(bbox) -> tuple[float, float, float, float]:
     if (x1 - x0) * (y1 - y0) > MAX_FIGURE_AREA_RATIO * 1_000_000:
         raise ValueError("插图区域覆盖过多页面，请缩小到独立插图。")
     return values
+
+
+def _complete_detached_vector_labels(page_info, original, current, candidate_ids):
+    """Complete only uniquely owned short labels at actual stroke endpoints."""
+    width, height = page_info.get("width"), page_info.get("height")
+    if (page_info.get("warnings") or page_info.get("full_page_image")
+            or any(type(value) not in {int, float} or not math.isfinite(value) or value <= 0
+                   for value in (width, height))):
+        return current, []
+    def box(value):
+        if (not isinstance(value, (list, tuple)) or len(value) != 4
+                or any(type(v) not in {int,float} or not math.isfinite(v) or not 0 <= v <= 1000 for v in value)):
+            return None
+        return tuple(value) if value[0]<value[2] and value[1]<value[3] else None
+    def area(value):
+        return (value[2]-value[0])*(value[3]-value[1])
+    def overlap(first,second):
+        return max(0,min(first[2],second[2])-max(first[0],second[0]))*max(0,min(first[3],second[3])-max(first[1],second[1]))
+    def contains(first,second):
+        return all((first[0]<=second[0]+.0002,first[1]<=second[1]+.0002,
+                    first[2]+.0002>=second[2],first[3]+.0002>=second[3]))
+    records=[]
+    for candidate in page_info.get("candidates",[]):
+        geometry=candidate.get("_label_geometry") if isinstance(candidate,dict) else None
+        candidate_box=box(candidate.get("bbox")) if isinstance(candidate,dict) else None
+        if (candidate_box is not None and candidate.get("type")=="vector" and isinstance(geometry,dict)
+                and geometry.get("complete") is True and isinstance(geometry.get("anchors"),list)
+                and len(geometry["anchors"])<=MAX_LABEL_ANCHORS):
+            records.append((candidate,candidate_box,geometry["anchors"]))
+    requested=list(dict.fromkeys(candidate_ids))
+    targets=[record for record in records if record[0].get("id") in requested
+             and overlap(original,record[1])/area(record[1])>=.75 and contains(current,record[1])]
+    if not targets and not requested:
+        targets=[record for record in records if overlap(original,record[1])/area(record[1])>=.75 and contains(current,record[1])]
+    if len(targets)!=1:
+        return current, []
+    target,target_box,_anchors=targets[0]
+    texts=[]
+    visibility={}
+    for block in page_info.get("text_blocks",[]):
+        value=box(block.get("bbox")) if isinstance(block,dict) else None
+        if value is not None:
+            texts.append((value,str(block.get("text") or "").strip()))
+            visibility[value]=block.get("_label_visible")
+    proposals=[]
+    warnings=[]
+    for label_box,text in texts:
+        if not re.fullmatch(r"[A-Za-z]",text) or contains(current,label_box):
+            continue
+        em=max((label_box[2]-label_box[0])*width/1000,(label_box[3]-label_box[1])*height/1000)
+        if not 3<=em<=24:
+            continue
+        owners={}
+        for candidate,candidate_box,anchors in records:
+            for anchor in anchors:
+                point=anchor.get("point") if isinstance(anchor,dict) else None
+                degree=anchor.get("degree") if isinstance(anchor,dict) else None
+                if (not isinstance(point,(list,tuple)) or len(point)!=2 or type(degree) is not int or degree<1
+                        or any(type(v) not in {int,float} or not math.isfinite(v) or not 0<=v<=1000 for v in point)):
+                    continue
+                distance=math.hypot(max(label_box[0]-point[0],0,point[0]-label_box[2])*width/1000,
+                                    max(label_box[1]-point[1],0,point[1]-label_box[3])*height/1000)
+                if distance<=.7*em:
+                    if anchor.get("kind")=="arrow" and text.lower() not in {"x","y","z"}:
+                        degree=1  # A bare option letter is not an axis name.
+                    owners[candidate["id"]]=max(owners.get(candidate["id"],0),degree)
+        if target["id"] not in owners:
+            continue
+        if visibility.get(label_box) is False:
+            continue
+        if visibility.get(label_box) is not True:
+            warnings.append(f"原生短标签“{text}”的可见绘制证据不完整，未自动扩框，请核对标注。")
+            continue
+        if set(owners)!={target["id"]} or owners[target["id"]]<2 or len(requested)!=1:
+            warnings.append(f"图框附近的原生短标签“{text}”尚无唯一端点归属，未自动扩框，请核对标注。")
+            continue
+        proposals.append((label_box,text,em))
+    allowed={value for value,_text,_em in proposals}
+    repaired=0
+    for label_box,text,em in proposals:
+        margin_x,margin_y=300/width,300/height  # .3 pt only, not a whole new line.
+        proposed=(max(0,min(current[0],label_box[0]-margin_x)),max(0,min(current[1],label_box[1]-margin_y)),
+                  min(1000,max(current[2],label_box[2]+margin_x)),min(1000,max(current[3],label_box[3]+margin_y)))
+        growth=(max(0,target_box[0]-proposed[0])*width/1000,max(0,target_box[1]-proposed[1])*height/1000,
+                max(0,proposed[2]-target_box[2])*width/1000,max(0,proposed[3]-target_box[3])*height/1000)
+        competition=any(candidate.get("id")!=target["id"] and box(candidate.get("bbox")) is not None
+                        and overlap(proposed,box(candidate["bbox"]))>overlap(current,box(candidate["bbox"]))+1e-6
+                        for candidate in page_info.get("candidates",[]) if isinstance(candidate,dict))
+        prose=any(value not in allowed and overlap(proposed,value)>overlap(current,value)+1e-6 for value,_ in texts)
+        if (max(growth)>1.3*em+.001 or area(proposed)>area(original)*2.2
+                or area(proposed)>MAX_FIGURE_AREA_RATIO*1_000_000 or competition or prose):
+            warnings.append(f"原生短标签“{text}”未完整进入图框，补全会越界、扩大过多或碰到邻文，请核对标注。")
+            continue
+        current=proposed
+        repaired+=1
+    if repaired:
+        warnings.append(f"已补全 {repaired} 处由唯一矢量端点确认的分离原生标签。")
+    return current,warnings
 
 
 def refine_figure_bbox(page_info: dict, bbox, candidate_ids: list[str]) -> dict[str, Any]:
@@ -427,6 +642,8 @@ def refine_figure_bbox(page_info: dict, bbox, candidate_ids: list[str]) -> dict[
             warnings.append("小边距会超过扩张上限或碰到其他文字，已保留当前边界。")
     else:
         warnings.append("页面尺寸无效，未添加裁图边距。")
+    current, detached_warnings = _complete_detached_vector_labels(page_info, original, current, candidate_ids)
+    warnings.extend(detached_warnings)
     return {"bbox": [round(value, 4) for value in current], "warnings": list(dict.fromkeys(warnings))}
 
 

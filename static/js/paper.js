@@ -668,6 +668,7 @@
         loadState.missingIds = missingIds;
         const confirmedMissingIds = new Set(revalidateAll ? [] : previousConfirmedMissingIds);
         const failedIds = new Set(revalidateAll ? [] : previousFailedIds);
+        const freshConfirmedMissingIds = new Set();
         const previouslyConfirmedIds = new Set(previousConfirmedMissingIds);
         idsToLoad.forEach(qid => {
             confirmedMissingIds.delete(qid);
@@ -701,6 +702,7 @@
                             confirmedMissingIds.delete(qid);
                         } else {
                             confirmedMissingIds.add(qid);
+                            freshConfirmedMissingIds.add(qid);
                         }
                     });
                 } catch (error) {
@@ -744,6 +746,10 @@
         loadState.failedIds = failedCurrentIds;
         loadState.error = buildCartQuestionLoadError(confirmedCurrentIds, failedCurrentIds);
         clampStoredPaperStreamPages();
+        if (options && typeof options.onConfirmedMissing === 'function') {
+            options.onConfirmedMissing(Array.from(freshConfirmedMissingIds)
+                .filter(qid => currentCartIds.has(qid)));
+        }
         return unresolvedIds.length === 0
             && confirmedCurrentIds.length === 0
             && failedCurrentIds.length === 0;
@@ -1189,20 +1195,49 @@
     };
 
     window.retryPaperCartQuestions = async function () {
-        const loadingPromise = ensureCartQuestionsLoaded({ revalidateAll: true });
-        renderPart3QuestionStream();
-        window.renderPaperCanvas();
-        await loadingPromise;
-        renderPart3QuestionStream();
-        window.renderPaperCanvas();
+        const actionKey = 'reload-cart';
+        if (!beginPaperAction(actionKey, '重新加载卷面')) return;
+        const expectedSignature = getPaperCartSignature();
+        const expectedCart = window.PaperStore.cart;
+        const expectedLoadState = window.PaperStore.cartQuestionLoad;
+        let freshConfirmedMissingIds = [];
+        try {
+            const loadingPromise = ensureCartQuestionsLoaded({
+                revalidateAll: true,
+                onConfirmedMissing(ids) { freshConfirmedMissingIds = ids; }
+            });
+            renderPart3QuestionStream();
+            window.renderPaperCanvas();
+            await loadingPromise;
+            if (!isPaperCartSnapshotCurrent(expectedSignature, '重新加载')) return;
+            if (window.PaperStore.cart !== expectedCart
+                    || window.PaperStore.cartQuestionLoad !== expectedLoadState) {
+                if (window.showToast) window.showToast('卷面状态已变化，请重新操作。', 'warning');
+                return;
+            }
+            removeConfirmedMissingPaperCartQuestions(freshConfirmedMissingIds, true);
+        } finally {
+            finishPaperAction(actionKey);
+            renderPart3QuestionStream();
+            window.renderPaperCanvas();
+        }
     };
 
     window.removeMissingPaperCartQuestions = function () {
+        return removeConfirmedMissingPaperCartQuestions();
+    };
+
+    function removeConfirmedMissingPaperCartQuestions(requestedIds = null, skipConfirmation = false) {
         const loadState = window.PaperStore.cartQuestionLoad;
+        if (loadState.loading || cartQuestionsLoadPromise) return;
+        const allowedIds = requestedIds === null ? null : new Set(
+            Array.from(requestedIds).map(qid => parseInt(qid, 10))
+        );
         const removableIds = new Set(
             (loadState.confirmedMissingIds || [])
                 .map(qid => parseInt(qid, 10))
-                .filter(qid => qid && window.PaperStore.cart.some(
+                .filter(qid => qid && (allowedIds === null || allowedIds.has(qid))
+                    && window.PaperStore.cart.some(
                     item => parseInt(item.id, 10) === qid
                 ))
         );
@@ -1211,7 +1246,8 @@
             window.renderPaperCanvas();
             return;
         }
-        if (!confirm(`确定从卷面移除这 ${removableIds.size} 道已失效题目吗？其他已选题目会保留。`)) return;
+        if (!skipConfirmation
+                && !confirm(`确定从卷面移除这 ${removableIds.size} 道已失效题目吗？其他已选题目会保留。`)) return;
 
         const previousLength = window.PaperStore.cart.length;
         window.PaperStore.cart = window.PaperStore.cart.filter(item => {
@@ -1240,7 +1276,7 @@
         if (removedCount > 0 && window.showToast) {
             window.showToast(`已移除 ${removedCount} 道失效题目，其他已选题目已保留。`, 'success');
         }
-    };
+    }
 
     window.changePaperStreamPage = async function (tabName, requestedPage) {
         if (!['all', 'selected'].includes(tabName)) return;
@@ -1475,7 +1511,7 @@
                 <div class="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-amber-200 bg-amber-50/70 px-4 py-3 text-xs text-amber-800 dark:border-amber-900/60 dark:bg-amber-950/30 dark:text-amber-200" role="alert">
                     <span><i class="fa-solid fa-triangle-exclamation mr-1.5"></i>${escapeHtml(cartLoadState.error)}</span>
                     <span class="flex flex-wrap items-center gap-2">
-                        <button type="button" onclick="window.retryPaperCartQuestions()" class="rounded-lg border border-amber-300 bg-white px-3 py-1.5 font-semibold hover:bg-amber-100 dark:border-amber-800 dark:bg-slate-800 dark:hover:bg-slate-700">重新加载</button>
+                        <button type="button" onclick="window.retryPaperCartQuestions()" ${cartLoadState.loading ? 'disabled' : ''} aria-busy="${cartLoadState.loading ? 'true' : 'false'}" class="rounded-lg border border-amber-300 bg-white px-3 py-1.5 font-semibold hover:bg-amber-100 disabled:cursor-wait disabled:opacity-60 dark:border-amber-800 dark:bg-slate-800 dark:hover:bg-slate-700">重新加载</button>
                         ${(cartLoadState.confirmedMissingIds || []).length > 0 ? `
                             <button type="button" onclick="window.removeMissingPaperCartQuestions()" class="rounded-lg border border-rose-300 bg-white px-3 py-1.5 font-semibold text-rose-600 hover:bg-rose-50 dark:border-rose-800 dark:bg-slate-800 dark:text-rose-300 dark:hover:bg-slate-700">只移除确认失效题</button>
                         ` : ''}
@@ -1723,7 +1759,7 @@
                 <span><i class="fa-solid fa-triangle-exclamation mr-1.5"></i>${cartLoadState.loading
                     ? '正在向服务端核验完整卷面，预览、保存与导出已暂停。'
                     : `${escapeHtml(cartLoadState.error || `有 ${unavailableCartQuestionIds.length} 道已选题目尚未完成核验。`)} 卷面预览、保存与导出已暂停。`}</span>
-                <button type="button" onclick="window.retryPaperCartQuestions()" class="rounded-lg border border-amber-300 bg-white px-3 py-1.5 font-semibold hover:bg-amber-100 dark:border-amber-800 dark:bg-slate-800 dark:hover:bg-slate-700">重新加载</button>
+                <button type="button" onclick="window.retryPaperCartQuestions()" ${cartLoadState.loading ? 'disabled' : ''} aria-busy="${cartLoadState.loading ? 'true' : 'false'}" class="rounded-lg border border-amber-300 bg-white px-3 py-1.5 font-semibold hover:bg-amber-100 disabled:cursor-wait disabled:opacity-60 dark:border-amber-800 dark:bg-slate-800 dark:hover:bg-slate-700">重新加载</button>
             </div>
         ` : '';
 

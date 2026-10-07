@@ -15,7 +15,9 @@ _WORD_FORMULA_NOTICE = re.compile(r"\[(?:公式(?:结构)?|特殊字符)待核�
 _WORD_FORMULA_WARNINGS = ("部分 Office 公式含暂未完整支持的结构", "MathType 公式包含无法识别的字符", "无法转换 Word 特殊字符：")
 
 
-def _word_formula_owners(source: str, diagnostics: dict, count: int) -> list[dict]:
+def _word_formula_owners(source: str, diagnostics: dict, count: int, *,
+                        source_review_evidence=None, extraction_diagnostics=None,
+                        source_document_sha256=None) -> list[dict]:
     items = []
     for marker in _WORD_FORMULA_NOTICE.finditer(source):
         owners = set()
@@ -28,17 +30,59 @@ def _word_formula_owners(source: str, diagnostics: dict, count: int) -> list[dic
                 owners.add(index)
         items.append({"source_start": marker.start(), "source_end": marker.end(),
                       "question_index": next(iter(owners)) if len(owners) == 1 else None})
+    if source_review_evidence is not None and isinstance(extraction_diagnostics, dict):
+        from mathbank.docx_source_scopes import verify_source_review_evidence
+        verified = verify_source_review_evidence(source, extraction_diagnostics,
+            source_review_evidence, source_document_sha256=source_document_sha256)
+        missing_count = extraction_diagnostics.get("native_missing_glyphs", 0)
+        missing_count = missing_count if type(missing_count) is int and missing_count > 0 else 0
+        unlocated = missing_count if verified.get("status") != "ready" else 0
+        for block in verified.get("blocks", []):
+            counters = block.get("risk_counters", {})
+            if not any(counters.get(key, 0) for key in ("omml_unsupported", "mtef_fallback_images",
+                "mtef_unavailable", "symbols_unavailable", "native_missing_glyphs")):
+                continue
+            start, end = block["range"]
+            owners = set()
+            for match in diagnostics.get("source_matches", []):
+                index, first, last = (match.get(key) for key in ("question_index", "source_start", "source_end"))
+                if (type(index) is int and 0 <= index < count and type(first) is int and type(last) is int
+                    and 0 <= first < last <= len(source) and first < end and last > start
+                    and source[first:last] == match.get("source_excerpt")
+                    and match.get("field") in {"content", "answer_markdown"}
+                    and source[max(first, start):min(last, end)].strip()):
+                    owners.add(index)
+            missing = bool(counters.get("native_missing_glyphs", 0))
+            if not owners and missing:
+                unlocated += int(counters["native_missing_glyphs"])
+            for index in sorted(owners) if owners else [None]:
+                native = {"source_start": start, "source_end": end, "question_index": index,
+                    "native_risk": True, "native_missing_glyphs": missing,
+                    "risk_counters": dict(counters)}
+                same = [item for item in items if item["question_index"] == index
+                        and start <= item["source_start"] <= item["source_end"] <= end]
+                if same:
+                    for item in same:
+                        item.update(native_risk=True, native_missing_glyphs=missing,
+                                    risk_counters=dict(counters), native_source_range=[start, end])
+                else:
+                    items.append(native)
+        diagnostics["word_native_missing_glyphs_unlocated"] = unlocated
     return items
 
 
-def prepare_word_extraction_reviews(questions: list[dict], diagnostics: dict, source: str) -> None:
+def prepare_word_extraction_reviews(questions: list[dict], diagnostics: dict, source: str, *,
+                                    source_review_evidence=None, extraction_diagnostics=None,
+                                    source_document_sha256=None) -> None:
     """An unchanged extraction placeholder is not proof of a correct formula.
 
     Bind native formula diagnostics to exact source ranges where available, so
     successful text alignment does not bypass the visual review of extraction.
     Unlocated warnings stay global instead of being broadcast to every card.
     """
-    items = _word_formula_owners(source, diagnostics, len(questions))
+    items = _word_formula_owners(source, diagnostics, len(questions),
+        source_review_evidence=source_review_evidence, extraction_diagnostics=extraction_diagnostics,
+        source_document_sha256=source_document_sha256)
     diagnostics["word_formula_extraction_items"] = items
     indices = {item["question_index"] for item in items if item["question_index"] is not None}
     indices.update(index for index, question in enumerate(questions)
@@ -47,6 +91,12 @@ def prepare_word_extraction_reviews(questions: list[dict], diagnostics: dict, so
     for index in indices:
         review = questions[index].setdefault("source_review", {})
         review["required"] = True
+        native = [item for item in items if item["question_index"] == index and item.get("native_risk")]
+        if native:
+            review["native_extraction_risks"] = [{key: value for key, value in item.items()
+                if key != "question_index"} for item in native]
+            if any(item.get("native_missing_glyphs") for item in native):
+                review["native_missing_glyphs"] = True
         reasons = review.setdefault("reasons", [])
         if WORD_FORMULA_EXTRACTION_REASON not in reasons:
             reasons.append(WORD_FORMULA_EXTRACTION_REASON)
@@ -58,15 +108,20 @@ def prepare_word_extraction_reviews(questions: list[dict], diagnostics: dict, so
     diagnostics["source_review_count"] = sum(bool((q.get("source_review") or {}).get("required")) for q in questions)
 
 
-def finalize_word_extraction_reviews(questions: list[dict], diagnostics: dict, source: str) -> None:
+def finalize_word_extraction_reviews(questions: list[dict], diagnostics: dict, source: str, *,
+                                     source_review_evidence=None, extraction_diagnostics=None,
+                                     source_document_sha256=None) -> None:
     """Report only unresolved extraction notices; retain original audit counts."""
     # Visual retrieval may have added exact source mappings during verification.
-    items = _word_formula_owners(source, diagnostics, len(questions))
+    items = _word_formula_owners(source, diagnostics, len(questions),
+        source_review_evidence=source_review_evidence, extraction_diagnostics=extraction_diagnostics,
+        source_document_sha256=source_document_sha256)
     resolved = 0
     for item in items:
         index = item["question_index"]
         review = (questions[index].get("source_review") or {}) if index is not None else {}
-        item["verified"] = (review.get("required") is False and review.get("verified_by") == "vision"
+        item["verified"] = (not item.get("native_missing_glyphs")
+                            and review.get("required") is False and review.get("verified_by") == "vision"
                             and (review.get("verification") or {}).get("decision") == "equivalent")
         resolved += int(item["verified"])
     diagnostics["word_formula_extraction_items"] = items

@@ -190,8 +190,13 @@ def finalize_source_answers(questions: list[dict[str, Any]], source: str) -> Non
     marker = "[EXTRACTED_ORIGINAL]"
     for question in questions:
         answer = question.get("answer_markdown") or ""
-        question["answer_markdown"] = answer.replace(marker, "").strip()
-        if not answer.strip() or marker in answer:
+        stripped = answer.strip()
+        marked_original = stripped.startswith(marker)
+        # The protocol owns only its leading prefix. A marker quoted inside
+        # source code, a text macro or prose is still original source data.
+        question["answer_markdown"] = (stripped[len(marker):].strip()
+                                       if marked_original else stripped)
+        if not stripped or marked_original:
             continue
         review = question.setdefault("source_review", {})
         review["required"] = True

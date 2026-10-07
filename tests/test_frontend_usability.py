@@ -2488,7 +2488,7 @@ def test_paper_cart_actions_reject_changed_hydration_snapshot_and_are_single_fli
         "const complete = await ensureCartQuestionsLoaded({ revalidateAll: true })",
     ):
         assert marker in paper_source
-    assert paper_source.count("finishPaperAction(actionKey);") == 5
+    assert paper_source.count("finishPaperAction(actionKey);") == 6
 
     node = shutil.which("node")
     assert node, "Node.js is required for the frontend executable regression"
@@ -2688,6 +2688,204 @@ if (streamRenders !== 1 || canvasRenders !== 1 ||
         check=False,
     )
     assert result.returncode == 0, result.stderr
+
+
+def test_paper_reload_removes_only_fresh_missing_questions_without_confirmation():
+    source = _read(STATIC_JS_DIR / "paper.js")
+    storage_start = source.index("function saveCartToStorage()")
+    storage_end = source.index("function saveMetaToStorage()", storage_start)
+    state_start = source.index("let bankQuestionsAbortController = null;")
+    state_end = source.index("// Fetch one server-paginated page", state_start)
+    norm_start = source.index("    function normalizeSectionOrder(")
+    norm_end = source.index("    function getPaperTypeOrder(", norm_start)
+    reload_start = source.index("window.retryPaperCartQuestions = async function")
+    reload_end = source.index("window.changePaperStreamPage = async function", reload_start)
+    prelude = r'''
+const assert = require('node:assert/strict');
+const PAPER_STREAM_PAGE_SIZE = 15;
+const STORAGE_KEY_CART = 'mathbank_paper_cart';
+const saved = new Map();
+let confirmCalls = 0;
+let calls = [];
+let fetchHandler;
+let renders = 0;
+global.localStorage = {
+  setItem(key, value) { saved.set(key, value); },
+  removeItem(key) { saved.delete(key); }
+};
+global.confirm = () => { confirmCalls++; return true; };
+global.window = {
+  showToast() {},
+  renderPaperCanvas() { renders++; }
+};
+function updateCartBadges() {}
+function renderPart3QuestionStream() { renders++; }
+function seedPaperAnswerCache() {}
+function snapshotFigureLayoutsForBankFetch() { return {}; }
+function preserveNewerFigureLayout() {}
+global.console = { ...console, error() {} };
+global.fetch = url => {
+  calls.push(String(url));
+  return fetchHandler(String(url));
+};
+function reset(count = 6, confirmed = [6]) {
+  saved.clear();
+  confirmCalls = 0;
+  calls = [];
+  const cart = Array.from({length:count}, (_, i) => ({
+    id:i+1, score:i+3, solution_space:String(i/2)
+  }));
+  window.PaperStore = {
+    cart, meta:{paper_type:'exam',section_order:[]},
+    questionsMap:Object.fromEntries(cart.map(item => [
+      item.id,{id:item.id,content:'question '+item.id}
+    ])),
+    streamPagination:{
+      all:{page:1,total:count,totalPages:Math.ceil(count/15)},
+      selected:{page:Math.max(1,Math.ceil(count/15))}
+    },
+    cartQuestionLoad:{
+      loading:false,error:'missing',missingIds:confirmed.slice(),
+      confirmedMissingIds:confirmed.slice(),failedIds:[]
+    },
+    expandedAnswerIds:new Set(confirmed),
+    answerErrors:Object.fromEntries(confirmed.map(id => [id,'old error'])),
+    answerCache:Object.fromEntries(confirmed.map(id => [id,'old answer']))
+  };
+  confirmed.forEach(id => delete window.PaperStore.questionsMap[id]);
+  return JSON.parse(JSON.stringify(cart));
+}
+const success = ids => ({
+  ok:true, json:async()=>({
+    status:'success',data:ids.map(id=>({id,content:'server '+id}))
+  })
+});
+const failure = () => ({ok:false,status:503,json:async()=>({})});
+function deferred() {
+  let resolve;
+  const promise = new Promise(r=>{resolve=r;});
+  return {resolve,promise};
+}
+'''
+    scenarios = r'''
+(async () => {
+  let original = reset();
+  let response = deferred();
+  fetchHandler = () => response.promise;
+  const first = window.retryPaperCartQuestions();
+  const second = window.retryPaperCartQuestions();
+  await second;
+  assert.equal(calls.length,1,'double click must share one reload');
+  response.resolve(success([1,2,3,4,5]));
+  await first;
+  assert.deepEqual(window.PaperStore.cart,original.slice(0,5));
+  assert.deepEqual(JSON.parse(saved.get(STORAGE_KEY_CART)),original.slice(0,5));
+  assert.equal(confirmCalls,0,'reload must not open confirmation');
+  assert.equal(window.PaperStore.cartQuestionLoad.error,'');
+  assert.equal(await ensureCartQuestionsLoaded(),true);
+  assert.equal(calls.length,1,'ready cart must not need further fetching');
+  console.log('PASS reload 6 to 5, ordering, score, space, storage, single flight');
+
+  original = reset();
+  fetchHandler = async () => success([1,2,3,4,5,6]);
+  await window.retryPaperCartQuestions();
+  assert.deepEqual(window.PaperStore.cart,original);
+  assert.deepEqual(window.PaperStore.cartQuestionLoad.confirmedMissingIds,[]);
+  console.log('PASS restored old missing question is preserved');
+
+  original = reset();
+  fetchHandler = async () => failure();
+  await window.retryPaperCartQuestions();
+  assert.deepEqual(window.PaperStore.cart,original);
+  assert.deepEqual(window.PaperStore.cartQuestionLoad.confirmedMissingIds,[6]);
+  assert.equal(saved.has(STORAGE_KEY_CART),false);
+  fetchHandler = async () => success([1,2,3,4,5]);
+  await window.retryPaperCartQuestions();
+  assert.deepEqual(window.PaperStore.cart,original.slice(0,5));
+  console.log('PASS historical missing plus failed reload stays; retry lock released');
+
+  for (const bad of [
+    {ok:true,json:async()=>({status:'error',data:[]})},
+    {ok:true,json:async()=>{throw new Error('bad JSON');}}
+  ]) {
+    original = reset();
+    fetchHandler = async () => bad;
+    await window.retryPaperCartQuestions();
+    assert.deepEqual(window.PaperStore.cart,original);
+  }
+  console.log('PASS malformed responses never clear selections');
+
+  original = reset(52,[]);
+  fetchHandler = async url => url.includes('ids=51%2C52')
+    ? failure() : success(Array.from({length:49},(_,i)=>i+1));
+  await window.retryPaperCartQuestions();
+  assert.equal(calls.length,2);
+  assert.deepEqual(window.PaperStore.cart,original.filter(item=>item.id!==50));
+  assert.deepEqual(window.PaperStore.cartQuestionLoad.failedIds,[51,52]);
+  assert.deepEqual(window.PaperStore.cartQuestionLoad.confirmedMissingIds,[]);
+  assert.match(window.PaperStore.cartQuestionLoad.error,/暂未通过服务端核验/);
+  console.log('PASS mixed batches remove only fresh confirmed misses, preserve failed batch');
+
+  const mutations = [
+    () => window.PaperStore.cart.push({id:7,score:9}),
+    () => window.PaperStore.cart.reverse(),
+    () => {window.PaperStore.cart[0].score=20;},
+    () => {window.PaperStore.cart[0].solution_space='9';},
+    () => {window.PaperStore.cart=window.PaperStore.cart.slice(0,5);},
+    () => {window.PaperStore.cart=window.PaperStore.cart.map(item=>({...item}));},
+    () => {window.PaperStore.cartQuestionLoad={...window.PaperStore.cartQuestionLoad};}
+  ];
+  for (const mutate of mutations) {
+    reset();
+    response = deferred();
+    fetchHandler = () => response.promise;
+    const pending = window.retryPaperCartQuestions();
+    mutate();
+    const changed = JSON.parse(JSON.stringify(window.PaperStore.cart));
+    response.resolve(success([1,2,3,4,5]));
+    await pending;
+    assert.deepEqual(window.PaperStore.cart,changed);
+    assert.equal(saved.has(STORAGE_KEY_CART),false,'stale reload must not persist a deletion');
+  }
+  console.log('PASS selection changes, same-signature cart replacement, state replacement');
+
+  reset(6,[]);
+  saved.set(STORAGE_KEY_CART,'old cart');
+  fetchHandler = async () => success([]);
+  await window.retryPaperCartQuestions();
+  assert.deepEqual(window.PaperStore.cart,[]);
+  assert.equal(saved.has(STORAGE_KEY_CART),false);
+  assert.equal(window.PaperStore.streamPagination.selected.page,1);
+  assert.equal(window.PaperStore.cartQuestionLoad.error,'');
+  console.log('PASS all missing yields empty cart and removes obsolete storage');
+
+  original = reset(6,[]);
+  fetchHandler = async () => success([1,2,3,4,5]);
+  assert.equal(await ensureCartQuestionsLoaded({revalidateAll:true}),false);
+  assert.deepEqual(window.PaperStore.cart,original,'ordinary validation must preserve cart');
+  removeConfirmedMissingPaperCartQuestions([],true);
+  assert.deepEqual(window.PaperStore.cart,original,'empty allowed IDs must clear nothing');
+  window.PaperStore.cartQuestionLoad.loading=true;
+  removeConfirmedMissingPaperCartQuestions([6],true);
+  assert.deepEqual(window.PaperStore.cart,original,'active validation must clear nothing');
+  window.PaperStore.cartQuestionLoad.loading=false;
+  window.removeMissingPaperCartQuestions();
+  assert.equal(confirmCalls,1,'manual recovery preserves its confirmation');
+  assert.deepEqual(window.PaperStore.cart,original.slice(0,5));
+  console.log('PASS ordinary validation, explicit empty scope, busy state, manual fallback');
+})().catch(error => {
+  process.stderr.write(String(error.stack || error));
+  process.exitCode=1;
+});
+'''
+    script = (prelude + source[storage_start:storage_end]
+              + source[norm_start:norm_end] + source[state_start:state_end]
+              + source[reload_start:reload_end] + scenarios)
+    node = shutil.which("node")
+    assert node, "Node.js is required for the frontend executable regression"
+    result = subprocess.run([node, "-e", script], text=True, capture_output=True, timeout=15)
+    assert result.returncode == 0, result.stderr
+    print(result.stdout, end="")
 
 
 def test_word_export_prepares_pandoc_once_and_can_continue_in_compatibility_mode():

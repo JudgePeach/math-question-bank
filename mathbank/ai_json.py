@@ -161,19 +161,85 @@ def _repair_json_string_content(text: str) -> str:
 import re
 
 
+def _subquestion_literal_ranges(text: str) -> list[tuple[int, int]]:
+    """Keep math, code/URLs and quoted examples out of layout-only edits."""
+    from mathbank.content_locks import _formulas
+    from mathbank.question_assets import markdown_literal_ranges
+
+    ranges = [*markdown_literal_ranges(text), *[(f.start, f.end) for f in _formulas(text)]]
+    for opening, closing in (("“", "”"), ("‘", "’"), ("「", "」"), ("『", "』"), ('"', '"')):
+        ranges.extend(m.span() for m in re.finditer(
+            re.escape(opening) + r"[\s\S]*?" + re.escape(closing), text,
+        ))
+    ranges.extend(m.span() for m in re.finditer(r"(?m)^[ \t]*>[^\n]*", text))
+    return ranges
+
+
+def _complete_choice_circle_ranges(text: str, protected: list[tuple[int, int]]) -> list[tuple[int, int]]:
+    """Protect circled option starts only in a proven complete A/B/C/D group.
+
+    A standalone A. is not evidence. Require four nonempty ordered labels in
+    one visible question region, with the first at a paragraph/line boundary;
+    references in math, literals and quotations do not contribute labels.
+    """
+    def inside(position):
+        return any(start <= position < end for start, end in protected)
+
+    boundaries = [0, *[
+        m.start() for m in re.finditer(r"(?m)^[ \t]*[1-9]\d{0,2}[.．、](?=\D|$)", text)
+        if not inside(m.start())
+    ], len(text)]
+    boundaries = sorted(set(boundaries))
+    ranges = []
+    label_re = re.compile(r"(?<!\S)([A-H])[.．、][ \t]*")
+    for left, right in zip(boundaries, boundaries[1:]):
+        labels = [m for m in label_re.finditer(text, left, right) if not inside(m.start(1))]
+        if len(labels) != 4 or [m.group(1) for m in labels] != list("ABCD"):
+            continue
+        first = labels[0].start(1)
+        if text[text.rfind("\n", left, first) + 1:first].strip():
+            continue
+        options = [text[m.end():labels[i + 1].start()] if i < 3 else text[m.end():right]
+                   for i, m in enumerate(labels)]
+        if any(not option.strip() for option in options):
+            continue
+        for label, option in zip(labels, options):
+            visible = re.search(r"\S", option)
+            position = label.end() + visible.start()
+            if text[position] in "①②③④⑤⑥⑦⑧⑨⑩" and not inside(position):
+                ranges.append((label.start(1), position + 1))
+    return ranges
+
+
 def normalize_subquestions_double_newlines(text: str) -> str:
     """Ensure subquestions (1), (2), (i), (ii), （1）, （2） start on a clean paragraph with double newlines."""
     if not text or not isinstance(text, str):
         return text
 
     s = text.strip()
+    protected = _subquestion_literal_ranges(s)
+    protected.extend(_complete_choice_circle_ranges(s, protected))
+    def separate_subquestion(match):
+        if any(start < match.end() and match.start() < end for start, end in protected):
+            return match.group()
+        # A leading Word question number can be followed immediately by its
+        # first subquestion: "15.(1)计算". Its dot belongs to the outer number,
+        # so consuming it leaves an unnumbered source fragment after splitting.
+        start = match.start()
+        line_start = s.rfind("\n", 0, start) + 1
+        heading_dot = (s[start:start + 1] == "."
+                       and re.fullmatch(r"[ \t]*\d{1,3}", s[line_start:start]) is not None)
+        return ("." if heading_dot else "") + "\n\n" + match.group(1) + " "
     # Replace single newline or punctuation-attached subquestion with standard double newlines
     s = re.sub(
         r'(?<!^)(?<!\n\n)(?:[。；;!！\.]|\s+|\n)\s*([(（](?:[1-9]|10|[ivxIVX]+)[)）]|\([1-9]\)|（[1-9]）|[①②③④⑤⑥⑦⑧⑨⑩])(?=\s*[\u4e00-\u9fa5a-zA-Z\$])',
-        r'\n\n\1 ',
+        separate_subquestion,
         s
     )
-    s = re.sub(r'\n{3,}', '\n\n', s)
+    literal_ranges = _subquestion_literal_ranges(s)
+    s = re.sub(r'\n{3,}', lambda m: m.group() if any(
+        start < m.end() and m.start() < end for start, end in literal_ranges
+    ) else '\n\n', s)
     return s.strip()
 
 

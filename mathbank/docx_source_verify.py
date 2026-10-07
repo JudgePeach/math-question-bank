@@ -47,6 +47,7 @@ _MATHTYPE_PREVIEW_NOTE = re.compile(r'\[公式待核对\]\n!\[MathType 公式待
 _INCOMPLETE_OUTPUT = re.compile(
     r'\[(?:公式[^\]\n]{0,80}待核对|特殊字符待核对|插图待补|[^\]\n]{0,20}不支持[^\]\n]{0,20})'
     r'|\[MathType 公式待核对\]'
+    r'|\[\s*字符待核对\s*\]'
     r'|无法识别的公式|公式无法安全提取'
 )
 
@@ -54,7 +55,7 @@ _INCOMPLETE_OUTPUT = re.compile(
 def _readable_formula(value):
     # The native extractor uses these explicit placeholders for lost glyphs.
     # A model saying "equivalent" cannot turn one into a complete formula.
-    return (not re.search(r'\\text\s*\{\s*\?\s*\}|\ufffd', value)
+    return (not re.search(r'\\text\s*\{\s*(?:\?|\[\s*字符待核对\s*\])\s*\}|\ufffd', value)
             and not any(0xE000 <= ord(char) <= 0xF8FF or 0xF0000 <= ord(char) <= 0xFFFFD
                         or 0x100000 <= ord(char) <= 0x10FFFD for char in value))
 
@@ -172,12 +173,16 @@ def _source_candidates(questions, diagnostics, source):
             output[field], count = _without_structure_notes(value)
             removed_notes += count
         blocking_checks = {}
+        native_missing = (review.get('native_missing_glyphs') is True
+                          or bool(diagnostics.get('word_native_missing_glyphs_unlocated', 0)))
         uncertain_text = '\n'.join([*original.values(), *output.values()])
         if _REFERENCE.search(uncertain_text) or '无法识别的公式来源' in uncertain_text:
             skipped.append({'question_index': index, 'source_number': stem.number,
                             'reason': '仍有无法识别的公式来源编号，保留人工核对。'})
             continue
-        if any(_INCOMPLETE_OUTPUT.search(value) or not _readable_formula(value) for value in output.values()):
+        if native_missing:
+            blocking_checks['complete_content'] = '原生提取有未能保留的字形或结构，干净正文不代表内容已恢复，已保留核对。'
+        elif any(_INCOMPLETE_OUTPUT.search(value) or not _readable_formula(value) for value in output.values()):
             blocking_checks['complete_content'] = '待核验结果仍有未解析的公式、缺失字符或图片占位，不能以占位与原文相似解除核对。'
         if sum(map(len, [*original.values(), *output.values()])) > MAX_CHARS:
             skipped.append({'question_index': index, 'source_number': stem.number,
@@ -191,6 +196,7 @@ def _source_candidates(questions, diagnostics, source):
                            'source_matches': ranges, 'inline_answer': answer is None or answer.owner == part_index,
                            'blocking_reasons': list(blocking_checks.values()),
                            'diagnostic_labels_removed': removed_notes,
+                           '_native_missing_glyphs': native_missing,
                            '_source_range_exact': len(matches) == 1,
                            '_blocking_checks': blocking_checks, '_output_before_cleanup': output_before})
     # Two outputs must not be confirmed from the same original question.
@@ -440,7 +446,7 @@ def _batch_image_evidence(batch, candidate_image_paths):
             cleaned, count = _without_mathtype_preview_notes(value, image_evidence, field)
             item['output'][field] = cleaned
             item['diagnostic_labels_removed'] += count
-        if all(not _INCOMPLETE_OUTPUT.search(value) and _readable_formula(value)
+        if not item.get('_native_missing_glyphs') and all(not _INCOMPLETE_OUTPUT.search(value) and _readable_formula(value)
                for value in item['output'].values()):
             checks.pop('complete_content', None)
         item['blocking_reasons'] = list(checks.values())
@@ -468,8 +474,8 @@ def verify_docx_source_suspicions(questions, diagnostics, source, evidence, *, c
     if not candidates:
         report['skipped'] = required
         return report
-    if (evidence.get('status') != 'ready' or evidence.get('evidence_kind') != 'original_docx_render'
-            or evidence.get('evidence_version') != 2):
+    from mathbank.docx_source_evidence import validate_docx_body_render_evidence
+    if not validate_docx_body_render_evidence(evidence):
         report.update(status='unavailable', skipped=required,
                       notes=evidence.get('notes') or ['本机暂不可直接渲染原Word，未调用视觉核验。'])
         return report
@@ -481,6 +487,19 @@ def verify_docx_source_suspicions(questions, diagnostics, source, evidence, *, c
         return report
     batches = []
     planned_evidence_hash = _fingerprint(evidence)
+    footer_cache_body_only = evidence.get('evidence_kind') == 'docx_embedded_footer_cache_render'
+    if footer_cache_body_only:
+        report['evidence_scope'] = 'body_only'
+        report['notes'] = list(evidence.get('notes') or [])
+
+    def verification_prompt(items):
+        if footer_cache_body_only:
+            return prompts.build_docx_source_verification_prompt(items, footer_cache_body_only=True)
+        return prompts.build_docx_source_verification_prompt(items)
+
+    def check_render_evidence():
+        if not validate_docx_body_render_evidence(evidence):
+            raise _VerificationError('原Word正文渲染证据或页脚隔离记录发生变化')
     for item in candidates:
         item['source_pages'] = _locate_pages(item, pages)
         if not item['source_pages'] or len(item['source_pages']) > MAX_PAGES:
@@ -523,6 +542,7 @@ def verify_docx_source_suspicions(questions, diagnostics, source, evidence, *, c
     for batch_index, batch in enumerate(batches):
         calls_before_batch = report['calls']
         try:
+            check_render_evidence()
             fresh_candidates = {item['question_index']: item for item in _source_candidates(questions, diagnostics, source)[0]}
             comparison_keys = ('original', 'output', '_output_before_cleanup', 'source_matches',
                                'source_number', '_source_range_exact', 'diagnostic_labels_removed', '_blocking_checks')
@@ -536,7 +556,7 @@ def verify_docx_source_suspicions(questions, diagnostics, source, evidence, *, c
                                      'candidate_image_paths': sorted(candidate_image_paths)})
             page_numbers = sorted(set().union(*(set(item['source_pages']) for item in batch)))
             image_items, image_evidence = _batch_image_evidence(batch, candidate_image_paths)
-            prompt = prompts.build_docx_source_verification_prompt(batch)
+            prompt = verification_prompt(batch)
             content = [{'type': 'text', 'text': prompt}, *_page_content(pages, page_numbers), *image_evidence['messages']]
             if sum(len(part.get('text', '')) for part in content) > MAX_CHARS:
                 raise _VerificationError('包含候选图片绑定的核验请求超出本批文字额度')
@@ -550,6 +570,7 @@ def verify_docx_source_suspicions(questions, diagnostics, source, evidence, *, c
             report['calls'] += 1
             response = post_chat_completion(provider, payload, timeout=120, check_status=False, retry_connection=False)
             check_cancelled()
+            check_render_evidence()
             if response.status_code != 200:
                 raise ValueError('核验请求未成功')
             body = response.json()
@@ -577,6 +598,7 @@ def verify_docx_source_suspicions(questions, diagnostics, source, evidence, *, c
             # Both use the same untouched original pages and task snapshot.
             def check_repair_evidence():
                 check_cancelled()
+                check_render_evidence()
                 if snapshot != _fingerprint({'questions': questions, 'source': source,
                         'matches': diagnostics.get('source_matches'), 'evidence': evidence,
                         'candidate_image_paths': sorted(candidate_image_paths)}):
@@ -595,7 +617,9 @@ def verify_docx_source_suspicions(questions, diagnostics, source, evidence, *, c
                     candidate = deepcopy(originals[item['id']])
                     candidate.update(output=deepcopy(item['output']), _output_before_cleanup=deepcopy(item['output']),
                                      _blocking_checks={}, blocking_reasons=[], diagnostic_labels_removed=0)
-                    if any(_INCOMPLETE_OUTPUT.search(value) or not _readable_formula(value)
+                    if candidate.get('_native_missing_glyphs'):
+                        candidate['_blocking_checks']['complete_content'] = '原生提取有未能保留的字形或结构，尚无独立恢复依据，已保留核对。'
+                    elif any(_INCOMPLETE_OUTPUT.search(value) or not _readable_formula(value)
                            for value in item['output'].values()):
                         candidate['_blocking_checks']['complete_content'] = '修正后仍有未解析公式或缺失字符。'
                     changed.append(candidate)
@@ -611,7 +635,7 @@ def verify_docx_source_suspicions(questions, diagnostics, source, evidence, *, c
                 return [*_page_content(pages, wanted), *images['messages']]
 
             def recheck_content(items):
-                return [{'type': 'text', 'text': prompts.build_docx_source_verification_prompt(revised_candidates(items))},
+                return [{'type': 'text', 'text': verification_prompt(revised_candidates(items))},
                         *repair_attachments(items)]
 
             def validate_repair(item, output):
