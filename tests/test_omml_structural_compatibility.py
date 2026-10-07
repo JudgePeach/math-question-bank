@@ -1,10 +1,11 @@
 """Bounded ISO OMML examples preserve meaning; unknown semantics keep review.
 
 These constructed XML cases are not reported as errors in user DOCX files.
-No provider requests or external format converter is used.
+No provider requests are used. The marked native Word roundtrip requires local Pandoc.
 """
 from io import BytesIO
 import json
+import shutil
 import zipfile
 import xml.etree.ElementTree as ET
 
@@ -337,6 +338,7 @@ def test_missing_any_native_variable_proof_or_mixed_literal_keeps_review(before,
     assert diagnostics['unsupported_omml_tags']
 
 
+@pytest.mark.skipif(shutil.which("pandoc") is None, reason="Pandoc is not installed")
 def test_actual_native_word_fraction_roundtrip_keeps_digits_and_proved_variable(tmp_path):
     from mathbank.word_export_helper import build_word_document
     content = r'$\dfrac{1}{2}\le m<\dfrac{3}{4}$'
