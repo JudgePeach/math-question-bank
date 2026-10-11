@@ -22,6 +22,7 @@ from typing import Any
 
 from mathbank import __version__
 from mathbank.asset_security import SAFE_IMAGE_EXTENSIONS, harden_private_path
+from mathbank.question_assets import embedded_question_assets
 from mathbank.paths import (
     DATA_BACKUP_DIR,
     DATABASE_FILE,
@@ -175,6 +176,8 @@ def _snapshot_database(source_path: Path, target_path: Path) -> dict[str, Any]:
         ]
         if schema_version >= 6:
             required_count_tables.append("question_fingerprints")
+        if schema_version >= 11:
+            required_count_tables.append("question_sub_knowledge")
         missing_required_tables = set(required_count_tables) - table_names
         if missing_required_tables:
             raise RuntimeError(
@@ -247,7 +250,7 @@ def _database_upload_references(
 
     references: set[str] = set()
     selected_columns = [
-        name for name in ("image_paths", "content", "answer_markdown") if name in columns
+        name for name in ("image_paths", "content", "answer_markdown", "review") if name in columns
     ]
     if not selected_columns:
         return references
@@ -276,6 +279,8 @@ def _database_upload_references(
                     raise RuntimeError(
                         f"题目 {question_id} 包含无效插图引用"
                     ) from exc
+        for reference in embedded_question_assets(values_by_column.get("review") or ""):
+            references.add(_upload_archive_name(reference, url_prefix=url_prefix))
         for field_name in ("content", "answer_markdown"):
             text = values_by_column.get(field_name)
             if not isinstance(text, str):
@@ -727,6 +732,8 @@ def verify_full_backup(archive_path: Path) -> dict[str, Any]:
                 }
                 if schema_version >= 6:
                     required_tables.add("question_fingerprints")
+                if schema_version >= 11:
+                    required_tables.add("question_sub_knowledge")
                 if not isinstance(row_counts, dict) or set(row_counts) != required_tables:
                     raise RuntimeError("备份数据库行数清单无效")
                 if not required_tables.issubset(table_names):
@@ -779,6 +786,9 @@ def verify_full_backup(archive_path: Path) -> dict[str, Any]:
                                     )
                                 ),
                             )
+                            if schema_version >= 11:
+                                from mathbank.db_migrations import _validate_sub_knowledge_schema
+                                _validate_sub_knowledge_schema(validation_connection)
                     finally:
                         validation_engine.dispose()
                 referenced_uploads = _database_upload_references(connection)

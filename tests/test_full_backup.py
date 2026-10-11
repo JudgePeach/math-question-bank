@@ -287,7 +287,6 @@ def test_schema_v6_backup_rejects_malformed_fingerprint_table(tmp_path):
             "question_id INTEGER NOT NULL, fingerprint_version INTEGER NOT NULL, "
             "PRIMARY KEY(question_id, fingerprint_version))"
         )
-
     with pytest.raises(RuntimeError, match="缺少核心字段"):
         create_full_backup(
             output_dir=tmp_path / "snapshots",
@@ -312,6 +311,13 @@ def test_restore_rejects_future_schema_before_replacing_current_database(tmp_pat
             "CREATE TABLE question_fingerprints ("
             "question_id INTEGER NOT NULL, fingerprint_version INTEGER NOT NULL, "
             "PRIMARY KEY(question_id, fingerprint_version))"
+        )
+        connection.execute(
+            "CREATE TABLE question_sub_knowledge ("
+            "id INTEGER PRIMARY KEY, curriculum_id INTEGER NOT NULL "
+            "REFERENCES question_curriculums(id) ON DELETE CASCADE, "
+            "compulsory TEXT NOT NULL, chapter TEXT NOT NULL, knowledge TEXT NOT NULL, "
+            "position INTEGER NOT NULL)"
         )
     archive = create_full_backup(
         output_dir=tmp_path / "snapshots",
@@ -630,6 +636,31 @@ def test_standard_backup_archives_only_referenced_production_rasters(tmp_path):
         "uploads/legacy.jpg",
         "uploads/structured.png",
     ]
+
+
+def test_backup_preserves_legacy_review_image_and_ignores_literal_example(tmp_path):
+    database = tmp_path / "math_question_bank.db"
+    uploads = tmp_path / "uploads"
+    uploads.mkdir()
+    image = uploads / "review.png"
+    image.write_bytes(b"commentary diagram")
+    _create_database(database)
+    with _sqlite_connection(database) as connection:
+        connection.execute("ALTER TABLE questions ADD COLUMN review TEXT DEFAULT ''")
+        connection.execute(
+            "UPDATE questions SET review=?",
+            ("错误示范 ![](/static/uploads/review.png)\n"
+             "代码例子 `![](/static/uploads/missing.png)`",),
+        )
+    archive = create_full_backup(
+        output_dir=tmp_path / "snapshots", database_path=database,
+        uploads_dir=uploads, metadata_path=tmp_path / "missing.json", retention=None,
+    )
+    verified = verify_full_backup(archive)
+    with zipfile.ZipFile(archive) as zipped:
+        assert zipped.read("uploads/review.png") == image.read_bytes()
+        assert "uploads/missing.png" not in zipped.namelist()
+    assert verified["upload_file_count"] == 1
 
 
 @pytest.mark.parametrize(

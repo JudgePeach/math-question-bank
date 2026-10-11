@@ -19,9 +19,11 @@ from sqlalchemy import (
 )
 from sqlalchemy.engine import Engine
 from sqlalchemy.exc import SQLAlchemyError
-from sqlalchemy.orm import declarative_base, sessionmaker
+from sqlalchemy.orm import declarative_base, relationship, sessionmaker
 from mathbank.paths import DATABASE_FILE, sqlite_url
 from mathbank.question_types import normalize_section_order
+from mathbank.question_assets import without_review_only_assets
+from mathbank.sub_knowledge import normalize_sub_knowledge, resolve_active_version
 
 
 FIGURE_ALIGN_VALUES = frozenset({"right", "center", "bottom_left", "bottom_right"})
@@ -146,6 +148,17 @@ class Question(Base):
     usage_count = Column(Integer, default=0, index=True)  # 组卷引用次数
     created_at = Column(DateTime, default=_utcnow_naive)
 
+    curriculum_mappings = relationship("QuestionCurriculum", back_populates="question", cascade="all, delete-orphan")
+
+    def sub_knowledge_for_version(self, version_code: str | None = None):
+        version_code = version_code or resolve_active_version()
+        mapping = next((row for row in self.curriculum_mappings if row.version_code == version_code), None)
+        return mapping.sub_knowledge if mapping is not None else []
+
+    @property
+    def sub_knowledge(self):
+        return self.sub_knowledge_for_version()
+
     @property
     def image_layouts(self):
         from .image_layout import normalize_image_layouts
@@ -206,7 +219,7 @@ class Question(Base):
 
     @property
     def display_image_paths(self):
-        """Return question figures while keeping AI-only references hidden."""
+        """Return ordinary figures, hiding AI references and review-only images."""
 
         hidden_references = {
             str(self.tikz_reference_image_path or "").strip()
@@ -218,9 +231,12 @@ class Question(Base):
             if reference:
                 hidden_references.add(reference)
         hidden_references.discard("")
-        return [path for path in self.image_paths if path not in hidden_references]
+        return without_review_only_assets(
+            [path for path in self.image_paths if path not in hidden_references],
+            self.content or "", self.answer_markdown or "", self.review or "",
+        )
 
-    def to_dict(self):
+    def to_dict(self, version_code: str | None = None):
         return {
             "id": self.id,
             "content": self.content,
@@ -228,6 +244,7 @@ class Question(Base):
             "category_compulsory": self.category_compulsory,
             "category_chapter": self.category_chapter,
             "category_knowledge": self.category_knowledge,
+            "sub_knowledge": self.sub_knowledge_for_version(version_code),
             "difficulty": self.difficulty,
             "source": self.source,
             "answer_markdown": self.answer_markdown,
@@ -248,7 +265,7 @@ class Question(Base):
             "created_at": (self.created_at.isoformat() + "Z") if self.created_at else None
         }
 
-    def to_summary_dict(self):
+    def to_summary_dict(self, version_code: str | None = None):
         return {
             "id": self.id,
             "content": self.content,
@@ -256,6 +273,7 @@ class Question(Base):
             "category_compulsory": self.category_compulsory,
             "category_chapter": self.category_chapter,
             "category_knowledge": self.category_knowledge,
+            "sub_knowledge": self.sub_knowledge_for_version(version_code),
             "difficulty": self.difficulty,
             "source": self.source,
             "has_answer": bool((self.answer_markdown or "").strip()),
@@ -293,6 +311,24 @@ class QuestionCurriculum(Base):
     compulsory = Column(String(100), default="", index=True)
     chapter = Column(String(100), default="", index=True)
     knowledge = Column(String(100), default="", index=True)
+    question = relationship("Question", back_populates="curriculum_mappings")
+    sub_knowledge_rows = relationship("QuestionSubKnowledge", back_populates="curriculum", cascade="all, delete-orphan", order_by="QuestionSubKnowledge.position")
+
+    @property
+    def sub_knowledge(self):
+        return [row.to_dict() for row in sorted(self.sub_knowledge_rows, key=lambda row: row.position)]
+
+    @sub_knowledge.setter
+    def sub_knowledge(self, value):
+        paths = normalize_sub_knowledge(value)
+        existing = {(row.compulsory, row.chapter, row.knowledge): row for row in self.sub_knowledge_rows}
+        rows = []
+        for position, path in enumerate(paths):
+            key = (path["compulsory"], path["chapter"], path["knowledge"])
+            row = existing.get(key) or QuestionSubKnowledge(**path)
+            row.position = position
+            rows.append(row)
+        self.sub_knowledge_rows = rows
 
     def to_dict(self):
         return {
@@ -301,8 +337,28 @@ class QuestionCurriculum(Base):
             "version_code": self.version_code,
             "compulsory": self.compulsory,
             "chapter": self.chapter,
-            "knowledge": self.knowledge
+            "knowledge": self.knowledge,
+            "sub_knowledge": self.sub_knowledge,
         }
+
+
+class QuestionSubKnowledge(Base):
+    __tablename__ = "question_sub_knowledge"
+    __table_args__ = (
+        UniqueConstraint("curriculum_id", "compulsory", "chapter", "knowledge", name="uq_question_sub_knowledge_path"),
+        CheckConstraint("position >= 0", name="ck_question_sub_knowledge_position"),
+    )
+
+    id = Column(Integer, primary_key=True)
+    curriculum_id = Column(Integer, ForeignKey("question_curriculums.id", ondelete="CASCADE"), nullable=False, index=True)
+    compulsory = Column(String(100), nullable=False)
+    chapter = Column(String(100), nullable=False)
+    knowledge = Column(String(100), nullable=False)
+    position = Column(Integer, nullable=False, default=0, server_default="0")
+    curriculum = relationship("QuestionCurriculum", back_populates="sub_knowledge_rows")
+
+    def to_dict(self):
+        return {"compulsory": self.compulsory, "chapter": self.chapter, "knowledge": self.knowledge}
 
 
 class QuestionFingerprint(Base):

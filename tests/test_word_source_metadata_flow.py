@@ -39,7 +39,7 @@ def setup_word(monkeypatch, tmp_path):
     category, chapters = next(iter(curriculum.items()))
     chapter = next(iter(chapters))
     fields = {"question_type": "detailed_answer", "category_compulsory": category,
-              "category_chapter": chapter, "difficulty": "challenge"}
+              "category_chapter": chapter, "category_knowledge": "", "difficulty": "challenge"}
     return fields
 
 

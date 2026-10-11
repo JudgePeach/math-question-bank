@@ -61,6 +61,7 @@ SOURCES = (
     + '\nwindow.MathBankSafe={safeImageUrl};\n'
     + section(API, 'const EditorState =', '// Global variables')
     + section(API, 'let uploadedImages =', 'let contentOcrAbortController')
+    + section(EDITOR, 'let subKnowledgeCatalog =', '// Formatting operates')
     + section(IMPORT, '// ocr.js is loaded', 'function findContentTikzImagePath')
     + section(EDITOR, 'function backupEditorState', '// Custom Premium Confirmation Modal')
     + section(EDITOR, 'function getLocalStorageDrafts', 'function selectDraft')
@@ -139,6 +140,30 @@ def test_cut_undo_paste_shared_answer_and_private_tikz_draft_assets():
     """)
 
 
+def test_save_retains_other_version_subdivisions_in_a_linked_draft():
+    run_js(r"""
+      window.activeCurriculumVersion='A';window.editorCurriculumVersion='A';
+      EditorState.useQuestion({id:7});elements.editContent.value='跨版本题目';
+      backupEditorState(7);
+      const pending={compulsory:'选择性必修三',chapter:'第七章 概率',knowledge:'7.1 条件概率'};
+      editorSubKnowledgeByVersion.B=[pending];
+      assert.equal(isEditorModified(),true);
+      const work=saveQuestion(true),request=requests.at(-1);
+      assert.equal(request.options.body.get('expected_version_code'),'A');
+      assert.equal(request.options.body.get('sub_knowledge'),null,'metadata-only saves omit relation edits so existing rows survive');
+      request.resolve({ok:true,status:200,json:async()=>({status:'success',question:{id:7,
+        content:'跨版本题目',image_paths:[],sub_knowledge:[]}})});
+      assert.equal(await work,true);
+      const drafts=getLocalStorageDrafts();
+      assert.equal(drafts.length,1);
+      assert.equal(drafts[0].saved_question_id,7);
+      assert.deepEqual(drafts[0].sub_knowledge_by_version.B,[pending]);
+      assert.deepEqual(drafts[0].pending_sub_knowledge_versions,['B']);
+      assert(toasts.some(message=>message.includes('草稿保留了 B')));
+      assert.equal(isEditorModified(),true,'saving A cannot clear outstanding B edits');
+    """)
+
+
 @pytest.mark.parametrize('edit_during_save', [False, True])
 def test_save_promotes_current_urls_and_saved_baseline_without_losing_later_edits(edit_during_save):
     run_js('const editDuringSave=' + json.dumps(edit_during_save) + r""";
@@ -182,6 +207,91 @@ def test_stale_editor_response_cannot_migrate_new_question():
       assert.deepEqual(window.MathBankImageAssets.collect('![x](https://other.invalid/a.png)'),[]);
       assert.deepEqual(Object.keys(window.MathBankImageAssets.normalizeMap({[old]:'https://other.invalid/a.png'})),[]);
     """)
+
+
+@pytest.mark.parametrize('edit_during_save', [False, True])
+def test_review_images_survive_draft_save_mapping_and_later_edit(edit_during_save):
+    run_js('const editDuringSave=' + json.dumps(edit_during_save) + r"""
+      EditorState.useQuestion({id:7});
+      elements.editContent.value='题干';elements.editAnswerMarkdown.value='正确解析';
+      elements.editReview.value='错误示范 '+mark(old);
+      syncEditorImageReferences();backupEditorState(7);
+      assert.deepEqual(uploadedImages,[]);assert.deepEqual(uploadedAnswerImages,[]);
+      saveCurrentToDrafts();
+      assert.deepEqual(getLocalStorageDrafts()[0].image_paths,[old]);
+      const work=saveQuestion(true);
+      const request=requests.at(-1);
+      assert.deepEqual(JSON.parse(request.options.body.get('image_paths')),[old]);
+      assert.equal(request.options.body.get('review'),'错误示范 '+mark(old));
+      if(editDuringSave) elements.editReview.value+=' 保存期间新评析 '+mark(reference);
+      const later=editDuringSave?' 保存期间新评析 '+mark(reference):'';
+      request.resolve({ok:true,status:200,json:async()=>({status:'success',question:{id:7},
+        asset_path_map:{[old]:final}})});
+      assert.equal(await work,true);
+      assert.equal(elements.editReview.value,'错误示范 '+mark(final)+later);
+      assert.equal(originalQuestionState.review,'错误示范 '+mark(final));
+      assert.equal(isEditorModified(),editDuringSave);
+      assert.deepEqual(uploadedImages,[]);assert.deepEqual(uploadedAnswerImages,[]);
+      assert.deepEqual(new Set(editorAssetReferences()),new Set(editDuringSave?[final,reference]:[final]));
+      const next=saveQuestion(true);const nextRequest=requests.at(-1);
+      assert.equal(nextRequest.options.body.get('review'),elements.editReview.value);
+      nextRequest.resolve({ok:true,status:200,json:async()=>({status:'success',question:{id:7}})});
+      assert.equal(await next,true);
+      assert.equal(isEditorModified(),false);
+    """)
+
+
+def test_review_ownership_keeps_shared_and_legacy_images_but_not_literals():
+    run_js(r"""
+      assert.deepEqual(window.MathBankImageAssets.withoutReviewOnly([old,reference],'题干','解析',mark(old)),[reference]);
+      assert.deepEqual(window.MathBankImageAssets.withoutReviewOnly([old,reference],mark(old),'解析',mark(old)),[old,reference]);
+      assert.deepEqual(window.MathBankImageAssets.withoutReviewOnly([old,reference],'题干',mark(old),mark(old)),[old,reference]);
+      assert.deepEqual(window.MathBankImageAssets.withoutReviewOnly([old,reference],'题干','解析','`'+mark(old)+'`'),[old,reference]);
+      EditorState.useQuestion({id:7});const session=EditorState.snapshot();
+      EditorState.useQuestion({id:8});elements.editReview.value=mark(old);
+      applyEditorAssetPathMap({[old]:final},session);
+      assert.equal(elements.editReview.value,mark(old));
+    """)
+
+
+def test_review_draft_reload_keeps_asset_without_content_badge():
+    sources = (SOURCES
+               + section(IMPORT, 'function findContentTikzImagePath', 'function resetTikzEditorState')
+               + section(EDITOR, 'function selectDraft(draft)', 'function highlightActiveDraftCard'))
+    run_js(r"""
+      globalThis.setEditorMetadataValue=(input,value)=>{ input.value=value; };
+      globalThis.renderEditorPaperMeta=()=>{};
+      globalThis.setQuestionDetailEditAvailability=()=>{};
+      elements.editCompulsory.onchange=()=>{};elements.editChapter.onchange=()=>{};
+      const draft={id:'review-draft',content:'题干',answer_markdown:'正确解析',review:'错误示范 '+mark(old),
+        image_paths:[old],content_tikz_assets:[],answer_tikz_assets:[]};
+      selectDraft(draft);
+      assert.equal(elements.editReview.value,draft.review);
+      assert.deepEqual(uploadedImages,[]);assert.deepEqual(uploadedAnswerImages,[]);
+      assert.deepEqual(editorAssetReferences(),[old]);
+      assert.equal(isEditorModified(),false);
+    """, sources=sources)
+
+
+def test_parsed_prompt_preview_never_supplements_review_only_image():
+    sources = SOURCES + section(IMPORT, 'function renderParsedCardPreview(card, contentText, answerText)',
+                                 'function validateParsedQuestionBeforeImport')
+    run_js(r"""
+      globalThis.parseMarkdownWithMath=text=>text;
+      globalThis.renderMathInElement=()=>{};
+      window.MathBankSafe.escapeAttribute=value=>value;
+      window.MathBankSafe.sanitizeRichHtml=value=>value;
+      const contentPreview=element(),answerPreview=element();
+      contentPreview.parentElement={classList:{toggle(){}}};
+      const card={id:'parsed-card-0',querySelector:selector=>selector==='.card-content-preview'?contentPreview:answerPreview};
+      parsedQuestionsData=[{content:'题干',answer_markdown:'正确解析',review:mark(old),image_paths:[old,reference]}];
+      renderParsedCardPreview(card,'题干','正确解析');
+      assert.equal(contentPreview.innerHTML.includes(old),false);
+      assert.equal(contentPreview.innerHTML.includes(reference),true);
+      parsedQuestionsData[0].content+=' '+mark(old);
+      renderParsedCardPreview(card,parsedQuestionsData[0].content,'正确解析');
+      assert.equal(contentPreview.innerHTML.includes(old),true);
+    """, sources=sources)
 
 
 def test_migration_changes_only_exact_destination_and_keeps_alt_filename_prefix():

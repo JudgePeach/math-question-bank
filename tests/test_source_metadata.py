@@ -24,7 +24,7 @@ def prepare(source):
 
 def metadata(plan, *, question_type="detailed_answer"):
     return {"items": [{"id": q["id"], "question_type": "single_choice" if q["has_choices"] else question_type,
-        "category_compulsory": "必修一", "category_chapter": "3. 函数的概念与性质", "difficulty": "normal"}
+        "category_compulsory": "必修一", "category_chapter": "3. 函数的概念与性质", "category_knowledge": "", "difficulty": "normal"}
         for q in plan["questions"]]}
 
 

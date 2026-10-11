@@ -154,19 +154,34 @@ def test_classification_prompts_prefer_later_curriculum_module():
 
     for prompt in prompts:
         assert "选择位置最靠后的模块作为最终分类" in prompt
-        assert "先比较学段从上到下的顺序" in prompt
-        assert "若属于同一学段，再比较章节从前到后的顺序" in prompt
+        assert "教材册次在目录中的排列" in prompt
+        assert "章节在目录中的排列" in prompt
+        assert "不得按字符串排序、裸章节编号或跨教材版本" in prompt
         assert "必修二的“平面向量及其应用”" in prompt
         assert "仅作为背景条件被提及" in prompt
 
 
 def test_single_question_classification_prompt_requests_only_coarse_question_form():
-    prompt = build_classification_system_prompt({"必修一": {"1. 集合": []}})
+    prompt = build_classification_system_prompt({"必修一": {"1. 集合": ["1.1 集合的概念", "1.2 集合间的基本关系"]}})
 
     assert '"compulsory"' in prompt
     assert '"chapter"' in prompt
     assert '"question_form"' in prompt
     assert "question_type" not in prompt
-    assert "包含且仅包含以下三个 key" in prompt
+    assert "包含且仅包含以下四个 key" in prompt
+    assert "真实小节" in prompt and "整章定位/待细分" in prompt
+    assert '"knowledge"' in prompt and "1.1 集合的概念" in prompt
     assert "任何选择题一律为 `choice`" in prompt
     assert "严禁输出或猜测 `single_choice`、`multi_choice`" in prompt
+    assert "JSON插入顺序" in prompt and "裸章节编号" in prompt
+    assert "唯一且有依据的小节" in prompt and "整章待细分" in prompt
+
+
+def test_import_prompts_return_single_leaf_or_whole_chapter_pending():
+    curriculum = {"必修一": {"2. 函数": ["2.1 概念", "2.2 性质"]}}
+    for prompt in (build_pdf_parse_system_prompt(curriculum, False),
+                   build_import_parse_system_prompt(curriculum, "markdown"),
+                   build_import_parse_system_prompt(curriculum, "tex")):
+        assert '"category_knowledge"' in prompt
+        assert "2.1 概念" in prompt
+        assert "空字符串" in prompt and "不得猜测" in prompt

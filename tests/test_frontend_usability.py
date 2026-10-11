@@ -1820,14 +1820,15 @@ def test_shared_tikz_workbench_is_multimodal_contextual_and_persistent():
         assert removed_legacy_marker not in import_source
 
 
-def test_ocr_auto_tikz_keeps_original_question_image_as_edit_reference():
+def test_ocr_auto_tikz_keeps_each_figure_reference_and_legacy_original():
     ocr_source = _read(STATIC_JS_DIR / "ocr.js")
     import_source = _read(STATIC_JS_DIR / "import.js")
 
     for marker in (
-        "formData.append('skip_tikz'",
+        "form.append('skip_tikz'",
         "window.registerAutoContentTikzAsset",
-        "referenceImagePath: data.image_path || ''",
+        "referenceImagePath: asset.reference_image_path || ''",
+        "reference_image_path: payload.image_path",
         "registerAutoTikzAsset('content', payload)",
         "setTikzReferencePath(",
         "data.reference_image_path",

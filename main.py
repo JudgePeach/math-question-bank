@@ -24,11 +24,12 @@ if hasattr(sys.stdout, "reconfigure"):
 import secrets
 from typing import List, Optional
 from PIL import Image
-from fastapi import FastAPI, Depends, HTTPException, UploadFile, File, Form, BackgroundTasks, Request, Response, Header
+from fastapi import FastAPI, Depends, HTTPException, UploadFile, File, Form, BackgroundTasks, Request, Response, Header, Query
 from fastapi.responses import FileResponse, JSONResponse, HTMLResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, selectinload
+from sqlalchemy import and_
 from dotenv import load_dotenv
 
 from mathbank.database import (
@@ -36,6 +37,7 @@ from mathbank.database import (
     FIGURE_SIZE_VALUES,
     Question,
     QuestionCurriculum,
+    QuestionSubKnowledge,
     QuestionFingerprint as StoredQuestionFingerprint,
     Paper,
     PaperQuestion,
@@ -44,6 +46,7 @@ from mathbank.database import (
     init_db,
     normalize_figure_size,
 )
+from mathbank.sub_knowledge import detect_curriculum_version, normalize_sub_knowledge
 from mathbank.question_duplicates import (
     QuestionDuplicateInput,
     build_question_fingerprint,
@@ -114,6 +117,7 @@ from mathbank.ai_http import (
 from mathbank.ai_providers import (
     MultimodalProviderConfig,
     apply_model_thinking_policy,
+    apply_structured_output_policy,
     resolve_draw_provider,
     resolve_ocr_fallbacks,
     resolve_ocr_provider,
@@ -128,6 +132,8 @@ from mathbank.prompts import (
     COMMON_OCR_PROMPT,
     PDF_VISUAL_FIDELITY_RULE,
     ILLUSTRATION_BOX_PROMPT,
+    SINGLE_OCR_STRUCTURED_INSTRUCTIONS,
+    build_single_ocr_vision_prompt,
     build_ai_solve_prompts,
     build_classification_system_prompt,
     build_import_parse_system_prompt,
@@ -137,6 +143,12 @@ from mathbank.prompts import (
     build_tikz_correction_prompt,
     build_tikz_draw_prompt,
 )
+from mathbank.ocr_illustrations import (
+    MAX_OCR_RESPONSE_CHARS,
+    materialize_ocr_illustrations,
+    parse_single_ocr_response,
+)
+from mathbank.ocr_figure_review import review_single_ocr_figures, review_tikz_previews
 from mathbank.question_types import (
     detect_structured_question_form,
     normalize_ai_question_form,
@@ -342,6 +354,13 @@ def print_optional_tool_diagnostics():
     )
 
 def heal_database_curriculum_names():
+    """Normalize proven book aliases without deleting stored knowledge labels.
+
+    Historical imports may use chapter-level or custom labels, and a mirror can
+    belong to another textbook version.  Absence from the current preset is not
+    evidence that a stored label is invalid.  Startup must preserve those values;
+    classification changes belong to an explicit user edit or reviewed migration.
+    """
     from mathbank.database import SessionLocal
     db = SessionLocal()
     try:
@@ -368,35 +387,9 @@ def heal_database_curriculum_names():
             )
             updated_mappings += res
 
-        # 清理在主表 questions 及镜像表 question_curriculums 中残留的不属于各自大纲小节列表的旧章名/错位知识点
-        curr = get_current_curriculum()
-        healed_know_count = 0
-        all_qs = db.query(Question).all()
-        for q in all_qs:
-            comp = q.category_compulsory
-            chap = q.category_chapter
-            know = q.category_knowledge
-            if know:
-                valid_knows = curr.get(comp, {}).get(chap, [])
-                if know not in valid_knows:
-                    q.category_knowledge = ""
-                    healed_know_count += 1
-
-        all_qcs = db.query(QuestionCurriculum).all()
-        for qc in all_qcs:
-            if qc.knowledge:
-                try:
-                    c_tree = load_curriculum(qc.version_code)
-                except ValueError:
-                    c_tree = curr
-                valid_knows = c_tree.get(qc.compulsory, {}).get(qc.chapter, [])
-                if qc.knowledge not in valid_knows:
-                    qc.knowledge = ""
-                    healed_know_count += 1
-            
-        if updated_questions > 0 or updated_mappings > 0 or healed_know_count > 0:
+        if updated_questions > 0 or updated_mappings > 0:
             db.commit()
-            print(f"[Self-Healing DB] Migrated {updated_questions} questions, {updated_mappings} mappings, and cleaned {healed_know_count} mismatched knowledge values.")
+            print(f"[Self-Healing DB] Migrated book aliases for {updated_questions} questions and {updated_mappings} mappings; preserved all knowledge labels.")
     except Exception as e:
         db.rollback()
         print(f"[Self-Healing DB Error] Failed to run database book names migration: {e}")
@@ -864,7 +857,7 @@ def ocr_via_provider(
     image_path: str,
     provider: MultimodalProviderConfig,
     include_illustration_box: bool = False,
-    *, pdf_page: bool = False, check_cancelled=lambda: None,
+    *, pdf_page: bool = False, single_question_layout: bool = False, check_cancelled=lambda: None,
     report_attempt=lambda _event: None, page_index: int = None,
 ) -> str:
     """Use one resolved multimodal provider for formula and text OCR."""
@@ -886,10 +879,12 @@ def ocr_via_provider(
     except Exception as e:
         raise RuntimeError(f"读取并对图片进行 Base64 编码失败: {str(e)}")
 
-    prompt = COMMON_OCR_PROMPT
+    if pdf_page and single_question_layout:
+        raise ValueError("PDF 页面识别不能使用单题配图协议。")
+    prompt = build_single_ocr_vision_prompt() if single_question_layout else COMMON_OCR_PROMPT
     if pdf_page:
         prompt += PDF_VISUAL_FIDELITY_RULE
-    if include_illustration_box:
+    if include_illustration_box and not single_question_layout:
         prompt += ILLUSTRATION_BOX_PROMPT
 
     payload = {
@@ -911,11 +906,18 @@ def ocr_via_provider(
         "stream": False
     }
 
+    if single_question_layout:
+        payload["max_tokens"] = 16384
     payload = apply_model_thinking_policy(
         payload,
         provider=provider,
         task="ocr",
     )
+    if single_question_layout:
+        payload = apply_structured_output_policy(
+            payload, provider=provider,
+            system_instruction=SINGLE_OCR_STRUCTURED_INSTRUCTIONS,
+        )
 
     if pdf_page:
         def validate(body):
@@ -945,6 +947,9 @@ def ocr_via_provider(
         )
 
     res_json = response.json()
+    if single_question_layout:
+        return completion_content(res_json, "单题图文识别", max_chars=MAX_OCR_RESPONSE_CHARS,
+                                  allow_missing_finish=True).strip()
     try:
         choices = res_json.get("choices", [])
         if choices and len(choices) > 0:
@@ -1145,11 +1150,12 @@ def ocr_formula(
             ocr_provider = resolve_ocr_provider(engine)
             if ocr_provider.api_key and ocr_provider.api_key.strip():
                 try:
-                    latex_content = ocr_via_provider(
-                        temp_filepath,
-                        ocr_provider,
-                        include_illustration_box=True,
-                    )
+                    with PDF_OCR_SEMAPHORE:
+                        latex_content = ocr_via_provider(
+                            temp_filepath,
+                            ocr_provider,
+                            single_question_layout=True,
+                        )
                     confidence = 0.99
                     provider = (
                         f"{ocr_provider.provider_label} "
@@ -1169,61 +1175,32 @@ def ocr_formula(
         if not latex_content:
             raise RuntimeError("当前分配的识图引擎无法启动或识别失败。请检查系统设置中所选识图平台的 API Key、模型名称和接口地址。")
 
-        # 成功，返回且进一步清洗
-        if latex_content:
-            # 过滤干扰字符
-            latex_content = latex_content.replace("\\,", "").replace("\\!", "")
-            # 自动清洗规范化下划线/连续划线/任何 \underline 变体为标准的 \fillin 宏
-            latex_content = normalize_fillin_macro(latex_content)
+        recognized = parse_single_ocr_response(latex_content)
+        recognized = review_single_ocr_figures(recognized, temp_filepath, ocr_provider,
+                                               post=post_chat_completion, semaphore=PDF_OCR_SEMAPHORE)
+        prefer_draw = os.getenv("PREFER_DRAW_MODEL", "Qwen/Qwen3-VL-32B-Instruct")
 
-        # ----------------- 双阶段多模态识图与高级 TikZ 绘图模型联动 -----------------
-        tikz_code_from_high_model = None
-        tikz_image_path = None
-        
-        if latex_content:
-            import re
-            # 提取可能由默认模型标注的示意图 Bounding Box 标记
-            box_match = re.search(r"\[ILLUSTRATION_BOX:\s*(\d+),\s*(\d+),\s*(\d+),\s*(\d+)\]", latex_content, re.IGNORECASE)
-            if box_match:
-                # 第一步先确保擦除标记，防止乱入题干文本框
-                latex_content = re.sub(r"\[ILLUSTRATION_BOX:.*?\]", "", latex_content).strip()
-                
-                if not skip_tikz:
-                    try:
-                        # 不再执行物理分割裁剪，直接将整张原始题目截图发送给高级视觉绘图模型进行图形分析与重画
-                        prefer_draw = os.getenv("PREFER_DRAW_MODEL", "Qwen/Qwen3-VL-32B-Instruct")
-                        print(f"[Illustration Draw] 检测到插图标记，直接将整张原图送往高级模型 {prefer_draw} 进行 TikZ 解析绘图...")
-                        
-                        tikz_code_from_high_model = draw_tikz_via_high_model(
-                            temp_filepath, # 传入整图
-                            prefer_draw,
-                            latex_content=latex_content
-                        )
-                    except Exception as draw_err:
-                        print(f"[Illustration Draw Fail] 高级多模态模型整图分析绘图失败: {str(draw_err)}")
-                else:
-                    print("[Illustration Draw] 检测到插图标记，但由于已勾选跳过，故未调用高级绘图模型进行 TikZ 绘制")
-            else:
-                # 剔除可能存在的由于大模型幻觉或者部分输出造成的残缺标记
-                latex_content = re.sub(r"\[ILLUSTRATION_BOX:.*?\]", "", latex_content).strip()
+        def draw_one(crop_path, text_context, instruction):
+            return draw_tikz_via_high_model(
+                crop_path, prefer_draw, latex_content=text_context,
+                instruction=instruction, require_image_support=True,
+            )
 
-            # Remove OCR protocol markers before repairing naked math. Otherwise
-            # the underscore in ILLUSTRATION_BOX can be mistaken for a subscript
-            # and leave behind an empty ``$$`` pair after marker cleanup.
-            latex_content = normalize_question_math_markdown(latex_content)
-
-        # 如果高级模型成功生成了 TikZ 代码，我们在后台自动进行编译预览，并格式化追加到 latex 文本中！
-        if tikz_code_from_high_model:
-            try:
-                print(f"[Illustration Draw] 高级绘图模型成功输出 TikZ 源码！正在开始编译为预览图...")
-                compiled_path = compile_tikz_to_png(tikz_code_from_high_model)
-                if compiled_path:
-                    tikz_image_path = compiled_path
-                    # 自动在题干文本的尾部追加 Markdown 插图引用
-                    latex_content += f"\n\n![]({compiled_path})"
-                    print(f"[Illustration Draw] 编译成功: {compiled_path}")
-            except Exception as compile_err:
-                print(f"[Illustration Draw] 编译高级模型生成的 TikZ 失败: {str(compile_err)}")
+        figures = materialize_ocr_illustrations(
+            recognized, image, skip_tikz=skip_tikz, upload_root=UPLOAD_DIR,
+            url_prefix=UPLOAD_DIR_REL, draw=draw_one, compile_tikz=compile_tikz_to_png,
+            require_review=True, verified_crops=recognized["_verified_crops"],
+        )
+        figures = review_tikz_previews(figures, ocr_provider, upload_root=UPLOAD_DIR,
+                                       url_prefix=UPLOAD_DIR_REL, summary=recognized["illustration_review"],
+                                       post=post_chat_completion, semaphore=PDF_OCR_SEMAPHORE)
+        # Source slots are filled before math repair; neither protocol IDs nor
+        # JSON syntax can be reinterpreted as naked mathematical expressions.
+        latex_content = figures["markdown"].replace("\\,", "").replace("\\!", "")
+        latex_content = normalize_fillin_macro(latex_content)
+        latex_content = normalize_table_math_wrappers(latex_content)
+        latex_content = normalize_question_math_markdown(latex_content)
+        first_asset = figures["tikz_assets"][0] if figures["tikz_assets"] else {}
 
         # 将 temp_filepath 置为 None，避免在 finally 块中被删除
         saved_filepath = temp_filepath
@@ -1235,8 +1212,13 @@ def ocr_formula(
             "confidence": confidence,
             "provider": provider,
             "image_path": f"/{UPLOAD_DIR_REL}/{os.path.basename(saved_filepath)}",
-            "tikz_code": tikz_code_from_high_model,
-            "tikz_image_path": tikz_image_path
+            "tikz_code": first_asset.get("tikz_code"),
+            "tikz_image_path": first_asset.get("image_path"),
+            "illustrations": figures["illustrations"],
+            "tikz_assets": figures["tikz_assets"],
+            "image_layouts": figures["image_layouts"],
+            "warnings": figures["warnings"],
+            "illustration_review": figures["illustration_review"],
         }
     except UploadTooLargeError:
         return JSONResponse(
@@ -2221,6 +2203,45 @@ def draw_tikz_from_image_endpoint(
 
 # ----------------- Questions Management API -----------------
 
+def curriculum_filter_expression(
+    compulsory=None, chapter=None, knowledge=None, *,
+    include_sub_knowledge=False, version_code=None,
+):
+    """Filter only the stored single-value classification, preserving relations."""
+
+    if include_sub_knowledge:
+        raise HTTPException(status_code=400, detail="细分关系仅作为历史证据保留，请使用原单值小节筛选")
+    fields = {"compulsory": compulsory, "chapter": chapter, "knowledge": knowledge}
+    fields = {field: value for field, value in fields.items() if value}
+    if not fields:
+        return None
+    return and_(*(getattr(Question, f"category_{field}") == value for field, value in fields.items()))
+
+
+def apply_curriculum_filters(query, compulsory=None, chapter=None, knowledge=None, *,
+                             include_sub_knowledge=False, sub_knowledge=None,
+                             sub_knowledge_mode="any", version_code=None):
+    expression = curriculum_filter_expression(
+        compulsory, chapter, knowledge, include_sub_knowledge=include_sub_knowledge,
+        version_code=version_code,
+    )
+    if expression is not None:
+        query = query.filter(expression)
+    if sub_knowledge_mode not in {"any", "all"}:
+        raise HTTPException(status_code=400, detail="细分知识点筛选模式必须是 any 或 all")
+    paths = normalize_sub_knowledge(sub_knowledge if sub_knowledge is not None else [])
+    if paths:
+        raise HTTPException(status_code=400, detail="细分关系仅作为历史证据保留，请使用原单值小节筛选")
+    return query
+
+
+def require_expected_curriculum_version(expected_version_code):
+    if expected_version_code is not None:
+        expected = str(expected_version_code).strip().upper()
+        if expected != get_active_version_code():
+            raise HTTPException(status_code=409, detail="教材版本已切换，请重新载入分类后保存")
+
+
 @app.get("/api/questions")
 def list_questions(
     q: str = None,
@@ -2231,6 +2252,9 @@ def list_questions(
     category_chapter: str = None,
     knowledge: str = None,
     category_knowledge: str = None,
+    include_sub_knowledge: bool = False,
+    sub_knowledge: Optional[List[str]] = Query(None),
+    sub_knowledge_mode: str = "any",
     qtype: str = None,
     question_type: str = None,
     difficulty: str = None,
@@ -2246,7 +2270,9 @@ def list_questions(
     know_val = knowledge or category_knowledge
     type_val = qtype or question_type
 
-    query = db.query(Question)
+    query = db.query(Question).options(
+        selectinload(Question.curriculum_mappings).selectinload(QuestionCurriculum.sub_knowledge_rows)
+    )
     
     # Check if searching for a specific display sequence number
     target_id_by_seq = None
@@ -2285,12 +2311,15 @@ def list_questions(
                 (Question.review.like(f"%{search_q}%")) |
                 (Question.tags.like(f"%{search_q}%"))
             )
-    if comp_val:
-        query = query.filter(Question.category_compulsory == comp_val)
-    if chap_val:
-        query = query.filter(Question.category_chapter == chap_val)
-    if know_val:
-        query = query.filter(Question.category_knowledge == know_val)
+    try:
+        paths = [json.loads(path) for path in (sub_knowledge or [])]
+        query = apply_curriculum_filters(
+            query, comp_val, chap_val, know_val,
+            include_sub_knowledge=include_sub_knowledge,
+            sub_knowledge=paths, sub_knowledge_mode=sub_knowledge_mode,
+        )
+    except (ValueError, TypeError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     if type_val:
         query = query.filter(Question.question_type == type_val)
     if difficulty:
@@ -2317,7 +2346,7 @@ def list_questions(
         seq_map = get_seq_mapping(db, [item.id for item in questions])
         return {
             "items": [
-                {**item.to_summary_dict(), "seq_num": seq_map.get(item.id)}
+                {**item.to_summary_dict(get_active_version_code()), "seq_num": seq_map.get(item.id), "version_code": get_active_version_code(), "active_version_code": get_active_version_code()}
                 for item in questions
             ],
             "total": total,
@@ -2328,7 +2357,7 @@ def list_questions(
 
     questions = query.order_by(*order_columns).all()
     seq_map = get_seq_mapping(db, [item.id for item in questions])
-    return [{**item.to_summary_dict(), "seq_num": seq_map.get(item.id)} for item in questions]
+    return [{**item.to_summary_dict(get_active_version_code()), "seq_num": seq_map.get(item.id), "version_code": get_active_version_code(), "active_version_code": get_active_version_code()} for item in questions]
 
 def _duplicate_payload_list(value, *, field_name: str, max_items: int = 50):
     if value is None:
@@ -2383,6 +2412,7 @@ def _duplicate_input_from_payload(item: dict) -> QuestionDuplicateInput:
         answer_markdown,
         evidence_image_paths,
         content_assets,
+        review=str(item.get("review") or ""),
     )
     return QuestionDuplicateInput(
         content=content,
@@ -2418,6 +2448,7 @@ def _prompt_visible_image_paths(question: Question) -> list[str]:
         question.answer_markdown or "",
         question.display_image_paths,
         question.content_tikz_assets,
+        review=question.review or "",
     )
 
 
@@ -2583,23 +2614,189 @@ def get_question(question_id: int, db: Session = Depends(get_db)):
     if not q:
         raise HTTPException(status_code=404, detail="未找到对应的题目")
     seq_map = get_seq_mapping(db, [q.id])
-    q_dict = q.to_dict()
+    q_dict = q.to_dict(get_active_version_code())
+    q_dict["version_code"] = get_active_version_code()
+    q_dict["active_version_code"] = get_active_version_code()
+    q_dict["curriculum_mappings"] = [mapping.to_dict() for mapping in q.curriculum_mappings]
     q_dict["seq_num"] = seq_map.get(q.id)
     return q_dict
 
 def normalize_fillin_macro(text: str) -> str:
-    """将题干中的任何下划线格式（\\underline{...}、\\fillin[...]、连续划线 ___）一律统一规范化为最纯粹的 \\fillin 宏"""
+    """Normalize proven blank lines; preserve literal TeX, subscripts and macros.
+
+    Self-contained: the private AST importer still needs only its existing re.
+    This proposal does not mutate source files or historical questions.
+    """
     if not text or not isinstance(text, str):
         return text or ""
-    # 1. 替换连续下划线 ___ (3个及以上) 为 \fillin
-    text = re.sub(r'_{3,}', r'\\fillin', text)
-    # 2. 替换任何带参数的 \fillin[...] 为纯净的 \fillin
-    text = re.sub(r'\\fillin\s*\[[^\]]*?\](?:\[[^\]]*?\])?', r'\\fillin', text)
-    # 3. 替换任何形式的 \underline{...} 为纯净的 \fillin
-    text = re.sub(r'\\underline\s*\{[^}]*?\}', r'\\fillin', text)
-    # 4. 清理可能残留的额外右花括号 }
-    text = re.sub(r'\\fillin\}', r'\\fillin', text)
-    return text
+    spans = []
+
+    def escaped(position):
+        previous = position - 1
+        while previous >= 0 and text[previous] == "\\":
+            previous -= 1
+        return (position - previous - 1) % 2 == 1
+
+    def covered(position):
+        return any(start <= position < end for start, end, _ in spans)
+
+    def group_end(position):
+        stack = ["]" if text[position] == "[" else "}"]
+        for index in range(position + 1, len(text)):
+            if escaped(index):
+                continue
+            char = text[index]
+            if char in "[{":
+                stack.append("]" if char == "[" else "}")
+            elif char in "]}":
+                if char != stack[-1]:
+                    return len(text)
+                stack.pop()
+                if not stack:
+                    return index + 1
+        return len(text)
+
+    # Code/HTML literals, links, URLs and asset paths cannot supply blank lines.
+    literal = re.compile(
+        r"<(?P<literal_tag>code|pre|mathbank-math)\b[^>]*>[\s\S]*?</(?P=literal_tag)\s*>|<!--[\s\S]*?(?:-->|\Z)|"
+        r"!?\[[^\]\n]*\]\([^\n)]*\)|(?:https?|ftp)://[^\s<>\"']+|"
+        r"</?[A-Za-z][A-Za-z0-9:_-]*(?:\s+[^<>]*|/?)>", re.IGNORECASE)
+    spans.extend((m.start(), m.end(), None) for m in literal.finditer(text))
+    cursor = 0
+    while match := re.search(r"`+|(?m:^[ \t]{0,3}~{3,})", text[cursor:]):
+        start, end = cursor + match.start(), cursor + match.end()
+        token = match.group().lstrip(" \t")
+        if covered(start) or escaped(start):
+            cursor = end
+            continue
+        line_start = text.rfind("\n", 0, start) + 1
+        fence = len(token) >= 3 and not text[line_start:start].strip()
+        if fence:
+            newline = text.find("\n", end)
+            body = newline + 1 if newline >= 0 else len(text)
+            closing = re.search(r"(?m)^[ \t]{0,3}" + re.escape(token[0]) + "{" + str(len(token)) + r",}[ \t]*(?:\n|\Z)", text[body:])
+            end = body + closing.end() if closing else len(text)
+        else:
+            closing = next((m for m in re.finditer(r"`+", text[end:]) if len(m.group()) == len(token)), None)
+            end = end + closing.end() if closing else len(text)
+        spans.append((start, end, None))
+        cursor = end
+    # Conservatively retain Markdown indented code. Lists' own content stays
+    # active; four additional columns establish an indented literal block.
+    offset, previous_blank, code_start, list_indent = 0, True, None, None
+    for line in text.splitlines(keepends=True):
+        body = line.rstrip("\r\n")
+        leading = re.match(r"[ \t]*", body).group()
+        indent = len(leading.expandtabs(4))
+        marker = re.match(r"(?:[-+*]|[0-9]{1,9}[.)])[ \t]+", body[len(leading):])
+        threshold = list_indent + 4 if list_indent is not None else 4
+        if not body.strip():
+            previous_blank = True
+        elif indent >= threshold and (previous_blank or code_start is not None):
+            if code_start is None:
+                code_start = offset
+            previous_blank = False
+        else:
+            if code_start is not None:
+                spans.append((code_start, offset, None))
+                code_start = None
+            if marker:
+                list_indent = indent + len(marker.group().expandtabs(4))
+            elif indent < 4:
+                list_indent = None
+            previous_blank = False
+        offset += len(line)
+    if code_start is not None:
+        spans.append((code_start, len(text), None))
+
+    environments = re.compile(r"\\begin\s*\{(tikzpicture|verbatim\*?|Verbatim\*?|lstlisting|minted)\}")
+    for match in environments.finditer(text):
+        if covered(match.start()) or escaped(match.start()):
+            continue
+        closing = re.search(r"\\end\s*\{" + re.escape(match.group(1)) + r"\}", text[match.end():])
+        spans.append((match.start(), match.end() + closing.end() if closing else len(text), None))
+    commands = re.compile(r"\\(verb|Verb|lstinline|mintinline|detokenize|texttt|url|path|includegraphics|fillin|underline)(?![A-Za-z])\*?")
+    for match in commands.finditer(text):
+        if covered(match.start()):
+            continue
+        name, cursor = match.group(1), match.end()
+        while cursor < len(text) and text[cursor] in " \t":
+            cursor += 1
+        if name in {"verb", "Verb", "lstinline", "mintinline"}:
+            if cursor < len(text) and text[cursor] == "[":
+                cursor = group_end(cursor)
+            if name == "mintinline" and text[cursor:cursor + 1] == "{":
+                cursor = group_end(cursor)
+            while cursor < len(text) and text[cursor] in " \t":
+                cursor += 1
+            if cursor < len(text) and not text[cursor].isspace():
+                if text[cursor] == "{":
+                    end = group_end(cursor)
+                else:
+                    closing = text.find(text[cursor], cursor + 1)
+                    end = closing + 1 if closing >= 0 else len(text)
+                spans.append((match.start(), end, None))
+            continue
+        arguments, end = [], match.end()
+        while cursor < len(text) and text[cursor] in "[{":
+            stop = group_end(cursor)
+            arguments.append((cursor, stop))
+            end = stop
+            cursor = stop
+            while cursor < len(text) and text[cursor].isspace():
+                cursor += 1
+        replacement = None
+        if name == "underline" and not escaped(match.start()) and len(arguments) == 1:
+            left, right = arguments[0]
+            if text[left] == "{" and text[right - 1:right] == "}":
+                inner = text[left + 1:right - 1]
+                blank = re.fullmatch(r"(?:\s|_|\\_|~|\\(?:quad|qquad|strut)|\\hspace\{[0-9.]+(?:cm|mm|pt|em|ex|in)\})*", inner)
+                if blank:
+                    replacement = r"\fillin"
+        # Preserve explicit fillin parameters/braces and nonblank underline.
+        spans.append((match.start(), end, replacement))
+
+    # An underscore inside a real subscript group is not an inferred blank.
+    stack = []
+    for index, char in enumerate(text):
+        if char not in "{}" or escaped(index) or covered(index):
+            continue
+        if char == "{":
+            stack.append((index, index > 0 and text[index - 1] == "_" and not escaped(index - 1)))
+        elif stack:
+            start, is_subscript = stack.pop()
+            if is_subscript:
+                spans.append((start + 1, index, None))
+    spans.extend((start + 1, len(text), None) for start, is_subscript in stack if is_subscript)
+
+    def normalize_segment(segment, base):
+        def blank(match):
+            start, end = base + match.start(), base + match.end()
+            if escaped(start):
+                return match.group()
+            left = text[start - 1:start]
+            right = text[end:end + 1]
+            if re.fullmatch(r"[A-Za-z0-9_\u0370-\u03ff]", left) or re.fullmatch(r"[A-Za-z0-9_\u0370-\u03ff]", right):
+                return match.group()
+            if match.group().startswith("\\") and len(match.group()) < 6:
+                # Single/double escaped glyphs need a declared value slot. This
+                # covers the real textbook S_n = \_ without guessing literal _.
+                before = text[max(0, start - 24):start].rstrip()
+                after = text[end:]
+                if not re.search(r"(?:=|为|是|等于|填写)\s*$", before) or not re.match(r"\s*(?:\$|\\[)\]]|[。，,；;.!?！？]|\Z)", after):
+                    return match.group()
+            return r"\fillin"
+        return re.sub(r"(?:\\_)+|_{3,}", blank, segment)
+
+    result, cursor = [], 0
+    for start, end, replacement in sorted(spans, key=lambda row: (row[0], -row[1])):
+        if start < cursor:
+            continue
+        result.append(normalize_segment(text[cursor:start], cursor))
+        result.append(text[start:end] if replacement is None else replacement)
+        cursor = end
+    result.append(normalize_segment(text[cursor:], cursor))
+    return "".join(result)
 
 
 def committed_question_response(
@@ -2614,7 +2811,9 @@ def committed_question_response(
     try:
         db.refresh(db_question)
         seq_map = get_seq_mapping(db, [question_id])
-        question = db_question.to_dict()
+        question = db_question.to_dict(get_active_version_code())
+        question["version_code"] = get_active_version_code()
+        question["active_version_code"] = get_active_version_code()
         question["seq_num"] = seq_map.get(question_id)
         return {"status": "success", "question": question}
     except Exception as exc:
@@ -2641,6 +2840,7 @@ def prepare_question_assets(
     answer_tikz_assets: str,
     tikz_code: str = "",
     *,
+    review: str = "",
     promotion_log: list[tuple[Path, Path]],
     path_map: dict[str, str] | None = None,
 ) -> tuple[
@@ -2657,6 +2857,7 @@ def prepare_question_assets(
     parsed_img_paths = json.loads(image_paths) if image_paths else []
     if not isinstance(parsed_img_paths, list):
         raise AssetSecurityError("image_paths 必须是插图路径数组。")
+    parsed_img_paths.extend(embedded_question_assets(review))
     parsed_img_paths.extend(structured_question_assets(
         content_tikz_assets, answer_tikz_assets,
         legacy_reference=tikz_reference_image_path,
@@ -2730,6 +2931,7 @@ def build_prepared_question_fingerprint(
     answer_tikz_assets: list[dict[str, str]],
     tikz_code: str,
     tikz_reference_image_path: str,
+    review: str = "",
 ):
     hidden_references = {str(tikz_reference_image_path or "").strip()}
     for asset in [*content_tikz_assets, *answer_tikz_assets]:
@@ -2744,6 +2946,7 @@ def build_prepared_question_fingerprint(
         answer_markdown,
         registered_visible_paths,
         content_tikz_assets,
+        review=review,
     )
     return build_question_fingerprint(
         QuestionDuplicateInput(
@@ -2817,6 +3020,8 @@ def create_question(
     category_compulsory: str = Form(""),
     category_chapter: str = Form(""),
     category_knowledge: str = Form(""),
+    sub_knowledge: str = Form("[]"),
+    expected_version_code: Optional[str] = Form(None),
     difficulty: str = Form(...),
     source: str = Form(""),
     answer_markdown: str = Form(""),
@@ -2836,10 +3041,12 @@ def create_question(
     duplicate_override: str = Form(""),
     db: Session = Depends(get_db)
 ):
+    require_expected_curriculum_version(expected_version_code)
     asset_promotions: list[tuple[Path, Path]] = []
     asset_path_map: dict[str, str] = {}
     duplicate_warning = ""
     try:
+        parsed_sub_knowledge = normalize_sub_knowledge(sub_knowledge)
         duplicate_snapshot_hash = str(duplicate_snapshot_hash or "").strip()
         duplicate_override = str(duplicate_override or "").strip()
         if duplicate_override not in {"", "independent"}:
@@ -2872,13 +3079,13 @@ def create_question(
             tikz_reference_image_path,
             answer_tikz_assets,
             tikz_code,
+            review=review,
             promotion_log=asset_promotions,
             path_map=asset_path_map,
         )
+        review = rewrite_question_asset_paths(review, asset_path_map)
         
         # 1. Fallback if third level is empty, default to chapter
-        if not category_knowledge and category_chapter:
-            category_knowledge = category_chapter
             
         db_question = Question(
             content=content,
@@ -2928,6 +3135,7 @@ def create_question(
                 answer_tikz_assets=parsed_answer_tikz_assets,
                 tikz_code=parsed_tikz_code,
                 tikz_reference_image_path=parsed_tikz_reference_image_path,
+                review=review,
             )
         except Exception as fingerprint_exc:
             question_fingerprint = None
@@ -2975,6 +3183,7 @@ def create_question(
             chapter=category_chapter,
             knowledge=category_knowledge
         )
+        curriculum_map.sub_knowledge = parsed_sub_knowledge
         db.add(curriculum_map)
         committed_question_id = db_question.id
         db.commit()
@@ -3014,6 +3223,8 @@ def update_question(
     category_compulsory: str = Form(""),
     category_chapter: str = Form(""),
     category_knowledge: str = Form(""),
+    sub_knowledge: Optional[str] = Form(None),
+    expected_version_code: Optional[str] = Form(None),
     difficulty: str = Form(...),
     source: str = Form(""),
     answer_markdown: str = Form(""),
@@ -3033,6 +3244,7 @@ def update_question(
     duplicate_override: str = Form(""),
     db: Session = Depends(get_db)
 ):
+    require_expected_curriculum_version(expected_version_code)
     db_question = db.query(Question).filter(Question.id == question_id).first()
     if not db_question:
         raise HTTPException(status_code=404, detail="未找到对应的题目")
@@ -3042,6 +3254,7 @@ def update_question(
     duplicate_warning = ""
     old_images = list(db_question.image_paths)
     try:
+        parsed_sub_knowledge = normalize_sub_knowledge(sub_knowledge) if sub_knowledge is not None else None
         duplicate_snapshot_hash = str(duplicate_snapshot_hash or "").strip()
         duplicate_override = str(duplicate_override or "").strip()
         if duplicate_override not in {"", "independent"}:
@@ -3075,13 +3288,13 @@ def update_question(
             tikz_reference_image_path,
             answer_tikz_assets,
             tikz_code,
+            review=review,
             promotion_log=asset_promotions,
             path_map=asset_path_map,
         )
+        review = rewrite_question_asset_paths(review, asset_path_map)
         
         # 1. Fallback if third level is empty, default to chapter
-        if not category_knowledge and category_chapter:
-            category_knowledge = category_chapter
             
         db_question.content = content
         db_question.question_type = question_type
@@ -3150,6 +3363,8 @@ def update_question(
         curriculum_map.compulsory = category_compulsory
         curriculum_map.chapter = category_chapter
         curriculum_map.knowledge = category_knowledge
+        if parsed_sub_knowledge is not None:
+            curriculum_map.sub_knowledge = parsed_sub_knowledge
 
         db.flush()
         try:
@@ -3162,6 +3377,7 @@ def update_question(
                 answer_tikz_assets=parsed_answer_tikz_assets,
                 tikz_code=parsed_tikz_code,
                 tikz_reference_image_path=parsed_tikz_reference_image_path,
+                review=review,
             )
         except Exception as fingerprint_exc:
             question_fingerprint = None
@@ -3309,7 +3525,7 @@ def get_associated_questions(question_id: int, db: Session = Depends(get_db)):
     ).all()
     
     seq_map = get_seq_mapping(db, [item.id for item in associated])
-    return [{**item.to_dict(), "seq_num": seq_map.get(item.id)} for item in associated]
+    return [{**item.to_dict(get_active_version_code()), "seq_num": seq_map.get(item.id)} for item in associated]
 
 @app.post("/api/questions/{question_id}/associate")
 def associate_questions_endpoint(
@@ -3538,22 +3754,41 @@ def load_or_init_metadata():
 load_or_init_metadata()
 
 def get_active_version_code() -> str:
-    curriculum = METADATA_CACHE.get("curriculum", {})
-    combined_chapters = ""
-    for book_content in curriculum.values():
-        if isinstance(book_content, dict):
-            combined_chapters += " ".join(book_content.keys())
-    if "第一章" in combined_chapters:
-        return "B"
-    if "第 1 章 集合与逻辑" in combined_chapters or "数学建模活动案例" in combined_chapters or "第 2 章 等式与不等式" in combined_chapters or "第 3 章 幂、指数与对数" in combined_chapters:
-        return "H"
-    if "第1章" in combined_chapters:
-        return "S"
-    return "A"
+    return detect_curriculum_version(METADATA_CACHE)
 
 @app.get("/api/config/metadata")
 def get_metadata_config():
     return METADATA_CACHE
+
+
+@app.get("/api/config/sub-knowledge")
+def get_sub_knowledge_config(compulsory: str = None, chapter: str = None,
+                             knowledge: str = None, db: Session = Depends(get_db)):
+    version = get_active_version_code()
+    filters = {"compulsory": compulsory, "chapter": chapter, "knowledge": knowledge}
+    paths = set()
+    for comp, chapters in get_current_curriculum().items():
+        if not isinstance(chapters, dict):
+            continue
+        for chap, leaves in chapters.items():
+            if not isinstance(leaves, list):
+                continue
+            for leaf in leaves:
+                if isinstance(leaf, str) and leaf.strip():
+                    paths.add((comp, chap, leaf))
+    existing = set(db.query(QuestionSubKnowledge.compulsory, QuestionSubKnowledge.chapter,
+                            QuestionSubKnowledge.knowledge).join(QuestionCurriculum).filter(
+                                QuestionCurriculum.version_code == version).all())
+    paths.update(existing)
+    def matching(path):
+        return all(not value or path[index] == value for index, value in enumerate(filters.values()))
+    def as_dict(path):
+        return dict(zip(("compulsory", "chapter", "knowledge"), path))
+    return {
+        "version_code": version,
+        "sub_knowledge": [as_dict(path) for path in sorted(paths) if matching(path)],
+        "existing_sub_knowledge": [as_dict(path) for path in sorted(existing) if matching(path)],
+    }
 
 @app.get("/api/config/curriculum-presets/{version}")
 def get_curriculum_preset_config(version: str):
@@ -3707,19 +3942,7 @@ def save_metadata_config(
     try:
         source_version = get_active_version_code()
         # Detect target version
-        curriculum = payload.get("curriculum", {})
-        combined_chapters = ""
-        for book_content in curriculum.values():
-            if isinstance(book_content, dict):
-                combined_chapters += " ".join(book_content.keys())
-        if "第一章" in combined_chapters:
-            target_version = "B"
-        elif "第 1 章 集合与逻辑" in combined_chapters or "数学建模活动案例" in combined_chapters or "第 2 章 等式与不等式" in combined_chapters or "第 3 章 幂、指数与对数" in combined_chapters:
-            target_version = "H"
-        elif "第1章" in combined_chapters:
-            target_version = "S"
-        else:
-            target_version = "A"
+        target_version = detect_curriculum_version(payload)
 
         # Incremental migration if curriculum version shifts
         if source_version != target_version:
@@ -3730,7 +3953,9 @@ def save_metadata_config(
                     QuestionCurriculum.question_id == q.id,
                     QuestionCurriculum.version_code == target_version
                 ).first()
-                if not target_map or not target_map.compulsory:
+                if target_map is None:
+                    target_map = QuestionCurriculum(question_id=q.id, version_code=target_version)
+                    db.add(target_map)
                     source_map = db.query(QuestionCurriculum).filter(
                         QuestionCurriculum.question_id == q.id,
                         QuestionCurriculum.version_code == source_version
@@ -3739,12 +3964,6 @@ def save_metadata_config(
                         new_comp, new_chap, new_know = route_chapter(
                             source_map.compulsory, source_map.chapter, source_map.knowledge, target_version
                         )
-                        if not target_map:
-                            target_map = QuestionCurriculum(
-                                question_id=q.id,
-                                version_code=target_version
-                            )
-                            db.add(target_map)
                         target_map.compulsory = new_comp
                         target_map.chapter = new_chap
                         target_map.knowledge = new_know
@@ -3960,6 +4179,7 @@ def ai_classify(content: str = Form(...)):
         result = json.loads(ai_message)
         compulsory = result.get("compulsory", "")
         chapter = result.get("chapter", "")
+        knowledge = result.get("knowledge", "")
         structured_question_form = detect_structured_question_form(content)
         question_form = structured_question_form or normalize_ai_question_form(
             result.get("question_form")
@@ -3968,27 +4188,19 @@ def ai_classify(content: str = Form(...)):
         
         # Verification: make sure returned values exist in get_current_curriculum()
         curr = get_current_curriculum()
-        if compulsory in curr and chapter in curr[compulsory]:
+        if (compulsory in curr and chapter in curr[compulsory]
+                and isinstance(knowledge, str)
+                and (not knowledge or knowledge in curr[compulsory][chapter])):
             return {
                 "status": "success",
                 "compulsory": compulsory,
                 "chapter": chapter,
+                "knowledge": knowledge,
                 "question_form": question_form,
                 "question_form_source": question_form_source,
             }
         else:
-            # Fallback dynamically to the first available category book/chapter
-            first_comp = list(curr.keys())[0] if curr else "必修一"
-            first_chap = list(curr[first_comp].keys())[0] if curr and first_comp in curr and curr[first_comp] else "1. 集合与常用逻辑用语"
-            return {
-                "status": "success",
-                "compulsory": first_comp,
-                "chapter": first_chap,
-                "question_form": question_form,
-                "question_form_source": question_form_source,
-                "is_fallback": True,
-                "raw_recommendation": f"{compulsory} -> {chapter}"
-            }
+            raise ValueError("AI 返回的学段、章节或小节不在当前教材大纲中，请保留原分类并人工核对。")
             
     except Exception as e:
         return JSONResponse(
@@ -4172,8 +4384,11 @@ def parse_paper_text_internal(
             diagnostics=diagnostics,
         )
     if preserve_source_answers:
+        validate_import_knowledge(parsed_questions, get_current_curriculum())
         # Compare the original response before answer filtering or formula edits.
         return parsed_questions
+
+    validate_import_knowledge(parsed_questions, get_current_curriculum())
 
     # 强制进行静默净化：若未勾选自动生成答案，则对于没有带有 [EXTRACTED_ORIGINAL] 的解析和解答，将其强行抹平为空。
     for q in parsed_questions:
@@ -4194,6 +4409,25 @@ def parse_paper_text_internal(
                 q[field] = normalize_question_math_markdown(value)
         
     return parsed_questions
+
+
+def validate_import_knowledge(questions: list[dict], curriculum: dict) -> None:
+    """Reject fabricated import subsections; empty knowledge means whole chapter."""
+    for index, question in enumerate(questions, start=1):
+        compulsory = question.get("category_compulsory", "")
+        chapter = question.get("category_chapter", "")
+        # Older parse providers may omit this optional field. Normalize omission
+        # to explicit whole-chapter status; never synthesize the chapter as a leaf.
+        knowledge = question.get("category_knowledge", "")
+        question["category_knowledge"] = knowledge
+        if not isinstance(knowledge, str):
+            raise ValueError(f"第 {index} 题的小节字段无效，请重新导入并核对。")
+        if compulsory or chapter:
+            if compulsory not in curriculum or chapter not in curriculum[compulsory]:
+                raise ValueError(f"第 {index} 题的学段或章节不在当前教材版本中，请重新导入并核对。")
+        if knowledge and (compulsory not in curriculum or chapter not in curriculum[compulsory]
+                          or knowledge not in curriculum[compulsory][chapter]):
+            raise ValueError(f"第 {index} 题的小节不属于所选版本、学段和章节，请重新导入并核对。")
 
 
 @app.post("/api/ai/parse-paper")
@@ -4280,6 +4514,7 @@ def ai_parse_paper(
         parsed_questions = parse_paper_completion(
             response.json(), diagnostics=tex_diagnostics,
         )
+        validate_import_knowledge(parsed_questions, get_current_curriculum())
         lock_report = reconcile_visible_math(
             parsed_questions, math_locks, tex_result["model_source"],
             tex_comments=source_format != "markdown",
@@ -4496,11 +4731,12 @@ def _referenced_question_assets(db: Session) -> set[Path]:
         Question._image_paths,
         Question.content,
         Question.answer_markdown,
+        Question.review,
         Question._content_tikz_assets,
         Question._answer_tikz_assets,
         Question.tikz_reference_image_path,
     ).all()
-    for raw_paths, content, answer_markdown, content_assets, answer_assets, legacy_reference in rows:
+    for raw_paths, content, answer_markdown, review, content_assets, answer_assets, legacy_reference in rows:
         references = []
         try:
             parsed = json.loads(raw_paths or "[]")
@@ -4512,7 +4748,7 @@ def _referenced_question_assets(db: Session) -> set[Path]:
             ))
         except (TypeError, ValueError) as exc:
             raise ValueError("题目图片记录损坏，已停止清理") from exc
-        references.extend(embedded_question_assets(content, answer_markdown))
+        references.extend(embedded_question_assets(content, answer_markdown, review))
         references.extend(
             re.findall(
                 r'/static/(?:uploads|test_uploads)/[a-zA-Z0-9_./-]+',
@@ -4876,6 +5112,7 @@ def find_source_page_by_overlap(q_text: str, ocr_results: list) -> int:
 @app.post("/api/paper/ai-select")
 def ai_select_paper(payload: dict, db: Session = Depends(get_db)):
     """AI 智能选题：结合用户指定的 PREFER_SOLVE_MODEL 大模型与 math-teaching 教研引擎组卷"""
+    require_expected_curriculum_version(payload.get("expected_version_code"))
     try:
         prompt = payload.get("prompt", "").strip()
         question_type = payload.get("question_type", "")
@@ -4883,6 +5120,12 @@ def ai_select_paper(payload: dict, db: Session = Depends(get_db)):
         compulsory = payload.get("compulsory", "")
         chapter = payload.get("chapter", "")
         knowledge = payload.get("knowledge", "")
+        raw_include_sub = payload.get("include_sub_knowledge", False)
+        include_sub = raw_include_sub is True or str(raw_include_sub).lower() in {"true", "1"}
+        try:
+            sub_paths = normalize_sub_knowledge(payload.get("sub_knowledge", []))
+        except (ValueError, TypeError) as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
         limit = max(1, min(int(payload.get("limit", 5)), 20))
 
         # 0. 自然语言意图智能分析 (NL Intent Parser)
@@ -4906,17 +5149,17 @@ def ai_select_paper(payload: dict, db: Session = Depends(get_db)):
             extracted_topics = [t for t in known_topics if t in prompt]
 
         # 1. 结构化过滤基础题目池
-        query = db.query(Question)
+        query = db.query(Question).options(
+            selectinload(Question.curriculum_mappings).selectinload(QuestionCurriculum.sub_knowledge_rows)
+        )
         if question_type:
             query = query.filter(Question.question_type == question_type)
         if difficulty:
             query = query.filter(Question.difficulty == difficulty)
-        if compulsory:
-            query = query.filter(Question.category_compulsory == compulsory)
-        if chapter:
-            query = query.filter(Question.category_chapter == chapter)
-        if knowledge:
-            query = query.filter(Question.category_knowledge == knowledge)
+        query = apply_curriculum_filters(
+            query, compulsory, chapter, knowledge, include_sub_knowledge=include_sub,
+            sub_knowledge=sub_paths, sub_knowledge_mode=payload.get("sub_knowledge_mode", "any"),
+        )
             
         if is_review_intent:
             # 复习/旧题模式：优先提取已使用频次高的题目
@@ -4927,7 +5170,7 @@ def ai_select_paper(payload: dict, db: Session = Depends(get_db)):
         else:
             # 默认鲜活模式：优先提取从未被使用过的冷门题目
             candidates = query.order_by(Question.usage_count.asc(), Question.id.desc()).limit(35).all()
-            if not candidates:
+            if not candidates and not any((question_type, difficulty, compulsory, chapter, knowledge, sub_paths)):
                 candidates = db.query(Question).order_by(Question.usage_count.asc(), Question.id.desc()).limit(35).all()
 
         # 2. 解题、拆卷、分类和组卷共用同一供应商解析规则。
@@ -4959,7 +5202,7 @@ def ai_select_paper(payload: dict, db: Session = Depends(get_db)):
                         "question_type": q.question_type,
                         "difficulty": q.difficulty,
                         "usage_count": q.usage_count or 0,
-                        "knowledge": q.category_knowledge or q.category_chapter or "通用知识点",
+                        "knowledge": q.category_knowledge or "整章定位（待细分）",
                         "tags": q.tags or "",
                         "stem_excerpt": clean_stem
                     })
@@ -5025,7 +5268,7 @@ def ai_select_paper(payload: dict, db: Session = Depends(get_db)):
                         db_selected = db.query(Question).filter(Question.id.in_(selected_ids)).all()
                         id_map = {q.id: q for q in db_selected}
                         seq_map = get_seq_mapping(db, selected_ids)
-                        final_questions = [{**id_map[qid].to_dict(), "seq_num": seq_map.get(qid)} for qid in selected_ids if qid in id_map]
+                        final_questions = [{**id_map[qid].to_dict(get_active_version_code()), "seq_num": seq_map.get(qid)} for qid in selected_ids if qid in id_map]
 
                         if final_questions:
                             return {
@@ -5043,9 +5286,7 @@ def ai_select_paper(payload: dict, db: Session = Depends(get_db)):
         fallback_questions = []
         if extracted_topics:
             for topic in extracted_topics:
-                sub_query = db.query(Question)
-                if question_type:
-                    sub_query = sub_query.filter(Question.question_type == question_type)
+                sub_query = query
                 sub_query = sub_query.filter(
                     (Question.content.like(f"%{topic}%")) |
                     (Question.category_chapter.like(f"%{topic}%")) |
@@ -5067,7 +5308,7 @@ def ai_select_paper(payload: dict, db: Session = Depends(get_db)):
 
         selected_fallback = fallback_questions[:limit]
         seq_map = get_seq_mapping(db, [q.id for q in selected_fallback])
-        result = [{**q.to_dict(), "seq_num": seq_map.get(q.id)} for q in selected_fallback]
+        result = [{**q.to_dict(get_active_version_code()), "seq_num": seq_map.get(q.id)} for q in selected_fallback]
         
         topic_str = "、".join(extracted_topics) if extracted_topics else "通用知识点"
         err_banner = f"⚠️ 【AI 解题模型调用未成功】: {api_error_detail}\n系统已为您自动启动本地教研算法，根据意图（{topic_str}）在本地题库中筛选并组合了 {len(result)} 道精选题目。" if api_error_detail else f"【本地智能筛选分析】已为您自动识别意图（{topic_str}），从题库中精准挑选并组合了鲜活试题。"
@@ -5080,6 +5321,8 @@ def ai_select_paper(payload: dict, db: Session = Depends(get_db)):
             "model_used": f"⚠️ 模型调用失败 ({target_model}) ➔ 退回本地算法" if api_error_detail else "本地算法",
             "fallback": True
         }
+    except HTTPException:
+        raise
     except Exception as e:
         return JSONResponse(content={"status": "error", "message": f"AI 智能选题失败: {str(e)}"}, status_code=500)
 
@@ -6520,7 +6763,7 @@ def get_paper_questions(ids: str = "", db: Session = Depends(get_db)):
         if not id_list:
             return {"status": "success", "data": []}
         questions = db.query(Question).filter(Question.id.in_(id_list)).all()
-        q_map = {q.id: q.to_dict() for q in questions}
+        q_map = {q.id: q.to_dict(get_active_version_code()) for q in questions}
         seq_map = get_seq_mapping(db, id_list)
         result = [
             {**q_map[qid], "seq_num": seq_map.get(qid)}
@@ -6657,7 +6900,7 @@ def get_paper_detail(paper_id: int, db: Session = Depends(get_db)):
             {
                 "id": question.id,
                 "score": paper_question.score,
-                "question": question.to_dict(),
+                "question": question.to_dict(get_active_version_code()),
             }
             for paper_question, question in rows
         ]
@@ -6737,7 +6980,7 @@ def _prepare_paper_export_questions(questions_input, db: Session) -> list[dict]:
     questions_db = db.query(Question).filter(
         Question.id.in_(seen_question_ids)
     ).all()
-    question_map = {question.id: question.to_dict() for question in questions_db}
+    question_map = {question.id: question.to_dict(get_active_version_code()) for question in questions_db}
     if seen_question_ids - set(question_map):
         raise PaperExportValidationError("试卷中包含已删除或不存在的题目。")
 

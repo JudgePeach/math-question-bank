@@ -11,7 +11,7 @@ from mathbank.source_metadata_request import request_word_source_metadata
 from mathbank.task_manager import TaskCancelled
 
 
-CURRICULUM = {"必修一": {"函数": []}}
+CURRICULUM = {"必修一": {"函数": ["函数概念"]}}
 
 
 def setup(monkeypatch):
@@ -20,7 +20,7 @@ def setup(monkeypatch):
     plan = prepare_word_source_metadata("1. 已知二次函数$f(x)=x^2$，求$f(3)$。", _new_diagnostics())
     assert plan["eligible"]
     row = {"id": plan["questions"][0]["id"], "question_type": "detailed_answer", "category_compulsory": "必修一",
-           "category_chapter": "函数", "difficulty": "normal"}
+           "category_chapter": "函数", "category_knowledge": "", "difficulty": "normal"}
     provider = SimpleNamespace(api_key="isolated-dummy", chat_completions_url="https://invalid.local",
                                model_name="isolated-model")
     return plan, row, provider
@@ -51,6 +51,17 @@ def test_complete_json_or_complete_fence_keeps_body_local_and_uses_one_post(monk
     assert questions[0]["content"] == plan["questions"][0]["content"]
     assert len(calls) == 1 and diagnostics["word_source_metadata"]["calls"] == 1
     assert diagnostics["word_source_metadata"]["status"] == "used"
+
+
+def test_word_metadata_rejects_non_leaf_or_cross_chapter_knowledge(monkeypatch):
+    for knowledge in ("函数", "空间向量", "不存在的小节"):
+        request, calls, diagnostics, _ = run(
+            monkeypatch,
+            lambda row, value=knowledge: json.dumps({"items": [{**row, "category_knowledge": value}]}, ensure_ascii=False),
+        )
+        with pytest.raises((ValueError, TypeError)):
+            request()
+        assert len(calls) == 1 and diagnostics["word_source_metadata"]["status"] == "fallback"
 
 
 @pytest.mark.parametrize("transform", [

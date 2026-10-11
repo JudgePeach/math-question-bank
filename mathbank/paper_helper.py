@@ -261,6 +261,11 @@ def _image_is_inside_table_environment(content: str, position: int) -> bool:
     )
 
 
+def _image_is_inside_choices_environment(content: str, position: int) -> bool:
+    prefix = content[:position]
+    return prefix.rfind(r"\begin{choices}") > prefix.rfind(r"\end{choices}")
+
+
 def _read_balanced_latex_group(source: str, start: int) -> tuple[str, int] | None:
     if start >= len(source) or source[start] != "{":
         return None
@@ -390,15 +395,16 @@ def clean_content_for_latex(
         text = re.sub(r'!\[.*?\]\([^)]+\)', '', text)
 
     # Four image-only options form one compact row. Mark only complete groups;
-    # prose, multi-image options and authored choices settings keep their layout.
+    # prose, multi-image options and authored choices/image settings keep their layout.
     compact_choice_ranges = []
     choice_offset = 0
 
     def compact_image_choices(match):
         nonlocal choice_offset
         parts = re.split(r"\\item\b", match.group(1))
-        if len(parts) == 5 and not parts[0].strip() and all(
-            _MARKDOWN_IMAGE_RE.fullmatch(part.strip()) for part in parts[1:]
+        image_matches = [_MARKDOWN_IMAGE_RE.fullmatch(part.strip()) for part in parts[1:]]
+        if len(parts) == 5 and not parts[0].strip() and all(image_matches) and not any(
+            (image_layouts or {}).get(image_key(image[1])) for image in image_matches
         ):
             replacement = r"\begin{choices}[columns=4,label-pos=left]" + match.group(1) + r"\end{choices}"
             start = match.start() + choice_offset
@@ -414,6 +420,7 @@ def clean_content_for_latex(
         img_path = match.group(1)
         base_name = os.path.basename(img_path)
         inside_table = _image_is_inside_table_environment(text, match.start())
+        inside_choices = _image_is_inside_choices_environment(text, match.start())
         code = (tikz_sources or {}).get(_tikz_image_key(img_path))
         layout = (image_layouts or {}).get(image_key(img_path))
         if any(start <= match.start() < end for start, end in compact_choice_ranges):
@@ -443,12 +450,17 @@ def clean_content_for_latex(
             if inside_table:
                 alignment = {'left': 'l', 'center': 'c', 'right': 'r'}[layout['align']]
                 rendered = r"\makebox[\linewidth][" + alignment + "]{" + r"\adjustbox{valign=m,margin=0pt 3pt}{" + visual + "}}"
+            elif inside_choices:
+                # exam-zh measures choices in a horizontal box before choosing
+                # columns. Keep alignment in that box, not a paragraph environment.
+                alignment = {'left': 'l', 'center': 'c', 'right': 'r'}[layout['align']]
+                rendered = r"\makebox[\linewidth][" + alignment + "]{" + visual + "}"
             else:
                 environment = {'left': 'flushleft', 'center': 'center', 'right': 'flushright'}[layout['align']]
                 rendered = "\\begin{" + environment + "}\n" + visual + "\n\\end{" + environment + "}"
             token = f"{token_prefix}N{len(tikz_blocks)}END"
             tikz_blocks[token] = rendered
-            return token if inside_table else "\n" + token + "\n"
+            return token if inside_table or inside_choices else "\n" + token + "\n"
         if code:
             if r"\begin{tikzpicture}" not in code:
                 code = "\\begin{tikzpicture}\n" + code + "\n\\end{tikzpicture}"
@@ -456,6 +468,12 @@ def clean_content_for_latex(
                 rendered = (
                     r"\adjustbox{valign=m,margin=0pt 3pt}{"
                     r"\adjustbox{max width=\linewidth,max height=4.0cm,keepaspectratio}{"
+                    + code + "\n}}"
+                )
+            elif inside_choices:
+                rendered = (
+                    r"\adjustbox{max width=\linewidth}{"
+                    r"\adjustbox{max width=9.0cm,max height=6.0cm,keepaspectratio}{"
                     + code + "\n}}"
                 )
             else:
@@ -467,13 +485,15 @@ def clean_content_for_latex(
                 )
             token = f"{token_prefix}N{len(tikz_blocks)}END"
             tikz_blocks[token] = rendered
-            return token if inside_table else "\n" + token + "\n"
+            return token if inside_table or inside_choices else "\n" + token + "\n"
         if inside_table:
             return (
                 r"\adjustbox{valign=m,margin=0pt 3pt}{"
                 rf"\includegraphics[max width=\linewidth,max height=4.0cm,keepaspectratio]{{{base_name}}}"
                 r"}"
             )
+        if inside_choices:
+            return _bounded_includegraphics(base_name, "9.0cm", "6.0cm")
         if preserve_image_positions:
             return (
                 "\n\\begin{center}\n"

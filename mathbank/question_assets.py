@@ -258,6 +258,20 @@ def embedded_question_assets(*texts: str) -> list[str]:
     return list(dict.fromkeys(path for text in texts for _, _, path in image_reference_spans(text)))
 
 
+def without_review_only_assets(references, content: str, answer_markdown: str, review: str) -> list[str]:
+    """Keep ordinary/legacy figures, excluding only images owned by commentary.
+
+    Lifecycle callers still retain these files. A shared image remains eligible
+    for the field that actually uses it, and literal examples do not own images.
+    """
+    def key(path):
+        return str(path or "").strip().lstrip("/")
+
+    ordinary = {key(path) for path in embedded_question_assets(content, answer_markdown)}
+    review_only = {key(path) for path in embedded_question_assets(review)} - ordinary
+    return [path for path in references if key(path) not in review_only]
+
+
 def structured_question_assets(*values, legacy_reference: str = "") -> list[str]:
     """Collect rendered and hidden reference images, never TikZ source literals."""
     paths = [legacy_reference] if legacy_reference else []

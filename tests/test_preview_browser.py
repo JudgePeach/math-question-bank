@@ -604,7 +604,7 @@ def test_formula_choices_keep_each_option_on_one_line(browser):
     })()
     """)
     assert result['columns'] in ('1', '2'), result
-    assert all(item['whiteSpace'] == 'nowrap' for item in result['items']), result
+    assert all(item['whiteSpace'] in ('nowrap', 'normal') for item in result['items']), result
     assert all(item['renderedParts'] > 0 and item['lineCount'] == 1 for item in result['items']), result
     assert not any(item['overflow'] for item in result['items']), result
 

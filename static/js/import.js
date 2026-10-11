@@ -62,11 +62,11 @@
 
         function editorAssetReferences() {
             syncEditorImageReferences();
-            return window.MathBankImageAssets.all(
+            return Array.from(new Set([...window.MathBankImageAssets.all(
                 document.getElementById('editContent').value,
                 document.getElementById('editAnswerMarkdown').value,
                 TikzState.contentAssets, TikzState.answerAssets
-            );
+            ), ...window.MathBankImageAssets.collect(document.getElementById('editReview').value)]));
         }
         window.editorAssetReferences = editorAssetReferences;
 
@@ -76,8 +76,10 @@
             if (!Object.keys(mapping).length) return;
             const content = document.getElementById('editContent');
             const answer = document.getElementById('editAnswerMarkdown');
+            const review = document.getElementById('editReview');
             const mapped = window.MathBankImageAssets.mapRecord({
                 content: content.value, answer_markdown: answer.value,
+                review: review.value,
                 content_tikz_assets: TikzState.contentAssets, answer_tikz_assets: TikzState.answerAssets,
                 image_layouts: FigureLayoutState.imageLayouts
             }, mapping);
@@ -85,12 +87,14 @@
             // and later additions/removals remain untouched and remain dirty.
             window.MathBankImageAssets.mapInput(content, mapping);
             window.MathBankImageAssets.mapInput(answer, mapping);
+            window.MathBankImageAssets.mapInput(review, mapping);
             TikzState.contentAssets = mapped.content_tikz_assets;
             TikzState.answerAssets = mapped.answer_tikz_assets;
             FigureLayoutState.imageLayouts = mapped.image_layouts;
             syncEditorImageReferences();
             if (typeof window.updateContentPreview === 'function') window.updateContentPreview();
             if (typeof window.updateAnswerPreview === 'function') window.updateAnswerPreview();
+            if (typeof window.updateReviewPreview === 'function') window.updateReviewPreview();
             if (typeof renderIllustrationBadges === 'function') renderIllustrationBadges();
             if (typeof window.renderAnswerImageBadges === 'function') window.renderAnswerImageBadges();
             if (typeof window.renderAnswerTikzAssets === 'function') window.renderAnswerTikzAssets();
@@ -149,6 +153,7 @@
             document.getElementById('editAnswerMarkdown').value = '';
             document.getElementById('aiCustomPrompt').value = '';
             if (document.getElementById('editTags')) document.getElementById('editTags').value = '';
+            if (typeof window.resetEditorSubKnowledge === 'function') window.resetEditorSubKnowledge();
             
             document.getElementById('aiOutputBox').classList.add('hidden');
             document.getElementById('ocrOutputBox').classList.add('hidden');
@@ -232,6 +237,7 @@
                 document.getElementById('aiCustomPrompt').value = '';
                 document.getElementById('editReview').value = '';
                 if (document.getElementById('editTags')) document.getElementById('editTags').value = '';
+                if (typeof window.resetEditorSubKnowledge === 'function') window.resetEditorSubKnowledge();
                 document.getElementById('editRelatedQuestion').value = '';
                 document.getElementById('editRelatedQuestionNum').value = '';
                 document.getElementById('editReview').dispatchEvent(new Event('input')); // Hide review preview
@@ -288,6 +294,7 @@
             document.getElementById('aiCustomPrompt').value = '';
             document.getElementById('editReview').value = '';
             if (document.getElementById('editTags')) document.getElementById('editTags').value = '';
+            if (typeof window.resetEditorSubKnowledge === 'function') window.resetEditorSubKnowledge();
             
             document.getElementById('editRelatedQuestion').value = '';
             document.getElementById('editRelatedQuestionNum').value = '';
@@ -670,6 +677,10 @@
                     if (!fullItem || Number(fullItem.id) !== requestedQuestionId) {
                         throw new Error('题目详情与请求 ID 不匹配');
                     }
+                    if (fullItem.active_version_code && window.activeCurriculumVersion
+                            && fullItem.active_version_code !== window.activeCurriculumVersion) {
+                        throw new Error('教材版本已切换，请重新打开题目');
+                    }
                     const currentFigureLayoutRevision = typeof window.getFigureLayoutMutationRevision === 'function'
                         ? window.getFigureLayoutMutationRevision(requestedQuestionId)
                         : figureLayoutRevisionAtRequest;
@@ -723,7 +734,9 @@
                         : [];
                     uploadedAnswerImages = window.collectAnswerImagePaths(fullItem.answer_markdown || '');
                     const hiddenTikzReferencePaths = new Set(TikzState.referencePaths());
-                    uploadedImages = allStoredImages.filter(path => {
+                    uploadedImages = window.MathBankImageAssets.withoutReviewOnly(
+                        allStoredImages, fullItem.content, fullItem.answer_markdown, fullItem.review
+                    ).filter(path => {
                         return !uploadedAnswerImages.includes(path)
                             && !hiddenTikzReferencePaths.has(path);
                     });
@@ -753,11 +766,13 @@
                     // Repopulate with clean categoryTree
                     populateCategoryDropdowns();
                     
-                    compSelect.value = fullItem.category_compulsory || '';
+                    setEditorMetadataValue(compSelect, fullItem.category_compulsory || '');
                     compSelect.onchange();
-                    chapSelect.value = fullItem.category_chapter || '';
+                    setEditorMetadataValue(chapSelect, fullItem.category_chapter || '');
+                    if (fullItem.category_chapter) chapSelect.disabled = false;
                     chapSelect.onchange();
-                    knowSelect.value = fullItem.category_knowledge || '';
+                    setEditorMetadataValue(knowSelect, fullItem.category_knowledge || '');
+                    if (typeof window.hydrateEditorSubKnowledge === 'function') window.hydrateEditorSubKnowledge(fullItem);
                     
                     // Dispatch input previews or update synchronously
                     if (typeof window.updateContentPreview === 'function') {
@@ -830,6 +845,11 @@
 
         // Save/Update Question in SQLite (returns Promise)
         function saveQuestion(skipCheck = false) {
+            if (window.editorCurriculumVersion && window.activeCurriculumVersion
+                    && window.editorCurriculumVersion !== window.activeCurriculumVersion) {
+                showToast('教材版本已切换，请切回原版本保存，或暂存草稿后重新打开题目。', 'info');
+                return Promise.resolve(false);
+            }
             if (questionDetailLoading) {
                 showToast('题目详情仍在加载，请稍候再保存', 'info');
                 return Promise.resolve(false);
@@ -849,11 +869,13 @@
                 }
                 if (typeof window.syncEditorImageReferences === 'function') window.syncEditorImageReferences();
                 const editorSession = EditorState.snapshot();
+                const curriculumVersion = window.activeCurriculumVersion || '';
                 const content = document.getElementById('editContent').value;
                 const qtype = document.getElementById('editQType').value;
                 const compulsory = document.getElementById('editCompulsory').value;
                 const chapter = document.getElementById('editChapter').value;
                 const knowledge = document.getElementById('editKnowledge').value;
+                const subKnowledge = typeof window.getEditorSubKnowledge === 'function' ? window.getEditorSubKnowledge() : [];
                 const difficulty = document.getElementById('editDifficulty').value;
                 const source = document.getElementById('editSource').value;
                 const answerMarkdown = document.getElementById('editAnswerMarkdown').value;
@@ -935,6 +957,10 @@
                     }
                 }
                 relatedQuestionId = document.getElementById('editRelatedQuestion').value;
+                if (curriculumVersion && window.activeCurriculumVersion !== curriculumVersion) {
+                    showToast('教材版本在保存检查期间已变化，请重新打开题目后保存。', 'info');
+                    return false;
+                }
 
                 const requestBackupSnapshot = Object.freeze({
                     content: content,
@@ -946,6 +972,10 @@
                     category_compulsory: compulsory,
                     category_chapter: chapter,
                     category_knowledge: knowledge,
+                    sub_knowledge: subKnowledge,
+                    version_code: curriculumVersion,
+                    sub_knowledge_by_version: typeof window.editorSubKnowledgeVersionSnapshot === 'function' ? window.editorSubKnowledgeVersionSnapshot() : {},
+                    classification_by_version: typeof window.editorClassificationVersionSnapshot === 'function' ? window.editorClassificationVersionSnapshot() : {},
                     related_question_id: relatedQuestionId,
                     image_paths: JSON.stringify(Array.from(uploadedImages)),
                     tikz_code: tikzCode,
@@ -970,6 +1000,7 @@
                 formData.append('category_compulsory', compulsory);
                 formData.append('category_chapter', chapter);
                 formData.append('category_knowledge', knowledge);
+                if (curriculumVersion) formData.append('expected_version_code', curriculumVersion);
                 formData.append('difficulty', difficulty);
                 formData.append('source', source);
                 formData.append('answer_markdown', answerMarkdown);
@@ -1087,10 +1118,28 @@
                             clearOcrPreview();
                         }
 
-                        // Delete draft if it was saved from a draft
-                        if (editorSession.draftId) {
+                        // A save confirms only this curriculum's mirror. Keep a
+                        // linked draft while another version still has changes.
+                        {
                             let drafts = getLocalStorageDrafts();
-                            drafts = drafts.filter(d => d.id !== editorSession.draftId);
+                            const draft = drafts.find(d => d.id === editorSession.draftId);
+                            const version = requestBackupSnapshot.version_code;
+                            const versionPaths = {...(draft?.sub_knowledge_by_version || {}), ...(requestBackupSnapshot.sub_knowledge_by_version || {})};
+                            const savedPaths = {...(draft?.saved_sub_knowledge_by_version || originalQuestionState?.sub_knowledge_by_version || {}),
+                                ...(version ? {[version]: subKnowledge} : {})};
+                            const remaining = typeof window.subKnowledgeSignature === 'function'
+                                ? Object.keys(versionPaths).filter(code => window.subKnowledgeSignature(versionPaths[code]) !== window.subKnowledgeSignature(savedPaths[code])) : [];
+                            if (remaining.length) {
+                                const retainedId = draft?.id || ('draft-' + Date.now());
+                                const retained = {...(draft || {}), ...data.question, id: retainedId, isDraft: true,
+                                    saved_question_id: data.question.id, version_code: version,
+                                    sub_knowledge_by_version: versionPaths, saved_sub_knowledge_by_version: savedPaths,
+                                    classification_by_version: {...(draft?.classification_by_version || {}), ...(requestBackupSnapshot.classification_by_version || {})},
+                                    pending_sub_knowledge_versions: remaining, updated_at: new Date().toISOString()};
+                                if (draft) drafts = drafts.map(item => item.id === draft.id ? retained : item);
+                                else drafts.unshift(retained);
+                                showToast(`当前版本已入库；草稿保留了 ${remaining.join('、')} 版本的未入库细分，请切换对应教材版本后继续保存。`, 'info');
+                            } else drafts = drafts.filter(d => d.id !== editorSession.draftId);
                             setLocalStorageDrafts(drafts);
                             updateDraftCountBadge();
                             if (EditorState.draftId === editorSession.draftId) {
@@ -1241,6 +1290,8 @@
                     temporaryClassifyData = data;
                     document.getElementById('recCompulsory').textContent = data.compulsory;
                     document.getElementById('recChapter').textContent = data.chapter;
+                    const recKnowledge = document.getElementById('recKnowledge');
+                    if (recKnowledge) recKnowledge.textContent = data.knowledge || '整章定位（待细分）';
                     const formLabels = {
                         'choice': '选择题',
                         'fill_in_blank': '填空题',
@@ -1314,7 +1365,7 @@
             compSelect.onchange();
             chapSelect.value = chap;
             chapSelect.onchange();
-            knowSelect.value = chap; // Default empty third level (小节) to chapter name
+            knowSelect.value = temporaryClassifyData.knowledge || '';
 
             if (temporaryClassifyQuestionType && qtypeSelect) {
                 qtypeSelect.value = temporaryClassifyQuestionType;
@@ -3762,6 +3813,7 @@
             return JSON.stringify({
                 content: String(item && item.content || ''),
                 answer_markdown: String(item && item.answer_markdown || ''),
+                review: String(item && item.review || ''),
                 question_type: String(item && item.question_type || ''),
                 image_paths: Array.isArray(item && item.image_paths) ? item.image_paths : [],
                 content_tikz_assets: Array.isArray(item && item.content_tikz_assets)
@@ -3790,11 +3842,13 @@
                 client_key: `parsed-${generation}-${index}`,
                 content: contentInput ? contentInput.value : String(q.content || ''),
                 answer_markdown: answerInput ? answerInput.value : String(q.answer_markdown || ''),
+                review: String(q.review || ''),
                 question_type: typeInput ? typeInput.value : String(q.question_type || ''),
                 image_paths: safeDuplicateImagePaths([
                     ...(Array.isArray(q.image_paths) ? q.image_paths : []),
                     ...(window.MathBankImageAssets ? window.MathBankImageAssets.collect(contentInput ? contentInput.value : q.content) : []),
                     ...(window.MathBankImageAssets ? window.MathBankImageAssets.collect(answerInput ? answerInput.value : q.answer_markdown) : []),
+                    ...(window.MathBankImageAssets ? window.MathBankImageAssets.collect(q.review) : []),
                     ...collectTikzAssetImagePaths(contentAssets, answerAssets),
                     legacyReference
                 ]),
@@ -3811,6 +3865,7 @@
         function buildEditorQuestionDuplicateItem(editorSession) {
             const contentInput = document.getElementById('editContent');
             const answerInput = document.getElementById('editAnswerMarkdown');
+            const reviewInput = document.getElementById('editReview');
             const typeInput = document.getElementById('editQType');
             const contentAssets = typeof TikzState !== 'undefined' && Array.isArray(TikzState.contentAssets)
                 ? TikzState.contentAssets
@@ -3822,10 +3877,12 @@
                 client_key: 'editor-question',
                 content: contentInput ? contentInput.value : '',
                 answer_markdown: answerInput ? answerInput.value : '',
+                review: reviewInput ? reviewInput.value : '',
                 question_type: typeInput ? typeInput.value : '',
                 image_paths: safeDuplicateImagePaths([
                     ...(window.MathBankImageAssets ? window.MathBankImageAssets.collect(contentInput ? contentInput.value : '') : []),
                     ...(window.MathBankImageAssets ? window.MathBankImageAssets.collect(answerInput ? answerInput.value : '') : []),
+                    ...(window.MathBankImageAssets ? window.MathBankImageAssets.collect(reviewInput ? reviewInput.value : '') : []),
                     ...(typeof uploadedImages !== 'undefined' ? uploadedImages : []),
                     ...(typeof uploadedAnswerImages !== 'undefined' ? uploadedAnswerImages : []),
                     ...(typeof TikzState !== 'undefined' ? TikzState.referencePaths() : []),
@@ -4820,13 +4877,15 @@
                     }
                     let html = parseMarkdownWithMath(processedContent);
                     
-                    // Only supplement images absent from both current text fields.
-                    // image_paths also contains answer images for asset retention.
+                    // Lifecycle registration also contains answer/commentary images.
                     if (q && q.image_paths && q.image_paths.length > 0) {
                         const answerImagePaths = new Set(window.collectAnswerImagePaths(answerText));
                         let hasUnrenderedImage = false;
                         let imgHtml = '<div class="flex flex-wrap gap-2 mt-3 pt-2.5 border-t border-dashed border-slate-200/60">';
-                        q.image_paths.forEach(p => {
+                        const promptImages = window.MathBankImageAssets.withoutReviewOnly(
+                            q.image_paths, contentText, answerText, q.review
+                        );
+                        promptImages.forEach(p => {
                             const safePath = window.MathBankSafe.safeImageUrl(p);
                             if (safePath && !answerImagePaths.has(safePath) && !html.includes(safePath)) {
                                 hasUnrenderedImage = true;
@@ -4958,6 +5017,7 @@
             if (existingSave) return existingSave;
 
             const saveGeneration = parsedQuestionsGeneration;
+            const curriculumVersion = window.activeCurriculumVersion || '';
             const card = document.getElementById(`parsed-card-${index}`);
             if (!card) return Promise.reject(new Error('Card element not found'));
             const saveBtn = card.querySelector('.card-save-btn');
@@ -4968,9 +5028,11 @@
                 const duplicateItem = buildParsedQuestionDuplicateItem(index, saveGeneration);
                 return {
                     content: field('content-textarea').trim(), answer_markdown: field('answer-textarea').trim(),
+                    review: String(q.review || ''),
                     question_type: field('qtype'), difficulty: field('difficulty'), source: field('source').trim(),
                     category_compulsory: field('compulsory'), category_chapter: field('chapter'),
                     category_knowledge: field('knowledge'),
+                    sub_knowledge: typeof window.normalizeSubKnowledge === 'function' ? window.normalizeSubKnowledge(q.sub_knowledge) : [],
                     image_paths: duplicateItem ? duplicateItem.image_paths : safeDuplicateImagePaths(q.image_paths),
                     content_tikz_assets: contentAssets, answer_tikz_assets: answerAssets,
                     tikz_code: String(contentAssets[0] ? (contentAssets[0].tikz_code || '') : (q.tikz_code || '')),
@@ -5080,9 +5142,11 @@
                 formData.append('category_compulsory', category_compulsory);
                 formData.append('category_chapter', category_chapter);
                 formData.append('category_knowledge', category_knowledge);
+                if (curriculumVersion) formData.append('expected_version_code', curriculumVersion);
                 formData.append('difficulty', difficulty);
                 formData.append('source', source);
                 formData.append('answer_markdown', answer_markdown);
+                formData.append('review', String(q.review || ''));
                 const parsedContentTikzAssets = safePersistedTikzAssets(q.content_tikz_assets);
                 const parsedAnswerTikzAssets = safePersistedTikzAssets(q.answer_tikz_assets);
                 const firstContentTikzAsset = parsedContentTikzAssets[0] || null;

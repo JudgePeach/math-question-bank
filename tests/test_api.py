@@ -267,6 +267,7 @@ def test_ai_classify_returns_coarse_form_without_question_type():
         "status": "success",
         "compulsory": "必修一",
         "chapter": "1. 集合",
+        "knowledge": "",
         "question_form": "choice",
         "question_form_source": "ai",
     }

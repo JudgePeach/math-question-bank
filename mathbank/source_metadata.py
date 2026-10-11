@@ -956,11 +956,12 @@ def build_source_metadata_messages(plan: dict, curriculum: dict) -> list[dict]:
         + CLASSIFICATION_PRIORITY_RULE
         + "例如同题既计算基本概率，又实际判断随机变量的分布律或比较其分布，"
           "随机变量及其分布也是实质模块，不能停留在基础概率章；仅出现随机背景则不据此升级。"
-        + "\n【可选教材范围与章节】:\n" + build_curriculum_text(curriculum)
+        + "\n【可选教材范围、章节及真实小节】:\n" + build_curriculum_text(curriculum)
         + "\n题型可选：" + ",".join(row["value"] for row in DEFAULT_QUESTION_TYPES)
         + "；难度可选：" + ",".join(row["value"] for row in DEFAULT_DIFFICULTIES)
         + '\n只输出JSON对象{"items":[{"id":"输入id","question_type":"题型",'
-          '"category_compulsory":"目录学段","category_chapter":"目录章节","difficulty":"难度"}]}。'
+          '"category_compulsory":"目录学段","category_chapter":"目录章节",'
+          '"category_knowledge":"该章真实小节；不能确定时空字符串表示整章待细分","difficulty":"难度"}]}。'
           "不得返回 content、answer_markdown、source_review 或图片路径。不截断任何题目。"
     )
     context = [record["text"] for record in plan.get("document_metadata", [])]
@@ -991,9 +992,13 @@ def apply_source_metadata_response(parsed: dict, plan: dict, curriculum: dict, *
     scope = build_word_classification_scope(plan, curriculum)
     types = {row["value"] for row in DEFAULT_QUESTION_TYPES}
     difficulties = {row["value"] for row in DEFAULT_DIFFICULTIES}
-    fields = {"id", "question_type", "category_compulsory", "category_chapter", "difficulty"}
+    fields = {"id", "question_type", "category_compulsory", "category_chapter", "category_knowledge", "difficulty"}
     supplied = {}
     for row in parsed["items"]:
+        if isinstance(row, dict) and "category_knowledge" not in row:
+            # Backward compatibility for providers using the previous schema:
+            # missing refinement means whole-chapter, never a copied chapter label.
+            row = {**row, "category_knowledge": ""}
         if not isinstance(row, dict) or set(row) != fields or any(not isinstance(v, str) for v in row.values()):
             raise SourceMetadataContractError("元数据字段无效，不接收模型改写原文。")
         identifier = row["id"]
@@ -1002,6 +1007,9 @@ def apply_source_metadata_response(parsed: dict, plan: dict, curriculum: dict, *
         if (row["question_type"] not in types or row["difficulty"] not in difficulties
                 or not word_category_allowed(scope, row["category_compulsory"], row["category_chapter"])):
             raise SourceMetadataContractError("元数据题型、难度或教材分类不在当前支持范围。")
+        allowed_knowledge = curriculum.get(row["category_compulsory"], {}).get(row["category_chapter"], ())
+        if row["category_knowledge"] and row["category_knowledge"] not in allowed_knowledge:
+            raise SourceMetadataContractError("元数据小节不属于所选版本、学段和章节。")
         if known[identifier]["has_choices"] and row["question_type"] not in {"single_choice", "multi_choice"}:
             raise SourceMetadataContractError("元数据题型与原卷选择题结构不一致。")
         explicit_type = known[identifier].get("explicit_question_type")

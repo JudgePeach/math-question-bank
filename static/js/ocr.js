@@ -299,7 +299,10 @@
 
         // EditorState calls this one boundary whenever a question, draft or new
         // editor session takes ownership of the form.
-        window.invalidateEditorSessionAsyncWork = () => cancelAllOcr(false);
+        window.invalidateEditorSessionAsyncWork = () => {
+            cancelAllOcr(false);
+            if (window.SingleOcrFigures) window.SingleOcrFigures.reset();
+        };
 
         // Cancel and abort all active OCR processes (both content and answer OCR)
         function cancelAllOcr(clearWhenIdle = true) {
@@ -370,6 +373,13 @@
         // Global Esc key listener for canceling OCR & closing lightbox
         window.addEventListener('keydown', (e) => {
             if (e.key === 'Escape' || e.key === 'Esc') {
+                const cropModal = document.getElementById('singleOcrCropModal');
+                if (cropModal) {
+                    e.preventDefault();
+                    const close = document.getElementById('singleOcrCropClose');
+                    if (close) close.click();
+                    return;
+                }
                 const figureLayoutPopover = document.getElementById('editorFigureLayoutPopover');
                 if (figureLayoutPopover) {
                     e.preventDefault();
@@ -944,216 +954,365 @@
             }
         }
 
-        function runOcr(file) {
-            if (!file.type.startsWith('image/')) {
-                showToast('请上传有效的图片格式！', 'error');
-                return;
+        // A single scoped owner keeps OCR sources, figure slots and crop work
+        // tied to the editor session; visible images remain owned by Markdown.
+        const SingleOcrFigures = (() => {
+            const results = { content: null, answer: null };
+            let crop = null;
+            const config = target => target === 'content' ? {
+                editor: 'editContent', result: 'contentOcrResultText', output: 'contentOcrOutputBox',
+                figures: 'contentOcrFigures', preview: 'contentOcrPreviewImg', container: 'contentOcrPreviewContainer',
+                placeholder: 'contentOcrPlaceholder', status: 'contentOcrStatusBadge', loading: 'contentOcrStatusLoadingText',
+                confidence: 'contentOcrConfBadge', skip: 'contentOcrSkipTikz'
+            } : {
+                editor: 'editAnswerMarkdown', result: 'ocrResultText', output: 'ocrOutputBox',
+                figures: 'answerOcrFigures', preview: 'ocrPreviewImg', container: 'ocrPreviewContainer',
+                placeholder: 'ocrPlaceholder', status: 'ocrStatusBadge', loading: 'ocrStatusLoadingText',
+                confidence: 'ocrConfBadge', skip: 'answerOcrSkipTikz'
+            };
+            const element = (target, key) => document.getElementById(config(target)[key]);
+            const current = state => state && results[state.target] === state && EditorState.isCurrent(state.session);
+            function visibleSlotMatches(text, token = null) {
+                const value = String(text || '');
+                // Equal-length masks retain source offsets for exact insertion.
+                // Reuse the preview scanners so code and math cannot own a slot.
+                const mask = whole => whole.replace(/[^\r\n]/g, ' ');
+                let source = value.replace(/<!--[\s\S]*?(?:-->|$)|!?\[[^\[\]\n]*\]\([^\n)]*\)/g, mask);
+                source = replacePreviewLiteralSpans(source, mask);
+                source = replaceDelimitedMathForPreview(source, mask);
+                source = replaceLatexEnvironmentsForPreview(source, (whole, name) =>
+                    /^(tabular\*?|tabularx|longtable|tblr|longtblr|talltblr)$/.test(name) ? whole : mask(whole));
+                const matches = [...source.matchAll(/\[插图待补(?:\s*[：:]\s*([^\]\n]{0,80}))?\]/g)];
+                return token === null ? matches : matches.filter(match => match[0] === token);
             }
-            
-            const ocrDropZone = document.getElementById('ocrDropZone');
-            const ocrOutput = document.getElementById('ocrOutputBox');
-            const ocrResult = document.getElementById('ocrResultText');
-            const ocrConf = document.getElementById('ocrConfBadge');
-            
-            const previewImg = document.getElementById('ocrPreviewImg');
-            const previewContainer = document.getElementById('ocrPreviewContainer');
-            const placeholder = document.getElementById('ocrPlaceholder');
-            const statusBadge = document.getElementById('ocrStatusBadge');
-            const loadingText = document.getElementById('ocrStatusLoadingText');
-            
-            // Read file to show image preview in the upload area IMMEDIATELY
-            const reader = new FileReader();
-            reader.onload = (e) => {
-                if (previewImg && previewContainer && placeholder) {
-                    previewImg.src = e.target.result;
-                    placeholder.classList.add('hidden');
-                    previewContainer.classList.remove('hidden');
-                    
-                    if (statusBadge) statusBadge.classList.add('hidden');
-                    if (loadingText) loadingText.classList.remove('hidden');
+            const occurrences = (text, token) => token ? visibleSlotMatches(text, token).length : 0;
+            function closeCrop() {
+                if (crop && crop.controller) crop.controller.abort();
+                crop = null;
+                const modal = document.getElementById('singleOcrCropModal');
+                if (modal) {
+                    if (window.MathBankModal) window.MathBankModal.close(modal);
+                    modal.remove();
                 }
+            }
+            function reset(target) {
+                if (crop && (!target || crop.state.target === target)) closeCrop();
+                (target ? [target] : ['content', 'answer']).forEach(name => {
+                    results[name] = null;
+                    const panel = element(name, 'figures');
+                    if (panel) { panel.replaceChildren(); panel.classList.add('hidden'); }
+                });
+            }
+            function begin(target) {
+                reset(target);
+                const state = { target, session: EditorState.snapshot(), original: element(target, 'editor').value,
+                    data: null, applied: false, source: '', illustrations: [] };
+                results[target] = state;
+                return state;
+            }
+            function button(label, action) {
+                const node = document.createElement('button');
+                node.type = 'button';
+                node.className = 'inline-flex min-h-[44px] shrink-0 items-center justify-center rounded-lg border border-brand-200 bg-brand-50 px-3 py-1.5 text-xs font-semibold text-brand-700 hover:bg-brand-100 focus:outline-none focus:ring-2 focus:ring-brand-500/30';
+                node.textContent = label;
+                node.addEventListener('click', action);
+                return node;
+            }
+            function render(state) {
+                if (!current(state)) return;
+                const panel = element(state.target, 'figures');
+                if (!panel) return;
+                panel.replaceChildren();
+                panel.classList.remove('hidden');
+                const intro = document.createElement('p');
+                intro.className = 'text-xs leading-5 text-slate-500';
+                intro.textContent = state.applied
+                    ? '配图已按识别图位处理。点击预览中的题干图片可调整对齐与尺寸；未定位的插图仍可从原图截图补入。'
+                    : '识别期间编辑内容发生变化，结果已保留。载入结果后可按图位截图补图。';
+                panel.appendChild(intro);
+                if (!state.applied) panel.appendChild(button('载入识别结果', () => apply(state)));
+                const text = element(state.target, 'editor').value;
+                const visiblePaths = new Set(window.MathBankImageAssets ? window.MathBankImageAssets.collect(text) : []);
+                state.illustrations.forEach((figure, index) => {
+                    const row = document.createElement('div');
+                    row.className = 'flex flex-wrap items-center justify-between gap-2 rounded-lg bg-slate-50 px-2.5 py-2';
+                    const label = document.createElement('span');
+                    label.className = 'min-w-0 text-xs text-slate-600';
+                    const unresolved = state.applied && occurrences(text, figure.placeholder) === 1;
+                    const imagePath = window.MathBankSafe.safeImageUrl(figure.image_path);
+                    const visible = state.applied && imagePath && visiblePaths.has(imagePath);
+                    let status = !state.applied ? '待载入' : unresolved ? '待截图'
+                        : visible ? figure.manual_crop ? '手动截图' : figure.status === 'tikz' ? 'TikZ 绘图' : '原图截图'
+                        : imagePath ? '图位已变化' : '待核对图位';
+                    const review = figure.status === 'tikz' ? figure.preview_review : figure.review;
+                    if (visible && !figure.manual_crop && review && review.status === 'verified') {
+                        status += figure.status === 'tikz' ? ' · 绘图已视觉核对'
+                            : review.corrected === true ? ' · 已修正裁图并核对' : ' · 原图裁片已视觉核对';
+                    } else if (unresolved && figure.review) {
+                        if (figure.review.status === 'unverified') status += ' · 视觉核对未通过';
+                        if (figure.review.status === 'unavailable') status += ' · 视觉核对暂不可用';
+                    }
+                    label.textContent = `${figure.slot || '插图 ' + (index + 1)} · ${status}`;
+                    const evidence = review && typeof review.evidence === 'string' ? review.evidence : '';
+                    if (figure.message || evidence) label.title = [figure.message, evidence].filter(Boolean).join('\n');
+                    row.appendChild(label);
+                    if (unresolved) row.appendChild(button('截图补入此处', () => openCrop(state, figure)));
+                    panel.appendChild(row);
+                });
+                if (state.applied && state.source) panel.appendChild(button('从原图追加截图', () => openCrop(state, null)));
+                (Array.isArray(state.data && state.data.warnings) ? state.data.warnings : []).forEach(warning => {
+                    const note = document.createElement('p');
+                    note.className = 'text-[11px] leading-5 text-amber-700';
+                    note.textContent = String(warning);
+                    panel.appendChild(note);
+                });
+            }
+            function registerAssets(state) {
+                const text = element(state.target, 'editor').value;
+                const payload = state.data || {};
+                const assets = Array.isArray(payload.tikz_assets) ? payload.tikz_assets : payload.tikz_code && payload.tikz_image_path ? [{
+                    tikz_code: payload.tikz_code, image_path: payload.tikz_image_path, reference_image_path: payload.image_path
+                }] : [];
+                const register = state.target === 'content' ? window.registerAutoContentTikzAsset : window.registerAutoAnswerTikzAsset;
+                assets.forEach(asset => {
+                    const path = window.MathBankSafe.safeImageUrl(asset.image_path);
+                    if (path && text.includes(path) && typeof register === 'function') register({
+                        tikzCode: asset.tikz_code, imagePath: path, referenceImagePath: asset.reference_image_path || ''
+                    });
+                });
+                if (state.target === 'content' && window.FigureLayoutState && window.ImageLayoutTools) {
+                    const layouts = window.ImageLayoutTools.normalize(payload.image_layouts || {});
+                    Object.keys(layouts).forEach(path => { if (!text.includes(path)) delete layouts[path]; });
+                    window.FigureLayoutState.imageLayouts = window.ImageLayoutTools.normalize({
+                        ...window.FigureLayoutState.imageLayouts, ...layouts
+                    });
+                }
+                element(state.target, 'editor').dispatchEvent(new Event('input'));
+            }
+            function apply(state) {
+                if (!current(state) || !state.data) return;
+                if (state.target === 'content') loadToContentEditor('ocr');
+                else loadToFinalReview('ocr');
+                state.applied = true;
+                registerAssets(state);
+                render(state);
+            }
+            function complete(state, data) {
+                if (!current(state)) return;
+                state.data = data;
+                state.source = window.MathBankSafe.safeImageUrl(data.image_path) || state.source;
+                state.illustrations = (Array.isArray(data.illustrations) ? data.illustrations : []).filter(figure => figure && typeof figure.placeholder === 'string');
+                // Partial/legacy metadata still exposes every visible pending slot.
+                const slots = visibleSlotMatches(data.latex);
+                slots.forEach((match, index) => {
+                    if (!state.illustrations.some(figure => figure.placeholder === match[0])) {
+                        state.illustrations.push({ placeholder: match[0], slot: match[1] || '图' + (index + 1), status: 'pending' });
+                    }
+                });
+                if (element(state.target, 'editor').value === state.original) apply(state);
+                else { render(state); showToast('识别结果已保留，请载入后继续编辑。', 'info'); }
+            }
+            function openCrop(state, figure) {
+                if (!current(state) || !state.applied || !state.source) return;
+                const textarea = element(state.target, 'editor');
+                if (figure && occurrences(textarea.value, figure.placeholder) !== 1) {
+                    showToast('图位已变化，请核对编辑框中的待补位置。', 'info');
+                    return;
+                }
+                closeCrop();
+                const selection = { state, figure, original: textarea.value,
+                    insertionStart: textarea.selectionStart, insertionEnd: textarea.selectionEnd,
+                    image: new Image(), box: null, start: null, ready: false, controller: null };
+                crop = selection;
+                const modal = document.createElement('div');
+                modal.id = 'singleOcrCropModal';
+                modal.setAttribute('role', 'dialog');
+                modal.setAttribute('aria-modal', 'true');
+                modal.setAttribute('aria-label', '从 OCR 原图截取插图');
+                modal.className = 'fixed inset-0 z-[100] flex items-center justify-center bg-slate-950/80 p-3 backdrop-blur-sm';
+                // This is fixed UI markup. OCR labels and sources are assigned with DOM APIs below.
+                modal.innerHTML = '<div data-modal-surface class="flex max-h-[94vh] w-full max-w-5xl flex-col overflow-hidden rounded-2xl bg-white shadow-2xl"><div class="flex items-center justify-between gap-3 border-b border-slate-200 p-4"><div><p id="singleOcrCropTitle" class="text-sm font-bold text-slate-800"></p><p class="mt-1 text-xs text-slate-500">在原图上拖动框选插图，确认后放回对应图位。</p></div><button type="button" id="singleOcrCropClose" class="min-h-[44px] rounded-lg px-3 text-sm text-slate-500" aria-label="关闭截图">关闭</button></div><div class="min-h-0 flex-1 overflow-auto bg-slate-100 p-3"><canvas id="singleOcrCropCanvas" class="mx-auto block max-w-full touch-none bg-white" style="cursor:crosshair"></canvas></div><div class="flex flex-wrap items-center justify-between gap-3 border-t border-slate-200 p-4"><p id="singleOcrCropStatus" class="text-xs text-slate-500" role="status">正在加载原图…</p><div class="flex gap-2"><button id="singleOcrCropClear" type="button" class="min-h-[44px] rounded-lg border border-slate-200 px-3 text-xs text-slate-600">重新框选</button><button id="singleOcrCropSave" type="button" disabled class="min-h-[44px] rounded-lg bg-brand-600 px-4 text-xs font-bold text-white disabled:opacity-40">确认截取配图</button></div></div></div>';
+                document.body.appendChild(modal);
+                const canvas = document.getElementById('singleOcrCropCanvas');
+                const save = document.getElementById('singleOcrCropSave');
+                const status = document.getElementById('singleOcrCropStatus');
+                document.getElementById('singleOcrCropTitle').textContent = figure ? '截图补入 ' + figure.slot : '追加一幅截图到光标位置';
+                document.getElementById('singleOcrCropClose').onclick = closeCrop;
+                if (window.MathBankModal) window.MathBankModal.open(modal, { onEscape: closeCrop });
+                const draw = () => {
+                    const ctx = canvas.getContext('2d');
+                    ctx.clearRect(0, 0, canvas.width, canvas.height);
+                    ctx.drawImage(selection.image, 0, 0, canvas.width, canvas.height);
+                    if (selection.box) {
+                        const box = selection.box;
+                        ctx.fillStyle = 'rgba(99,102,241,0.16)';
+                        ctx.fillRect(box.left, box.top, box.right - box.left, box.bottom - box.top);
+                        ctx.strokeStyle = '#6366f1'; ctx.lineWidth = 2;
+                        ctx.strokeRect(box.left, box.top, box.right - box.left, box.bottom - box.top);
+                    }
+                    save.disabled = !selection.box || selection.box.right - selection.box.left < 4 || selection.box.bottom - selection.box.top < 4;
+                };
+                const point = event => {
+                    const rect = canvas.getBoundingClientRect();
+                    return { x: Math.max(0, Math.min(canvas.width, (event.clientX - rect.left) * canvas.width / rect.width)),
+                        y: Math.max(0, Math.min(canvas.height, (event.clientY - rect.top) * canvas.height / rect.height)) };
+                };
+                canvas.onpointerdown = event => {
+                    if (selection.controller || !selection.ready) return;
+                    event.preventDefault();
+                    selection.start = point(event);
+                    canvas.setPointerCapture(event.pointerId);
+                };
+                canvas.onpointermove = event => {
+                    if (!selection.start) return;
+                    const end = point(event);
+                    selection.box = { left: Math.min(selection.start.x, end.x), top: Math.min(selection.start.y, end.y),
+                        right: Math.max(selection.start.x, end.x), bottom: Math.max(selection.start.y, end.y) };
+                    draw(); status.textContent = '确认前请检查框内只包含这幅插图。';
+                };
+                canvas.onpointerup = canvas.onpointercancel = () => { selection.start = null; };
+                document.getElementById('singleOcrCropClear').onclick = () => {
+                    if (selection.controller) return;
+                    selection.box = null; draw(); status.textContent = '请拖动框选插图区域。';
+                };
+                save.onclick = () => submitCrop(selection);
+                selection.image.onload = () => {
+                    if (crop !== selection || !current(state)) return;
+                    const factor = Math.min(1, 1600 / Math.max(selection.image.naturalWidth, selection.image.naturalHeight));
+                    canvas.width = Math.max(1, Math.round(selection.image.naturalWidth * factor));
+                    canvas.height = Math.max(1, Math.round(selection.image.naturalHeight * factor));
+                    // A manual repair slot is unresolved. Failed initial bounds
+                    // remain diagnostics, never a ready-to-submit selection.
+                    selection.ready = true;
+                    draw(); status.textContent = figure ? '原图框未确认，请手动框选完整插图' : '请拖动框选插图区域。';
+                };
+                selection.image.onerror = () => { if (crop === selection) status.textContent = '原图加载失败，请关闭后重试。'; };
+                selection.image.src = state.source;
+            }
+            async function submitCrop(selection) {
+                const state = selection.state;
+                const textarea = element(state.target, 'editor');
+                if (crop !== selection || !current(state) || !selection.box || selection.controller) return;
+                if (textarea.value !== selection.original) {
+                    closeCrop(); showToast('编辑内容已变化，请重新打开截图，避免放错位置。', 'info'); return;
+                }
+                const source = document.getElementById('singleOcrCropCanvas');
+                const box = selection.box;
+                const scaleX = selection.image.naturalWidth / source.width;
+                const scaleY = selection.image.naturalHeight / source.height;
+                const canvas = document.createElement('canvas');
+                canvas.width = Math.max(1, Math.round((box.right - box.left) * scaleX));
+                canvas.height = Math.max(1, Math.round((box.bottom - box.top) * scaleY));
+                canvas.getContext('2d').drawImage(selection.image, box.left * scaleX, box.top * scaleY,
+                    canvas.width, canvas.height, 0, 0, canvas.width, canvas.height);
+                selection.controller = new AbortController();
+                const save = document.getElementById('singleOcrCropSave');
+                const status = document.getElementById('singleOcrCropStatus');
+                save.disabled = true; status.textContent = '正在保存截图…';
+                try {
+                    const blob = await new Promise(resolve => canvas.toBlob(resolve, 'image/png'));
+                    if (crop !== selection || !current(state) || selection.controller.signal.aborted) return;
+                    if (!blob) throw new Error('无法生成截图');
+                    const form = new FormData(); form.append('file', blob, 'ocr-figure.png');
+                    const response = await fetch('/api/upload', { method: 'POST', body: form, signal: selection.controller.signal });
+                    const data = await response.json();
+                    if (crop !== selection || !current(state) || selection.controller.signal.aborted) return;
+                    if (textarea.value !== selection.original) {
+                        closeCrop(); showToast('截图已上传，编辑内容已变化，请重新截图定位。', 'info'); return;
+                    }
+                    const path = window.MathBankSafe.safeImageUrl(data.file_path);
+                    if (!response.ok || data.status !== 'success' || !path) throw new Error(data.message || '截图保存失败');
+                    const label = String(selection.figure && selection.figure.slot || '插图').replace(/[\[\]\\\r\n]/g, '');
+                    const tag = `![${label}](${path})`;
+                    if (selection.figure) {
+                        if (occurrences(textarea.value, selection.figure.placeholder) !== 1) {
+                            closeCrop(); showToast('图位已变化，请重新定位。', 'info'); return;
+                        }
+                        const match = visibleSlotMatches(textarea.value, selection.figure.placeholder)[0];
+                        textarea.value = textarea.value.slice(0, match.index) + tag
+                            + textarea.value.slice(match.index + match[0].length);
+                        selection.figure.image_path = path;
+                        selection.figure.status = 'cropped';
+                        selection.figure.manual_crop = true;
+                        delete selection.figure.review;
+                        delete selection.figure.preview_review;
+                    } else {
+                        textarea.value = textarea.value.slice(0, selection.insertionStart) + tag + textarea.value.slice(selection.insertionEnd);
+                    }
+                    if (state.target === 'content' && window.FigureLayoutState && window.ImageLayoutTools) {
+                        // A cropped slot remains inline, including choices and table cells.
+                        const key = window.ImageLayoutTools.key(path);
+                        window.FigureLayoutState.imageLayouts = window.ImageLayoutTools.normalize({
+                            ...window.FigureLayoutState.imageLayouts, [key]: { align: 'left', size: 'small' }
+                        });
+                    }
+                    textarea.dispatchEvent(new Event('input'));
+                    closeCrop(); render(state); showToast('截图已补入对应位置。');
+                } catch (error) {
+                    if (crop !== selection || !current(state) || error.name === 'AbortError') return;
+                    selection.controller = null; save.disabled = false;
+                    status.textContent = error.message; showToast('截图失败：' + error.message, 'error');
+                }
+            }
+            return { begin, current, complete, reset, config };
+        })();
+        window.SingleOcrFigures = SingleOcrFigures;
+
+        function runOcr(file) { runSingleOcr('answer', file); }
+        function runContentOcr(file) { runSingleOcr('content', file); }
+
+        function runSingleOcr(target, file) {
+            if (!file.type.startsWith('image/')) {
+                showToast('请上传有效的图片格式！', 'error'); return;
+            }
+            const names = SingleOcrFigures.config(target);
+            const get = key => document.getElementById(names[key]);
+            const previous = target === 'content' ? contentOcrAbortController : answerOcrAbortController;
+            if (previous) previous.abort();
+            const controller = new AbortController();
+            if (target === 'content') contentOcrAbortController = controller;
+            else answerOcrAbortController = controller;
+            const state = SingleOcrFigures.begin(target);
+            const requestIsCurrent = () => SingleOcrFigures.current(state) && !controller.signal.aborted
+                && controller === (target === 'content' ? contentOcrAbortController : answerOcrAbortController);
+            get('output').classList.add('hidden');
+            get('status').classList.add('hidden');
+            get('loading').classList.remove('hidden');
+            const reader = new FileReader();
+            reader.onload = event => {
+                if (!SingleOcrFigures.current(state) || controller.signal.aborted) return;
+                if (!state.data) state.source = event.target.result;
+                get('preview').src = event.target.result;
+                get('placeholder').classList.add('hidden');
+                get('container').classList.remove('hidden');
             };
             reader.readAsDataURL(file);
-            
-            ocrOutput.classList.add('hidden');
-            
-            // Abort previous running controller if any
-            if (answerOcrAbortController) {
-                answerOcrAbortController.abort();
-            }
-            answerOcrAbortController = new AbortController();
-            const signal = answerOcrAbortController.signal;
-            
-            const engine = 'default';
-            const skipTikz = document.getElementById('answerOcrSkipTikz') ? document.getElementById('answerOcrSkipTikz').checked : false;
-            
-            const formData = new FormData();
-            formData.append('file', file);
-            formData.append('engine', engine);
-            formData.append('skip_tikz', skipTikz ? "true" : "false");
-            
-            fetch('/api/ocr', {
-                method: 'POST',
-                body: formData,
-                signal: signal
-            })
-            .then(r => r.json())
-            .then(data => {
-                if (loadingText) loadingText.classList.add('hidden');
-                if (statusBadge) {
-                    statusBadge.classList.remove('hidden');
-                    statusBadge.textContent = '已加载截图预览 (点击可更换图片)';
-                }
-                
-                answerOcrAbortController = null;
-                
-                if (data.status === 'success') {
-                    showToast('OCR 识别成功并已自动填入！');
-                    ocrOutput.classList.remove('hidden');
-                    ocrResult.textContent = cleanMathOcrText(data.latex);
-                    ocrConf.textContent = `置信度: ${(data.confidence * 100).toFixed(1)}%`;
-                    
-                    if (data.tikz_code) {
-                        if (data.tikz_image_path) {
-                            if (typeof window.registerAutoAnswerTikzAsset === 'function') {
-                                window.registerAutoAnswerTikzAsset({
-                                    tikzCode: data.tikz_code,
-                                    imagePath: data.tikz_image_path,
-                                    referenceImagePath: data.image_path || ''
-                                });
-                            }
-                        }
-                    }
-                    
-                    // Automatically load OCR results into final review editor silently
-                    loadToFinalReview('ocr');
-                } else {
-                    showToast(data.message, 'error');
-                }
-            })
-            .catch(err => {
-                if (err.name === 'AbortError') {
-                    return; // Gracefully handle manual aborts without error toast
-                }
-                if (loadingText) loadingText.classList.add('hidden');
-                if (statusBadge) {
-                    statusBadge.classList.remove('hidden');
-                    statusBadge.textContent = '已加载截图预览 (点击可更换图片)';
-                }
-                
-                answerOcrAbortController = null;
-                showToast('OCR 识别出错: ' + err, 'error');
-            });
-        }
-
-        // 2.2 OCR Question Content screenshot handler
-        function runContentOcr(file) {
-            if (!file.type.startsWith('image/')) {
-                showToast('请上传有效的图片格式！', 'error');
-                return;
-            }
-            
-            const contentOcrDropZone = document.getElementById('contentOcrDropZone');
-            const contentOcrOutput = document.getElementById('contentOcrOutputBox');
-            const contentOcrResult = document.getElementById('contentOcrResultText');
-            const contentOcrConf = document.getElementById('contentOcrConfBadge');
-            
-            const previewImg = document.getElementById('contentOcrPreviewImg');
-            const previewContainer = document.getElementById('contentOcrPreviewContainer');
-            const placeholder = document.getElementById('contentOcrPlaceholder');
-            const statusBadge = document.getElementById('contentOcrStatusBadge');
-            const loadingText = document.getElementById('contentOcrStatusLoadingText');
-            
-            // 1. Read file to show image preview in the upload area
-            const reader = new FileReader();
-            reader.onload = (e) => {
-                if (previewImg && previewContainer && placeholder) {
-                    previewImg.src = e.target.result;
-                    placeholder.classList.add('hidden');
-                    previewContainer.classList.remove('hidden');
-                    
-                    if (statusBadge) statusBadge.classList.add('hidden');
-                    if (loadingText) loadingText.classList.remove('hidden');
-                }
+            const form = new FormData();
+            form.append('file', file); form.append('engine', 'default');
+            form.append('skip_tikz', get('skip') && get('skip').checked ? 'true' : 'false');
+            const finish = () => {
+                get('loading').classList.add('hidden');
+                get('status').classList.remove('hidden');
+                get('status').textContent = '已加载截图预览 (点击可更换图片)';
+                if (target === 'content') contentOcrAbortController = null;
+                else answerOcrAbortController = null;
             };
-            reader.readAsDataURL(file);
-            
-            contentOcrOutput.classList.add('hidden');
-            
-            // Abort previous running controller if any
-            if (contentOcrAbortController) {
-                contentOcrAbortController.abort();
-            }
-            contentOcrAbortController = new AbortController();
-            const signal = contentOcrAbortController.signal;
-            
-            const engine = 'default';
-            const skipTikz = document.getElementById('contentOcrSkipTikz') ? document.getElementById('contentOcrSkipTikz').checked : false;
-            
-            const formData = new FormData();
-            formData.append('file', file);
-            formData.append('engine', engine);
-            formData.append('skip_tikz', skipTikz ? "true" : "false");
-            
-            fetch('/api/ocr', {
-                method: 'POST',
-                body: formData,
-                signal: signal
-            })
-            .then(r => r.json())
-            .then(data => {
-                if (loadingText) loadingText.classList.add('hidden');
-                if (statusBadge) {
-                    statusBadge.classList.remove('hidden');
-                    statusBadge.textContent = '已加载截图预览 (点击可更换图片)';
-                }
-                
-                contentOcrAbortController = null;
-                
-                if (data.status === 'success') {
-                    showToast('题干 OCR 识别成功并已自动填入！');
-                    contentOcrOutput.classList.remove('hidden');
-                    
-                    // 1. Clean LaTeX noise, exclamation marks and leading question numbers
-                    const cleanLatex = cleanMathOcrText(data.latex);
-                    contentOcrResult.textContent = cleanLatex;
-                    contentOcrConf.textContent = `置信度: ${(data.confidence * 100).toFixed(1)}%`;
-                    
-                    if (data.tikz_code) {
-                        if (data.tikz_image_path) {
-                            if (typeof window.registerAutoContentTikzAsset === 'function') {
-                                window.registerAutoContentTikzAsset({
-                                    tikzCode: data.tikz_code,
-                                    imagePath: data.tikz_image_path,
-                                    referenceImagePath: data.image_path || ''
-                                });
-                            } else if (typeof renderIllustrationBadges === 'function') {
-                                renderIllustrationBadges();
-                            }
-                        }
-                    }
-                    
-
-                    
-                    // 2. Automatically load results into the persistent content editor
-                    loadToContentEditor('ocr');
-                } else {
-                    showToast(data.message, 'error');
-                }
-            })
-            .catch(err => {
-                if (err.name === 'AbortError') {
-                    return; // Gracefully handle manual aborts without error toast
-                }
-                if (loadingText) loadingText.classList.add('hidden');
-                if (statusBadge) {
-                    statusBadge.classList.remove('hidden');
-                    statusBadge.textContent = '已加载截图预览 (点击可更换图片)';
-                }
-                
-                contentOcrAbortController = null;
-                showToast('题干 OCR 识别出错: ' + err, 'error');
-            });
+            fetch('/api/ocr', { method: 'POST', body: form, signal: controller.signal })
+                .then(async response => {
+                    const data = await response.json();
+                    if (!requestIsCurrent()) return;
+                    finish();
+                    if (!response.ok || data.status !== 'success') { showToast(data.message || 'OCR 识别失败', 'error'); return; }
+                    get('output').classList.remove('hidden');
+                    get('result').textContent = cleanMathOcrText(data.latex);
+                    const confidence = Number(data.confidence);
+                    get('confidence').textContent = Number.isFinite(confidence) ? `置信度: ${(confidence * 100).toFixed(1)}%` : '请核对识别结果';
+                    SingleOcrFigures.complete(state, data);
+                })
+                .catch(error => {
+                    if (!requestIsCurrent() || error.name === 'AbortError') return;
+                    finish(); showToast('OCR 识别出错: ' + error.message, 'error');
+                });
         }
 
         // Switch Question Content workflow tab - Apple Glass Style
@@ -1187,17 +1346,20 @@
                 const hasC = /[\s,，、]*\bC(?:[\.\s、，．]+|\b|\))/i.test(contentToImport);
                 const hasD = /[\s,，、]*\bD(?:[\.\s、，．]+|\b|\))/i.test(contentToImport);
                 
-                if (hasA && hasB && hasC && hasD) {
+                if (/\\begin\s*\{choices\}/.test(contentToImport) || (hasA && hasB && hasC && hasD)) {
                     const editQType = document.getElementById('editQType');
-                    if (editQType) {
+                    if (editQType && !['single_choice', 'multi_choice'].includes(editQType.value)) {
                         editQType.value = 'single_choice';
                         // Trigger change listener to update paper badges immediately
                         editQType.dispatchEvent(new Event('change'));
                     }
                 }
                 
-                // 2. Automatically format the OCR content to break choice options onto separate lines beautifully
-                contentToImport = formatQuestionContent(contentToImport);
+                // Canonical choices already owns option boundaries. Plain-label
+                // reformatting would also rewrite A.png inside its image paths.
+                if (!/\\begin\s*\{choices\}[\s\S]*?\\end\s*\{choices\}/.test(contentToImport)) {
+                    contentToImport = formatQuestionContent(contentToImport);
+                }
             }
             
             if (!contentToImport.trim()) {
@@ -1234,6 +1396,7 @@
 
         // Clear OCR image preview and OCR result box
         function clearContentOcrPreview() {
+            if (window.SingleOcrFigures) window.SingleOcrFigures.reset('content');
             const previewContainer = document.getElementById('contentOcrPreviewContainer');
             const placeholder = document.getElementById('contentOcrPlaceholder');
             const previewImg = document.getElementById('contentOcrPreviewImg');
@@ -1249,6 +1412,7 @@
 
         // Clear Answer OCR image preview and result box
         function clearOcrPreview() {
+            if (window.SingleOcrFigures) window.SingleOcrFigures.reset('answer');
             const previewContainer = document.getElementById('ocrPreviewContainer');
             const placeholder = document.getElementById('ocrPlaceholder');
             const previewImg = document.getElementById('ocrPreviewImg');

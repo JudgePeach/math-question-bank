@@ -16,16 +16,17 @@ from sqlalchemy import inspect
 from sqlalchemy.engine import Engine
 
 from mathbank.paths import SCHEMA_SNAPSHOT_DIR
+from mathbank.sub_knowledge import normalize_sub_knowledge
 
 
-LATEST_SCHEMA_VERSION = 10
+LATEST_SCHEMA_VERSION = 11
 LEGACY_REQUIRED_TABLES = {
     "questions",
     "question_curriculums",
     "papers",
     "paper_questions",
 }
-REQUIRED_TABLES = LEGACY_REQUIRED_TABLES | {"question_fingerprints"}
+REQUIRED_TABLES = LEGACY_REQUIRED_TABLES | {"question_fingerprints", "question_sub_knowledge"}
 
 V6_QUESTION_FINGERPRINT_COLUMNS = {
     "question_id",
@@ -316,6 +317,66 @@ def _validate_figure_layout_schema(connection) -> None:
     )
     if invalid_custom_count:
         raise RuntimeError("questions.figure_align_custom 包含无效值")
+
+
+def _ensure_sub_knowledge_columns(connection) -> dict[str, int]:
+    """v11 adds an empty relation; no historical chapter labels/tags change."""
+
+    exists = bool(connection.exec_driver_sql(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='question_sub_knowledge'"
+    ).first())
+    if not exists:
+        connection.exec_driver_sql("""
+            CREATE TABLE question_sub_knowledge (
+                id INTEGER NOT NULL PRIMARY KEY,
+                curriculum_id INTEGER NOT NULL,
+                compulsory VARCHAR(100) NOT NULL,
+                chapter VARCHAR(100) NOT NULL,
+                knowledge VARCHAR(100) NOT NULL,
+                position INTEGER NOT NULL DEFAULT 0,
+                CONSTRAINT uq_question_sub_knowledge_path UNIQUE (curriculum_id, compulsory, chapter, knowledge),
+                CONSTRAINT ck_question_sub_knowledge_position CHECK (position >= 0),
+                FOREIGN KEY(curriculum_id) REFERENCES question_curriculums(id) ON DELETE CASCADE
+            )
+        """)
+        connection.exec_driver_sql("CREATE INDEX ix_question_sub_knowledge_curriculum_id ON question_sub_knowledge (curriculum_id)")
+    _validate_sub_knowledge_schema(connection)
+    return {"added_question_sub_knowledge": int(not exists)}
+
+
+def _validate_sub_knowledge_schema(connection) -> None:
+    table = "question_sub_knowledge"
+    info = {row[1]: row for row in connection.exec_driver_sql(f'PRAGMA table_info("{table}")').fetchall()}
+    fields = {"id", "curriculum_id", "compulsory", "chapter", "knowledge", "position"}
+    if set(info) != fields or any(int(info[field][3]) != 1 for field in fields - {"id"}):
+        raise RuntimeError(f"数据库表 {table} 缺少核心字段或结构异常")
+    if int(info["id"][5]) != 1 or any(int(info[field][5]) != 0 for field in fields - {"id"}):
+        raise RuntimeError("question_sub_knowledge 主键结构异常")
+    if str(info["position"][4]).strip("'\"") != "0":
+        raise RuntimeError("question_sub_knowledge 排序默认值异常")
+    foreign_keys = connection.exec_driver_sql(f'PRAGMA foreign_key_list("{table}")').fetchall()
+    if not any(row[2] == "question_curriculums" and row[3] == "curriculum_id" and row[4] == "id"
+               and str(row[6]).upper() == "CASCADE" for row in foreign_keys):
+        raise RuntimeError("question_sub_knowledge 缺少版本镜像级联外键")
+    indexes = connection.exec_driver_sql(f'PRAGMA index_list("{table}")').fetchall()
+    if not any(tuple(entry[2] for entry in connection.exec_driver_sql(
+        f'PRAGMA index_info("{row[1]}")'
+    ).fetchall()) == ("curriculum_id",) for row in indexes):
+        raise RuntimeError("question_sub_knowledge 缺少版本镜像索引")
+    if not any(int(row[2]) == 1 and tuple(entry[2] for entry in connection.exec_driver_sql(
+        f'PRAGMA index_info("{row[1]}")'
+    ).fetchall()) == ("curriculum_id", "compulsory", "chapter", "knowledge") for row in indexes):
+        raise RuntimeError("question_sub_knowledge 缺少完整路径唯一约束")
+    violations = connection.exec_driver_sql("PRAGMA foreign_key_check(question_sub_knowledge)").fetchall()
+    if violations:
+        raise RuntimeError("question_sub_knowledge 存在外键异常")
+    for row in connection.exec_driver_sql("SELECT id, compulsory, chapter, knowledge, position FROM question_sub_knowledge"):
+        try:
+            normalize_sub_knowledge([dict(zip(("compulsory", "chapter", "knowledge"), row[1:4]))])
+            if row[4] < 0:
+                raise ValueError("position")
+        except ValueError as exc:
+            raise RuntimeError(f"question_sub_knowledge 包含无效值 (id={row[0]})") from exc
 
 
 def _validate_question_fingerprint_schema(
@@ -619,6 +680,7 @@ def _rebuild_relationship_tables(engine: Engine) -> dict[str, int]:
             )
             tikz_column_stats = _ensure_tikz_asset_columns(connection)
             figure_layout_stats = _ensure_figure_layout_columns(connection)
+            sub_knowledge_stats = _ensure_sub_knowledge_columns(connection)
             added_question_fingerprints = _ensure_question_fingerprint_table(connection)
             _validate_figure_layout_schema(connection)
 
@@ -635,6 +697,7 @@ def _rebuild_relationship_tables(engine: Engine) -> dict[str, int]:
                 "added_question_fingerprints": added_question_fingerprints,
                 **tikz_column_stats,
                 **figure_layout_stats,
+                **sub_knowledge_stats,
             }
         except Exception:
             if transaction_started:
@@ -658,6 +721,7 @@ def _upgrade_derived_schema(engine: Engine) -> dict[str, int]:
             transaction_started = True
             stats = _ensure_tikz_asset_columns(connection)
             stats.update(_ensure_figure_layout_columns(connection))
+            stats.update(_ensure_sub_knowledge_columns(connection))
             stats["added_question_fingerprints"] = (
                 _ensure_question_fingerprint_table(connection)
             )
@@ -730,6 +794,7 @@ def _upgrade_v6_or_v7_fingerprint_schema(
                 added_text_indexes += 1
             _validate_question_fingerprint_schema(connection)
             figure_layout_stats = _ensure_figure_layout_columns(connection)
+            sub_knowledge_stats = _ensure_sub_knowledge_columns(connection)
             _validate_figure_layout_schema(connection)
             connection.exec_driver_sql(f"PRAGMA user_version={LATEST_SCHEMA_VERSION}")
             connection.exec_driver_sql("COMMIT")
@@ -739,6 +804,7 @@ def _upgrade_v6_or_v7_fingerprint_schema(
                 "added_question_fingerprint_text_columns": 8,
                 "added_question_fingerprint_text_indexes": added_text_indexes,
                 **figure_layout_stats,
+                **sub_knowledge_stats,
             }
         except Exception:
             if transaction_started:
@@ -766,6 +832,7 @@ def migrate_database(
         with engine.connect() as connection:
             _validate_question_fingerprint_schema(connection)
             _validate_figure_layout_schema(connection)
+            _validate_sub_knowledge_schema(connection)
         return {"from_version": current, "to_version": current, "backup": None}
 
     if not table_names:

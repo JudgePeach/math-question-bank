@@ -4,9 +4,11 @@ import re
 import datetime
 import threading
 import tempfile
+import sqlite3
 from sqlalchemy.orm import Session
-from mathbank.database import Question, SessionLocal
+from mathbank.database import Question, QuestionCurriculum, SessionLocal
 from mathbank.paths import DATA_BACKUP_DIR
+from mathbank.sub_knowledge import resolve_active_version
 
 BACKUP_DIR = str(DATA_BACKUP_DIR)
 JSON_BACKUP_PATH = os.path.join(BACKUP_DIR, "questions_backup.json")
@@ -29,7 +31,31 @@ def _fsync_file(path: str) -> None:
         os.fsync(handle.fileno())
 
 
-def export_database_to_files(db: Session = None):
+def serialize_exchange_questions(db, questions, active_version):
+    """Serialize old question fields and every independent version mirror."""
+    mappings_by_question = {}
+    for mapping in db.query(QuestionCurriculum).order_by(
+        QuestionCurriculum.question_id, QuestionCurriculum.version_code
+    ).all():
+        mappings_by_question.setdefault(mapping.question_id, []).append({
+            "version_code": mapping.version_code, "compulsory": mapping.compulsory,
+            "chapter": mapping.chapter, "knowledge": mapping.knowledge,
+            "sub_knowledge": mapping.sub_knowledge,
+        })
+    questions_list = []
+    for question in questions:
+        payload = question.to_dict(version_code=active_version)
+        payload["active_version_code"] = active_version
+        payload["curriculum_mappings"] = mappings_by_question.get(question.id, [])
+        active = next((mapping for mapping in payload["curriculum_mappings"] if mapping["version_code"] == active_version), None)
+        if active and any(payload["category_" + field] != active[field] for field in ("compulsory", "chapter", "knowledge")):
+            raise RuntimeError("教材版本正在切换或主表镜像不一致，请稍后重试导出")
+        payload["sub_knowledge"] = active["sub_knowledge"] if active else []
+        questions_list.append(payload)
+    return questions_list, mappings_by_question
+
+
+def export_database_to_files(db: Session = None, *, quiet: bool = False):
     """Atomically export questions to portable JSON and AI-readable Markdown.
 
     These files are exports, not full disaster-recovery backups.  Use
@@ -43,6 +69,12 @@ def export_database_to_files(db: Session = None):
             if db is None:
                 db = SessionLocal()
                 local_session = db
+            # Python's legacy SQLite mode does not BEGIN for SELECT.  Establish
+            # one real read snapshot before reading questions and relationships.
+            connection = db.connection()
+            raw_connection = connection.connection.dbapi_connection
+            if isinstance(raw_connection, sqlite3.Connection) and not raw_connection.in_transaction:
+                connection.exec_driver_sql("BEGIN")
                 
             # 确保备份目录存在
             os.makedirs(BACKUP_DIR, exist_ok=True)
@@ -50,7 +82,11 @@ def export_database_to_files(db: Session = None):
             # 查询所有题目，按 ID 升序排列
             questions = db.query(Question).order_by(Question.id.asc()).all()
             
-            questions_list = [q.to_dict() for q in questions]
+            # Keep the historical top-level array and question fields.  The
+            # additional mappings preserve every textbook version independently;
+            # they never enter the AI-readable question body.
+            active_version = resolve_active_version()
+            questions_list, mappings_by_question = serialize_exchange_questions(db, questions, active_version)
             json_temp = _temporary_output_path(JSON_BACKUP_PATH)
             markdown_temp = _temporary_output_path(MD_BACKUP_PATH)
             with open(json_temp, "w", encoding="utf-8") as f:
@@ -59,14 +95,15 @@ def export_database_to_files(db: Session = None):
                 os.fsync(f.fileno())
 
             # Generate both temporary files before replacing either good export.
-            generate_markdown_library(questions, markdown_temp)
+            generate_markdown_library(questions, markdown_temp, curriculum_mappings=mappings_by_question, active_version_code=active_version)
             _fsync_file(markdown_temp)
             os.replace(json_temp, JSON_BACKUP_PATH)
             json_temp = None
             os.replace(markdown_temp, MD_BACKUP_PATH)
             markdown_temp = None
             
-            print(f"[Sync] 成功导出 {len(questions)} 道题目到 {JSON_BACKUP_PATH} 和 {MD_BACKUP_PATH}")
+            if not quiet:
+                print(f"[Sync] 成功导出 {len(questions)} 道题目到 {JSON_BACKUP_PATH} 和 {MD_BACKUP_PATH}")
             return {
                 "status": "success",
                 "question_count": len(questions),
@@ -137,7 +174,7 @@ def clean_latex_to_markdown_for_ai(text: str) -> str:
     
     return text.strip()
 
-def generate_markdown_library(questions, filepath: str):
+def generate_markdown_library(questions, filepath: str, *, curriculum_mappings=None, active_version_code=None):
     """生成高度结构化、题干纯净无干扰、支持 LaTeX 的只读 Markdown 文件，供 AI (如 Claude Code) 检索和备课参考"""
     now_str = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     
@@ -253,6 +290,13 @@ def generate_markdown_library(questions, filepath: str):
                                 f.write(f"- **关联题目组 ID**：`{q.association_group_id}`\n")
                             if q.tags:
                                 f.write(f"- **标签**：`{q.tags}`\n")
+                            if curriculum_mappings is not None:
+                                active = next((mapping for mapping in curriculum_mappings.get(q.id, []) if mapping["version_code"] == active_version_code), None)
+                                fine_paths = active["sub_knowledge"] if active else []
+                            else:
+                                fine_paths = q.sub_knowledge_for_version(active_version_code or resolve_active_version())
+                            if fine_paths:
+                                f.write("- **细分知识点**：" + "；".join(" / ".join(path[field] for field in ("compulsory", "chapter", "knowledge")) for path in fine_paths) + "\n")
                             f.write("\n")
                             
                             # 经过转换与清理的纯净题干

@@ -1,4 +1,5 @@
 import io
+import json
 import os
 from pathlib import Path
 from types import SimpleNamespace
@@ -127,6 +128,40 @@ def test_ocr_read_timeout_is_not_retried(tmp_path):
     mock_post.assert_called_once()
 
 
+def test_single_ocr_structured_request_reuses_provider_json_and_thinking_policy(tmp_path):
+    image_path = tmp_path / "question.png"
+    image_path.write_bytes(_png_bytes())
+    provider = resolve_ocr_provider("siliconflow", {
+        "SILICONFLOW_API_KEY": "test-key", "SILICONFLOW_OCR_MODEL": "Qwen/Qwen3.8-27B",
+    })
+    raw = json.dumps({"markdown": "$x=2$ [插图待补: 图1]", "figures": []}, ensure_ascii=False)
+    response = MagicMock(status_code=200)
+    response.json.return_value = {"choices": [{"finish_reason": "stop", "message": {"content": raw}}]}
+    with patch("main.post_chat_completion", return_value=response) as post:
+        assert ocr_via_provider(str(image_path), provider, single_question_layout=True) == raw
+    payload = post.call_args.args[1]
+    assert payload["response_format"] == {"type": "json_object"}
+    assert payload["enable_thinking"] is False
+    assert payload["max_tokens"] == 16384
+    assert "max_completion_tokens" not in payload
+    assert payload["messages"][0]["role"] == "system"
+    assert "每幅独立插图" in payload["messages"][1]["content"][0]["text"]
+
+
+def test_single_ocr_does_not_accept_truncated_structured_response(tmp_path):
+    image_path = tmp_path / "question.png"
+    image_path.write_bytes(_png_bytes())
+    provider = resolve_ocr_provider("deepseek", {"DEEPSEEK_API_KEY": "test-key"})
+    response = MagicMock(status_code=200)
+    response.json.return_value = {"choices": [{"finish_reason": "length", "message": {
+        "content": '{"markdown":"some text","figures":[]}',
+    }}]}
+    with patch("main.post_chat_completion", return_value=response) as post:
+        with pytest.raises(ValueError, match="截断"):
+            ocr_via_provider(str(image_path), provider, single_question_layout=True)
+    post.assert_called_once()
+
+
 def test_pdf_ocr_does_not_fallback_after_ambiguous_read_timeout():
     provider = MagicMock(provider_label="configured")
 
@@ -244,6 +279,21 @@ def _png_bytes():
     return output.getvalue()
 
 
+def _accept_ocr_figure_review(_provider, payload, **_kwargs):
+    """Mock only the visual HTTP response; run all server-side gates normally."""
+    user = next(message for message in payload["messages"] if message["role"] == "user")
+    metadata = json.loads(user["content"][0]["text"].split("\n输入资料JSON：\n", 1)[1])
+    checks = {name: True for name in ("same_figure", "full_graphic", "labels_complete", "no_foreign_content", "correct_anchor")}
+    if metadata["stage"] == "tikz_preview":
+        checks["geometry_faithful"] = True
+    entries = [{**{key: figure[key] for key in ("id", "slot", "source_sha256", "crop_sha256")},
+                "decision": "accepted", "checks": checks, "corrected_bbox": None,
+                "evidence": "测试核对回执：边界和标注与对应原图一致。"} for figure in metadata["figures"]]
+    response = MagicMock(status_code=200)
+    response.json.return_value = {"choices": [{"finish_reason": "stop", "message": {"content": json.dumps({"figures": entries}, ensure_ascii=False)}}]}
+    return response
+
+
 def test_workbench_draw_route_accepts_text_without_reference(client):
     generated = "\\begin{tikzpicture}\\draw (0,0)--(1,1);\\end{tikzpicture}"
     with patch("main.draw_tikz_via_high_model", return_value=generated) as mock_draw:
@@ -358,28 +408,37 @@ def test_failed_workbench_draw_does_not_leave_reference_file(client):
     assert set(upload_root.glob("tikz_reference_*")) == before
 
 
-def test_question_ocr_still_auto_draws_tikz_and_returns_original_reference(client):
+def test_question_ocr_draws_individual_crop_at_exact_source_slot(client):
     generated = "\\begin{tikzpicture}\\draw (0,0)--(1,0);\\end{tikzpicture}"
     rendered_url = "/static/test_uploads/tikz_auto_test.png"
-    observed_original = None
+    observed_crop = None
+    original_path = None
+    rendered_path = Path("static/test_uploads/tikz_auto_test.png").resolve()
     provider = SimpleNamespace(
         api_key="ocr-key",
         provider_label="Test OCR",
         model_name="test-vision",
         credential_label="TEST_KEY",
+        supports_image_input=True, chat_completions_url="https://example.test/v1/chat/completions",
+        provider_code="zhongzhan_gpt", api_base="https://example.test/v1", reasoning_effort=None,
     )
 
-    def draw(original_path, *_args, **_kwargs):
-        nonlocal observed_original
-        observed_original = Path(original_path)
-        assert observed_original.is_file()
+    def draw(crop_path, *_args, **kwargs):
+        nonlocal observed_crop
+        observed_crop = Path(crop_path)
+        assert observed_crop.is_file() and "ocr_figure_" in observed_crop.name
+        assert Image.open(observed_crop).size == (9, 7)
+        assert kwargs["require_image_support"] is True
+        assert "只重绘当前参考图" in kwargs["instruction"]
         return generated
 
     try:
+        Image.new("RGB", (12, 8), "white").save(rendered_path)
         with patch("main.resolve_ocr_provider", return_value=provider), patch(
             "main.ocr_via_provider",
-            return_value="已知三角形 ABC\n[ILLUSTRATION_BOX: 10, 20, 90, 80]",
-        ), patch("main.draw_tikz_via_high_model", side_effect=draw), patch(
+            return_value=json.dumps({"markdown": "题干[插图待补: 图1]后文 $x=1$", "figures": [{"slot": "图1",
+                "bbox": {"left": 100, "top": 100, "right": 800, "bottom": 800}}]}, ensure_ascii=False),
+        ) as ocr, patch("main.post_chat_completion", side_effect=_accept_ocr_figure_review), patch("main.draw_tikz_via_high_model", side_effect=draw), patch(
             "main.compile_tikz_to_png", return_value=rendered_url
         ):
             response = client.post(
@@ -396,28 +455,41 @@ def test_question_ocr_still_auto_draws_tikz_and_returns_original_reference(clien
         assert payload["image_path"].startswith("/static/test_uploads/ocr_original_")
         assert "ILLUSTRATION_BOX" not in payload["latex"]
         assert "$$" not in payload["latex"]
-        assert payload["latex"].startswith("已知三角形 ABC\n\n![](")
+        assert payload["latex"] == f"题干![]({rendered_url})后文 $x=1$"
         assert rendered_url in payload["latex"]
-        assert observed_original is not None
+        assert observed_crop is not None
+        assert payload["tikz_assets"][0]["reference_image_path"].endswith(observed_crop.name)
+        assert payload["tikz_assets"][0]["reference_image_path"] != payload["image_path"]
+        assert ocr.call_args.kwargs["single_question_layout"] is True
+        assert payload["illustrations"][0]["preview_review"]["status"] == "verified"
+        assert payload["illustration_review"]["calls"] == 2
+        original_path = Path("main.py").resolve().parent / payload["image_path"].lstrip("/")
     finally:
-        if observed_original is not None:
-            observed_original.unlink(missing_ok=True)
+        if observed_crop is not None:
+            observed_crop.unlink(missing_ok=True)
+        if original_path is not None:
+            original_path.unlink(missing_ok=True)
+        rendered_path.unlink(missing_ok=True)
 
 
-def test_question_ocr_removes_illustration_marker_before_math_normalization_when_draw_is_skipped(client):
+def test_question_ocr_automatically_crops_figure_when_draw_is_disabled(client):
     provider = SimpleNamespace(
         api_key="ocr-key",
         provider_label="Test OCR",
         model_name="test-vision",
         credential_label="TEST_KEY",
+        supports_image_input=True, chat_completions_url="https://example.test/v1/chat/completions",
+        provider_code="zhongzhan_gpt", api_base="https://example.test/v1", reasoning_effort=None,
     )
     persisted_original = None
+    persisted_crop = None
 
     try:
         with patch("main.resolve_ocr_provider", return_value=provider), patch(
             "main.ocr_via_provider",
-            return_value="已知三角形 ABC\n[ILLUSTRATION_BOX: 10, 20, 90, 80]",
-        ), patch("main.draw_tikz_via_high_model") as draw:
+            return_value=json.dumps({"markdown": "已知三角形 ABC\n[插图待补: 图1]", "figures": [{"slot": "图1",
+                "bbox": {"left": 100, "top": 100, "right": 800, "bottom": 800}}]}, ensure_ascii=False),
+        ), patch("main.post_chat_completion", side_effect=_accept_ocr_figure_review), patch("main.draw_tikz_via_high_model") as draw, patch("main.compile_tikz_to_png") as compile_tikz:
             response = client.post(
                 "/api/ocr",
                 data={"engine": "siliconflow", "skip_tikz": "true"},
@@ -427,14 +499,25 @@ def test_question_ocr_removes_illustration_marker_before_math_normalization_when
 
         assert response.status_code == 200
         payload = response.json()
-        assert payload["latex"] == "已知三角形 ABC"
+        item = payload["illustrations"][0]
+        assert payload["latex"] == f"已知三角形 ABC\n![]({item['image_path']})"
         assert "ILLUSTRATION_BOX" not in payload["latex"]
         assert "$$" not in payload["latex"]
+        assert item["status"] == "cropped"
+        assert payload["illustrations"][0]["placeholder"] == "[插图待补: 图1]"
+        assert payload["tikz_assets"] == []
+        assert payload["tikz_code"] is None and payload["tikz_image_path"] is None
+        assert item["reference_image_path"] == "" and payload["warnings"] == []
         draw.assert_not_called()
+        compile_tikz.assert_not_called()
         persisted_original = Path("main.py").resolve().parent / payload["image_path"].lstrip("/")
+        persisted_crop = Path("main.py").resolve().parent / item["image_path"].lstrip("/")
+        assert persisted_crop.is_file()
     finally:
         if persisted_original is not None:
             persisted_original.unlink(missing_ok=True)
+        if persisted_crop is not None:
+            persisted_crop.unlink(missing_ok=True)
 
 
 def test_pdf_ocr_uses_claude_provider_when_selected():
@@ -551,3 +634,57 @@ def test_pdf_ocr_uses_deepseek_when_selected():
     with patch.dict(os.environ, {'OCR_PREFER_ENGINE':'deepseek', 'DEEPSEEK_API_KEY':'test-ds-key', 'DEEPSEEK_OCR_MODEL':'deepseek-flash'}), patch('main.ocr_via_provider', return_value='整页识别结果') as ocr:
         assert ocr_pdf_page_image('/tmp/page.png') == '整页识别结果'
         assert ocr.call_args.args[1].provider_code == 'deepseek'
+
+
+def test_single_ocr_calls_selected_vision_provider_again_before_returning_actual_crop(client):
+    provider = resolve_ocr_provider("deepseek", {"DEEPSEEK_API_KEY": "test-key"})
+    calls, paths = [], []
+    def post(actual_provider, payload, **kwargs):
+        calls.append((actual_provider, payload, kwargs))
+        user = next(message for message in payload["messages"] if message["role"] == "user")
+        if "\n输入资料JSON：\n" in user["content"][0]["text"]:
+            return _accept_ocr_figure_review(actual_provider, payload, **kwargs)
+        response = MagicMock(status_code=200)
+        response.json.return_value = {"choices": [{"finish_reason": "stop", "message": {"content": json.dumps({
+            "markdown": "题干[插图待补: 图1]后文", "figures": [{"slot": "图1",
+                "bbox": {"left": 100, "top": 100, "right": 800, "bottom": 800}}]})}}]}
+        return response
+    try:
+        with patch("main.resolve_ocr_provider", return_value=provider), patch("main.post_chat_completion", side_effect=post), patch("main.draw_tikz_via_high_model") as draw:
+            response = client.post("/api/ocr", data={"engine": "deepseek", "skip_tikz": "true"},
+                files={"file": ("question.png", _png_bytes(), "image/png")}, headers={"X-Local-Token": LOCAL_TOKEN})
+        assert response.status_code == 200, response.text
+        body = response.json()
+        assert len(calls) == 2 and all(call[0] is provider for call in calls)
+        assert calls[1][2]["retry_connection"] is False
+        assert body["illustration_review"]["calls"] == 1 and body["illustrations"][0]["review"]["status"] == "verified"
+        assert "插图待补" not in body["latex"]
+        draw.assert_not_called()
+        paths = [Path("main.py").resolve().parent / url.lstrip("/") for url in (body["image_path"], body["illustrations"][0]["image_path"])]
+        import hashlib
+        assert hashlib.sha256(paths[1].read_bytes()).hexdigest() == body["illustrations"][0]["review"]["crop_sha256"]
+    finally:
+        for path in paths:
+            path.unlink(missing_ok=True)
+
+
+def test_single_ocr_does_not_materialize_crops_when_vision_review_cannot_finish(client):
+    provider = resolve_ocr_provider("deepseek", {"DEEPSEEK_API_KEY": "test-key"})
+    persisted = None
+    try:
+        with patch("main.resolve_ocr_provider", return_value=provider), patch("main.ocr_via_provider", return_value=json.dumps({
+            "markdown": "题干[插图待补: 图1]后文", "figures": [{"slot": "图1",
+                "bbox": {"left": 100, "top": 100, "right": 800, "bottom": 800}}]})), patch("main.post_chat_completion", side_effect=requests.ReadTimeout("private")) as review, patch("main.draw_tikz_via_high_model") as draw:
+            response = client.post("/api/ocr", data={"engine": "deepseek", "skip_tikz": "false"},
+                files={"file": ("question.png", _png_bytes(), "image/png")}, headers={"X-Local-Token": LOCAL_TOKEN})
+        assert response.status_code == 200, response.text
+        body = response.json()
+        assert body["latex"] == "题干[插图待补: 图1]后文" and body["tikz_assets"] == []
+        assert body["illustrations"][0]["image_path"] == "" and body["illustration_review"]["status"] == "unavailable"
+        assert "private" not in " ".join(body["warnings"])
+        review.assert_called_once()
+        draw.assert_not_called()
+        persisted = Path("main.py").resolve().parent / body["image_path"].lstrip("/")
+    finally:
+        if persisted is not None:
+            persisted.unlink(missing_ok=True)

@@ -74,6 +74,8 @@ flowchart LR
   * **Windows users**: Recommend installing [**TeX Live Official Website**](https://www.tug.org/texlive/) (ISO ~5GB; Tsinghua University mirror recommended; MiKTeX is also supported).
 - **📄 Word (.docx) Exam Paper Safe Import**: No Microsoft Word or MathType installation needed. The system converts standard OMML formulas and uses `olefile` + MTEF v5 record trees to parse MathType structures; numbers like `32` and Latin letters like `p` won't be misidentified by legacy character rules. The system recursively preserves hyperlinks, tracked revisions, and Symbol characters, while extracting tables and original images. Preview images are kept for formulas without high-confidence conversion. The parser report details counts for structural conversion, embedded LaTeX, limited compatibility, and manual review needed.
 
+- Single-question OCR preserves multiple diagrams in the stem, options, and tables. With TikZ disabled, reviewed source crops stay at their original positions; manual cropping remains available for uncertain diagrams, and drawing or compilation failures keep usable source images. Choice previews show complete long options, and review images are preserved during saving and full backups. Curriculum knowledge remains a single value, with whole-chapter placement when a unique subsection cannot be determined and existing labels preserved.
+
 ---
 
 ## 🚀 Quick Start

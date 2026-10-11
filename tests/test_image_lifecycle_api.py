@@ -190,7 +190,7 @@ def test_missing_visible_permanent_image_rejected_but_code_literal_preserved(cli
     assert data["question"]["image_paths"] == []
 
 
-@pytest.mark.parametrize("field", ["content", "answer_markdown"])
+@pytest.mark.parametrize("field", ["content", "answer_markdown", "review"])
 def test_startup_cleanup_preserves_legacy_body_only_references(client, db_session, assets, field):
     import main
 
@@ -207,6 +207,103 @@ def test_startup_cleanup_preserves_legacy_body_only_references(client, db_sessio
 
     assert path.is_file()
     assert path.read_bytes() == original
+
+
+def test_review_image_survives_create_reload_edit_and_cleanup(client, headers, db_session, assets):
+    import main
+
+    source, temporary = assets("review", temporary=True)
+    original = source.read_bytes()
+    created = _created(client.post(
+        "/api/questions", data=_payload(review=f"错误示范 ![评析图]({temporary})"), headers=headers,
+    ))
+    question = created["question"]
+    permanent = created["asset_path_map"][temporary]
+    promoted = Path(main.UPLOAD_DIR) / Path(permanent).name
+    assert question["review"] == f"错误示范 ![评析图]({permanent})"
+    assert question["image_paths"] == []  # Commentary is not a fallback prompt figure.
+    assert source.read_bytes() == promoted.read_bytes() == original
+    stored = db_session.get(Question, question["id"])
+    assert stored.image_paths == [permanent]
+
+    reloaded = client.get(f"/api/questions/{question['id']}").json()
+    updated = _created(client.put(
+        f"/api/questions/{question['id']}",
+        data=_payload(content=reloaded["content"] + " 修改题干文字",
+                      review=reloaded["review"] + "\n错因说明", image_paths="[]"),
+        headers=headers,
+    ))
+    assert updated["question"]["review"] == reloaded["review"] + "\n错因说明"
+    assert stored.image_paths == [permanent]
+    _age(promoted)
+    main.clean_orphaned_images()
+    assert promoted.read_bytes() == original
+    assert client.get(permanent).content == original
+
+
+@pytest.mark.parametrize("shared_field", ["", "content", "answer_markdown"])
+def test_review_image_visibility_preserves_shared_and_legacy_figures(
+    client, headers, db_session, assets, shared_field,
+):
+    _, review_image = assets("review-only")
+    _, legacy_image = assets("legacy-fallback")
+    payload = _payload(review=f"错误示范 ![]({review_image})",
+                       image_paths=json.dumps([legacy_image]))
+    if shared_field:
+        payload[shared_field] += f" ![]({review_image})"
+    created = _created(client.post("/api/questions", data=payload, headers=headers))
+    stored = db_session.get(Question, created["question"]["id"])
+    assert set(stored.image_paths) == {review_image, legacy_image}
+    assert legacy_image in created["question"]["image_paths"]
+    assert (review_image in created["question"]["image_paths"]) == bool(shared_field)
+
+    from mathbank import sync_helper
+    sync_helper.export_database_to_files(db_session)
+    exported = Path(sync_helper.MD_BACKUP_PATH).read_text()
+    assert Path(legacy_image).name in exported
+    assert (Path(review_image).name in exported) == bool(shared_field)
+
+
+def test_review_missing_image_rejected_but_literal_example_untouched(client, headers):
+    import main
+
+    missing = f"/{main.UPLOAD_DIR_REL}/review-missing-{uuid.uuid4().hex}.png"
+    failed = client.post("/api/questions", data=_payload(review=f"![]({missing})"), headers=headers)
+    assert failed.status_code == 400
+    literal = f"错解代码示例 `![]({missing})`"
+    created = _created(client.post("/api/questions", data=_payload(review=literal), headers=headers))
+    assert created["question"]["review"] == literal
+    assert created["question"]["image_paths"] == []
+
+
+def test_review_only_image_does_not_change_duplicate_snapshot_or_block_save(client, headers, assets):
+    from mathbank.question_duplicate_service import select_visible_question_images
+
+    _, url = assets("duplicate-review", color="red")
+    content, answer = "已知 $x=2$，求 $x+1$。", "答案：3"
+    review = f"错误示范 ![]({url})"
+    checked = client.post(
+        "/api/questions/check-duplicates",
+        json={"items": [
+            {"client_key": "plain", "content": content, "answer_markdown": answer,
+             "question_type": "single_choice", "image_paths": []},
+            {"client_key": "review", "content": content, "answer_markdown": answer,
+             "question_type": "single_choice", "review": review, "image_paths": [url]},
+        ]}, headers=headers,
+    )
+    assert checked.status_code == 200, checked.text
+    items = checked.json()["items"]
+    assert items[0]["snapshot_hash"] == items[1]["snapshot_hash"]
+    assert select_visible_question_images(content, answer, [url], [], review=review) == []
+    assert select_visible_question_images(content + f" ![]({url})", answer, [url], [], review=review) == [url]
+    assert select_visible_question_images(content, answer, [url], [], review=f"代码 `![]({url})`") == [url]
+    created = _created(client.post(
+        "/api/questions", data=_payload(content=content, answer_markdown=answer, review=review,
+                                        duplicate_snapshot_hash=items[1]["snapshot_hash"]),
+        headers=headers,
+    ))
+    assert created["question"]["review"] == review
+    assert created["question"]["image_paths"] == []
 
 
 @pytest.mark.parametrize("recover_with", ["get", "save"])

@@ -1476,16 +1476,44 @@ header, main {
     display: block;
     min-width: 0;
     max-width: 100%;
+    padding: 0.2em;
+    overflow: visible;
+    line-height: 1.8;
+    white-space: nowrap;
+}
+.choices-grid[data-choice-columns="1"] .choices-content {
+    white-space: normal;
+    overflow-wrap: anywhere;
+}
+.choices-grid[data-choices-measuring] .choices-content {
+    white-space: nowrap;
+    overflow-wrap: normal;
+}
+.choices-grid .choices-content .katex {
+    display: inline-block;
+    vertical-align: baseline;
+    /* Tall vlist glyphs can extend beyond KaTeX's nominal line box. Keep
+       visible ink clear of the scroll clip, including at sidebar font sizes. */
+    padding: 0.4em 0.25em;
+    white-space: nowrap;
+    overflow-wrap: normal;
+}
+.choices-grid .choices-content .katex.choices-math-scroll {
+    max-width: 100%;
     overflow-x: auto;
     overflow-y: hidden;
     scrollbar-width: thin;
-    white-space: nowrap;
 }
-.choices-grid .choices-content .katex {
-    white-space: nowrap;
+/* A choice card must include every option, independently of stem length or
+   KaTeX height. Ordinary non-choice excerpts retain their compact preview. */
+.card-formula-render.question-choice-preview {
+    display: block !important;
+    -webkit-line-clamp: unset !important;
+    overflow: visible;
+    padding: 0.2em;
 }
 .choices-grid.choices-has-images,
-.choices-has-images > .choices-item {
+.choices-grid > .choices-image-item {
     align-items: center !important;
 }
 .choices-content img {
@@ -5564,6 +5592,28 @@ button[aria-disabled="true"]:hover,
 #answerExplanationPanel .apple-divider { margin: 12px 0; }
 .editor-field-label { font-size: 14px; font-weight: 600; color: var(--text-primary); }
 .bank-question-tags { display: flex; align-items: center; gap: 4px; }
+.sub-knowledge-picker { min-width: 0; border: 1px solid var(--glass-border, rgba(148,163,184,.3)); border-radius: 10px; background: var(--glass-bg, rgba(255,255,255,.55)); }
+.sub-knowledge-picker summary { padding: 10px 12px; cursor: pointer; min-height: 44px; font-size: 12px; font-weight: 600; overflow-wrap: anywhere; }
+.sub-knowledge-options { max-height: 220px; overflow-y: auto; padding: 4px 8px 8px; }
+.sub-knowledge-search { display: block; width: calc(100% - 16px); margin: 0 8px 6px; min-height: 44px; padding: 8px; border-radius: 8px; font-size: 12px; }
+.sub-knowledge-option { display: flex; align-items: center; gap: 8px; min-height: 44px; padding: 6px; font-size: 12px; cursor: pointer; overflow-wrap: anywhere; }
+.sub-knowledge-option[hidden] { display: none; }
+.sub-knowledge-option input { flex: 0 0 auto; width: 16px; height: 16px; accent-color: var(--brand-500, #6366f1); }
+.sub-knowledge-empty { padding: 8px; font-size: 12px; color: #64748b; }
+.sub-knowledge-custom-row { display: flex; gap: 8px; margin-top: 8px; }
+.sub-knowledge-custom-row input { flex: 1; min-width: 0; min-height: 44px; padding: 8px 10px; font-size: 12px; border-radius: 10px; }
+.sub-knowledge-custom-row button { flex: 0 0 auto; min-height: 44px; padding: 8px 12px; border-radius: 10px; }
+.sub-knowledge-badges { display: flex; flex-wrap: wrap; gap: 4px; }
+.sub-knowledge-badge { font-size: 10px; padding: 3px 7px; border-radius: 6px; background: rgba(99,102,241,.1); color: #4f46e5; overflow-wrap: anywhere; }
+.dark .sub-knowledge-picker { background: rgba(15,23,42,.65); border-color: rgba(148,163,184,.3); color: #e2e8f0; }
+.dark .sub-knowledge-badge { color: #c7d2fe; background: rgba(99,102,241,.22); }
+.dark .sub-knowledge-empty { color: #94a3b8; }
+.bank-filter-fields .sub-knowledge-picker { grid-column: span 2; }
+@media (max-width: 480px) {
+    .bank-filter-fields .sub-knowledge-picker { grid-column: 1 / -1; }
+    .sub-knowledge-custom-row { flex-wrap: wrap; }
+    .sub-knowledge-custom-row input { flex-basis: 100%; font-size: 16px; }
+}
 @media (max-width: 768px) {
     .bank-question-tags { display: none; }
     .bank-question-card button[aria-label="删除题目"] { opacity: 1; }
@@ -5749,3 +5799,21 @@ button[aria-disabled="true"]:hover,
     #paperCanvasSection .paper-export-actions button { gap: 4px; font-size: 12px; }
 }
 .records-filters.workspace-command-bar #savedPaperResultCount { padding: 0; }
+
+/* Keep path pickers compact within the bank/paper's general form grids. */
+.sub-knowledge-picker label.sub-knowledge-option {
+    flex-direction: row;
+    align-items: center;
+    gap: 8px;
+    min-height: 44px;
+}
+.sub-knowledge-picker label.sub-knowledge-option input[type="checkbox"],
+#paperFilterSection .sub-knowledge-picker label.sub-knowledge-option input[type="checkbox"] {
+    flex: 0 0 16px;
+    width: 16px;
+    height: 16px;
+    min-width: 0;
+    min-height: 0;
+    padding: 0;
+    border-radius: 3px;
+}
