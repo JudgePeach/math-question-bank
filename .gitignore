@@ -97,3 +97,24 @@ tests/artifacts/*
 /docs/*
 !/docs/AI_DATABASE_GUIDE.md
 !/docs/images/
+
+# 13. 本机批量处理工具及专用测试，不属于公开题库功能
+# 精确限定路径；正常运行模块、教材资源和产品回归测试继续跟踪
+/mathbank/association_batch.py
+/mathbank/classification_proposals.py
+/mathbank/knowledge_backfill.py
+/mathbank/knowledge_backfill_apply.py
+/mathbank/question_exchange.py
+/scripts/association_batch.py
+/scripts/classification_proposals.py
+/scripts/knowledge_backfill.py
+/scripts/knowledge_backfill_apply.py
+/scripts/question_exchange.py
+/scripts/resources/
+/tests/test_association_batch.py
+/tests/test_classification_proposals.py
+/tests/test_knowledge_backfill.py
+/tests/test_knowledge_backfill_apply.py
+/tests/test_question_exchange.py
+/scripts/migrate_word_math_private_chars.py
+/tests/test_migrate_word_math_private_chars.py

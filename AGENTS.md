@@ -22,6 +22,7 @@
 > **开发规范单一来源规则**：
 > 根目录 `AGENTS.md` 是本项目面向 AI 代理与开发者的唯一开发规范来源。进行系统更新、重构、功能新增或回滚（Rollback）时，如变更影响本文记录的技术设计、接口规范、验证方式或发布流程，必须同步更新本文件，确保规范与实际代码实现准确一致；禁止再维护内容重复的平行代理指南。
 > **文档跟踪边界**：`docs/` 默认由 Git 忽略，仅跟踪 `docs/AI_DATABASE_GUIDE.md` 与 README 所需的 `docs/images/`。内部计划、升级记录及社区 QA 整理记录仅在本地保留；对外维护规范统一记录在本文件，不依赖被忽略的文档。
+> **本机工具、公开 Git 与便携包边界**：`mathbank/` 与 `scripts/` 下的 `classification_proposals`、`knowledge_backfill`、`knowledge_backfill_apply`、`association_batch`、`question_exchange` 本机批处理模块，以及 `scripts/resources/` 协议资料、旧 `scripts/migrate_word_math_private_chars.py` 与各自专用测试，按 `.gitignore` 的精确路径留在本机，不进入公开 Git 或便携包。正常题库运行模块、教材资源及产品回归测试继续跟踪；Word 字符处理核心仍由 `mathbank.omml_helper` 提供。`scripts/build_release.py` 保留在源码 Git，构建命令仅适用于源码仓库，构建脚本本身不进入便携包。发布复制、暂存树与最终 ZIP 均校验上述包边界，目录项和大小写变体同样拒绝，不能按裸文件名误排其他路径的同名模块或资源。
 
 > [!IMPORTANT]
 > **本地版本号与发布权限边界**：

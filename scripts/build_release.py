@@ -113,6 +113,23 @@ STATIC_ALLOWLIST = (
     "lib",
 )
 HIDDEN_FILE_ALLOWLIST = {".env.example", ".gitkeep", ".rels"}
+# Reviewed local-only maintenance tools and the source-only release builder.
+# Match project-relative paths so runtime resources and dependency names survive.
+INTERNAL_TOOL_RELEASE_PATHS = frozenset({
+    "mathbank/association_batch.py",
+    "mathbank/classification_proposals.py",
+    "mathbank/knowledge_backfill.py",
+    "mathbank/knowledge_backfill_apply.py",
+    "mathbank/question_exchange.py",
+    "scripts/association_batch.py",
+    "scripts/classification_proposals.py",
+    "scripts/knowledge_backfill.py",
+    "scripts/knowledge_backfill_apply.py",
+    "scripts/question_exchange.py",
+    "scripts/resources",
+    "scripts/migrate_word_math_private_chars.py",
+    "scripts/build_release.py",
+})
 FORBIDDEN_RELEASE_PARTS = {
     ".DS_Store",
     ".git",
@@ -319,9 +336,11 @@ def validate_release_source():
 
     compile_code = (
         "from pathlib import Path; "
+        "from scripts.build_release import _is_internal_tool_release_path; "
         "[compile(p.read_bytes(), str(p), 'exec') "
         "for root in ('mathbank', 'scripts') "
-        "for p in Path(root).rglob('*.py')]"
+        "for p in Path(root).rglob('*.py') "
+        "if not _is_internal_tool_release_path(p)]"
     )
     subprocess.check_call([sys.executable, "-c", compile_code], cwd=BASE_DIR)
 
@@ -554,23 +573,41 @@ def _prune_dependency_test_artifacts(site_packages):
         shutil.rmtree(root / relative_path, ignore_errors=True)
 
 
-def _release_ignore(_directory, names):
+def _is_internal_tool_release_path(relative_path):
+    name = PurePosixPath(Path(relative_path).as_posix()).as_posix().casefold()
+    return any(
+        name == excluded or name.startswith(excluded + "/")
+        for excluded in INTERNAL_TOOL_RELEASE_PATHS
+    )
+
+
+def _release_ignore(directory, names):
+    try:
+        relative_directory = Path(directory).relative_to(Path(BASE_DIR))
+    except ValueError:
+        relative_directory = None
     ignored = set()
     for name in names:
         if (
             name.startswith(".")
             or name in FORBIDDEN_RELEASE_PARTS
             or name.endswith((".pyc", ".pyo"))
+            or (
+                relative_directory is not None
+                and _is_internal_tool_release_path(relative_directory / name)
+            )
         ):
             ignored.add(name)
     return ignored
 
 
 def _release_path_violation(relative_path):
-    """Return why a package member crosses the persistent-data boundary."""
+    """Return why a package member crosses a reviewed release boundary."""
 
     path = PurePosixPath(Path(relative_path).as_posix())
     name = path.as_posix()
+    if _is_internal_tool_release_path(path):
+        return "non-runtime source tooling"
     if name == "static/uploads/.gitkeep":
         return None
     if name == ".env" or name.startswith(".env/"):
@@ -722,6 +759,9 @@ def assert_release_tree_clean(root, platform_name):
         raise RuntimeError(f"release staging tree is missing required files: {missing}")
 
     violations = []
+    for directory in root.rglob("*"):
+        if directory.is_dir() and _is_internal_tool_release_path(directory.relative_to(root)):
+            violations.append(directory.relative_to(root).as_posix())
     for file_path in _release_files(root):
         relative_path = file_path.relative_to(root)
         persistence_violation = _release_path_violation(relative_path)
@@ -888,6 +928,10 @@ def verify_zip_archive(zip_path, required_members):
             ):
                 raise RuntimeError(
                     f"finished release archive contains an unsafe path: {raw_name}"
+                )
+            if _is_internal_tool_release_path(member_path):
+                raise RuntimeError(
+                    "finished release archive contains forbidden artifacts: " + name
                 )
             if info.is_dir():
                 continue

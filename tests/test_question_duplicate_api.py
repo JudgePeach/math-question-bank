@@ -517,32 +517,6 @@ def test_visible_selection_keeps_ordinary_image_alongside_tikz_render(tmp_path):
     assert selected == [ordinary, tikz]
 
 
-def test_word_private_character_migration_invalidates_derived_fingerprint(
-    db_session, monkeypatch
-):
-    from mathbank import database
-    from scripts import migrate_word_math_private_chars as migration
-
-    question = Question(
-        content="迁移题 \uec07x\uec08",
-        question_type="detailed_answer",
-    )
-    db_session.add(question)
-    db_session.flush()
-    fingerprint = build_question_fingerprint(
-        {"content": question.content, "question_type": question.question_type}
-    )
-    upsert_question_fingerprint(db_session, question, fingerprint)
-    db_session.commit()
-    monkeypatch.setattr(migration, "SessionLocal", database.SessionLocal)
-    monkeypatch.setattr(migration, "export_database_to_files", lambda *_args: None)
-
-    result = migration.migrate_database_word_math_private_chars()
-
-    assert result["changed_questions"] == [question.id]
-    assert db_session.query(QuestionFingerprint).count() == 0
-
-
 def test_concurrent_backfill_uses_atomic_upsert_without_primary_key_failure(tmp_path):
     engine = create_engine(
         f"sqlite:///{(tmp_path / 'concurrent.db').as_posix()}",

@@ -193,7 +193,7 @@ python3 -m scripts.search_questions -q "导数"
 ### 2. 数据清洗与自愈脚本
 - **填空题下划线全量升级**：`python3 -m scripts.migrate_fillin`（将旧下划线规范化为 `\fillin` 宏）
 - **选择题题干空括号净化**：`python3 -m scripts.migrate_choice_parentheses`（自动抹除题干末尾空括号，防止与 `\paren` 重叠）
-- **构建跨平台 Release**：先确认 `mathbank/__init__.py` 的版本号，再运行 `python3 -m scripts.build_release`。构建器会校验固定 SHA-256 的官方 Python/NuGet 运行时、Release 白名单、运行时布局与源码 smoke，并生成包内 `RELEASE-MANIFEST.json` 和包外 `.zip.sha256`。
+- **构建跨平台 Release（源码仓库专用）**：在源码仓库中先确认 `mathbank/__init__.py` 的版本号，再运行 `python3 -m scripts.build_release`；便携包不包含构建脚本。构建器会校验固定 SHA-256 的官方 Python/NuGet 运行时、Release 白名单、运行时布局与源码 smoke，并生成包内 `RELEASE-MANIFEST.json` 和包外 `.zip.sha256`。
 
 ### 3. 完整备份与恢复
 

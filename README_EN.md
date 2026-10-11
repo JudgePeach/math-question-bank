@@ -188,7 +188,7 @@ python3 -m scripts.search_questions -q "导数"
 ### 2. Data Cleaning & Self-Healing Scripts
 - **Fill-in-the-blank Underline Upgrade**: `python3 -m scripts.migrate_fillin` (Standardizes old underlines to `\fillin` macro)
 - **Multiple-Choice Empty Parentheses Cleanup**: `python3 -m scripts.migrate_choice_parentheses` (Cleans trailing empty parentheses in stems to avoid overlap with `\paren`)
-- **Build Cross-Platform Release**: Confirm the version in `mathbank/__init__.py`, then run `python3 -m scripts.build_release`. The builder verifies pinned SHA-256 values for the official Python/NuGet runtimes, the Release allowlist, runtime layout, and a source smoke check. It emits an in-archive `RELEASE-MANIFEST.json` and an external `.zip.sha256` file.
+- **Build Cross-Platform Release (Source Repository Only)**: In the source repository, confirm the version in `mathbank/__init__.py`, then run `python3 -m scripts.build_release`; portable packages do not include the builder. The builder verifies pinned SHA-256 values for the official Python/NuGet runtimes, the Release allowlist, runtime layout, and a source smoke check. It emits an in-archive `RELEASE-MANIFEST.json` and an external `.zip.sha256` file.
 
 ### 3. Full Backup and Restore
 

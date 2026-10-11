@@ -15,6 +15,35 @@ from scripts import build_release, release_overlay
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
+INTERNAL_TOOL_MODULE_NAMES = (
+    "classification_proposals",
+    "knowledge_backfill",
+    "knowledge_backfill_apply",
+    "association_batch",
+    "question_exchange",
+)
+INTERNAL_TOOL_MODULE_PATHS = tuple(
+    f"{package}/{name}.py"
+    for package in ("mathbank", "scripts")
+    for name in INTERNAL_TOOL_MODULE_NAMES
+)
+NON_RUNTIME_RELEASE_SCRIPT_PATHS = (
+    "scripts/migrate_word_math_private_chars.py",
+    "scripts/build_release.py",
+)
+INTERNAL_TOOL_FORBIDDEN_MEMBERS = (
+    *INTERNAL_TOOL_MODULE_PATHS,
+    *NON_RUNTIME_RELEASE_SCRIPT_PATHS,
+    "scripts/resources/classification_proposal.example.json",
+    "scripts/resources/nested/protocol.json",
+    "scripts/resources/",
+    "MathBank/Knowledge_Backfill.py",
+    "Scripts/Resources/protocol.json",
+    "Scripts/Resources/",
+    "Scripts/Migrate_Word_Math_Private_Chars.py",
+    "Scripts/Build_Release.py",
+)
+
 
 def _zip_bytes(name="payload.txt", content=b"verified"):
     output = io.BytesIO()
@@ -587,6 +616,181 @@ def _make_minimal_macos_tree(root):
     (root / "启动题库系统.command").chmod(0o755)
 
 
+def test_release_copy_excludes_internal_tools_and_preserves_runtime_imports(
+    tmp_path, monkeypatch
+):
+    source = tmp_path / "source"
+    staged = tmp_path / "staged"
+    for relative_path in (
+        *build_release.ROOT_FILE_ALLOWLIST,
+        "启动题库系统.command",
+        "scripts/__init__.py",
+        "scripts/backup.py",
+        "scripts/restore.py",
+        "scripts/search_questions.py",
+        "mathbank/backup.py",
+        "mathbank/db_migrations.py",
+        "mathbank/database.py",
+        "mathbank/sync_helper.py",
+        "mathbank/ocr_illustrations.py",
+        "mathbank/ocr_figure_review.py",
+        "mathbank/ocr_raster_layout.py",
+        *INTERNAL_TOOL_MODULE_PATHS,
+        *NON_RUNTIME_RELEASE_SCRIPT_PATHS,
+        "scripts/resources/classification_proposal.schema.json",
+        "scripts/resources/classification_proposal.example.json",
+        "scripts/resources/nested/protocol.json",
+        "MathBank/Knowledge_Backfill.py",
+        "Scripts/Resources/protocol.json",
+        # These names belong to other package paths and must survive.
+        "mathbank/resources/classification_proposal.example.json",
+        "mathbank/vendor/knowledge_backfill.py",
+        "scripts/vendor/question_exchange.py",
+        "templates/template.tex",
+    ):
+        path = source / relative_path
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(b"pass\n")
+    for relative_name in build_release.STATIC_ALLOWLIST:
+        path = source / "static" / relative_name
+        if relative_name in {"css", "js", "lib"}:
+            path.mkdir(parents=True, exist_ok=True)
+            (path / "runtime.txt").write_bytes(b"runtime asset\n")
+        else:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(b"runtime asset\n")
+
+    safe_modules = (
+        "mathbank.paths",
+        # A release branch may precede the optional product module. Test it
+        # only when this branch contains it; never borrow uncommitted sources.
+        *(("mathbank.sub_knowledge",) if (PROJECT_ROOT / "mathbank/sub_knowledge.py").is_file() else ()),
+        "mathbank.question_assets",
+        "mathbank.curriculums",
+        "scripts.local_launcher",
+        "scripts.windows_launcher",
+        "scripts.release_overlay",
+    )
+    # Real, standard-library-only runtime sources make the import smoke useful
+    # even in the release-guard CI job, which installs only pytest.
+    for relative_path in (
+        "mathbank/__init__.py",
+        *(name.replace(".", "/") + ".py" for name in safe_modules),
+    ):
+        path = source / relative_path
+        path.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(PROJECT_ROOT / relative_path, path)
+    curriculum = {"必修一": {"1. 集合": ["1.1 集合的概念"]}}
+    for version in ("A", "B", "S", "H"):
+        path = source / "mathbank/resources/curriculums" / f"{version}.json"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(curriculum, ensure_ascii=False), encoding="utf-8")
+
+    monkeypatch.setattr(build_release, "BASE_DIR", str(source))
+    build_release.copy_app_files(staged, "启动题库系统.command")
+
+    for relative_path in (*INTERNAL_TOOL_MODULE_PATHS, *NON_RUNTIME_RELEASE_SCRIPT_PATHS):
+        assert not (staged / relative_path).exists(), relative_path
+    assert not (staged / "scripts/resources").exists()
+    # Case-insensitive source files may alias these paths on macOS/Windows.
+    assert not (staged / "MathBank/Knowledge_Backfill.py").exists()
+    assert not (staged / "Scripts/Resources").exists()
+    for relative_path in (
+        "main.py",
+        "scripts/backup.py",
+        "scripts/restore.py",
+        "scripts/search_questions.py",
+        "mathbank/backup.py",
+        "mathbank/db_migrations.py",
+        "mathbank/database.py",
+        "mathbank/sync_helper.py",
+        "mathbank/ocr_illustrations.py",
+        "mathbank/ocr_figure_review.py",
+        "mathbank/ocr_raster_layout.py",
+        "mathbank/resources/classification_proposal.example.json",
+        "mathbank/vendor/knowledge_backfill.py",
+        "scripts/vendor/question_exchange.py",
+        "templates/template.tex",
+        *("mathbank/resources/curriculums/" + version + ".json" for version in ("A", "B", "S", "H")),
+        *(name.replace(".", "/") + ".py" for name in safe_modules),
+    ):
+        assert (staged / relative_path).read_bytes() == (source / relative_path).read_bytes()
+    assert build_release._release_path_violation(
+        "python/site-packages/vendor/knowledge_backfill.py"
+    ) is None
+    assert build_release._release_path_violation(
+        "python/site-packages/scripts/resources/protocol.json"
+    ) is None
+
+    smoke_code = """
+import importlib
+from pathlib import Path
+import sys
+root = Path(sys.argv[1]).resolve()
+sys.path.insert(0, str(root))
+for name in sys.argv[2:]:
+    module = importlib.import_module(name)
+    assert Path(module.__file__).resolve().is_relative_to(root), name
+from mathbank.curriculums import load_curriculum
+assert load_curriculum("A")["必修一"]["1. 集合"] == ["1.1 集合的概念"]
+"""
+    result = subprocess.run(
+        [sys.executable, "-I", "-B", "-c", smoke_code, str(staged), *safe_modules],
+        cwd=staged,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
+    assert not list(staged.rglob("__pycache__"))
+
+
+def test_git_ignores_only_local_batch_tools_and_their_dedicated_tests(tmp_path):
+    shutil.copy2(PROJECT_ROOT / ".gitignore", tmp_path / ".gitignore")
+    subprocess.run(["git", "init", "-q", str(tmp_path)], check=True)
+    ignored_paths = [
+        *INTERNAL_TOOL_MODULE_PATHS,
+        "scripts/migrate_word_math_private_chars.py",
+        "tests/test_migrate_word_math_private_chars.py",
+        "scripts/resources/classification_proposal.schema.json",
+        "scripts/resources/classification_proposal.example.json",
+        *("tests/test_" + name + ".py" for name in (
+            "association_batch", "classification_proposals", "knowledge_backfill",
+            "knowledge_backfill_apply", "question_exchange",
+        )),
+    ]
+    runtime_paths = [
+        "mathbank/sub_knowledge.py", "mathbank/ocr_illustrations.py",
+        "mathbank/ocr_figure_review.py", "mathbank/ocr_raster_layout.py",
+        "mathbank/resources/curriculums/A.json", "scripts/build_release.py",
+        "scripts/local_launcher.py", "scripts/backup.py", "scripts/restore.py",
+        "tests/test_release_hardening.py", "tests/test_sub_knowledge.py",
+        "tests/test_single_ocr_illustrations.py",
+    ]
+    result = subprocess.run(
+        ["git", "check-ignore", "--no-index", "--stdin"],
+        input="\n".join(ignored_paths + runtime_paths) + "\n",
+        cwd=tmp_path, capture_output=True, text=True, check=False,
+    )
+    assert result.returncode == 0, result.stderr
+    assert set(result.stdout.splitlines()) == set(ignored_paths)
+
+
+@pytest.mark.parametrize("forbidden_path", INTERNAL_TOOL_FORBIDDEN_MEMBERS)
+def test_release_tree_rejects_internal_tool_files_and_directories(
+    tmp_path, forbidden_path
+):
+    _make_minimal_macos_tree(tmp_path)
+    path = tmp_path / forbidden_path
+    if forbidden_path.endswith("/"):
+        path.mkdir(parents=True, exist_ok=True)
+    else:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(b"must not ship\n")
+    with pytest.raises(RuntimeError, match="forbidden artifacts"):
+        build_release.assert_release_tree_clean(tmp_path, "macos")
+
+
 @pytest.mark.parametrize(
     "forbidden_path",
     [
@@ -733,6 +937,29 @@ def test_finished_archive_rejects_documentation_and_test_artifacts(
     with zipfile.ZipFile(archive_path, "a") as archive:
         archive.writestr(forbidden_path, b"must not ship")
 
+    with pytest.raises(RuntimeError, match="forbidden artifacts"):
+        build_release.verify_zip_archive(
+            archive_path,
+            {"RELEASE-MANIFEST.json", "main.py", "启动题库系统.command"},
+        )
+
+
+@pytest.mark.parametrize("forbidden_path", INTERNAL_TOOL_FORBIDDEN_MEMBERS)
+def test_finished_archive_rejects_internal_tool_files_and_directories(
+    tmp_path, forbidden_path
+):
+    staging = tmp_path / "staging"
+    _make_minimal_macos_tree(staging)
+    archive_path = build_release._build_archive(
+        staging,
+        str(tmp_path / "MathBank-macOS"),
+        "macos",
+        "启动题库系统.command",
+    )
+    with zipfile.ZipFile(archive_path, "a") as archive:
+        archive.writestr(forbidden_path, b"" if forbidden_path.endswith("/") else b"must not ship\n")
+    # A CRC-valid, otherwise well-formed archive must fail the explicit package
+    # boundary before the manifest's extra-member check can catch it.
     with pytest.raises(RuntimeError, match="forbidden artifacts"):
         build_release.verify_zip_archive(
             archive_path,
