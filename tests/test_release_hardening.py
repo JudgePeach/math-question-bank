@@ -768,12 +768,12 @@ def test_git_ignores_only_local_batch_tools_and_their_dedicated_tests(tmp_path):
         "tests/test_single_ocr_illustrations.py",
     ]
     result = subprocess.run(
-        ["git", "check-ignore", "--no-index", "--stdin"],
-        input="\n".join(ignored_paths + runtime_paths) + "\n",
-        cwd=tmp_path, capture_output=True, text=True, check=False,
+        ["git", "check-ignore", "--no-index", "-z", "--stdin"],
+        input=("\0".join(ignored_paths + runtime_paths) + "\0").encode("utf-8"),
+        cwd=tmp_path, capture_output=True, check=False,
     )
     assert result.returncode == 0, result.stderr
-    assert set(result.stdout.splitlines()) == set(ignored_paths)
+    assert set(result.stdout.decode("utf-8").rstrip("\0").split("\0")) == set(ignored_paths)
 
 
 @pytest.mark.parametrize("forbidden_path", INTERNAL_TOOL_FORBIDDEN_MEMBERS)
