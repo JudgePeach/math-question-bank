@@ -19,7 +19,7 @@ No frontend build step is required. The Windows 10/11 x64 portable package inclu
 With just basic LaTeX math formula syntax, MathBank empowers frontline math teachers to efficiently solve exam generation and lesson preparation challenges:
 
 - 🎨 **1:1 A4 Simulation Exam Layout**: Provides an intuitive exam paper canvas just like Word, complete with sealing line, title, and notice box. Supports drag-and-drop sorting, question blank space height adjustment, and one-click switching to A3 answer sheet or Gaokao 19-question preset.
-- ⚡ **Second-Level Formula Rendering & Exam-Level Export**: Built-in professional math formula typesetting engine with real-time web preview. Supports one-click export of high-definition PDFs matching National College Entrance Examination (Gaokao) standards and complete LaTeX source packages.
+- ⚡ **Second-Level Formula Rendering & Exam-Level Export**: Built-in professional math formula typesetting engine with real-time web preview. Choice options adapt to 4, 2, or 1 columns according to their rendered widths. Long text wraps naturally in a single column; only an indivisible formula wider than its column scrolls horizontally, without reducing the font size. Question-bank, draft, and detail previews retain the complete stem, every option, and their pictures. Supports one-click export of high-definition PDFs matching National College Entrance Examination (Gaokao) standards and complete LaTeX source packages.
 - 🤖 **AI Intelligent Exam Generation & Solving Assistance**: Built-in Large Language Models (DeepSeek, etc.) automatically select questions and generate exams based on knowledge point breakdown tables and difficulty gradients; supports single-question AI generation of detailed solutions and teaching reflections.
 - 📚 **One-Click Switching Across Major Curriculum Outlines**: Natively preloaded with standard High School curriculum outlines: **PEP A (人教A版)**, **PEP B (人教B版)**, **Jiangsu (苏教版)**, and **Shanghai (沪教版)**. Changing outlines automatically and intelligently maps questions without manual re-organization.
 - 📄 **Multi-Format Exam Smart Parsing & PDF Dual-Strategy Route**: Supports direct drag-and-drop of **LaTeX source (.tex)**, **Markdown (.md)**, **PDF exams (.pdf)**, or **Word documents (.docx)** for fast intelligent slice parsing. Markdown support is still experimental: carefully check each question, formula, image, and answer association before importing. PDF parsing natively offers dual strategies: **[Native Vector Text & Formula Extraction] (Default Recommended)** and **[Full-Page Visual OCR]**. Primary recommendation is native extraction using `PDF Inspector` for sub-second, 0-visual-token loss extraction; if images cause missing formulas, the system smoothly falls back to VLM visual OCR completion; full-page visual OCR and source-page review prompts remain available for unusually formatted exams; model output still needs to be checked against the original paper. Word import structurally converts Office OMML and parses MathType structures from OLE `Equation Native` streams, preserving preview images with manual audit tags for non-high-confidence formulas.
@@ -42,18 +42,27 @@ flowchart LR
     Merge --> LLM[LLM Structured Slice Parsing]
 ```
 
-### 2. Geometry Reconstruction & Self-Correction Harness
+### 2. Single-Question OCR, Reviewed Crops & Optional TikZ
+
+This flow applies to single-question screenshots. PDF and Word batch imports use their own extraction and review workflows.
+
 ```mermaid
 flowchart LR
-    Img[Question Image] --> VLM[Multimodal VLM OCR & BBox]
-    VLM --> Crop[Auto Smart Crop]
-    Crop --> Reason[Multimodal Spatial Reasoning]
-    Reason --> TikZ[TikZ Code Generation]
-    TikZ --> Engine[Local XeLaTeX Execution]
-    Engine --> Feedback{Compile Logs &<br/>Visual Feedback}
-    Feedback -->|"Compile Error"| Repair[AI Code Self-Correction Loop]
-    Repair --> Engine
-    Feedback -->|"Success"| Output[HD Vector Graphics & Preview]
+    Img[Single-question screenshot] --> OCR[Text and figure positions]
+    OCR --> Crop[Crop proposed figures]
+    Crop --> Review{Actual crop verified}
+    Review -->|"Needs correction"| Repair[Bounded correction and recheck]
+    Repair -->|"Verified"| Mode{TikZ enabled}
+    Repair -->|"Still uncertain"| Manual[Pending slot and manual crop]
+    Review -->|"Uncertain or unavailable"| Manual
+    Review -->|"Verified"| Mode
+    Mode -->|"No"| Original[Use verified source crop]
+    Mode -->|"Yes"| TikZ[Generate TikZ code]
+    TikZ --> Engine[Local XeLaTeX compilation]
+    Engine -->|"Failed"| Original
+    Engine -->|"Compiled"| Preview{Rendered preview verified}
+    Preview -->|"Failed or unavailable"| Original
+    Preview -->|"Verified"| Output[TikZ preview and vector source]
 ```
 
 ### 3. Paper Ingestion & Concurrent Solving Harness
@@ -74,7 +83,12 @@ flowchart LR
   * **Windows users**: Recommend installing [**TeX Live Official Website**](https://www.tug.org/texlive/) (ISO ~5GB; Tsinghua University mirror recommended; MiKTeX is also supported).
 - **📄 Word (.docx) Exam Paper Safe Import**: No Microsoft Word or MathType installation needed. The system converts standard OMML formulas and uses `olefile` + MTEF v5 record trees to parse MathType structures; numbers like `32` and Latin letters like `p` won't be misidentified by legacy character rules. The system recursively preserves hyperlinks, tracked revisions, and Symbol characters, while extracting tables and original images. Preview images are kept for formulas without high-confidence conversion. The parser report details counts for structural conversion, embedded LaTeX, limited compatibility, and manual review needed.
 
-- Single-question OCR preserves multiple diagrams in the stem, options, and tables. With TikZ disabled, reviewed source crops stay at their original positions; manual cropping remains available for uncertain diagrams, and drawing or compilation failures keep usable source images. Choice previews show complete long options, and review images are preserved during saving and full backups. Curriculum knowledge remains a single value, with whole-chapter placement when a unique subsection cannot be determined and existing labels preserved.
+### Preview & Single-Question OCR
+
+- **Reviewed diagrams at their original positions**: Single-question OCR supports multiple diagrams in the stem, choices, and table cells. It checks the actual crop against the original screenshot. Any bounded box correction is cropped and checked again. With TikZ disabled, verified source crops stay at their original positions; no local LaTeX installation is needed for this cropping path. Unverified or unavailable crops leave a pending figure slot with a manual cropping entry. With TikZ enabled, the program can generate and compile drawing code, then check the rendered preview against the source. Drawing, compilation, or preview-verification failure falls back to a verified original crop. Figure verification adds model calls and waiting time; disabling TikZ still retains crop verification. These guarantees apply to single-question OCR, not automatically to PDF/Word batch imports.
+- **Edits remain under your control**: Late responses from a previous recognition request or another question are not applied. If you edit while recognition is running, the current text remains and the result waits for you to select **Load recognition result (载入识别结果)**. If the text changes while a manual crop is open or uploading, the old insertion is rejected; reopen cropping to choose the correct position.
+- **exam-zh upright constants**: Web previews support `\iu` / `\upi` for upright imaginary-unit i and `\eu` / `\upe` for upright natural constant e. Ordinary variables i/e stay italic. This preview compatibility does not rewrite the original text, database records, or export source.
+- **Review images and curriculum labels**: Teacher-review images remain part of saving, drafts, and full backups. Curriculum knowledge remains a single value; when a unique subsection cannot be determined, the recommendation uses whole-chapter placement. Historical and custom classifications remain preserved.
 
 ---
 
@@ -119,26 +133,25 @@ Both launchers check Python and required packages, and open an already-running M
 
 ## 🔑 API Configuration & LLM Selection Guide
 
-Whether running from source or portable packages, AI smart parsing and OCR formula recognition rely on external APIs. After launching, click the **Settings (Gear Icon)** button in the top right corner of the web interface to save API keys:
+Whether running from source or portable packages, AI tasks rely on external APIs. After launching, click the **Settings (Gear Icon)** button in the top right corner of the web interface to save API keys and configure the provider and model separately for solving, paper parsing, classification, OCR, and drawing:
 
 ### 1. 🤖 Pure Text LLM Reasoning (Solving / Parsing / Classification)
-Directly using [DeepSeek Official Open Platform](https://platform.deepseek.com/) API key is recommended for exceptional cost-performance and logical reasoning.
+Configure the text-task provider and model separately from OCR. The program provides **DeepSeek Flash** and **DeepSeek V4 Pro** presets for text tasks such as solving, paper parsing, and classification, using the existing [DeepSeek Official Open Platform](https://platform.deepseek.com/) API-key configuration. Refer to the provider's current model documentation for availability, supported inputs, and pricing.
 
 ### 2. 📷 Default Formula OCR Model (Must use Multimodal VLM)
-* **Must use Multimodal LLMs**: Formula OCR reads images, so **pure language models (like DeepSeek V3/R1 text-only) cannot be used for OCR**.
-* **Domestic Model Options**: Recommend **Qwen-VL** or **MIMO** series. E.g., registering via [SiliconFlow Referral Link](https://cloud.siliconflow.cn/i/hkgjSWrg) grants a **¥16 voucher**; or register on [Aliyun Bailian Platform](https://bailian.console.aliyun.com/), which offers a **3-month free trial quota** for multimodal models. Use `Qwen/Qwen3-VL-8B-Instruct` on SiliconFlow; on Bailian, use `qwen3.7-flash` for routine OCR, paper parsing, and classification, or `qwen3.7-plus` for solving and TikZ drawing.
-* **Overseas / Aggregator Providers**: If you have access to API relay platforms, **`GPT-5.6 Luna` is strongly recommended**! Recent price drops make GPT-5.6 Luna perform significantly better than most models in formula extraction accuracy while being **cheaper than Qwen**, making it the top choice for OCR.
+* **Use an image-capable model**: OCR reads screenshots. A text-only task configuration cannot perform image recognition.
+* **DeepSeek official OCR**: In **Settings**, choose **DeepSeek** as the OCR provider and **`deepseek-flash`** as the OCR model. This reuses the existing DeepSeek official API key; no separate OCR key is needed. **`deepseek-v4-pro`** is not the official OCR preset.
+* **Other existing providers**: The program includes [SiliconFlow](https://cloud.siliconflow.cn/i/hkgjSWrg) and [Aliyun Bailian](https://bailian.console.aliyun.com/) integrations. The SiliconFlow OCR preset includes `Qwen/Qwen3-VL-8B-Instruct`; Bailian presets use `qwen3.7-flash` for routine OCR, paper parsing, and classification, and `qwen3.7-plus` for solving and drawing. Choose models that the platform actually offers, confirming image-input support for OCR. Trial credits, free quotas, prices, and model capabilities are subject to each platform's current published terms.
 
 ### 3. 🎨 TikZ Geometry Diagram Redrawing Model (`PREFER_DRAW_MODEL`)
-* If two-stage multimodal geometric illustration redrawing is enabled, **avoid using domestic models** (currently domestic models underperform on TikZ geometry code generation).
-* Recommend **GPT series** (e.g., `GPT-5.6 Luna`) or **Gemini series** (e.g., `Gemini 3.6 Flash`), offering extremely high drawing accuracy and vector fidelity.
+Choose the drawing model through the existing provider configuration, using the provider's current model list and supported inputs. Generated code and compiled diagrams still need to be checked against the original; enabling TikZ does not guarantee an accurate redraw. You can disable TikZ to use reviewed original-image crops instead.
 
 > [!WARNING]
 > **Disclaimer Regarding Third-Party API Relay Services**
 > 
 > The two third-party API relay links provided below are listed **solely because the developer uses them personally in daily workflow, and no guarantees or warranties are made regarding their service stability, model authenticity (watered-down/replaced models), or data privacy/security**. Third-party aggregators may pose data leak, privacy, or model substitution risks. Use with caution:
-> * **Recommended Multimodal Aggregator A (Ideal for GPT Models)**: Obtain API keys via [RightCodes Registration Link](https://www.rightapi.ai/register?aff=f7656b31), providing affordable and performant `gpt-5.6-luna` series.
-> * **Recommended Multimodal Aggregator B (Ideal for Claude / Alibaba Models)**: Obtain API keys via [PackyAPI Registration Link](https://www.packyapi.com/register?aff=5yyF), suitable for Claude and Aliyun Bailian models.
+> * **Multimodal Aggregator A**: [RightCodes Registration Link](https://www.rightapi.ai/register?aff=f7656b31). Check its current supported models, capabilities, and pricing.
+> * **Multimodal Aggregator B**: [PackyAPI Registration Link](https://www.packyapi.com/register?aff=5yyF). Check its current supported models, capabilities, and pricing.
 
 > [!IMPORTANT]
 > **Regarding TikZ Auto Geometry Redrawing & Local LaTeX Environment Dependency**
@@ -152,10 +165,16 @@ Directly using [DeepSeek Official Open Platform](https://platform.deepseek.com/)
 
 - **✨ In-App One-Click Update Check & Portable Direct Link**: Built-in automatic version detection. Go to top-right 【Settings】$\rightarrow$【Version Updates】to compare against GitHub Releases, view release notes, and download portable packages directly, or ignore updates.
 - **Method A: Git Upgrade (Recommended for Source Users)**
+
+  1. Save your current edits and create a verified full backup.
+  2. Use the webpage power button to shut MathBank down and wait until the service has stopped.
+  3. Update the source:
   ```bash
   git pull
   ```
-  *Note: Databases (`*.db`), API keys (`.env`), dimension configurations (`data_backup/`), and illustrations (`static/uploads/`) are Git-ignored. `git pull` will never overwrite local data.*
+  4. Launch again and check the version in Settings. Resolve any source-update conflicts before launching.
+
+  Databases (`*.db`), API keys (`.env`), dimension configurations (`data_backup/`), and illustrations (`static/uploads/`) are Git-ignored. These ignore rules do not prevent database migrations when the updated program starts, and do not replace a backup or rollback plan.
 
 - **Method B: Portable Package Overwrite Upgrade**
   1. Create a verified full backup first (see **Full Backup and Restore** below).
@@ -167,10 +186,16 @@ Directly using [DeepSeek Official Open Platform](https://platform.deepseek.com/)
 
   Overlay upgrades preserve root databases and their WAL/SHM files, `.env`, `data_backup/`, `static/uploads/`, `.system_generated/`, and `venv/`. Never delete the existing installation and replace it with the new folder. The Windows 10/11 x64 portable package includes its complete Python and VC++ runtimes, so no separate runtime installation is required. The macOS package does not include Python, so confirm that Python 3.10 or newer is installed on the Mac before launching it. The macOS launcher automatically creates or repairs `venv`; network access is needed only when the environment is first created or when `requirements.txt` changed/dependencies are missing.
 
+### Database Upgrades & Rollback
+
+Supported released versions can be upgraded directly, without installing each intermediate version. Only when the database structure needs migration does the program first create and verify a database snapshot in `data_backup/schema_snapshots/`. That automatic snapshot contains **only the database**. Create a full backup separately before upgrading to preserve referenced illustrations and custom metadata as well.
+
+**Rollback**: Completely stop the service, then restore the pre-upgrade full backup and use the corresponding older application. Replacing program files alone does not undo a migrated database, and an older program should not be started against a newer database structure. Preserve a separate copy or export of any edits made after the backup before rolling back; restoring the earlier backup will not include those later edits. Keep `.env` separately, since full backups exclude API secrets. Database structure numbers and software versions are managed separately; upgrading does not automatically reclassify historical questions.
+
 > [!IMPORTANT]
 > **Data Backup Recommendation**
 > 
-> A verified full backup is the preferred safeguard before an overlay upgrade. For an additional manual copy, preserve these files/directories:
+> A verified full backup is the preferred safeguard before either upgrade method. Automatic pre-migration database snapshots contain **only the database**; a full backup also preserves referenced illustrations and custom metadata. For an additional manual copy, preserve these files/directories:
 > - `*.db` (Local Question Database)
 > - `.env` (API Key Config)
 > - `data_backup/` (Custom Dimensions & Curriculum Outlines)
@@ -205,11 +230,13 @@ python3 -m scripts.restore data_backup/snapshots/mathbank-backup-TIMESTAMP.zip
 python3 -m scripts.restore data_backup/snapshots/mathbank-backup-TIMESTAMP.zip --apply --yes
 ```
 
-Full backups include a per-file SHA-256 manifest and exclude `.env`, the local token, and API secrets. The server and restore tool share a cross-platform runtime lock, so restore refuses to run until the service is fully stopped. `questions_backup.json` is a compatibility JSON export for search/sync; it is not a disaster-recovery backup.
+Full backups include the database, referenced illustrations, custom metadata, and a per-file SHA-256 manifest; they exclude `.env`, the local token, and API secrets. The server and restore tool share a cross-platform runtime lock, so restore refuses to run until the service is fully stopped. `questions_backup.json` is a compatibility JSON export for search/sync; it is not a disaster-recovery backup.
 
 ---
 
-## 📂 Project Directory Structure
+## 📂 Source Repository & Portable Package Contents
+
+The tree below describes the **source repository** and its runtime data locations. Portable ZIPs contain the allowlisted application and normal user components, including launchers, offline preview resources, templates, search, backup, and restore tools. Development-only and one-off internal tools, `tests/`, `docs/`, and `scripts/build_release.py` are excluded. Source documentation and developer tools shown below are therefore not a portable-package file list. Runtime data and credentials are created locally or preserved during upgrades; they are not shipped in the ZIP.
 
 ```text
 .
@@ -237,6 +264,9 @@ Full backups include a per-file SHA-256 manifest and exclude `.env`, the local t
 │   ├── ai_providers.py         # AI provider & model parameter parsers
 │   ├── ai_http.py              # AI HTTP requests & authentication
 │   ├── ai_json.py              # AI structured JSON fault-tolerant parser
+│   ├── ocr_illustrations.py    # Single-question figure slots & crop materialization
+│   ├── ocr_figure_review.py    # Actual crop & TikZ-preview verification
+│   ├── ocr_raster_layout.py    # Bounded pixel-layout evidence & box corrections
 │   ├── latex_diagnostics.py    # XeLaTeX error diagnosis & AI solver
 │   ├── content_locks.py        # Word formula inline visible locking & verification
 │   ├── omml_helper.py          # Office OMML structured formula converter
@@ -250,11 +280,11 @@ Full backups include a per-file SHA-256 manifest and exclude `.env`, the local t
 │   ├── restore.py
 │   ├── migrate_fillin.py
 │   ├── migrate_choice_parentheses.py
-│   └── build_release.py
+│   └── build_release.py        # Source-only builder; excluded from portable ZIPs
 ├── static/                     # Frontend static assets
 │   ├── index.html              # Main dashboard frontend SPA
 │   ├── css/                    # Offline styles for Tailwind, FontAwesome, KaTeX
-│   ├── uploads/                # Illustration uploads (auto-cleaned)
+│   ├── uploads/                # Unreferenced images enter recoverable retention
 │   └── js/                     # Cascading frontend JS modules
 │       ├── api.js              # API interaction & Token interceptor
 │       ├── editor.js           # Editing, KaTeX preview & TikZ compilation

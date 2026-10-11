@@ -23,7 +23,7 @@ https://github.com/user-attachments/assets/46834cbd-3499-4c06-9d8e-c81bdc10a0a7
 只需了解一些基础的 LaTeX 数学公式语法，MathBank 就能帮一线数学老师高效解决组卷与备课难题：
 
 - 🎨 **1:1 A4 仿真组卷排版**：提供像 Word 一样直观的仿真试卷画布，密封线、大标题、注意事项框一应俱全。支持拖拽排序、题目留白高度调整，以及一键切换 A3 答题卡与高考 19 题预设。
-- ⚡ **秒级公式渲染与高考级导出**：内置专业数学公式排版引擎，网页上修改秒级实时预览。选择题选项按实际宽度自动调整列数，保持文字和公式单行显示；小问分段保留前置标点。支持一键导出高考标准的高清 PDF 试卷与完整的排版源码包。
+- ⚡ **秒级公式渲染与高考级导出**：内置专业数学公式排版引擎，网页上修改秒级实时预览。题库与草稿中的选择题完整显示题干、选项和图片，选项按实际宽度在四列、两列和单列之间调整；单列长文字自然换行，只有超宽且不可拆分的公式独立横向滚动。小问分段保留前置标点。支持一键导出高考标准的高清 PDF 试卷与完整的排版源码包。
 - 🤖 **AI 智能组卷与辅助解答**：内置 DeepSeek 等大语言模型，能根据考点细目表与难度阶梯一键自动挑选题目生成试卷；支持单题一键 AI 生成详细解析与教学反思。
 - 📚 **主流教材大纲一键切换**：原生预设 **人教A版**、**人教B版**、**苏教版**与**沪教版**标准高中大纲目录，切换大纲时系统自动智能映射，无需手动重新整理题目。
 - 📄 **多格式试卷智能拆解与 PDF 双策略分流**：支持直接拖入 **LaTeX 源码 (.tex)**、**Markdown (.md)**、**PDF 试卷 (.pdf)** 或 **Word 试卷 (.docx)** 快速智能切片拆题。Markdown 支持尚不完善，拆分结果可能有误，请谨慎使用，并在入库前逐题核对题干、公式、配图与答案对应。PDF 拆解原生提供 **【原生文字公式提取】（默认推荐）** 与 **【全图视觉 OCR】** 双解析策略：推荐优先使用原生提取模式，享受 `PDF Inspector` 毫秒级 0 视觉 Token 损耗的极速提取，当遇到 Word/MathType 特殊导出卷导致公式硬转化为图片时，系统会自动平滑降级并触发 VLM 视觉 OCR 识图补全；同时，为避免极少数排版极其特殊的试卷使自愈规则失效，系统亦保留了全图视觉 OCR 备选通道与原页复核提示；模型识别结果仍需对照原卷检查。Word 导入则会结构化转换 Office OMML，并从 OLE `Equation Native` 流解析 MathType 结构，不能高置信转换的公式保留原预览图并标记人工核对。
@@ -46,19 +46,25 @@ flowchart LR
     Merge --> LLM[大语言模型结构化切片拆题]
 ```
 
-### 2. 几何图形重构与闭环自愈 (Geometry Reconstruction Harness)
+### 2. 单题识图、裁图与可选 TikZ 重绘 (Single-Question OCR Harness)
 ```mermaid
 flowchart LR
-    Img[题目图像输入] --> VLM[多模态 VLM 识图与 BBox]
-    VLM --> Crop[智能精准裁剪]
-    Crop --> Reason[多模态空间几何推理]
-    Reason --> TikZ[TikZ 代码生成]
-    TikZ --> Engine[本地 XeLaTeX 编译执行]
-    Engine --> Feedback{编译日志与<br/>视觉诊断反馈}
-    Feedback -->|"编译失败/语法错误"| Repair[AI 代码自动闭环纠错]
-    Repair --> Engine
-    Feedback -->|"编译成功"| Output[高清矢量图形与预览]
+    Img[单题图像输入] --> VLM[转录文字与定位多幅插图]
+    VLM --> Crop[按原位置裁图]
+    Crop --> Review{裁图视觉核验通过?}
+    Review -->|"否"| Repair[受限修框与重新裁图]
+    Repair --> Recheck{再次核验通过?}
+    Recheck -->|"否"| Manual[保留待补图位置与手动截图入口]
+    Review -->|"是"| Mode{启用 TikZ 重绘?}
+    Recheck -->|"是"| Mode
+    Mode -->|"否"| Source[原位置插入核验通过的原图]
+    Mode -->|"是"| TikZ[逐图生成 TikZ 与本地编译]
+    TikZ --> Check{编译与视觉核验通过?}
+    Check -->|"否"| Source
+    Check -->|"是"| Output[原位置插入重绘图]
 ```
+
+此流程适用于单题 OCR。PDF、Word 整卷导入使用各自的配图与来源核对流程，仍需对照原卷检查。
 
 ### 3. 试卷切片与并发解题管道 (Paper Ingestion Harness)
 ```mermaid
@@ -79,7 +85,10 @@ flowchart LR
 - **📄 Word (.docx) 试卷安全导入**：无需安装 Microsoft Word 或 MathType。系统可转换常见 OMML 公式，并使用 `olefile` + MTEF v5 记录树解析 MathType 结构；普通 `32`、拉丁 `p` 等不会再因旧的字符规则被误判。系统还会递归保留超链接/修订文字/Symbol 字符并提取表格与原图，不能高置信转换的公式则保留 Word 预览图。拆卷报告会分别显示结构转换、内嵌 LaTeX、有限兼容及人工核对数量。
 - **📝 Word 可编辑公式导出**：系统会优先复用电脑上已安装的 Pandoc。首次导出时如未检测到，经用户确认后自动下载并安装到 MathBank 本地运行目录，安装完成后自动继续原导出；无需管理员权限、手动选路径或配置 PATH。下载优先使用 Pandoc 官方 GitHub Release，失败时自动切换 SourceForge 备用线路，两条线路均使用同一固定 SHA-256 校验。
 
-- 单题 OCR 可处理题干、选项和表格中的多幅插图。禁用 TikZ 时仍会在原位置插入核对通过的截图；自动配图不可靠时可手动截图补入，生成或编译失败会保留可用原图。选择题预览完整显示长选项，教师评析图片随保存与完整备份保留。教材小节仍为单值，无法唯一确定时显示整章定位，并保留历史分类。
+- **单题 OCR 与多图处理**：题干、选项和表格中的插图分别定位并保留原位置。禁用 TikZ 时仍会裁图和视觉核验；启用时增加重绘、编译与重绘图核验，失败则回退到核验通过的原图。没有可靠裁片时保留待补图位置，可手动截图补入。含图核验会增加模型调用与等待时间，关闭 TikZ 仍保留裁图核验。
+- **识图期间的编辑保护**：识别期间若有新增编辑，会保留现有内容，并等待用户明确载入识图结果；切换题目后旧结果不会覆盖新编辑。手动截图定位期间若题目内容变化，旧操作会被拒绝，需重新定位。
+- **exam-zh 正体常量预览**：网页支持 `\iu` / `\upi` 显示正体 i，`\eu` / `\upe` 显示正体 e；普通变量 i、e 仍为斜体。兼容处理只作用于网页预览，不改写题目原文、数据库或导出源码。
+- **图片保存与教材分类**：教师评析图片随保存、草稿及完整备份保留。教材小节仍为单值，无法唯一确定时显示整章定位，并保留历史和自定义分类。
 
 ---
 
@@ -124,26 +133,27 @@ flowchart LR
 
 ## 🔑 API 配置与大模型选型指南
 
-无论是使用源码还是便携包，AI 智能解析与 OCR 公式识别均依赖外部 API。启动项目后，点击网页右上角的 **设置（齿轮）按钮** 即可一键填入并保存密钥：
+无论是使用源码还是便携包，AI 智能解析与 OCR 公式识别均依赖外部 API。启动项目后，点击网页右上角的 **设置（齿轮）按钮** 填入并保存密钥，并分别选择解题、拆卷、分类、识图与绘图任务的供应商和模型。模型名称、图像输入能力、价格与试用活动以对应平台当前说明为准：
 
-### 1. 🤖 纯文本 AI 推理大模型（解题/拆卷/分类）
-推荐直接使用 [DeepSeek 官方开放平台](https://platform.deepseek.com/) 密钥，性价比与逻辑推导极高。
+### 1. 🤖 文本任务模型（解题/拆卷/分类）
+程序提供 [DeepSeek 官方开放平台](https://platform.deepseek.com/) 等供应商接入，可在设置中为各任务选择模型。DeepSeek 预设包含 `deepseek-flash` 与 `deepseek-v4-pro`；程序将 V4 Pro 用于文本任务，带图识图应选择下方的图像输入型号。
 
 ### 2. 📷 默认公式识图模型（OCR - 必须使用多模态 VLM 大模型）
-* **必须使用多模态大模型**：公式识图需要读取图像，因此 **DeepSeek 纯语言模型无法用于 OCR 识图**。
-* **国内模型选型**：推荐使用 **通义千问 (Qwen-VL)** 或 **MIMO** 系列。例如通过 [硅基流动 (SiliconFlow) 专属链接](https://cloud.siliconflow.cn/i/hkgjSWrg) 注册并完成实名认证后，可直接获得 **16 元代金券** 试用赠额；或者前往 [阿里云百炼平台](https://bailian.console.aliyun.com/) 注册，旗下的多模态模型在 **3 个月内均提供免费试用额度**。硅基流动可使用 `Qwen/Qwen3-VL-8B-Instruct`；阿里百炼常规 OCR、拆卷和分类推荐 `qwen3.7-flash`，解答与绘图推荐 `qwen3.7-plus`。
-* **海外/中转站模型**：如果有合适的中转站或者其他渠道，**强烈推荐选择 `GPT-5.6 Luna`**！GPT 5.6 Luna 最近大幅降价，不仅在公式提取与精度上远超大多数模型，**使用成本甚至比千问还要便宜**，是识图的首选。
+* **图像输入要求**：公式识图必须选择能接收图片的具体型号，仅支持文字输入的型号不能用于 OCR。
+* **DeepSeek 官方识图**：在设置的“默认公式识图模型”中选择 **DeepSeek → `deepseek-flash`**，复用 DeepSeek API Key。程序的 DeepSeek 官方识图预设为 Flash；`deepseek-v4-pro` 不作为识图型号。
+* **其他供应商预设**：程序提供 [硅基流动 (SiliconFlow)](https://cloud.siliconflow.cn/i/hkgjSWrg)、[阿里云百炼](https://bailian.console.aliyun.com/) 等接入。硅基流动的识图预设包含 `Qwen/Qwen3-VL-8B-Instruct`；百炼常规 OCR、拆卷和分类预设为 `qwen3.7-flash`，解答与绘图为 `qwen3.7-plus`。请按平台实际开放的型号选择，注册赠额和试用额度以当时活动规则为准。
+* **海外/中转站模型**：可在相应供应商下选择预设或填写自定义模型名称；用于识图时需确认该接口支持图像输入。价格、计费方式及效果可能随平台和任务变化，建议先用少量代表性题目核对结果与用量。
 
 ### 3. 🎨 TikZ 几何绘图模型（`PREFER_DRAW_MODEL`）
-* 如果开启了双阶段多模态几何插图重绘，**建议不要使用国内模型**（目前国内模型在 TikZ 几何代码生成上表现普遍较差）。
-* 建议选择 **GPT 系列**（如 `GPT-5.6 Luna`）或 **Gemini 系列**（如 `Gemini 3.6 Flash`），绘图精准度与矢量还原度极高。
+* 为绘图任务单独选择模型；有参考图片的重绘需要该型号和接口支持图像输入。
+* 建议先用少量代表性几何图检查编译结果与原图是否一致。编译成功后仍需核对图形，单题 OCR 的自动核验与回退流程见上方说明。
 
 > [!WARNING]
 > **关于第三方 API 中转站的风险与担保声明**
 > 
 > 下面提供的两个中转站链接**仅因为开发者个人日常在用，不对其服务稳定性、模型真实度（是否存在掺水/以次充好）或数据隐私安全性提供任何形式的担保**。第三方中转站可能存在数据泄露、隐私风险或模型替换行为，请用户务必谨慎评估与使用：
-> * **推荐多模态中转站 A (适合 GPT 模型)**：通过专属 [RightCodes 注册链接](https://www.rightapi.ai/register?aff=f7656b31) 获取 API Key，提供价格实惠且性能优越的 `gpt-5.6-luna` 系列。
-> * **推荐多模态中转站 B (适合 Claude / 阿里系模型)**：通过专属 [PackyAPI 注册链接](https://www.packyapi.com/register?aff=5yyF) 获取 API Key，适合 Claude及阿里百炼模型。
+> * **开发者使用的中转站 A**：[RightCodes 注册链接](https://www.rightapi.ai/register?aff=f7656b31)。可用模型、价格及图像输入支持以该平台说明为准。
+> * **开发者使用的中转站 B**：[PackyAPI 注册链接](https://www.packyapi.com/register?aff=5yyF)。可用模型、价格及图像输入支持以该平台说明为准。
 
 > [!IMPORTANT]
 > **关于 TikZ 自动几何重绘与本地 LaTeX 编译环境依赖**
@@ -157,10 +167,11 @@ flowchart LR
 
 - **✨ 界面一键检查更新与便携包直链**：系统内置自动版本检测机制。进入网页右上角【设置】$\rightarrow$【版本更新】，即可一键实时比对 GitHub 官方 Release，查阅最新版本特性并一键下载对应系统的便携包；亦支持一键忽略不常更新的版本。
 - **方式 A：Git 升级（源码用户推荐）**
+  先创建完整备份并安全关闭题库服务，再更新代码：
   ```bash
   git pull
   ```
-  *说明：数据库 (`*.db`)、API 密钥 (`.env`)、维度配置 (`data_backup/`) 及插图 (`static/uploads/`) 均已被 Git 忽略，执行 `git pull` 绝不会影响本地数据。*
+  数据库 (`*.db`)、API 密钥 (`.env`)、维度配置 (`data_backup/`) 及插图 (`static/uploads/`) 均由 Git 忽略，不属于正常代码更新内容。更新后启动程序会按需迁移数据库结构；请保留本地数据目录和未提交的编辑，启动后确认页面版本与更新后的程序一致。
 
 - **方式 B：便携包覆盖更新**
   1. 先创建一份可验证完整备份（见下方“完整备份与恢复”）。
@@ -171,6 +182,12 @@ flowchart LR
   6. 双击新版启动器，自动准备运行环境并打开题库。启动器不再校验历史 Release 清单或自动删除历史发布文件；如果仍打开旧版本，请在网页电源按钮关闭服务后再启动。
 
   覆盖升级会保留根目录数据库及 WAL/SHM、`.env`、`data_backup/`、`static/uploads/`、`.system_generated/` 和 `venv/`。请勿删除原项目目录再换成新目录。Windows 10/11 x64 便携包内置完整 Python 与 VC++ 运行时，无需另行安装；macOS 包不内置 Python，运行前请确认本机已安装 Python 3.10 或更高版本。macOS 启动器会自动创建或修复 `venv`，仅在首次建立环境或 `requirements.txt` 变化/依赖缺失时需要联网安装。
+
+### 数据库升级与退回旧版
+
+受支持的正式旧版可直接升级当前版本，无需逐版安装。只有数据库结构需要更新时，程序才会先在 `data_backup/schema_snapshots/` 创建并校验旧数据库副本，再执行迁移；这份自动快照只含数据库。下方的“完整备份”还包含题目引用的图片和自定义元数据，升级前应另行创建并保留。
+
+如需退回旧版，请先安全关闭服务，再恢复升级前的完整备份并使用对应旧版程序。仅替换旧程序文件可能因数据库结构版本较新而无法启动；恢复后数据回到备份时的状态，升级后新增或修改的内容需另行保留。数据库结构编号与软件版本号分别管理，升级不会自动重新分类历史题目。
 
 > [!IMPORTANT]
 > **数据备份建议**
@@ -216,6 +233,8 @@ python3 -m scripts.restore data_backup/snapshots/mathbank-backup-时间戳.zip -
 
 ## 📂 项目目录结构
 
+以下是源码仓库的目录示意。便携发布包保留题库运行、启动、备份恢复和检索所需组件，不包含内部批处理工具、`tests/`、`docs/`、测试产物或 `scripts/build_release.py`；构建命令用于源码仓库。
+
 ```text
 .
 ├── data_backup/                # 实时备份与 AI 专属只读题库 (已忽略)
@@ -242,6 +261,9 @@ python3 -m scripts.restore data_backup/snapshots/mathbank-backup-时间戳.zip -
 │   ├── ai_providers.py         # AI Provider 与模型参数解析
 │   ├── ai_http.py              # AI HTTP 请求与鉴权
 │   ├── ai_json.py              # AI 结构化 JSON 容错解析
+│   ├── ocr_illustrations.py    # 单题图位占位与裁图处理
+│   ├── ocr_figure_review.py    # 实际裁片与 TikZ 预览核验
+│   ├── ocr_raster_layout.py    # 有界像素版面证据与图框修正
 │   ├── latex_diagnostics.py    # XeLaTeX 错误定位、本地解释与 AI 诊断合并
 │   ├── content_locks.py        # Word 公式原位可见锁定、原文恢复与完整性校验
 │   ├── omml_helper.py          # Office OMML 结构化公式转换器
@@ -255,7 +277,7 @@ python3 -m scripts.restore data_backup/snapshots/mathbank-backup-时间戳.zip -
 │   ├── restore.py
 │   ├── migrate_fillin.py
 │   ├── migrate_choice_parentheses.py
-│   └── build_release.py
+│   └── build_release.py        # 源码构建器；不进入便携包
 ├── static/                     # 前端静态资源目录
 │   ├── index.html              # 主控制台前端页面 (SPA)
 │   ├── css/                    # Tailwind, FontAwesome, KaTeX 离线样式
