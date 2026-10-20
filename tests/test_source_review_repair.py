@@ -111,7 +111,7 @@ def test_exact_patch_needs_fresh_independent_complete_verdict_before_returning_o
     assert result["outputs"] == {item["id"]: {"content": "已知 $x+1=2$，求值。", "answer_markdown": ""}}
     assert result["decisions"][item["id"]]["decision"] == "equivalent"
     assert result["calls"] == 2 and result["repair_calls"] == result["recheck_calls"] == 1
-    assert all(kwargs["timeout"] == 120 for _provider, _payload, kwargs in state.calls)
+    assert all(kwargs["timeout"] == 600 for _provider, _payload, kwargs in state.calls)
     assert result["usage"] == {"prompt_tokens": 200, "completion_tokens": 40, "total_tokens": 240}
     assert budget["remaining"] == repair.MAX_EXTRA_CALLS - 2
     audit = result["repairs"][item["id"]]

@@ -18,6 +18,9 @@ _COMMAND = re.compile(r"\\(?:[A-Za-z]+|[^\n])")
 _BACKTICKS = re.compile(r"`+")
 _ENVIRONMENT = re.compile(r"\\(begin|end)\{([^{}\n]+)\}")
 _FRACTIONS = {"frac", "dfrac", "tfrac", "cfrac"}
+# exam-zh constants are zero-argument atoms, including when an unbraced
+# fraction/script argument is immediately followed by another braced argument.
+_EXAMZH_CONSTANTS = {"eu", "upe", "iu", "upi"}
 _TEXT_COMMANDS = {
     "text", "textrm", "textsf", "texttt", "textnormal", "textbf", "textit",
     "mbox", "hbox", "verb", "operatorname", "label", "tag", "url", "path",
@@ -157,6 +160,8 @@ class _MathNormalizer:
             return self.atom(cursor, end, small, depth + 1)
         if name in _UNARY_COMMANDS:
             return self.atom(cursor, end, small, depth + 1)
+        if name in _EXAMZH_CONSTANTS:
+            return cursor
         if name.isalpha() and name not in _ORDINARY_COMMANDS:
             raise _UncertainMath
         if argument and self.whitespace(cursor, end) < end:

@@ -7,7 +7,8 @@ import pytest
 
 from mathbank.docx_helper import _new_diagnostics
 from mathbank.source_metadata import prepare_word_source_metadata
-from mathbank.source_metadata_request import request_word_source_metadata
+from mathbank.source_metadata_request import request_word_source_metadata, SourceMetadataPermanentHTTPError
+from mathbank.source_metadata import SourceMetadataContractError
 from mathbank.task_manager import TaskCancelled
 
 
@@ -53,15 +54,16 @@ def test_complete_json_or_complete_fence_keeps_body_local_and_uses_one_post(monk
     assert diagnostics["word_source_metadata"]["status"] == "used"
 
 
-def test_word_metadata_rejects_non_leaf_or_cross_chapter_knowledge(monkeypatch):
+def test_word_metadata_keeps_source_and_reviews_non_leaf_or_cross_chapter_knowledge(monkeypatch):
     for knowledge in ("函数", "空间向量", "不存在的小节"):
         request, calls, diagnostics, _ = run(
             monkeypatch,
             lambda row, value=knowledge: json.dumps({"items": [{**row, "category_knowledge": value}]}, ensure_ascii=False),
         )
-        with pytest.raises((ValueError, TypeError)):
-            request()
-        assert len(calls) == 1 and diagnostics["word_source_metadata"]["status"] == "fallback"
+        questions = request()
+        assert questions[0]["category_knowledge"] == ""
+        assert questions[0]["classification_review"]["required"] is True
+        assert len(calls) == 1 and diagnostics["word_source_metadata"]["status"] == "used"
 
 
 @pytest.mark.parametrize("transform", [
@@ -106,3 +108,31 @@ def test_cancelled_network_error_is_not_reclassified_as_retryable_contract_error
         request_word_source_metadata(plan, CURRICULUM, provider=provider, post=post, diagnostics=diagnostics,
                                      normalize_fillin=lambda value: value, check_cancelled=check_cancelled)
     assert len(calls) == 1 and diagnostics["word_source_metadata"]["status"] == "cancelled"
+
+
+@pytest.mark.parametrize("status", [301, 400, 401, 403, 404, 413, 422])
+def test_permanent_provider_responses_cannot_trigger_paid_full_source_fallback(monkeypatch, status):
+    plan, _, provider = setup(monkeypatch)
+    diagnostics = {}; calls = []
+    def post(*args, **kwargs):
+        calls.append(kwargs)
+        return SimpleNamespace(status_code=status)
+    with pytest.raises(SourceMetadataPermanentHTTPError):
+        request_word_source_metadata(plan, CURRICULUM, provider=provider, post=post, diagnostics=diagnostics,
+                                     normalize_fillin=lambda value: value)
+    report = diagnostics["word_source_metadata"]
+    assert len(calls) == 1 and report["status"] == "permanent_error"
+    assert report["permanent_error"] and report["http_status"] == status
+
+
+@pytest.mark.parametrize("status", [408, 425, 429, 500, 503, 599])
+def test_transient_responses_preserve_existing_bounded_fallback_contract(monkeypatch, status):
+    plan, _, provider = setup(monkeypatch)
+    diagnostics = {}; calls = []
+    def post(*args, **kwargs):
+        calls.append(kwargs)
+        return SimpleNamespace(status_code=status)
+    with pytest.raises(SourceMetadataContractError):
+        request_word_source_metadata(plan, CURRICULUM, provider=provider, post=post, diagnostics=diagnostics,
+                                     normalize_fillin=lambda value: value)
+    assert len(calls) == 1 and diagnostics["word_source_metadata"]["status"] == "fallback"

@@ -5,7 +5,17 @@ import re
 
 IMAGE_RE = re.compile(r"!\[.*?\]\(([^)]+)\)")
 ENV_RE = re.compile(r"\\(begin|end)\{(tabular\*?|tabularx|longtable|tblr|longtblr|talltblr|choices)\}")
-SIZE_CM = {"small": (5.0, 4.2), "medium": (8.0, 6.0), "large": (10.5, 7.5)}
+# Explicit sizes describe two intentionally different image roles. Keep auto
+# sizing contextual: editor previews, detached groups and right-side figures
+# have different readability/space constraints. These physical limits must match
+# ImageLayoutTools.sizeProfilesCm in api.js (checked by executable regression).
+BODY_IMAGE_SIZE_CM = {"small": (5.0, 4.2), "medium": (8.0, 6.0), "large": (10.5, 7.5)}
+DETACHED_FIGURE_SIZE_CM = {"small": (5.0, 4.0), "medium": (8.0, 6.0), "large": (11.0, 8.0)}
+TABLE_IMAGE_MAX_HEIGHT_CM = 4.0
+COMPACT_CHOICE_IMAGE_SIZE_CM = (3.0, 3.0)
+CSS_PX_PER_CM = 96.0 / 2.54
+# Existing callers and persistence validation continue to use this public name.
+SIZE_CM = BODY_IMAGE_SIZE_CM
 
 
 def image_key(path: str) -> str:

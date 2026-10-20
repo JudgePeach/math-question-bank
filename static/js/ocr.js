@@ -487,6 +487,9 @@
                     ? { maxWidth: 125, maxHeight: 115 }
                     : { maxWidth: 155, maxHeight: 135 };
             }
+            const sharedDimensions = window.ImageLayoutTools && typeof window.ImageLayoutTools.sizeDimensions === 'function'
+                ? window.ImageLayoutTools.sizeDimensions('detached', size) : null;
+            if (sharedDimensions) return sharedDimensions;
             if (size === 'medium') return { maxWidth: 320, maxHeight: 240 };
             if (size === 'large') return { maxWidth: 420, maxHeight: 300 };
             if (size === 'auto' && count > 1) return { maxWidth: 150, maxHeight: 140 };
@@ -988,6 +991,7 @@
             const occurrences = (text, token) => token ? visibleSlotMatches(text, token).length : 0;
             function closeCrop() {
                 if (crop && crop.controller) crop.controller.abort();
+                if (crop && crop.resizeHandler && window.removeEventListener) window.removeEventListener('resize', crop.resizeHandler);
                 crop = null;
                 const modal = document.getElementById('singleOcrCropModal');
                 if (modal) {
@@ -1112,6 +1116,27 @@
                 if (element(state.target, 'editor').value === state.original) apply(state);
                 else { render(state); showToast('识别结果已保留，请载入后继续编辑。', 'info'); }
             }
+            // Split only the user's selected region. Shared boundaries survive
+            // conversion back to original-image pixels without gaps or overlaps.
+            function computeCropGridBoxes(box, mode = 'single') {
+                if (!box || ![box.left, box.top, box.right, box.bottom].every(Number.isFinite)
+                    || box.right - box.left < 4 || box.bottom - box.top < 4) return [];
+                const dimensions = { single: [1, 1], '2x2': [2, 2], '1x4': [1, 4], '4x1': [4, 1] }[mode];
+                if (!dimensions) return [];
+                const [rows, columns] = dimensions;
+                const boxes = [];
+                for (let row = 0; row < rows; row += 1) {
+                    for (let column = 0; column < columns; column += 1) {
+                        boxes.push({
+                            left: box.left + (box.right - box.left) * column / columns,
+                            right: box.left + (box.right - box.left) * (column + 1) / columns,
+                            top: box.top + (box.bottom - box.top) * row / rows,
+                            bottom: box.top + (box.bottom - box.top) * (row + 1) / rows
+                        });
+                    }
+                }
+                return boxes.every(part => part.right - part.left >= 4 && part.bottom - part.top >= 4) ? boxes : [];
+            }
             function openCrop(state, figure) {
                 if (!current(state) || !state.applied || !state.source) return;
                 const textarea = element(state.target, 'editor');
@@ -1122,7 +1147,7 @@
                 closeCrop();
                 const selection = { state, figure, original: textarea.value,
                     insertionStart: textarea.selectionStart, insertionEnd: textarea.selectionEnd,
-                    image: new Image(), box: null, start: null, ready: false, controller: null };
+                    image: new Image(), box: null, mode: 'single', start: null, ready: false, controller: null };
                 crop = selection;
                 const modal = document.createElement('div');
                 modal.id = 'singleOcrCropModal';
@@ -1131,26 +1156,47 @@
                 modal.setAttribute('aria-label', '从 OCR 原图截取插图');
                 modal.className = 'fixed inset-0 z-[100] flex items-center justify-center bg-slate-950/80 p-3 backdrop-blur-sm';
                 // This is fixed UI markup. OCR labels and sources are assigned with DOM APIs below.
-                modal.innerHTML = '<div data-modal-surface class="flex max-h-[94vh] w-full max-w-5xl flex-col overflow-hidden rounded-2xl bg-white shadow-2xl"><div class="flex items-center justify-between gap-3 border-b border-slate-200 p-4"><div><p id="singleOcrCropTitle" class="text-sm font-bold text-slate-800"></p><p class="mt-1 text-xs text-slate-500">在原图上拖动框选插图，确认后放回对应图位。</p></div><button type="button" id="singleOcrCropClose" class="min-h-[44px] rounded-lg px-3 text-sm text-slate-500" aria-label="关闭截图">关闭</button></div><div class="min-h-0 flex-1 overflow-auto bg-slate-100 p-3"><canvas id="singleOcrCropCanvas" class="mx-auto block max-w-full touch-none bg-white" style="cursor:crosshair"></canvas></div><div class="flex flex-wrap items-center justify-between gap-3 border-t border-slate-200 p-4"><p id="singleOcrCropStatus" class="text-xs text-slate-500" role="status">正在加载原图…</p><div class="flex gap-2"><button id="singleOcrCropClear" type="button" class="min-h-[44px] rounded-lg border border-slate-200 px-3 text-xs text-slate-600">重新框选</button><button id="singleOcrCropSave" type="button" disabled class="min-h-[44px] rounded-lg bg-brand-600 px-4 text-xs font-bold text-white disabled:opacity-40">确认截取配图</button></div></div></div>';
+                modal.innerHTML = '<div data-modal-surface class="flex max-h-[94vh] w-full max-w-5xl flex-col overflow-hidden rounded-2xl bg-white shadow-2xl"><div class="flex items-center justify-between gap-3 border-b border-slate-200 p-4"><div><p id="singleOcrCropTitle" class="text-sm font-bold text-slate-800"></p><p class="mt-1 text-xs text-slate-500">拖动框选插图或合图区域；批量按从左到右、从上到下的 A–D 顺序插入图片，不改写已有选项。</p><label class="mt-2 flex items-center gap-2 text-xs text-slate-600">切图布局（行×列）<select id="singleOcrCropMode" class="min-h-[44px] rounded-lg border border-slate-200 bg-white px-2"><option value="single">单图</option><option value="2x2">2×2 四图</option><option value="1x4">1×4 横排四图</option><option value="4x1">4×1 竖排四图</option></select></label></div><button type="button" id="singleOcrCropClose" class="min-h-[44px] shrink-0 whitespace-nowrap rounded-lg px-3 text-sm text-slate-500" aria-label="关闭截图">关闭</button></div><div class="min-h-0 flex-1 overflow-auto bg-slate-100 p-3"><canvas id="singleOcrCropCanvas" class="mx-auto block max-w-full touch-none bg-white" style="cursor:crosshair"></canvas></div><div class="flex flex-wrap items-center justify-between gap-3 border-t border-slate-200 p-4"><p id="singleOcrCropStatus" class="text-xs text-slate-500" role="status">正在加载原图…</p><div class="flex gap-2"><button id="singleOcrCropClear" type="button" class="min-h-[44px] rounded-lg border border-slate-200 px-3 text-xs text-slate-600">重新框选</button><button id="singleOcrCropSave" type="button" disabled class="min-h-[44px] rounded-lg bg-brand-600 px-4 text-xs font-bold text-white disabled:opacity-40">确认截取配图</button></div></div></div>';
                 document.body.appendChild(modal);
                 const canvas = document.getElementById('singleOcrCropCanvas');
                 const save = document.getElementById('singleOcrCropSave');
                 const status = document.getElementById('singleOcrCropStatus');
-                document.getElementById('singleOcrCropTitle').textContent = figure ? '截图补入 ' + figure.slot : '追加一幅截图到光标位置';
+                const mode = document.getElementById('singleOcrCropMode');
+                mode.value = 'single';
+                mode.disabled = Boolean(figure);
+                mode.title = figure ? '指定待补图位只替换这一幅图；批量切图请使用从原图追加截图。' : '先框选合图区域，再选择四图的行列布局。';
+                document.getElementById('singleOcrCropTitle').textContent = figure ? '截图补入 ' + figure.slot : '从原图追加截图到光标位置';
                 document.getElementById('singleOcrCropClose').onclick = closeCrop;
                 if (window.MathBankModal) window.MathBankModal.open(modal, { onEscape: closeCrop });
                 const draw = () => {
+                    if (!selection.ready) { save.disabled = true; return; }
                     const ctx = canvas.getContext('2d');
                     ctx.clearRect(0, 0, canvas.width, canvas.height);
                     ctx.drawImage(selection.image, 0, 0, canvas.width, canvas.height);
-                    if (selection.box) {
-                        const box = selection.box;
+                    const boxes = computeCropGridBoxes(selection.box, selection.mode);
+                    const displayScale = canvas.width / Math.max(1, canvas.getBoundingClientRect().width);
+                    boxes.forEach((box, index) => {
                         ctx.fillStyle = 'rgba(99,102,241,0.16)';
                         ctx.fillRect(box.left, box.top, box.right - box.left, box.bottom - box.top);
-                        ctx.strokeStyle = '#6366f1'; ctx.lineWidth = 2;
+                        ctx.strokeStyle = '#6366f1'; ctx.lineWidth = 2 * displayScale;
                         ctx.strokeRect(box.left, box.top, box.right - box.left, box.bottom - box.top);
-                    }
-                    save.disabled = !selection.box || selection.box.right - selection.box.left < 4 || selection.box.bottom - selection.box.top < 4;
+                        if (boxes.length > 1 && ctx.fillText) {
+                            ctx.fillStyle = 'rgba(255,255,255,0.92)';
+                            ctx.fillRect(box.left + 2 * displayScale, box.top + 2 * displayScale, 24 * displayScale, 24 * displayScale);
+                            ctx.fillStyle = '#312e81'; ctx.font = 'bold ' + (16 * displayScale) + 'px sans-serif';
+                            ctx.fillText(String.fromCharCode(65 + index), box.left + 7 * displayScale, box.top + 20 * displayScale);
+                        }
+                    });
+                    save.disabled = Boolean(selection.controller) || !boxes.length;
+                    save.textContent = selection.mode === 'single' ? '确认截取配图' : '确认截取并插入 A–D 四图';
+                };
+                selection.resizeHandler = () => { if (crop === selection) draw(); };
+                if (window.addEventListener) window.addEventListener('resize', selection.resizeHandler);
+                mode.onchange = () => {
+                    if (selection.controller || selection.figure) return;
+                    selection.mode = mode.value;
+                    draw();
+                    status.textContent = selection.box ? '检查每框是否完整包含一幅图；拖动可重新选择合图区域。' : '请先拖动框选完整合图区域。';
                 };
                 const point = event => {
                     const rect = canvas.getBoundingClientRect();
@@ -1168,7 +1214,7 @@
                     const end = point(event);
                     selection.box = { left: Math.min(selection.start.x, end.x), top: Math.min(selection.start.y, end.y),
                         right: Math.max(selection.start.x, end.x), bottom: Math.max(selection.start.y, end.y) };
-                    draw(); status.textContent = '确认前请检查框内只包含这幅插图。';
+                    draw(); status.textContent = selection.mode === 'single' ? '确认前请检查框内只包含这幅插图。' : '确认前请检查 A–D 四框的图形、标注和顺序。';
                 };
                 canvas.onpointerup = canvas.onpointercancel = () => { selection.start = null; };
                 document.getElementById('singleOcrCropClear').onclick = () => {
@@ -1197,33 +1243,59 @@
                     closeCrop(); showToast('编辑内容已变化，请重新打开截图，避免放错位置。', 'info'); return;
                 }
                 const source = document.getElementById('singleOcrCropCanvas');
-                const box = selection.box;
+                const boxes = computeCropGridBoxes(selection.box, selection.mode);
+                if (!boxes.length || (selection.figure && boxes.length !== 1)) return;
                 const scaleX = selection.image.naturalWidth / source.width;
                 const scaleY = selection.image.naturalHeight / source.height;
-                const canvas = document.createElement('canvas');
-                canvas.width = Math.max(1, Math.round((box.right - box.left) * scaleX));
-                canvas.height = Math.max(1, Math.round((box.bottom - box.top) * scaleY));
-                canvas.getContext('2d').drawImage(selection.image, box.left * scaleX, box.top * scaleY,
-                    canvas.width, canvas.height, 0, 0, canvas.width, canvas.height);
+                const crops = boxes.map(box => {
+                    const left = Math.round(box.left * scaleX), top = Math.round(box.top * scaleY);
+                    const right = Math.round(box.right * scaleX), bottom = Math.round(box.bottom * scaleY);
+                    return { left, top, width: right - left, height: bottom - top };
+                });
+                const pixels = crops.reduce((total, part) => total + part.width * part.height, 0);
+                if (pixels > 30000000 || crops.some(part => part.width < 1 || part.height < 1 || part.width > 32767 || part.height > 32767)) {
+                    showToast('截图区域过大，请缩小框选区域后重试。', 'error'); return;
+                }
                 selection.controller = new AbortController();
                 const save = document.getElementById('singleOcrCropSave');
                 const status = document.getElementById('singleOcrCropStatus');
-                save.disabled = true; status.textContent = '正在保存截图…';
+                const mode = document.getElementById('singleOcrCropMode');
+                save.disabled = true; mode.disabled = true;
+                const active = () => crop === selection && current(state) && !selection.controller.signal.aborted;
+                const unchanged = () => {
+                    if (!active()) return false;
+                    if (textarea.value === selection.original) return true;
+                    closeCrop(); showToast('编辑内容已变化，截图未插入，请重新打开截图定位。', 'info'); return false;
+                };
                 try {
-                    const blob = await new Promise(resolve => canvas.toBlob(resolve, 'image/png'));
-                    if (crop !== selection || !current(state) || selection.controller.signal.aborted) return;
-                    if (!blob) throw new Error('无法生成截图');
-                    const form = new FormData(); form.append('file', blob, 'ocr-figure.png');
-                    const response = await fetch('/api/upload', { method: 'POST', body: form, signal: selection.controller.signal });
-                    const data = await response.json();
-                    if (crop !== selection || !current(state) || selection.controller.signal.aborted) return;
-                    if (textarea.value !== selection.original) {
-                        closeCrop(); showToast('截图已上传，编辑内容已变化，请重新截图定位。', 'info'); return;
+                    const paths = [];
+                    for (let index = 0; index < crops.length; index += 1) {
+                        if (!unchanged()) return;
+                        status.textContent = crops.length === 1 ? '正在保存截图…' : `正在保存截图 ${index + 1}/${crops.length}…`;
+                        const part = crops[index];
+                        const canvas = document.createElement('canvas');
+                        canvas.width = part.width; canvas.height = part.height;
+                        canvas.getContext('2d').drawImage(selection.image, part.left, part.top,
+                            part.width, part.height, 0, 0, part.width, part.height);
+                        const blob = await new Promise(resolve => canvas.toBlob(resolve, 'image/png'));
+                        // Release native bitmap storage before uploading/creating the next fragment.
+                        canvas.width = 0; canvas.height = 0;
+                        if (!unchanged()) return;
+                        if (!blob || blob.size > 10 * 1024 * 1024) throw new Error('截图无法生成或超过 10MB，请缩小区域');
+                        const form = new FormData(); form.append('file', blob, 'ocr-figure-' + (index + 1) + '.png');
+                        const response = await fetch('/api/upload', { method: 'POST', body: form, signal: selection.controller.signal });
+                        const data = await response.json();
+                        if (!unchanged()) return;
+                        const path = window.MathBankSafe.safeImageUrl(data.file_path);
+                        if (!response.ok || data.status !== 'success' || !path) throw new Error(data.message || '截图保存失败');
+                        paths.push(path);
                     }
-                    const path = window.MathBankSafe.safeImageUrl(data.file_path);
-                    if (!response.ok || data.status !== 'success' || !path) throw new Error(data.message || '截图保存失败');
+                    // Apply the complete batch once. Partial upload failures cannot
+                    // replace slots, alter choices or register incomplete layouts.
+                    const path = paths[0];
                     const label = String(selection.figure && selection.figure.slot || '插图').replace(/[\[\]\\\r\n]/g, '');
-                    const tag = `![${label}](${path})`;
+                    const tag = paths.length === 1 ? `![${label}](${path})`
+                        : paths.map((item, index) => `![${String.fromCharCode(65 + index)}](${item})`).join('\n\n');
                     if (selection.figure) {
                         if (occurrences(textarea.value, selection.figure.placeholder) !== 1) {
                             closeCrop(); showToast('图位已变化，请重新定位。', 'info'); return;
@@ -1237,20 +1309,21 @@
                         delete selection.figure.review;
                         delete selection.figure.preview_review;
                     } else {
-                        textarea.value = textarea.value.slice(0, selection.insertionStart) + tag + textarea.value.slice(selection.insertionEnd);
+                        const end = paths.length === 1 ? selection.insertionEnd : selection.insertionStart;
+                        const spacer = paths.length > 1 ? '\n\n' : '';
+                        textarea.value = textarea.value.slice(0, selection.insertionStart) + spacer + tag + spacer + textarea.value.slice(end);
                     }
                     if (state.target === 'content' && window.FigureLayoutState && window.ImageLayoutTools) {
                         // A cropped slot remains inline, including choices and table cells.
-                        const key = window.ImageLayoutTools.key(path);
-                        window.FigureLayoutState.imageLayouts = window.ImageLayoutTools.normalize({
-                            ...window.FigureLayoutState.imageLayouts, [key]: { align: 'left', size: 'small' }
-                        });
+                        const layouts = { ...window.FigureLayoutState.imageLayouts };
+                        paths.forEach(item => { layouts[window.ImageLayoutTools.key(item)] = { align: 'left', size: 'small' }; });
+                        window.FigureLayoutState.imageLayouts = window.ImageLayoutTools.normalize(layouts);
                     }
                     textarea.dispatchEvent(new Event('input'));
-                    closeCrop(); render(state); showToast('截图已补入对应位置。');
+                    closeCrop(); render(state); showToast(paths.length === 1 ? '截图已补入对应位置。' : 'A–D 四图已按顺序插入光标位置。');
                 } catch (error) {
                     if (crop !== selection || !current(state) || error.name === 'AbortError') return;
-                    selection.controller = null; save.disabled = false;
+                    selection.controller = null; save.disabled = false; mode.disabled = Boolean(selection.figure);
                     status.textContent = error.message; showToast('截图失败：' + error.message, 'error');
                 }
             }

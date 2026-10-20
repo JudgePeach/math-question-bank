@@ -168,7 +168,8 @@ def test_single_question_classification_prompt_requests_only_coarse_question_for
     assert '"chapter"' in prompt
     assert '"question_form"' in prompt
     assert "question_type" not in prompt
-    assert "包含且仅包含以下四个 key" in prompt
+    assert "包含且仅包含以下五个 key" in prompt
+    assert '"knowledge_points"' in prompt
     assert "真实小节" in prompt and "整章定位/待细分" in prompt
     assert '"knowledge"' in prompt and "1.1 集合的概念" in prompt
     assert "任何选择题一律为 `choice`" in prompt

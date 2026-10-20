@@ -23,6 +23,8 @@ import re
 import unicodedata
 from typing import Iterable, Literal, Mapping, Sequence
 
+from mathbank.source_comments import strip_source_attribution_comment
+
 
 FINGERPRINT_VERSION = 3
 SIMHASH_BITS = 128
@@ -799,6 +801,7 @@ def normalize_math_text(value: str) -> str:
 
 
 def _build_canonical_content(value: str) -> tuple[str, str, tuple[str, ...], int]:
+    value = strip_source_attribution_comment(value)
     with_images, markdown_figure_count = _replace_images(value)
     raw_stem, raw_choices = extract_choices(with_images)
     stem = normalize_math_text(raw_stem)

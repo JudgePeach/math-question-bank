@@ -203,7 +203,9 @@ def test_compile_auto_loads_known_missing_package():
         return SimpleNamespace(returncode=0, stdout="ok", stderr="")
 
     tex = "\n".join([r"\documentclass{article}", r"\begin{document}", r"$\cancel{x}$", r"\end{document}"])
-    with patch("mathbank.paper_helper.subprocess.run", side_effect=fake_run):
+    with patch("mathbank.paper_helper.subprocess.run", side_effect=fake_run), patch(
+        "mathbank.paper_helper._with_content_source_pdf_metadata", side_effect=lambda data, notice: data
+    ):
         pdf_bytes, output = compile_tex_to_pdf(tex)
 
     assert pdf_bytes == b"complete pdf"

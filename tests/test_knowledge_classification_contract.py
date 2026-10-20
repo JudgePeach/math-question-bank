@@ -1,4 +1,4 @@
-"""AI/import classifications accept only a real subsection of the selected chapter."""
+"""AI imports keep uncertain classification separate from complete source text."""
 import pytest
 
 from main import validate_import_knowledge
@@ -32,6 +32,10 @@ def test_classification_uses_actual_book_then_chapter_catalog_order():
     {"category_compulsory": "选择性必修一", "category_chapter": "空间向量", "category_knowledge": "8.1 基本立体图形"},
     {"category_compulsory": "必修二", "category_chapter": "8. 立体几何初步", "category_knowledge": None},
 ])
-def test_import_knowledge_rejects_chapter_labels_wrong_version_and_malformed_values(row):
-    with pytest.raises(ValueError):
-        validate_import_knowledge([row], TREE)
+def test_import_knowledge_preserves_questions_with_uncertain_classification(row):
+    row = {**row, "content": "必须保留的题干", "answer_markdown": "$x=1$"}
+    validate_import_knowledge([row], TREE)
+    assert row["classification_review"]["required"] is True
+    assert row["category_knowledge"] == ""
+    assert row["content"] == "必须保留的题干"
+    assert row["answer_markdown"] == "$x=1$"

@@ -292,20 +292,21 @@ def restore_visible_math(
     }
     missing: list[str] = []
     duplicated: list[str] = []
+    evidence_owners: dict[tuple[int, str], set[str]] = defaultdict(set)
 
     # Work on copies: a later missing ID must not leave earlier formulas restored.
     staged = [dict(question) for question in questions]
     for lock in locks:
-        occurrences: list[tuple[dict[str, Any], str, str, int, bool]] = []
+        occurrences: list[tuple[int, dict[str, Any], str, str, int, bool]] = []
         total = 0
-        for question in staged:
+        for q_index, question in enumerate(staged):
             for field in ("content", "answer_markdown"):
                 field_value = question.get(field, "")
                 if not isinstance(field_value, str):
                     continue
                 restored, count, modified = _restore_lock_in_text(field_value, lock)
                 if count:
-                    occurrences.append((question, field, restored, count, modified))
+                    occurrences.append((q_index, question, field, restored, count, modified))
                     total += count
         if total == 0:
             missing.append(lock.lock_id)
@@ -313,8 +314,9 @@ def restore_visible_math(
         if total != 1:
             duplicated.append(lock.lock_id)
             continue
-        question, field, restored, _count, modified = occurrences[0]
+        q_index, question, field, restored, _count, modified = occurrences[0]
         question[field] = restored
+        evidence_owners[q_index, field].add(lock.lock_id)
         report["math_locks_restored"] += 1
         if modified:
             report["math_locks_overwritten"] += 1
@@ -331,6 +333,7 @@ def restore_visible_math(
             "AI 拆题时未完整保留公式定位标记（" + "；".join(details) + "），"
             "系统已停止本次结果，避免公式静默丢失或串题。"
         )
+    _restore_knowledge_point_evidence(staged, locks, evidence_owners)
     for question, restored_question in zip(questions, staged):
         question.update(restored_question)
     return report
@@ -376,12 +379,61 @@ _REFERENCE = re.compile(
     r'|\[\[\s*MBM_[A-Za-z0-9_-]+\s*\]\]'
     r'|\bMBM_[A-Za-z0-9_-]+\b', re.DOTALL | re.IGNORECASE,
 )
+_KNOWLEDGE_REFERENCE = re.compile(
+    r'<mathbank-math\b[^>]*>.*?</mathbank-math\s*>'
+    r'|\[\[\s*MBM_[A-Za-z0-9_-]+\s*\]\]', re.DOTALL | re.IGNORECASE,
+)
+_KNOWLEDGE_TAG_OPEN = re.compile(
+    r'''<mathbank-math\s+id\s*=\s*(["'])(MBM_[A-Za-z0-9_-]+)\1\s*>''',
+    re.IGNORECASE,
+)
+
+
+def _knowledge_evidence_references(value: str, *, tex_comments=True):
+    """Only complete protocol references outside literal examples are active."""
+    references = list(_KNOWLEDGE_REFERENCE.finditer(value))
+    literals = [span for span in _reference_literal_ranges(value, tex_comments=tex_comments)
+                if not any(ref.start() <= span[0] < ref.end() for ref in references)]
+    return [ref for ref in references
+            if not any(left <= ref.start() and ref.end() <= right for left, right in literals)]
+
+
+def _restore_knowledge_point_evidence(questions, locks, owners, *, tex_comments=True):
+    """Restore point quotes from trusted locks owned by this question/field."""
+    from .ai_knowledge_points import restore_ai_knowledge_evidence
+    by_id = {lock.lock_id: lock for lock in locks}
+    for q_index, question in enumerate(questions):
+        def restore_text(value, source_field):
+            if not isinstance(source_field, str):
+                return value
+            references = _knowledge_evidence_references(value, tex_comments=tex_comments)
+            shells = _reference_shell_spans(value, references, tex_comments=tex_comments)
+            allowed = owners.get((q_index, source_field), set())
+            replacements = []
+            for reference in references:
+                raw = reference.group()
+                if raw.startswith('[['):
+                    lock_id = raw[2:-2].strip()
+                else:
+                    opening = raw[:raw.find('>') + 1]
+                    tag = _KNOWLEDGE_TAG_OPEN.fullmatch(opening)
+                    lock_id = tag[2] if tag else None
+                if lock_id not in allowed or lock_id not in by_id:
+                    continue
+                start, end = shells.get(reference.span(), reference.span())
+                replacements.append((start, end, by_id[lock_id].original))
+            for start, end, original in sorted(replacements, reverse=True):
+                value = value[:start] + original + value[end:]
+            return value
+        restore_ai_knowledge_evidence(question, restore_text)
+
+
 _NUMBER = re.compile(
     r'^[ \t]*(?:#{1,6}[ \t]*)?(?:\\noindent[ \t]*)?'
     r'(?:(?:\\(?:textbf|textit|textrm)[ \t]*\{)|\*\*|__)?[ \t]*(?:【[ \t]*)?'
     r'(?:(?!(?:(?:\\(?:textbf|textit|textrm)[ \t]*\{)|\*\*|__)?[ \t]*\d{1,3}[ \t]*(?:\}|\*\*|__)?[ \t]*[：:])'
     r'(?:题(?:目)?[ \t]*)?(?:(?:\\(?:textbf|textit|textrm)[ \t]*\{)|\*\*|__)?[ \t]*(\d{1,3})'
-    r'[ \t]*(?:(?:\}|\*\*|__)[ \t]*)?(?:[.．、](?!\d)|[：:])'
+    r'[ \t]*(?:(?:\}|\*\*|__)[ \t]*)?(?:\\\.(?!\d)|[.．、](?!\d)|[：:])'
     r'|第[ \t]*(\d{1,3})[ \t]*题[：:]?)'
     r'[ \t]*(?:】[ \t]*)?(?:\}|\*\*|__)?[ \t]*',
     re.MULTILINE,
@@ -851,6 +903,10 @@ def _math_key(value: str) -> tuple[str, ...]:
 
 def _plain_key(value: str) -> str:
     """Discard layout while retaining words, numbers, and option positions."""
+    # Compare canonical answer-slot decoration in this copy only. Source
+    # evidence and genuine geometric triangle markers remain unchanged.
+    from mathbank.fillin_placeholders import normalize_fillin_placeholder_clusters
+    value = normalize_fillin_placeholder_clusters(value)
     # Older valid JSON responses sometimes encoded the layout macro \fillin
     # with a single backslash, decoding \f into U+000C. Compare that exact
     # broken blank marker as the same macro; never alter the source evidence
@@ -1774,6 +1830,14 @@ def reconcile_visible_math(
     if unmatched:
         warnings.append(f'{len(unmatched)} 段原文未匹配到拆分结果，请核对是否遗漏。')
     duplicate_answers = {part for part, count in Counter(answer_assignments.values()).items() if count > 1}
+    evidence_owners = {}
+    for mapping, duplicates, field in ((assignments, duplicate_parts, 'content'),
+                                       (answer_assignments, duplicate_answers, 'answer_markdown')):
+        for q_index, part_index in mapping.items():
+            if part_index not in duplicates:
+                evidence_owners[q_index, field] = {formula.lock_id for formula in parts[part_index].formulas
+                                                  if formula.lock_id in verified_ids}
+    _restore_knowledge_point_evidence(staged, locks, evidence_owners, tex_comments=tex_comments)
     report = {
         'math_locks_created': len(locks),
         'math_locks_restored': len(verified_ids),

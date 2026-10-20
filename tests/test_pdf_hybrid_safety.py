@@ -113,6 +113,31 @@ def test_snapshot_self_reported_native_math_flags_never_become_native_certificat
     assert '`[EXTRACTED_ORIGINAL]`' in result.questions[0]['answer_markdown']
 
 
+@pytest.mark.parametrize('status', [301, 307, 400, 401, 403, 404, 413, 422])
+def test_permanent_http_error_stops_without_full_source_fallback(tmp_path, status):
+    from types import SimpleNamespace
+    from mathbank.source_hybrid_request import SourceHybridPermanentRequestError
+    plan, _, _ = prepared(tmp_path, risk=False)
+    calls = []
+    def post(*_args, **_kwargs):
+        calls.append(status)
+        return SimpleNamespace(status_code=status, json=lambda: pytest.fail('Do not inspect error body'))
+    with pytest.raises(SourceHybridPermanentRequestError, match=f'HTTP {status}'):
+        run(plan, post, fallback=lambda: pytest.fail('Permanent failure must not resubmit the full paper'))
+    assert calls == [status]
+
+
+def test_filtered_hybrid_response_never_resubmits_whole_source(tmp_path):
+    from types import SimpleNamespace
+    from mathbank.source_hybrid_request import SourceHybridPermanentRequestError
+    plan, _, _ = prepared(tmp_path, risk=False)
+    def post(*_args, **_kwargs):
+        return SimpleNamespace(status_code=200, json=lambda: {
+            'choices': [{'finish_reason': 'content_filter', 'message': {'content': '{}'}}]})
+    with pytest.raises(SourceHybridPermanentRequestError):
+        run(plan, post, fallback=lambda: pytest.fail('Filtered response cannot trigger another request'))
+
+
 @pytest.mark.parametrize('change',['source','page','layout','generation','native_basis','input_image','figure_image','private_math'])
 def test_source_page_layout_identity_and_assets_change_after_post_are_hard_stops(tmp_path,change):
     plan,images,figures=prepared(tmp_path,with_figure=True);posts=[];fallbacks=[]
@@ -252,5 +277,6 @@ def test_pdf_task_completion_executed_tail_preserves_partial_flag_and_notice(par
     assert len(captured)==1
     kwargs=captured[0][1]
     assert kwargs['partial'] is partial and kwargs['data'] is data and kwargs['diagnostics'] is diagnostics
-    assert ('部分疑点题组未完成' in kwargs['log']) is partial
+    assert ('仍需校对' in kwargs['log']) is partial
+    assert ('未处理范围已保留' in kwargs['log']) is partial
     assert kwargs['document_type']=='pdf' and kwargs['page_numbers']==[1]

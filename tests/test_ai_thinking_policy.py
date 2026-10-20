@@ -248,3 +248,43 @@ def test_deepseek_flash_effort_mapping(effort, expected):
     result = apply_model_thinking_policy({'model':provider.model_name}, provider=provider, task='ocr')
     assert result['thinking'] == {'type':'enabled'}
     assert result['reasoning_effort'] == expected
+
+
+@pytest.mark.parametrize('task', TASKS)
+@pytest.mark.parametrize('enabled', [False, True])
+def test_siliconflow_v41_flash_uses_verified_switch_without_v4_effort_or_budget(task, enabled):
+    provider = configured('SILICONFLOW/deepseek-ai/DeepSeek-V4.1-Flash:max')
+    payload = {'model': provider.model_name, 'max_tokens':16384, 'temperature':0.1,
+               'enable_thinking':True, 'thinking':{'type':'enabled'},
+               'reasoning_effort':'max', 'thinking_budget':8192}
+    original = deepcopy(payload)
+    result = apply_model_thinking_policy(payload, provider=provider, task=task, thinking_enabled=enabled)
+    actual_enabled = enabled if task == 'solve' else task == 'draw'
+    assert result == {'model':provider.model_name, 'max_tokens':16384, 'temperature':0.1,
+                      'enable_thinking':actual_enabled}
+    assert payload == original
+
+
+@pytest.mark.parametrize('config', [
+    'SILICONFLOW/Pro/deepseek-ai/DeepSeek-V4.1-Flash',
+    'SILICONFLOW/deepseek-ai/DeepSeek-V4.1-Flash-custom',
+    'SILICONFLOW/deepseek-ai/DeepSeek-V4.1-Pro',
+    'ZHONGZHAN_GPT/deepseek-ai/DeepSeek-V4.1-Flash',
+    'ZHONGZHAN_CLAUDE/deepseek-ai/DeepSeek-V4.1-Flash'])
+def test_v41_flash_policy_does_not_guess_unverified_models_or_gateways(config):
+    provider = configured(config)
+    payload = {'model':provider.model_name, 'custom':'keep'}
+    assert apply_model_thinking_policy(payload,provider=provider,task='ocr') == payload
+    assert apply_structured_output_policy(payload,provider=provider) == payload
+
+
+def test_siliconflow_v41_flash_json_mode_only_at_structured_call_sites():
+    from mathbank.ai_providers import supports_pdf_split_stream
+    provider = configured('SILICONFLOW/deepseek-ai/DeepSeek-V4.1-Flash')
+    payload = {'model':provider.model_name, 'messages':[{'role':'user','content':'original page data'}]}
+    original = deepcopy(payload)
+    result = apply_structured_output_policy(payload,provider=provider,system_instruction='fixed JSON rules')
+    assert result['response_format'] == {'type':'json_object'}
+    assert result['messages'] == [{'role':'system','content':'fixed JSON rules'},*payload['messages']]
+    assert payload == original
+    assert supports_pdf_split_stream(provider) is False

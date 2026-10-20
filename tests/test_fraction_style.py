@@ -17,6 +17,41 @@ def test_nested_fractions_and_unbraced_script_arguments_keep_scope():
     assert normalize_fraction_style(source) == expected
 
 
+@pytest.mark.parametrize("constant", ["eu", "upe", "iu", "upi"])
+@pytest.mark.parametrize("opening,closing", [("$", "$"), ("$$", "$$"), (r"\(", r"\)"), (r"\[", r"\]")])
+def test_examzh_constants_do_not_block_fraction_normalization(constant, opening, closing):
+    atom = "\\" + constant
+    source = opening + atom + r"^x-\frac{2}{3}\sin x" + closing
+    expected = source.replace(r"\frac", r"\dfrac")
+    assert normalize_fraction_style(source) == expected
+    assert normalize_fraction_style(expected) == expected
+
+
+@pytest.mark.parametrize("constant", ["eu", "upe", "iu", "upi"])
+def test_examzh_constants_are_atoms_and_keep_compact_fraction_contexts(constant):
+    atom = "\\" + constant
+    source = "$" + r"\frac" + atom + r"{3}+\frac{1+" + atom + r"^{\dfrac12}}{\dfrac" + atom + r"{2}}+x^" + atom + r"{\frac34}$"
+    expected = "$" + r"\dfrac" + atom + r"{3}+\dfrac{1+" + atom + r"^{\frac12}}{\frac" + atom + r"{2}}+x^" + atom + r"{\dfrac34}$"
+    assert normalize_fraction_style(source) == expected
+    assert normalize_fraction_style(expected) == expected
+
+
+@pytest.mark.parametrize("command", ["du", "eux", "upex", "iux", "upix"])
+def test_unknown_constant_commands_still_preserve_entire_formula(command):
+    source = r"$\frac12+" + "\\" + command + r"^{\dfrac34}$"
+    assert normalize_fraction_style(source) == source
+
+
+def test_examzh_constants_in_protected_sources_are_preserved():
+    protected = (
+        r"`$\eu+\frac12$` "
+        r"\begin{tikzpicture}\node {$\iu+\frac12$};\end{tikzpicture} "
+        r"\text{示例 $\upe+\frac12$} "
+        '<mathbank-math id="MBM_DOCX_0001">$\\upi+\\frac12$</mathbank-math>'
+    )
+    assert normalize_fraction_style(protected + r" $\eu+\frac12$") == protected + r" $\eu+\dfrac12$"
+
+
 def test_explicit_small_and_continued_fractions_are_retained():
     source = r"$\tfrac{\dfrac12}{3}+\cfrac[l]{1}{2+\dfrac34}$"
     expected = r"$\tfrac{\frac12}{3}+\cfrac[l]{1}{2+\frac34}$"

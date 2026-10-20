@@ -30,9 +30,12 @@ data_backup/archive/*
 # 但通过排除 .gitkeep，使得 static/uploads 目录结构可以被提交到 GitHub 上
 static/uploads/*
 !static/uploads/.gitkeep
+# 本机静态目录副本包含用户插图，只在本地保留。
+/static_副本/
 
 # 5. 忽略 Python 运行缓存、测试缓存及本地临时草稿代码目录
 .system_generated/
+/restored_content_sources/
 __pycache__/
 *.pyc
 *.pyo
@@ -102,17 +105,24 @@ tests/artifacts/*
 # 精确限定路径；正常运行模块、教材资源和产品回归测试继续跟踪
 /mathbank/association_batch.py
 /mathbank/classification_proposals.py
+/mathbank/difficulty_batch.py
 /mathbank/knowledge_backfill.py
 /mathbank/knowledge_backfill_apply.py
 /mathbank/question_exchange.py
 /scripts/association_batch.py
+/scripts/backfill_question_references.py
 /scripts/classification_proposals.py
+/scripts/difficulty_batch.py
+/scripts/difficulty_classify.py
 /scripts/knowledge_backfill.py
 /scripts/knowledge_backfill_apply.py
 /scripts/question_exchange.py
 /scripts/resources/
 /tests/test_association_batch.py
+/tests/test_backfill_question_references.py
+/tests/test_question_references_exchange.py
 /tests/test_classification_proposals.py
+/tests/test_difficulty_batch.py
 /tests/test_knowledge_backfill.py
 /tests/test_knowledge_backfill_apply.py
 /tests/test_question_exchange.py

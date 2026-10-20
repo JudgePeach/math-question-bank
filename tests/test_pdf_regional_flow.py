@@ -16,7 +16,7 @@ def no_model_network(monkeypatch):
 def pdf_bytes(count=3):
     with fitz.open() as document:
         for _ in range(count):
-            document.new_page(width=595, height=842)
+            document.new_page(width=595, height=842).insert_text((30, 40), "PDF fixture")
         return document.tobytes()
 
 

@@ -45,6 +45,8 @@ MAX_ARCHIVE_UNCOMPRESSED = 200 * 1024 * 1024
 MAX_ARCHIVE_MEMBER = 50 * 1024 * 1024
 MAX_DOCUMENT_XML = 25 * 1024 * 1024
 MAX_IMAGE_PIXELS = 30_000_000
+MAX_NUMBERING_STYLE_DEPTH = 32
+MAX_NUMBERING_STYLES = 4096
 
 _MATH_NS = W_NS["m"]
 _WORD_NS = W_NS["w"]
@@ -145,6 +147,8 @@ def _new_diagnostics() -> Dict[str, Any]:
         "symbols_unavailable": 0,
         "numbering_converted": 0,
         "numbering_unavailable": 0,
+        "numbering_review_details": [],
+        "drawing_review_details": [],
         "superscripts_converted": 0,
         "subscripts_converted": 0,
         "underlines_converted": 0,
@@ -226,6 +230,7 @@ def _numbering_level_definition(level, ilvl: int) -> Dict[str, Any]:
         "format": _word_attr(level.find("w:numFmt", W_NS), "val", "decimal"),
         "text": _word_attr(level.find("w:lvlText", W_NS), "val", f"%{ilvl + 1}."),
         "restart": restart,
+        "paragraph_style": _word_attr(level.find("w:pStyle", W_NS), "val"),
     }
 
 
@@ -278,6 +283,92 @@ def _extract_numbering(z: zipfile.ZipFile, diagnostics: MutableMapping) -> Dict[
         return {"abstracts": {}, "nums": {}, "counters": {}}
 
 
+def _extract_numbering_styles(z: zipfile.ZipFile) -> Dict[str, Any]:
+    """Read only paragraph numbering inheritance, never formatting or content."""
+    result = {"styles": {}, "default": "", "error": ""}
+    if "word/styles.xml" not in z.namelist():
+        return result
+    try:
+        if z.getinfo("word/styles.xml").file_size > MAX_DOCUMENT_XML:
+            raise ValueError("styles_xml_too_large")
+        root = SafeET.fromstring(z.read("word/styles.xml"))
+        for style in root.findall("w:style", W_NS):
+            if _word_attr(style, "type") != "paragraph":
+                continue
+            identifier = _word_attr(style, "styleId")
+            if not identifier or identifier in result["styles"]:
+                raise ValueError("paragraph_style_identity_ambiguous")
+            if len(result["styles"]) >= MAX_NUMBERING_STYLES:
+                raise ValueError("paragraph_style_budget_exceeded")
+            result["styles"][identifier] = {
+                "based_on": _word_attr(style.find("w:basedOn", W_NS), "val"),
+                "numbering": _numbering_properties(style.find("w:pPr/w:numPr", W_NS)),
+            }
+            if _word_attr(style, "default").lower() in {"1", "true", "on"}:
+                if result["default"]:
+                    raise ValueError("default_paragraph_style_ambiguous")
+                result["default"] = identifier
+    except Exception:
+        # A later paragraph decides whether the unavailable inheritance is
+        # relevant. Do not add global warnings for unused style definitions.
+        result = {"styles": {}, "default": "", "error": "paragraph_styles_unavailable"}
+    return result
+
+
+def _numbering_properties(props) -> Dict[str, str]:
+    if props is None:
+        return {}
+    return {name: _word_attr(node, "val") for name in ("numId", "ilvl")
+            if (node := props.find(f"w:{name}", W_NS)) is not None}
+
+
+def _numbering_review(diagnostics: MutableMapping, reason: str, **details) -> None:
+    diagnostics["numbering_unavailable"] += 1
+    diagnostics["review_required"] += 1
+    diagnostics.setdefault("numbering_review_details", []).append({"reason": reason, **details})
+    _warn(diagnostics, "Word 自动编号未能完整还原，已保留正文和编号来源供核对：" + reason)
+
+
+def _effective_numbering_properties(paragraph, diagnostics: MutableMapping):
+    props = paragraph.find("w:pPr", W_NS)
+    direct = _numbering_properties(props.find("w:numPr", W_NS) if props is not None else None)
+    if direct.get("numId") == "0" or set(direct) == {"numId", "ilvl"}:
+        return direct
+    state = diagnostics.get("_numbering_styles") or {}
+    style_id = _word_attr(props.find("w:pStyle", W_NS), "val") if props is not None else ""
+    style_id = style_id or state.get("default", "")
+    numbering = diagnostics.get("_numbering") or {}
+    if not style_id and not state.get("error"):
+        return direct
+    inherited, seen, chain = {}, set(), []
+    current = style_id
+    error = state.get("error", "")
+    while current and not error:
+        if current in seen or len(seen) >= MAX_NUMBERING_STYLE_DEPTH:
+            error = "paragraph_style_inheritance_cycle_or_limit"
+            break
+        seen.add(current)
+        chain.append(current)
+        style = state.get("styles", {}).get(current)
+        if style is None:
+            error = "paragraph_style_not_found"
+            break
+        # OOXML numPr in a paragraph style supplies numId. Its ilvl is ignored;
+        # the abstract level's pStyle selects the associated level instead.
+        if "numId" in style["numbering"]:
+            inherited["numId"] = style["numbering"]["numId"]
+            break
+        current = style["based_on"]
+    if error and (direct or inherited or numbering.get("nums")):
+        _numbering_review(diagnostics, error, style_id=style_id,
+                          direct_numbering=direct, inherited_numbering=inherited)
+        return None
+    inherited.update(direct)
+    if inherited and chain:
+        inherited["_style_chain"] = chain
+    return inherited
+
+
 def _roman_number(value: int) -> str:
     if value <= 0:
         return str(value)
@@ -323,17 +414,20 @@ def _format_list_number(value: int, number_format: str) -> str:
 
 
 def _paragraph_number_prefix(paragraph, diagnostics: MutableMapping) -> str:
-    p_props = paragraph.find("w:pPr", W_NS)
-    num_props = p_props.find("w:numPr", W_NS) if p_props is not None else None
-    if num_props is None:
+    num_props = _effective_numbering_properties(paragraph, diagnostics)
+    if not num_props:
         return ""
-    num_id = _word_attr(num_props.find("w:numId", W_NS), "val")
+    num_id = num_props.get("numId", "")
     if not num_id or num_id == "0":
         return ""
     try:
-        ilvl = int(_word_attr(num_props.find("w:ilvl", W_NS), "val", "0"))
+        ilvl = int(num_props.get("ilvl", "0"))
     except ValueError:
-        ilvl = 0
+        _numbering_review(diagnostics, "numbering_level_invalid", num_id=num_id)
+        return ""
+    if not 0 <= ilvl <= 8:
+        _numbering_review(diagnostics, "numbering_level_out_of_range", num_id=num_id, level=ilvl)
+        return ""
 
     numbering = diagnostics.get("_numbering") or {}
     num_definition = (numbering.get("nums") or {}).get(num_id)
@@ -343,12 +437,21 @@ def _paragraph_number_prefix(paragraph, diagnostics: MutableMapping) -> str:
     # The num instance's complete lvl replaces its abstract level definition;
     # startOverride, if present, then takes precedence over that level's start.
     abstract_levels.update((num_definition or {}).get("levels") or {})
+    if "ilvl" not in num_props:
+        for style_id in num_props.get("_style_chain", []):
+            associated = [index for index, definition in abstract_levels.items()
+                          if definition.get("paragraph_style") == style_id]
+            if len(associated) > 1:
+                _numbering_review(diagnostics, "paragraph_style_numbering_level_ambiguous",
+                                  num_id=num_id, style_id=style_id)
+                return ""
+            if associated:
+                ilvl = associated[0]
+                break
     level = abstract_levels.get(ilvl)
     if not num_definition or not level:
-        diagnostics["numbering_unavailable"] += 1
-        diagnostics["review_required"] += 1
-        _warn(diagnostics, f"无法还原 Word 自动编号：numId={num_id}, level={ilvl}")
-        return "[自动编号待核对] "
+        _numbering_review(diagnostics, "numbering_definition_unavailable", num_id=num_id, level=ilvl)
+        return ""
 
     counters = numbering.setdefault("counters", {}).setdefault(num_id, {})
     for deeper_level in [key for key in counters if key > ilvl]:
@@ -562,12 +665,7 @@ def _find_and_extract_image(
     diagnostics: MutableMapping,
     asset_cache: MutableMapping[str, str],
 ) -> Optional[str]:
-    references = []
-    for blip in elem.iter(f"{{{_DRAWING_NS}}}blip"):
-        references.append(blip.attrib.get(f"{{{_REL_NS}}}embed"))
-    for image_data in elem.iter(f"{{{_VML_NS}}}imagedata"):
-        references.append(image_data.attrib.get(f"{{{_REL_NS}}}id"))
-    for rel_id in references:
+    for rel_id in _drawing_image_references(elem):
         if rel_id and rel_id in rels:
             url = _save_image(
                 z, rels[rel_id], output_dir, url_prefix, asset_prefix,
@@ -578,6 +676,121 @@ def _find_and_extract_image(
                 note_image_context(diagnostics, url, elem)
                 return url
     return None
+
+
+def _drawing_image_references(elem) -> list[str | None]:
+    """Keep occurrence order across both DrawingML and VML representations."""
+    references = []
+    for node in elem.iter():
+        if node.tag == f"{{{_DRAWING_NS}}}blip":
+            references.append(node.attrib.get(f"{{{_REL_NS}}}embed"))
+        elif node.tag == f"{{{_VML_NS}}}imagedata":
+            references.append(node.attrib.get(f"{{{_REL_NS}}}id"))
+    return references
+
+
+def _drawing_visual_risks(elem) -> list[str]:
+    """Identify unconsumed visual payloads without guessing their pixels.
+
+    A picture's own rectangular geometry belongs to that picture. Text boxes
+    remain supported as text containers; their ordinary box geometry alone is
+    not evidence that a mathematical diagram was lost.
+    """
+    reasons = set()
+    shape_ns = "http://schemas.microsoft.com/office/word/2010/wordprocessingShape"
+    group_ns = "http://schemas.microsoft.com/office/word/2010/wordprocessingGroup"
+    picture_ns = "http://schemas.openxmlformats.org/drawingml/2006/picture"
+    for node in elem.iter():
+        local = _local_tag(node)
+        if node.tag == f"{{{_DRAWING_NS}}}graphicData":
+            uri = node.attrib.get("uri", "")
+            if uri not in {picture_ns, shape_ns, group_ns}:
+                reasons.add("unknown_graphic_payload")
+            elif uri == picture_ns and not _drawing_image_references(node):
+                reasons.add("picture_payload_unavailable")
+        if node.tag in {f"{{{_VML_NS}}}group", f"{{{_DRAWING_NS}}}grpSp",
+                        f"{{{group_ns}}}wgp"}:
+            reasons.add("group_layout_not_converted")
+        if local in {"chart", "relIds", "contentPart"} and not node.tag.startswith(f"{{{_WORD_NS}}}"):
+            reasons.add("native_chart_or_diagram_not_converted")
+        native_shape = node.tag in {f"{{{shape_ns}}}wsp", f"{{{_DRAWING_NS}}}sp",
+                                    f"{{{_DRAWING_NS}}}cxnSp"}
+        vml_shape = node.tag in {f"{{{_VML_NS}}}{name}" for name in
+                                ("shape", "line", "polyline", "curve", "rect", "roundrect", "oval", "arc")}
+        if native_shape or vml_shape:
+            has_textbox = any(child.tag == f"{{{_WORD_NS}}}txbxContent" for child in node.iter())
+            has_picture = bool(_drawing_image_references(node))
+            geometry = [child for child in node.iter() if child.tag in {
+                f"{{{_DRAWING_NS}}}prstGeom", f"{{{_DRAWING_NS}}}custGeom"}]
+            plain_textbox = has_textbox and not has_picture and (
+                not geometry or all(child.tag == f"{{{_DRAWING_NS}}}prstGeom"
+                                    and child.attrib.get("prst") == "rect" for child in geometry))
+            if (native_shape and not plain_textbox
+                    or vml_shape and not has_picture and not plain_textbox):
+                reasons.add("native_shape_not_converted")
+    return sorted(reasons)
+
+
+def _record_drawing_review(elem, diagnostics, reasons, paths, references, before) -> None:
+    if diagnostics["images_unavailable"] == before[0]:
+        diagnostics["images_unavailable"] += 1
+    if diagnostics["review_required"] == before[1]:
+        diagnostics["review_required"] += 1
+    source = ET.tostring(elem, encoding="unicode")
+    row = {"reasons": list(reasons), "image_reference_count": len(references),
+           "image_occurrences": list(paths), "layout_preserved": False,
+           "source_xml_sha256": hashlib.sha256(source.encode()).hexdigest(), "characters": len(source)}
+    records = diagnostics.setdefault("drawing_review_details", [])
+    if len(records) < 128:
+        if len(source) <= 32768:
+            row["source_xml"] = source
+        records.append(row)
+    if "multiple_image_components" in reasons or "group_layout_not_converted" in reasons:
+        _warn(diagnostics, "Word 组合绘图的整体布局尚未转换，已按源载体顺序保留全部可用图片组件，请对照原页核对。")
+    else:
+        _warn(diagnostics, "Word 原生绘图、图表或图片载荷未能完整转换，请对照原页核对；原XML证据已保留。")
+
+
+def _parse_drawing(elem, z, rels, output_dir, url_prefix, asset_prefix, diagnostics,
+                   asset_cache, escape_plain_text=False) -> str:
+    def payload_nodes(node):
+        # Text boxes parse their own paragraphs, drawings and relationships.
+        # Do not extract their nested pictures a second time in this carrier.
+        if node.tag == f"{{{_WORD_NS}}}txbxContent" or node.tag in {
+                f"{{{_DRAWING_NS}}}blip", f"{{{_VML_NS}}}imagedata"}:
+            yield node
+            return
+        for child in node:
+            yield from payload_nodes(child)
+
+    payloads = list(payload_nodes(elem))
+    references = [_drawing_image_references(node)[0] for node in payloads
+                  if node.tag != f"{{{_WORD_NS}}}txbxContent"]
+    reasons = _drawing_visual_risks(elem)
+    if len(references) > 1:
+        reasons.append("multiple_image_components")
+    before = (diagnostics["images_unavailable"], diagnostics["review_required"])
+    paths, parts = [], []
+    for node in payloads:
+        if node.tag == f"{{{_WORD_NS}}}txbxContent":
+            value = _parse_inline(node, z, rels, output_dir, url_prefix, asset_prefix,
+                                  diagnostics, asset_cache, escape_plain_text)
+            if value:
+                parts.append(value)
+            continue
+        reference = _drawing_image_references(node)[0]
+        url = _save_image(z, rels.get(reference or "", ""), output_dir, url_prefix,
+                          asset_prefix, diagnostics, asset_cache)
+        if url:
+            from .docx_source_assets import note_image_context
+            note_image_context(diagnostics, url, elem)
+            paths.append(url)
+            parts.append(f"\n![]({url})\n")
+        else:
+            reasons.append("image_reference_unavailable")
+    if reasons:
+        _record_drawing_review(elem, diagnostics, sorted(set(reasons)), paths, references, before)
+    return "\n".join(parts)
 
 
 def _extract_ole_formula_or_image(
@@ -995,20 +1208,8 @@ def _parse_inline(
                 blocks.append(value)
         return "\n\n".join(blocks)
     if tag in {"drawing", "pict"}:
-        url = _find_and_extract_image(
-            elem, z, rels, output_dir, url_prefix, asset_prefix,
-            diagnostics, asset_cache,
-        )
-        embedded_text = []
-        for text_box in elem.iter(f"{{{_WORD_NS}}}txbxContent"):
-            embedded_text.append(_parse_inline(
-                text_box, z, rels, output_dir, url_prefix, asset_prefix,
-                diagnostics, asset_cache, escape_plain_text,
-            ))
-        parts = [text for text in embedded_text if text]
-        if url:
-            parts.append(f"\n![]({url})\n")
-        return "\n".join(parts)
+        return _parse_drawing(elem, z, rels, output_dir, url_prefix, asset_prefix,
+                             diagnostics, asset_cache, escape_plain_text)
     if tag == "object":
         value = _extract_ole_formula_or_image(
             elem, z, rels, output_dir, url_prefix, asset_prefix,
@@ -1453,6 +1654,7 @@ def extract_docx_markdown(
 
             rels = _extract_rels(z, diagnostics)
             diagnostics["_numbering"] = _extract_numbering(z, diagnostics)
+            diagnostics["_numbering_styles"] = _extract_numbering_styles(z)
             root = SafeET.fromstring(z.read("word/document.xml"))
             _select_compatible_alternatives(root, z, rels)
             diagnostics["_paragraph_image_ambiguities"] = _adjacent_question_image_ambiguities(root)
@@ -1505,6 +1707,7 @@ def extract_docx_markdown(
                     + ", ".join(diagnostics["unsupported_omml_tags"]),
                 )
             diagnostics.pop("_numbering", None)
+            diagnostics.pop("_numbering_styles", None)
             diagnostics.pop("_paragraph_image_ambiguities", None)
             from .docx_source_assets import finalize_word_asset_evidence
             asset_evidence = finalize_word_asset_evidence(markdown, diagnostics)
@@ -1531,6 +1734,7 @@ def extract_docx_markdown(
             }
     except Exception as exc:
         diagnostics.pop("_numbering", None)
+        diagnostics.pop("_numbering_styles", None)
         diagnostics.pop("_paragraph_image_ambiguities", None)
         diagnostics.pop("_empty_rasters", None)
         diagnostics.pop("_nonempty_image_contexts", None)

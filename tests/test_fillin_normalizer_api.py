@@ -29,6 +29,10 @@ def _question(response):
     (r"已知$x>0$，则$x$的最小值为\_\_\_\_。", r"已知$x>0$，则$x$的最小值为\fillin。"),
     # Real Example 2.6: one escaped glyph at the RHS of a complete math shell.
     (r"则$S_n = \_$。", r"则$S_n = \fillin$。"),
+    (r"已知 $x=1$，则结果为 $\fillin$。", r"已知 $x=1$，则结果为 \fillin。"),
+    (r"结果为 $$\fillin[width=2cm][$x^2$]$$。", r"结果为 \fillin[width=2cm][$x^2$]。"),
+    (r"结果为\fillin\underline{▲}\fillin．", r"结果为\fillin．"),
+    (r"结果为____\underline{▲}____．", r"结果为\fillin．"),
 ])
 def test_book_escaped_blanks_are_stored_consistently_on_create_and_update(client, db_session, raw, expected):
     from mathbank.database import Question, QuestionFingerprint

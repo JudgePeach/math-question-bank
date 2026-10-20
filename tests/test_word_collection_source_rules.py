@@ -120,7 +120,6 @@ def test_unproven_inline_numbers_still_veto_combined_questions(body):
 
 
 @pytest.mark.parametrize("native", [
-    r"\fillin\underline{▲}\fillin",
     r"\underline{不能删除的原文字}",
     r"\underline{数值\textbf{21}与\{可见括号\}}",
     r"\underline{尚未闭合的原文字",
@@ -135,6 +134,16 @@ def test_source_underline_contents_survive_a_destructive_legacy_fillin_formatter
     assert result == normalize_source_fillin(result, legacy)
     if native.endswith("}"):
         assert "另填 " + r"\fillin" in result
+
+
+def test_only_complete_triangle_answer_slots_are_canonicalized_after_source_protection():
+    source = (r"结果为\fillin\underline{▲}\fillin．真正标记▲；"
+              r"\underline{▲}、\underline{不能删除的原文字}及$\underline{a_n}$。")
+    expected = (r"结果为\fillin．真正标记▲；"
+                r"\underline{▲}、\underline{不能删除的原文字}及$\underline{a_n}$。")
+    normalize = lambda value: value
+    assert normalize_source_fillin(source, normalize) == expected
+    assert normalize_source_fillin(expected, normalize) == expected
 
 
 @pytest.mark.parametrize("native", [

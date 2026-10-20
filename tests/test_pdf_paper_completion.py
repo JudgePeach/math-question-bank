@@ -126,6 +126,12 @@ def test_legacy_missing_finish_reason_remains_compatible():
     assert split(lambda *_a, **_kw: response(finish=None))[0]["content"] == "完整题干 $x=1$。"
 
 
+@pytest.mark.parametrize("finish", ["error", "cancelled", "safety", "unknown_terminal_state"])
+def test_non_success_terminal_state_never_accepts_valid_partial_json(finish):
+    with pytest.raises(ValueError, match="未正常完成"):
+        paper_parse.parse_paper_completion(response(finish=finish).json())
+
+
 def stream_provider():
     return SimpleNamespace(provider_code="siliconflow", model_name="Qwen/Qwen3.8-27B",
                            api_key="unused", chat_completions_url="https://model.invalid")

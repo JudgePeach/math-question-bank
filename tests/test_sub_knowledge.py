@@ -8,7 +8,7 @@ import pytest
 from sqlalchemy import create_engine
 
 from mathbank import db_migrations
-from mathbank.curriculums import build_default_metadata
+from mathbank.curriculums import CURRICULUM_NAMES, build_default_metadata
 from mathbank.database import Base, Question, QuestionCurriculum, QuestionSubKnowledge
 from mathbank.sub_knowledge import normalize_sub_knowledge, resolve_active_version
 
@@ -146,7 +146,7 @@ def test_all_versions_independent_new_mirrors_empty_existing_empty_mirror_preser
     main = isolated_metadata
     qid = create(client, main, sub_knowledge=json.dumps([CONDITIONAL]))
     original = db_session.query(QuestionCurriculum).filter_by(question_id=qid, version_code="A").one().to_dict()
-    for version in ("B", "S", "H"):
+    for version in ("B", "S", "H", "N", "X"):
         response = client.post("/api/config/metadata", json=build_default_metadata(version), headers=headers(main))
         assert response.status_code == 200, response.text
         detail = client.get(f"/api/questions/{qid}").json()
@@ -156,7 +156,7 @@ def test_all_versions_independent_new_mirrors_empty_existing_empty_mirror_preser
         # Existing empty old categories are meaningful and must not be routed again.
         mirror.compulsory = mirror.chapter = mirror.knowledge = ""
         db_session.commit()
-    for version in ("A", "B", "S", "H", "A"):
+    for version in (*CURRICULUM_NAMES, "A"):
         assert client.post("/api/config/metadata", json=build_default_metadata(version), headers=headers(main)).status_code == 200
         detail = client.get(f"/api/questions/{qid}").json()
         if version == "A":
@@ -232,7 +232,8 @@ def test_v10_migration_backup_unchanged_old_fields_empty_relation_idempotent_fk(
             connection.exec_driver_sql("INSERT INTO question_curriculums(id,question_id,version_code,knowledge) VALUES(1,1,'A','8. 立体几何初步'),(2,1,'B','历史B标签')")
         monkeypatch.setattr(db_migrations, "SCHEMA_SNAPSHOT_DIR", tmp_path / "snapshots")
         result = db_migrations.migrate_database(engine)
-        assert result["from_version"] == 10 and result["to_version"] == 11 and result["backup"]
+        from mathbank.db_migrations import LATEST_SCHEMA_VERSION
+        assert result["from_version"] == 10 and result["to_version"] == LATEST_SCHEMA_VERSION and result["backup"]
         with sqlite3.connect(result["backup"]) as original:
             assert original.execute("PRAGMA user_version").fetchone()[0] == 10
             assert original.execute("SELECT category_knowledge,tags FROM questions").fetchone() == ("8. 立体几何初步", "旧标签")
@@ -256,7 +257,7 @@ def test_metadata_resolver_requires_explicit_valid_source_in_strict_mode(tmp_pat
     path = tmp_path / "metadata.json"
     with pytest.raises(ValueError):
         resolve_active_version(path, strict=True)
-    for version in ("A", "B", "S", "H"):
+    for version in CURRICULUM_NAMES:
         path.write_text(json.dumps(build_default_metadata(version)), encoding="utf-8")
         assert resolve_active_version(path, strict=True) == version
     path.write_text('{"curriculum": {"未知": {"自编章": []}}}', encoding="utf-8")

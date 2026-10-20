@@ -111,13 +111,16 @@ def test_administrative_score_shell_cannot_override_an_unknown_anchor(tmp_path):
 ])
 def test_uncertain_heading_anchor_is_not_reassigned_and_blocks_certification(tmp_path,kwargs):
     result=extract(tmp_path,picture(**kwargs))
-    assert result['success'] and result['diagnostics']['review_required']==1
+    has_unconverted_chart = kwargs.get('other') == '<a:chart/>'
+    assert result['success'] and result['diagnostics']['review_required'] == (2 if has_unconverted_chart else 1)
     url=result['image_paths'][0]
     assert result['markdown'].index(url)<result['markdown'].index('14．')
     review=result['diagnostics']['heading_image_ownership'][0]
     assert review['source_number']==14 and review['image_path']==url and review['status']=='ownership_uncertain'
-    assert len(result['diagnostics']['warnings'])==1
-    assert url in result['diagnostics']['warnings'][0]
+    assert len(result['diagnostics']['warnings']) == (2 if has_unconverted_chart else 1)
+    assert any(url in warning for warning in result['diagnostics']['warnings'])
+    if has_unconverted_chart:
+        assert result['diagnostics']['drawing_review_details'][0]['reasons'] == ['native_chart_or_diagram_not_converted']
 
 
 @pytest.mark.parametrize('mutation',[

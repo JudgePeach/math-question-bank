@@ -264,11 +264,11 @@ def test_solution_space_latex_generation():
         "solution_space": "0.0"
     }]
     
-    # 1. Non-exam_19 paper mode -> should inject \vspace*{6.5cm}
+    # The physical answer space remains pageable in every paper template.
     tex = build_latex_document("单元测试", "试卷", "exam", questions_data_65, include_answers=False)
-    assert r"\vspace*{6.5cm}" in tex
+    assert r"\mathbanksolutionspace{6.5cm}" in tex
     
-    # 2. exam_19 paper mode with 3.0cm solution space -> should inject \vspace*{3.0cm}
+    # Explicit nonzero settings still work after switching to compact exam_19.
     questions_data_3 = [{
         "question": {
             "id": 99,
@@ -280,11 +280,11 @@ def test_solution_space_latex_generation():
         "solution_space": "3.0"
     }]
     tex_19_three = build_latex_document("高考模拟", "试卷", "exam_19", questions_data_3, include_answers=False)
-    assert r"\vspace*{3.0cm}" in tex_19_three
+    assert r"\mathbanksolutionspace{3.0cm}" in tex_19_three
 
     # 3. exam_19 paper mode with 0.0cm solution space -> should not inject \vspace
     tex_19_zero = build_latex_document("高考模拟", "试卷", "exam_19", questions_data_zero, include_answers=False)
-    assert r"\vspace*" not in tex_19_zero
+    assert r"\mathbanksolutionspace{0.0cm}" not in tex_19_zero
 
 
 def test_latex_export_renders_every_editable_content_tikz_asset_once():
@@ -588,7 +588,7 @@ def test_multiple_large_lower_figures_remain_page_breakable(
     assert tex.count(r"max width=11.0cm,max height=8.0cm") == 4
     assert r"\mathbankneedspace{8.5cm}" in tex
     assert tex.count(rf"\begin{{{environment}}}") == 4
-    assert r"\vspace*{7.0cm}" in tex
+    assert r"\mathbanksolutionspace{7.0cm}" in tex
 
 
 def test_latex_export_bounds_full_width_multicolumn_and_keeps_multirow():

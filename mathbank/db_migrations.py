@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import datetime as dt
 import hashlib
+import json
 import sqlite3
 from contextlib import closing
 from pathlib import Path
@@ -19,14 +20,16 @@ from mathbank.paths import SCHEMA_SNAPSHOT_DIR
 from mathbank.sub_knowledge import normalize_sub_knowledge
 
 
-LATEST_SCHEMA_VERSION = 11
+LATEST_SCHEMA_VERSION = 14
 LEGACY_REQUIRED_TABLES = {
     "questions",
     "question_curriculums",
     "papers",
     "paper_questions",
 }
-REQUIRED_TABLES = LEGACY_REQUIRED_TABLES | {"question_fingerprints", "question_sub_knowledge"}
+KNOWLEDGE_POINT_TABLES = {"knowledge_points", "knowledge_point_curriculums", "question_knowledge_points"}
+QUESTION_REFERENCE_TABLES = {"question_source_labels", "question_references"}
+REQUIRED_TABLES = LEGACY_REQUIRED_TABLES | {"question_fingerprints", "question_sub_knowledge", "document_import_receipts"} | KNOWLEDGE_POINT_TABLES | QUESTION_REFERENCE_TABLES
 
 V6_QUESTION_FINGERPRINT_COLUMNS = {
     "question_id",
@@ -230,6 +233,97 @@ def create_pre_migration_backup(
     return backup_path
 
 
+QUESTION_SORT_INDEX_NAME = "idx_questions_created_at_id"
+
+
+def _question_sort_index_name(connection) -> str | None:
+    """Accept a full BINARY index whose leading keys serve either sort direction."""
+
+    for index in connection.exec_driver_sql('PRAGMA index_list("questions")'):
+        if len(index) < 5 or int(index[4]):
+            continue  # A partial index cannot serve the unfiltered question list.
+        name = str(index[1])
+        quoted_name = '"' + name.replace('"', '""') + '"'
+        keys = [row for row in connection.exec_driver_sql(
+            f"PRAGMA index_xinfo({quoted_name})"
+        ) if len(row) >= 6 and int(row[5])]
+        if (len(keys) >= 2
+                and tuple(row[2] for row in keys[:2]) == ("created_at", "id")
+                and all(str(row[4]).upper() == "BINARY" for row in keys[:2])
+                and int(keys[0][3]) == int(keys[1][3])):
+            return name
+    return None
+
+
+def ensure_question_sort_index(
+    engine: Engine,
+    *,
+    pre_migration_backup: Path | str | None = None,
+) -> dict[str, object]:
+    """Supplement a validated database without changing its local schema version.
+
+    init_db calls this after the existing schema migration. New ORM databases
+    already contain the index. Existing files are snapshotted before the first
+    DDL; an earlier verified migration snapshot can cover the same startup.
+    No question rows or existing indexes are changed.
+    """
+
+    current = schema_version(engine)
+    if current > LATEST_SCHEMA_VERSION:
+        raise RuntimeError(
+            f"数据库版本 {current} 高于程序支持版本 {LATEST_SCHEMA_VERSION}，请升级程序。"
+        )
+    with engine.connect() as connection:
+        columns = {row[1] for row in connection.exec_driver_sql(
+            'PRAGMA table_info("questions")'
+        )}
+        if not {"created_at", "id"}.issubset(columns):
+            raise RuntimeError("questions 缺少 created_at/id，不能补建排序索引")
+        existing = _question_sort_index_name(connection)
+    if existing:
+        return {"added_question_sort_indexes": 0,
+                "question_sort_index": existing, "sort_index_backup": None}
+
+    backup = pre_migration_backup or create_pre_migration_backup(
+        engine, from_version=current, to_version=current
+    )
+    with engine.connect().execution_options(isolation_level="AUTOCOMMIT") as connection:
+        transaction_started = False
+        try:
+            connection.exec_driver_sql("BEGIN IMMEDIATE")
+            transaction_started = True
+            # Another startup may have completed the supplement after our read.
+            existing = _question_sort_index_name(connection)
+            added = 0
+            if not existing:
+                conflict = connection.exec_driver_sql(
+                    "SELECT type, tbl_name FROM sqlite_master WHERE name = ?",
+                    (QUESTION_SORT_INDEX_NAME,),
+                ).first()
+                if conflict:
+                    raise RuntimeError(
+                        f"排序索引名称 {QUESTION_SORT_INDEX_NAME} 已被其他结构占用；"
+                        "请先核查，未替换原索引"
+                    )
+                connection.exec_driver_sql(
+                    f"CREATE INDEX {QUESTION_SORT_INDEX_NAME} "
+                    "ON questions (created_at, id)"
+                )
+                existing = _question_sort_index_name(connection)
+                if not existing:
+                    raise RuntimeError("questions 排序索引补建后验证失败")
+                added = 1
+            connection.exec_driver_sql("COMMIT")
+            transaction_started = False
+        except Exception:
+            if transaction_started:
+                connection.exec_driver_sql("ROLLBACK")
+            raise
+    return {"added_question_sort_indexes": added,
+            "question_sort_index": existing,
+            "sort_index_backup": str(backup) if backup else None}
+
+
 def _ensure_tikz_asset_columns(connection) -> dict[str, int]:
     """Add editable TikZ asset columns when an older table lacks them."""
 
@@ -377,6 +471,168 @@ def _validate_sub_knowledge_schema(connection) -> None:
                 raise ValueError("position")
         except ValueError as exc:
             raise RuntimeError(f"question_sub_knowledge 包含无效值 (id={row[0]})") from exc
+
+
+def _ensure_knowledge_point_tables(connection) -> dict[str, int]:
+    """v12 adds independent point tables; existing question fields stay intact."""
+
+    from mathbank.database import KnowledgePoint, KnowledgePointCurriculum, QuestionKnowledgePoint
+    existing = set(inspect(connection).get_table_names())
+    stats = {}
+    for model in (KnowledgePoint, KnowledgePointCurriculum, QuestionKnowledgePoint):
+        missing = model.__tablename__ not in existing
+        if missing:
+            model.__table__.create(bind=connection)
+        stats[f"added_{model.__tablename__}"] = int(missing)
+    _validate_knowledge_point_schema(connection)
+    return stats
+
+
+def _validate_knowledge_point_schema(connection) -> None:
+    """Fail closed for incomplete constraints, indexes, or persisted point data."""
+
+    from mathbank.database import KnowledgePoint, KnowledgePointCurriculum, QuestionKnowledgePoint
+    models = (KnowledgePoint, KnowledgePointCurriculum, QuestionKnowledgePoint)
+    expected_indexes = {
+        "knowledge_points": {(False, ("name",))},
+        "knowledge_point_curriculums": {
+            (True, ("point_code", "version_code", "compulsory", "chapter", "knowledge", "reference_section", "level")),
+            (False, ("point_code",)),
+            (False, ("version_code", "compulsory", "chapter", "knowledge", "point_code")),
+        },
+        "question_knowledge_points": {
+            (True, ("question_id", "point_code")), (False, ("question_id",)),
+            (False, ("point_code", "role", "status", "question_id")),
+        },
+    }
+    for model in models:
+        table = model.__tablename__
+        info = {row[1]: row for row in connection.exec_driver_sql(f'PRAGMA table_info("{table}")')}
+        columns = model.__table__.columns
+        if set(info) != set(columns.keys()) or any(not column.nullable and not int(info[column.name][3]) for column in columns if column.name != "id"):
+            raise RuntimeError(f"知识点表 {table} 缺少核心字段或非空约束")
+        primary_keys = tuple(row[1] for row in sorted(info.values(), key=lambda row: row[5]) if row[5])
+        if primary_keys != tuple(column.name for column in columns if column.primary_key):
+            raise RuntimeError(f"知识点表 {table} 主键结构异常")
+        actual_indexes = set()
+        for index in connection.exec_driver_sql(f'PRAGMA index_list("{table}")'):
+            actual_indexes.add((bool(index[2]), tuple(row[2] for row in connection.exec_driver_sql(f'PRAGMA index_info("{index[1]}")'))))
+        if not expected_indexes[table].issubset(actual_indexes):
+            raise RuntimeError(f"知识点表 {table} 缺少索引或唯一约束")
+        for foreign_key in model.__table__.foreign_keys:
+            if not any(row[2] == foreign_key.column.table.name and row[3] == foreign_key.parent.name and row[4] == foreign_key.column.name and row[6].upper() == "CASCADE" for row in connection.exec_driver_sql(f'PRAGMA foreign_key_list("{table}")')):
+                raise RuntimeError(f"知识点表 {table} 缺少级联外键")
+        ddl = connection.exec_driver_sql("SELECT sql FROM sqlite_master WHERE type='table' AND name=?", (table,)).scalar_one()
+        for constraint in model.__table__.constraints:
+            if hasattr(constraint, "sqltext") and str(constraint.sqltext) not in ddl:
+                raise RuntimeError(f"知识点表 {table} 缺少值域约束")
+        if connection.exec_driver_sql(f'PRAGMA foreign_key_check("{table}")').fetchall():
+            raise RuntimeError(f"知识点表 {table} 存在外键异常")
+    try:
+        for row in connection.exec_driver_sql("SELECT code, name, original_name, source, aliases FROM knowledge_points"):
+            if any(not isinstance(value, str) or not value.strip() for value in row[:4]):
+                raise ValueError("point identity")
+            aliases = json.loads(row[4])
+            if not isinstance(aliases, list) or any(not isinstance(alias, str) or not alias.strip() for alias in aliases):
+                raise ValueError("aliases")
+        for row in connection.exec_driver_sql("SELECT level, knowledge FROM knowledge_point_curriculums"):
+            if row[0] not in {"leaf", "parent", "chapter"} or (row[0] == "chapter") != (not row[1]):
+                raise ValueError("point curriculum")
+        for row in connection.exec_driver_sql("SELECT role, status, position, scope, evidence_source, evidence, reason, origin FROM question_knowledge_points"):
+            if row[0] not in {"main", "auxiliary"} or row[1] not in {"confirmed", "suggested"} or not isinstance(row[2], int) or row[2] < 0:
+                raise ValueError("point role/status/position")
+            for value in row[3:]:
+                json.loads(value)
+    except (ValueError, TypeError) as exc:
+        raise RuntimeError("知识点表包含无效数据") from exc
+
+
+def _ensure_document_import_receipts(connection) -> dict[str, int]:
+    from mathbank.database import DocumentImportReceipt
+    missing = DocumentImportReceipt.__tablename__ not in set(inspect(connection).get_table_names())
+    if missing:
+        DocumentImportReceipt.__table__.create(bind=connection)
+    _validate_document_import_receipts(connection)
+    return {"added_document_import_receipts": int(missing)}
+
+
+def _validate_document_import_receipts(connection) -> None:
+    inspector = inspect(connection)
+    columns = {row["name"] for row in inspector.get_columns("document_import_receipts")}
+    required = {"id", "project_id", "card_id", "payload_sha256", "draft_revision", "question_id", "created_at"}
+    if not required.issubset(columns):
+        raise RuntimeError("导入回执表缺少必要字段")
+    uniques = {tuple(row.get("column_names") or ()) for row in inspector.get_unique_constraints("document_import_receipts")}
+    foreign_keys = inspector.get_foreign_keys("document_import_receipts")
+    if (("project_id", "card_id") not in uniques or not any(
+            row.get("constrained_columns") == ["question_id"] and row.get("referred_table") == "questions"
+            and (row.get("options") or {}).get("ondelete", "").upper() == "SET NULL" for row in foreign_keys)):
+        raise RuntimeError("导入回执表的唯一约束或外键无效")
+
+
+def _ensure_question_reference_tables(connection) -> dict[str, int]:
+    """v13 creates empty reference tables; startup never guesses bindings."""
+
+    from mathbank.database import QuestionReference, QuestionSourceLabel
+    existing = set(inspect(connection).get_table_names())
+    stats = {}
+    for model in (QuestionSourceLabel, QuestionReference):
+        missing = model.__tablename__ not in existing
+        if missing:
+            model.__table__.create(bind=connection)
+        stats[f"added_{model.__tablename__}"] = int(missing)
+    _validate_question_reference_schema(connection)
+    _ensure_document_import_receipts(connection)
+    return stats
+
+
+def _validate_question_reference_schema(connection) -> None:
+    """Require index/constraint/FK contracts, including target SET NULL safety."""
+
+    from sqlalchemy import UniqueConstraint
+    from mathbank.database import QuestionReference, QuestionSourceLabel
+    from mathbank.question_references import normalize_book_key, normalize_label_key
+    for model in (QuestionSourceLabel, QuestionReference):
+        table = model.__tablename__
+        columns = model.__table__.columns
+        info = {row[1]: row for row in connection.exec_driver_sql(f'PRAGMA table_info("{table}")')}
+        if set(info) != set(columns.keys()) or any(not column.nullable and not int(info[column.name][3]) for column in columns if column.name != "id"):
+            raise RuntimeError(f"交叉引用表 {table} 缺少核心字段或非空约束")
+        if model is QuestionReference and int(info["target_question_id"][3]):
+            raise RuntimeError("交叉引用目标必须允许置空")
+        primary_keys = tuple(row[1] for row in sorted(info.values(), key=lambda row: row[5]) if row[5])
+        if primary_keys != ("id",):
+            raise RuntimeError(f"交叉引用表 {table} 主键结构异常")
+        expected_indexes = {(index.unique, tuple(column.name for column in index.columns)) for index in model.__table__.indexes}
+        expected_indexes.update((True, tuple(column.name for column in constraint.columns)) for constraint in model.__table__.constraints if isinstance(constraint, UniqueConstraint))
+        actual_indexes = set()
+        for index in connection.exec_driver_sql(f'PRAGMA index_list("{table}")'):
+            actual_indexes.add((bool(index[2]), tuple(row[2] for row in connection.exec_driver_sql(f'PRAGMA index_info("{index[1]}")'))))
+        if not expected_indexes.issubset(actual_indexes):
+            raise RuntimeError(f"交叉引用表 {table} 缺少索引或唯一约束")
+        actual_foreign_keys = connection.exec_driver_sql(f'PRAGMA foreign_key_list("{table}")').fetchall()
+        for foreign_key in model.__table__.foreign_keys:
+            if not any(row[2] == foreign_key.column.table.name and row[3] == foreign_key.parent.name and row[4] == foreign_key.column.name and row[6].upper() == foreign_key.ondelete for row in actual_foreign_keys):
+                raise RuntimeError(f"交叉引用表 {table} 缺少删除保护外键")
+        ddl = connection.exec_driver_sql("SELECT sql FROM sqlite_master WHERE type='table' AND name=?", (table,)).scalar_one()
+        for constraint in model.__table__.constraints:
+            if hasattr(constraint, "sqltext") and str(constraint.sqltext) not in ddl:
+                raise RuntimeError(f"交叉引用表 {table} 缺少值域约束")
+        if connection.exec_driver_sql(f'PRAGMA foreign_key_check("{table}")').fetchall():
+            raise RuntimeError(f"交叉引用表 {table} 存在外键异常")
+    try:
+        for book, label, original in connection.exec_driver_sql("SELECT book_key,label_key,original_label FROM question_source_labels"):
+            if not book or normalize_book_key(book) != book or len(book) > 200 or not label or normalize_label_key(label) != label or len(label) > 100 or not original or len(original) > 200:
+                raise ValueError("source label")
+        for field, start, end, text, book, label, digest, prefix, suffix, state, target in connection.exec_driver_sql("SELECT field,start,end,text,book_key,label_key,field_sha256,prefix,suffix,resolution_state,target_question_id FROM question_references"):
+            if field not in {"content", "answer_markdown", "review"} or type(start) is not int or type(end) is not int or start < 0 or end <= start or len(text) != end - start:
+                raise ValueError("reference span")
+            if normalize_book_key(book) != book or len(book) > 200 or (label and normalize_label_key(label) != label) or len(label) > 100 or len(digest) != 64 or any(char not in "0123456789abcdef" for char in digest):
+                raise ValueError("reference identity")
+            if len(prefix) > 24 or len(suffix) > 24 or state not in {"resolved", "unresolved", "ambiguous"} or (state != "resolved" and target is not None):
+                raise ValueError("reference state")
+    except (ValueError, TypeError) as exc:
+        raise RuntimeError("交叉引用表包含无效数据") from exc
 
 
 def _validate_question_fingerprint_schema(
@@ -681,6 +937,8 @@ def _rebuild_relationship_tables(engine: Engine) -> dict[str, int]:
             tikz_column_stats = _ensure_tikz_asset_columns(connection)
             figure_layout_stats = _ensure_figure_layout_columns(connection)
             sub_knowledge_stats = _ensure_sub_knowledge_columns(connection)
+            knowledge_point_stats = _ensure_knowledge_point_tables(connection)
+            question_reference_stats = _ensure_question_reference_tables(connection)
             added_question_fingerprints = _ensure_question_fingerprint_table(connection)
             _validate_figure_layout_schema(connection)
 
@@ -698,6 +956,8 @@ def _rebuild_relationship_tables(engine: Engine) -> dict[str, int]:
                 **tikz_column_stats,
                 **figure_layout_stats,
                 **sub_knowledge_stats,
+                **knowledge_point_stats,
+                **question_reference_stats,
             }
         except Exception:
             if transaction_started:
@@ -722,6 +982,8 @@ def _upgrade_derived_schema(engine: Engine) -> dict[str, int]:
             stats = _ensure_tikz_asset_columns(connection)
             stats.update(_ensure_figure_layout_columns(connection))
             stats.update(_ensure_sub_knowledge_columns(connection))
+            stats.update(_ensure_knowledge_point_tables(connection))
+            stats.update(_ensure_question_reference_tables(connection))
             stats["added_question_fingerprints"] = (
                 _ensure_question_fingerprint_table(connection)
             )
@@ -795,6 +1057,8 @@ def _upgrade_v6_or_v7_fingerprint_schema(
             _validate_question_fingerprint_schema(connection)
             figure_layout_stats = _ensure_figure_layout_columns(connection)
             sub_knowledge_stats = _ensure_sub_knowledge_columns(connection)
+            knowledge_point_stats = _ensure_knowledge_point_tables(connection)
+            question_reference_stats = _ensure_question_reference_tables(connection)
             _validate_figure_layout_schema(connection)
             connection.exec_driver_sql(f"PRAGMA user_version={LATEST_SCHEMA_VERSION}")
             connection.exec_driver_sql("COMMIT")
@@ -805,6 +1069,8 @@ def _upgrade_v6_or_v7_fingerprint_schema(
                 "added_question_fingerprint_text_indexes": added_text_indexes,
                 **figure_layout_stats,
                 **sub_knowledge_stats,
+                **knowledge_point_stats,
+                **question_reference_stats,
             }
         except Exception:
             if transaction_started:
@@ -833,6 +1099,9 @@ def migrate_database(
             _validate_question_fingerprint_schema(connection)
             _validate_figure_layout_schema(connection)
             _validate_sub_knowledge_schema(connection)
+            _validate_knowledge_point_schema(connection)
+            _validate_question_reference_schema(connection)
+            _validate_document_import_receipts(connection)
         return {"from_version": current, "to_version": current, "backup": None}
 
     if not table_names:

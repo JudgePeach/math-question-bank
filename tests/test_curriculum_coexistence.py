@@ -77,16 +77,18 @@ def test_curriculum_coexistence_and_migration(client, db_session):
         question_id=question_id, version_code="B"
     ).first()
     assert mapping_b is not None
-    assert mapping_b.compulsory == "必修三"
-    assert mapping_b.chapter == "第八章 向量的数量积与三角恒等变换"
-    assert mapping_b.knowledge == "" # Leaf knowledge is reset to empty for B
+    # Without confirmed points or a verified directory crosswalk, a keyword
+    # alone cannot prove a B chapter.  Preserve the A mirror and leave B open.
+    assert mapping_b.compulsory == ""
+    assert mapping_b.chapter == ""
+    assert mapping_b.knowledge == ""
 
     # Query the question and verify its main category fields are now updated to B-version!
     response = client.get(f"/api/questions/{question_id}")
     assert response.status_code == 200
     fetched_q = response.json()
-    assert fetched_q["category_compulsory"] == "必修三"
-    assert fetched_q["category_chapter"] == "第八章 向量的数量积与三角恒等变换"
+    assert fetched_q["category_compulsory"] == ""
+    assert fetched_q["category_chapter"] == ""
     assert fetched_q["category_knowledge"] == ""
 
     # 3. Test updating the question category under B-version

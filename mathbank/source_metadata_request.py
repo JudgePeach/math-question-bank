@@ -6,6 +6,7 @@ from typing import Callable
 
 from mathbank.source_review_results import parse_review_response as strict_json_loads
 from mathbank.ai_providers import apply_model_thinking_policy
+from mathbank.ai_knowledge_points import load_ai_knowledge_catalog
 from mathbank.paper_parse import PAPER_SPLIT_TIMEOUT_SECONDS
 from mathbank.pdf_vision_request import completion_content
 from mathbank.source_metadata import (
@@ -15,6 +16,11 @@ from mathbank.source_metadata import (
     source_metadata_diagnostics,
 )
 from mathbank.task_manager import TaskCancelled
+from mathbank.document_requests import is_retryable_document_http_status
+
+
+class SourceMetadataPermanentHTTPError(RuntimeError):
+    """A second full-source POST cannot repair a permanent provider response."""
 
 
 def request_word_source_metadata(
@@ -33,7 +39,8 @@ def request_word_source_metadata(
     check_cancelled()
     if not provider.api_key or not provider.chat_completions_url:
         raise SourceMetadataContractError("拆题服务未配置，沿用原整卷拆题入口。")
-    messages = build_source_metadata_messages(plan, curriculum)
+    knowledge_catalog = load_ai_knowledge_catalog()
+    messages = build_source_metadata_messages(plan, curriculum, knowledge_catalog)
     payload = apply_model_thinking_policy({
         "model": provider.model_name, "messages": messages,
         "response_format": {"type": "json_object"}, "temperature": 0.2,
@@ -46,6 +53,11 @@ def request_word_source_metadata(
         check_cancelled()
         report["http_status"] = response.status_code
         if response.status_code != 200:
+            if not is_retryable_document_http_status(response.status_code):
+                report.update(status="permanent_error", permanent_error=True)
+                raise SourceMetadataPermanentHTTPError(
+                    f"拆题服务未接受请求（HTTP {response.status_code}），请检查模型、凭据及服务配置后重试。"
+                )
             raise SourceMetadataContractError(f"元数据请求失败（HTTP {response.status_code}）。")
         body = response.json()
         usage = body.get("usage") if isinstance(body, dict) else None
@@ -58,7 +70,8 @@ def request_word_source_metadata(
                       response_sha256=hashlib.sha256(raw.encode()).hexdigest())
         parsed = strict_json_loads(raw)
         questions = apply_source_metadata_response(parsed, plan, curriculum,
-                                                     normalize_fillin=normalize_fillin)
+                                                     normalize_fillin=normalize_fillin,
+                                                     knowledge_catalog=knowledge_catalog)
         report.update(status="used", question_count=len(questions))
         return questions
     except Exception:
@@ -68,5 +81,6 @@ def request_word_source_metadata(
             report["status"] = "cancelled"
             raise
         # Content or provider exception text must not enter task diagnostics.
-        report["status"] = "fallback"
+        if not report.get("permanent_error"):
+            report["status"] = "fallback"
         raise

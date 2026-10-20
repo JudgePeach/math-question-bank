@@ -375,7 +375,7 @@
                     <span class="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
                         <i class="fa-solid fa-magnifying-glass text-slate-400 text-xs"></i>
                     </span>
-                    <input type="text" id="searchInput" aria-label="搜索题库" placeholder="搜索题干、知识点或来源..."
+                    <input type="text" id="searchInput" aria-label="搜索题库" placeholder="搜索题干、解析、来源或标签（#题号）…"
                            class="glass-input w-full pl-8 pr-4 py-1.5 text-xs rounded-xl">
                 </div>
                 <button type="button" class="bank-filter-toggle" aria-expanded="false" aria-controls="bankFilterFields" onclick="toggleBankFilters(this)">筛选条件</button>
@@ -429,7 +429,10 @@
                         </div>
                     </div>
                 </div>
+                <div id="bankKnowledgePointPicker" class="mb-knowledge-point-field"></div>
                 </div>
+                <div id="bankFilterConditions" class="bank-filter-conditions" aria-label="已生效的筛选条件" aria-live="polite" hidden></div>
+                <div id="bankKnowledgePointConditions" class="mb-knowledge-point-conditions" aria-live="polite" hidden></div>
             </section>
 
             <!-- Lower left: question resources -->
@@ -572,6 +575,8 @@
                         </div>
                     </div>
 
+
+                    <div id="editKnowledgePointPicker" class="mb-knowledge-point-field"></div>
 
                     <!-- Row 3: Custom Tags -->
                     <div class="mt-3">
@@ -968,13 +973,13 @@
                             </div>
                             
                             <!-- Right: Association Selector - Apple Glass Style -->
-                            <div class="space-y-1.5 max-w-sm">
+                            <div class="space-y-1.5 min-w-0">
                                 <label class="block text-[11px] font-semibold text-slate-500 flex items-center space-x-1">
                                     <i class="fa-solid fa-link text-brand-500 mr-1"></i>关联题库中的其他题目
                                 </label>
                                 <div class="flex space-x-2 items-center">
                                     <input type="number" id="editRelatedQuestionNum" placeholder="编号" class="w-16 h-10 px-2 rounded-xl text-xs text-center border border-slate-200 focus:border-brand-500 focus:ring-2 focus:ring-brand-100 transition-all" min="1" title="输入要关联题目的显示编号数字">
-                                    <select id="editRelatedQuestion" class="flex-1 min-w-0 h-10 px-2.5 rounded-xl text-xs truncate border border-slate-200 focus:border-brand-500 focus:ring-2 focus:ring-brand-100 transition-all">
+                                    <select id="editRelatedQuestion" aria-label="选择关联题目" class="flex-1 min-w-0 h-10 px-2.5 rounded-xl text-xs truncate border border-slate-200 focus:border-brand-500 focus:ring-2 focus:ring-brand-100 transition-all">
                                         <option value="">-- 选择要关联的题目 (可选) --</option>
                                     </select>
                                     <button type="button" onclick="associateRelatedQuestion()" class="h-10 px-3 rounded-xl text-xs flex items-center justify-center space-x-1 shrink-0 bg-brand-50 hover:bg-brand-100 text-brand-700 font-bold border border-brand-200 shadow-sm hover:shadow-sm transition-all active:scale-95" title="点击确认将选中的题目与当前题目绑定关联">
@@ -986,6 +991,17 @@
                                     </button>
                                 </div>
                             </div>
+                            <details id="relatedQuestionSearchPanel" class="md:col-start-2 min-w-0 text-xs text-slate-500">
+                                <summary class="cursor-pointer w-fit focus-visible:outline-brand-500">搜索更多题目</summary>
+                                <div class="pt-2 space-y-2">
+                                    <input type="search" id="editRelatedQuestionSearch" placeholder="搜索题干或来源" aria-label="搜索关联题目" class="w-full h-9 px-3 rounded-xl text-xs border border-slate-200 focus:border-brand-500 focus:ring-2 focus:ring-brand-100">
+                                    <div class="flex items-center justify-between gap-2">
+                                        <button type="button" id="relatedQuestionPrevPage" class="px-2 py-1 rounded-lg border border-slate-200 disabled:opacity-40" disabled>上一页</button>
+                                        <span id="relatedQuestionPageStatus" role="status" class="min-w-0 truncate">展开搜索或输入编号查找题目</span>
+                                        <button type="button" id="relatedQuestionNextPage" class="px-2 py-1 rounded-lg border border-slate-200 disabled:opacity-40" disabled>下一页</button>
+                                    </div>
+                                </div>
+                            </details>
                         </div>
                     </div>
 
@@ -1244,11 +1260,11 @@
 
     <!-- AI CLASSIFICATION MODAL - Apple Glass Style -->
     <div id="aiClassifyModal" role="dialog" aria-modal="true" aria-hidden="true" aria-labelledby="aiClassifyModalTitle" class="fixed inset-0 glass-modal-overlay z-50 flex items-center justify-center hidden opacity-0 transition-opacity duration-300">
-        <div class="glass-modal rounded-2xl w-full max-w-md p-6 transform scale-95 transition-transform duration-300 space-y-5">
+        <div class="glass-modal rounded-2xl w-full max-w-lg max-h-[90vh] overflow-y-auto p-6 transform scale-95 transition-transform duration-300 space-y-5">
             <div class="flex justify-between items-center border-b border-slate-200/50 pb-3">
                 <h3 id="aiClassifyModalTitle" class="font-bold text-base text-slate-800 flex items-center space-x-2">
                     <i class="fa-solid fa-wand-magic-sparkles text-brand-600"></i>
-                    <span>教材分类智能分析</span>
+                    <span>教材与知识点智能分类</span>
                 </h3>
                 <button type="button" data-modal-close onclick="closeClassifyModal()" aria-label="关闭教材分类分析弹窗" class="glass-btn w-9 h-9 flex items-center justify-center rounded-xl text-slate-400 hover:text-slate-600 transition-all">
                     <i class="fa-solid fa-xmark text-lg"></i>
@@ -1257,13 +1273,13 @@
 
             <div class="space-y-4">
                 <p class="text-xs text-slate-500 leading-relaxed">
-                    您当前未选择 <strong>学段</strong> 或 <strong>所属章节</strong>。系统将结合题干结构规则与 AI 完成教材定位和粗粒度题型识别；选择题仍需您手动确认单选或多选。
+                    使用同一分类模型分析教材定位、题型，并按现有知识点体系推荐主要考查与辅助知识点。已有知识点会保留；选择题仍需您确认单选或多选。
                 </p>
 
                 <!-- Loading State -->
                 <div id="classifyLoading" role="status" aria-live="polite" class="hidden glass-card rounded-xl p-6 text-center space-y-3">
                     <i class="fa-solid fa-spinner animate-spin text-brand-500 text-2xl"></i>
-                    <p class="text-xs text-slate-500 font-medium">正在分析题干结构、题型与教材定位...</p>
+                    <p class="text-xs text-slate-500 font-medium">正在分析题型、教材定位与知识点...</p>
                 </div>
 
                 <!-- Recommendation Result -->
@@ -1301,6 +1317,11 @@
                             <p id="unknownQuestionFormNotice" class="hidden text-[11px] text-slate-500 font-medium">无法可靠判断题型，将保留当前手动选择。</p>
                         </div>
                     </div>
+                    <div class="rounded-xl border border-slate-200 p-3 space-y-2 text-xs">
+                        <strong>识别的知识点</strong>
+                        <div id="classifyKnowledgePoints" class="space-y-2"></div>
+                        <p id="classifyKnowledgePointWarnings" class="text-[11px] text-amber-700 whitespace-pre-wrap"></p>
+                    </div>
                 </div>
             </div>
 
@@ -1311,7 +1332,7 @@
                     <span>一键 AI 分析</span>
                 </button>
                 <button type="button" id="classifyApplyButton" onclick="applyClassifyRecommendation()" class="hidden glass-btn-primary px-5 py-2 rounded-xl font-medium text-xs">
-                    确认分类并保存题目
+                    应用分类并保存题目
                 </button>
             </div>
         </div>
@@ -1323,9 +1344,9 @@
             <div class="flex justify-between items-center border-b border-slate-200/50 pb-3 shrink-0">
                 <h3 id="settingsModalTitle" class="font-bold text-base text-slate-800 flex items-center space-x-2">
                     <i class="fa-solid fa-sliders text-brand-600"></i>
-                    <span>外部与本地 API 接口参数设置</span>
+                    <span>系统设置</span>
                 </h3>
-                <button type="button" data-modal-close onclick="closeSettingsModal()" aria-label="关闭系统设置" class="glass-btn w-9 h-9 flex items-center justify-center rounded-xl text-slate-400 hover:text-slate-600 transition-all aspect-square">
+                <button type="button" data-modal-close onclick="closeSettingsModal()" aria-label="关闭系统设置" class="glass-btn w-11 h-11 flex items-center justify-center rounded-xl text-slate-400 hover:text-slate-600 transition-all aspect-square shrink-0">
                     <i class="fa-solid fa-xmark text-lg"></i>
                 </button>
             </div>
@@ -1341,6 +1362,10 @@
                         <i class="fa-solid fa-tags"></i>
                         <span>自定义维度配置</span>
                     </button>
+                    <button type="button" onclick="switchSettingsTab('transfer')" id="btn-settings-transfer" class="min-h-[44px] px-4 py-2 border-b-2 border-transparent text-slate-500 hover:text-slate-700 font-medium text-xs transition-all flex items-center space-x-1.5 focus:outline-none">
+                        <i class="fa-solid fa-box-archive" aria-hidden="true"></i>
+                        <span>题库分享</span>
+                    </button>
                     <button type="button" onclick="switchSettingsTab('about')" id="btn-settings-about" class="px-4 py-2 border-b-2 border-transparent text-slate-500 hover:text-slate-700 font-medium text-xs transition-all flex items-center space-x-1.5 focus:outline-none">
                         <i class="fa-solid fa-circle-info"></i>
                         <span>版本更新</span>
@@ -1348,7 +1373,7 @@
                 </div>
 
                 <!-- Scrollable Settings Body -->
-                <div class="flex-1 overflow-y-auto pr-1 space-y-5 scrollbar-thin py-2">
+                <div id="settingsScrollableBody" class="flex-1 overflow-y-auto pr-1 space-y-5 scrollbar-thin py-2">
 
                 <!-- API Keys & Models Tab Content -->
                 <div id="settings-tab-api" class="space-y-4">
@@ -1536,7 +1561,7 @@
 
                 <!-- Metadata Tab Content (JSON Editor) -->
                 <div id="settings-tab-metadata" class="hidden space-y-4">
-                    <div class="flex items-center justify-between">
+                    <div class="flex flex-col items-start gap-3 lg:flex-row lg:items-center lg:justify-between">
                         <div>
                             <h4 class="text-xs font-bold text-slate-700 flex items-center space-x-2">
                                 <i class="fa-solid fa-code text-brand-500"></i>
@@ -1544,7 +1569,7 @@
                             </h4>
                             <p class="text-[10px] text-slate-400 mt-0.5">可在此处编辑自定义的题型、难度等级（含颜色）以及层级教学大纲树状结构。</p>
                         </div>
-                        <div class="flex items-center space-x-2">
+                        <div class="flex flex-wrap items-center gap-2">
                             <span class="text-[10px] font-bold text-slate-400">预设模板一键载入：</span>
                             <button type="button" onclick="resetMetadataToDefault('A')" class="glass-btn px-2.5 py-1.5 rounded-lg text-[10px] text-brand-600 hover:text-brand-700 font-medium flex items-center space-x-1" title="载入高中数学人教A版大纲">
                                 <i class="fa-solid fa-rotate-left text-[9px]"></i>
@@ -1562,6 +1587,14 @@
                                 <i class="fa-solid fa-rotate-left text-[9px]"></i>
                                 <span>沪教版</span>
                             </button>
+                            <button type="button" onclick="resetMetadataToDefault('N')" class="glass-btn px-2.5 py-1.5 rounded-lg text-[10px] text-brand-600 hover:text-brand-700 font-medium flex items-center space-x-1" title="载入高中数学北师大版大纲">
+                                <i class="fa-solid fa-rotate-left text-[9px]"></i>
+                                <span>北师大版</span>
+                            </button>
+                            <button type="button" onclick="resetMetadataToDefault('X')" class="glass-btn px-2.5 py-1.5 rounded-lg text-[10px] text-brand-600 hover:text-brand-700 font-medium flex items-center space-x-1" title="载入高中数学湘教版大纲">
+                                <i class="fa-solid fa-rotate-left text-[9px]"></i>
+                                <span>湘教版</span>
+                            </button>
                         </div>
                     </div>
                     
@@ -1576,9 +1609,81 @@
                         <p>1. <strong>question_types</strong>: 题型列表。例如：<code>{"value": "single_choice", "label": "单选题"}</code>。</p>
                         <p>2. <strong>difficulties</strong>: 难度等级列表。必须包含 value, label 和 color 属性。color 使用 Tailwind CSS 类名控制徽章样式。</p>
                         <p>3. <strong>curriculum</strong>: 树状大纲目录结构。格式为：<code>"学段名称": {"章节名称": ["知识点/小节1", "知识点/小节2"]}</code>。修改并保存后，AI 智能分类与试卷智能拆解将立刻感知并应用新大纲！</p>
+                        <p>4. <strong>curriculum_version</strong>: 当前教材版本编码（A 人教A、B 人教B、S 苏教、H 沪教、N 北师大、X 湘教）。编辑目录名称时保留此项；切换教材请载入对应预设。</p>
                     </div>
                 </div>
                 <!-- End of settings-tab-metadata -->
+
+                <!-- Library sharing uses its own actions and never submits API settings. -->
+                <div id="settings-tab-transfer" class="hidden" aria-busy="false">
+                    <div class="mb-transfer-pane-header">
+                        <div class="mb-transfer-pane-tabs" role="group" aria-label="题库分享操作">
+                            <button type="button" id="libraryTransferExportTab" class="glass-btn" aria-pressed="true" aria-controls="libraryExportPanel" onclick="switchLibraryTransferPane('export')"><i class="fa-solid fa-file-export" aria-hidden="true"></i><span>导出选题</span></button>
+                            <button type="button" id="libraryTransferImportTab" class="glass-btn" aria-pressed="false" aria-controls="libraryImportPanel" onclick="switchLibraryTransferPane('import')"><i class="fa-solid fa-file-import" aria-hidden="true"></i><span>导入分享包</span></button>
+                        </div>
+                        <p class="mb-transfer-pane-help">分享包保留题目、配图、解析与分类。</p>
+                    </div>
+                    <fieldset id="libraryTransferControls" class="min-w-0">
+                        <section id="libraryExportPanel" class="mb-transfer-export-panel" aria-label="导出选题">
+                            <div class="mb-transfer-filter-row">
+                            <div class="mb-transfer-search">
+                                <label class="mb-transfer-input-label">来源
+                                    <input id="libraryExportSource" type="search" oninput="changeLibraryExportFilters(true)" class="glass-input" placeholder="如：新高掌、赵礼显、高考" aria-label="按来源关键词筛选题目">
+                                </label>
+                                <label class="mb-transfer-input-label">关键词
+                                    <input id="libraryExportSearch" type="search" oninput="changeLibraryExportFilters(true)" class="glass-input" placeholder="题干、解析或标签" aria-label="按关键词搜索要导出的题目">
+                                </label>
+                            </div>
+                            <details id="libraryExportMoreFilters" class="mb-transfer-more" ontoggle="if(this.open) prepareLibraryExportFilters()">
+                                <summary><i class="fa-solid fa-filter" aria-hidden="true"></i><span>更多筛选</span><span id="libraryExportFilterSummary" class="text-slate-400"></span></summary>
+                                <div class="mb-transfer-more-panel">
+                                <div class="mb-transfer-location">
+                                    <label class="mb-transfer-input-label">教材册次<select id="libraryExportCompulsory" class="glass-select" onchange="changeLibraryExportLocation('compulsory')"><option value="">全部册次</option></select></label>
+                                    <label class="mb-transfer-input-label">章节<select id="libraryExportChapter" class="glass-select" onchange="changeLibraryExportLocation('chapter')"><option value="">全部章节</option></select></label>
+                                    <label class="mb-transfer-input-label">教材小节<select id="libraryExportKnowledge" class="glass-select" onchange="changeLibraryExportFilters()"><option value="">全部小节</option></select></label>
+                                </div>
+                                <div class="mb-transfer-point-heading"><span>考查知识点</span><div id="libraryExportPointsSelected" class="mb-transfer-point-selected"></div></div>
+                                <details id="libraryExportPointPicker" class="mb-transfer-point-picker">
+                                    <summary>选择知识点</summary>
+                                    <div class="mb-transfer-point-search"><input id="libraryExportPointSearch" type="search" class="glass-input" oninput="searchLibraryExportPoints()" placeholder="搜索名称；精确编码用 #1230" aria-label="搜索分享筛选的知识点"><button id="libraryExportPointScope" type="button" class="glass-btn" onclick="toggleLibraryExportPointScope()" aria-pressed="false">本节推荐</button></div>
+                                    <div id="libraryExportPointOptions" class="mb-transfer-point-options"></div>
+                                    <div class="mb-transfer-point-pager"><span id="libraryExportPointInfo" role="status"></span><button type="button" id="libraryExportPointPrev" class="glass-btn" onclick="pageLibraryExportPoints(-1)" aria-label="上一组知识点">上一组</button><button type="button" id="libraryExportPointNext" class="glass-btn" onclick="pageLibraryExportPoints(1)" aria-label="下一组知识点">下一组</button></div>
+                                    <label class="mb-transfer-point-mode" for="libraryExportPointMode">所选知识点<select id="libraryExportPointMode" class="glass-select" onchange="changeLibraryExportFilters()"><option value="any">包含任意一个</option><option value="all">同时包含全部</option></select></label>
+                                    <p class="text-[11px] text-slate-400 leading-relaxed">匹配主要考查知识点，并同时满足教材位置条件。</p>
+                                </details>
+                                </div>
+                            </details>
+                            </div>
+                            <div class="mb-transfer-toolbar">
+                                <div class="mb-transfer-view-tabs" role="group" aria-label="题目列表视图"><button type="button" id="libraryExportResultsViewBtn" class="glass-btn" aria-pressed="true" onclick="setLibraryExportView('results')">筛选结果</button><button type="button" id="libraryExportSelectedViewBtn" class="glass-btn" aria-pressed="false" onclick="setLibraryExportView('selected')">已选 (0)</button></div>
+                                <span id="libraryExportCount" class="mb-transfer-count" role="status" aria-live="polite">已选 0 题</span>
+                                <div class="mb-transfer-selection-tools"><button type="button" id="libraryExportSelectPageBtn" class="glass-btn" onclick="selectLibraryExportPage()">全选本页</button><button type="button" id="libraryExportSelectAllBtn" class="glass-btn" onclick="selectAllLibraryExportResults()">全选筛选结果</button><button type="button" id="libraryExportClearBtn" class="glass-btn" onclick="clearLibraryExportSelection()">清空已选</button></div>
+                            </div>
+                            <p id="libraryExportListMessage" class="mb-transfer-list-message" role="status" aria-live="polite">正在读取题目…</p>
+                            <div id="libraryExportMissing" hidden class="mb-transfer-missing" role="alert"><span id="libraryExportMissingText"></span><button type="button" class="glass-btn" onclick="removeMissingLibraryExportQuestions()">移除这些已删除题目</button></div>
+                            <div id="libraryExportList" class="mb-transfer-list" aria-label="可勾选的分享题目" aria-busy="false"></div>
+                            <div class="mb-transfer-footer">
+                                <div class="mb-transfer-pager"><button type="button" id="libraryExportPrevBtn" class="glass-btn" onclick="pageLibraryExportQuestions(-1)" aria-label="上一页题目">上一页</button><span id="libraryExportPageLabel" class="text-xs text-slate-500">1 / 1</span><button type="button" id="libraryExportNextBtn" class="glass-btn" onclick="pageLibraryExportQuestions(1)" aria-label="下一页题目">下一页</button></div>
+                                <button type="button" id="libraryExportBtn" onclick="exportLibraryTransfer()" disabled class="glass-btn-primary min-h-[44px] px-4 py-2 rounded-xl text-xs font-medium disabled:opacity-50"><i class="fa-solid fa-download mr-1.5" aria-hidden="true"></i><span>导出 0 题 · ZIP 分享包</span></button>
+                            </div>
+                            <p id="libraryExportSelectionNote" class="mb-transfer-selection-note">勾选后导出；切换筛选会保留已选题目。</p>
+                        </section>
+                        <section id="libraryImportPanel" hidden class="mb-transfer-import" aria-label="导入分享包">
+                            <div class="mb-transfer-import-heading"><i class="fa-solid fa-box-archive" aria-hidden="true"></i><h4>将分享包加入我的题库</h4></div>
+                            <p id="libraryImportHelp" class="mb-transfer-import-help">选择 MathBank 导出的 ZIP 分享包，自动导入题目、配图、解析与分类。每道题分配新 ID，同名图片安全改名。</p>
+                            <div class="mb-transfer-file-picker">
+                                <label for="libraryImportFile">选择题库分享包</label>
+                                <input id="libraryImportFile" type="file" accept=".zip,application/zip" onchange="updateLibraryTransferControls()" aria-describedby="libraryImportHelp libraryImportRepeatNote" class="block min-h-[44px] w-full min-w-0 text-xs text-slate-600 dark:text-slate-300">
+                            </div>
+                            <p id="libraryImportRepeatNote" class="mb-transfer-import-note"><i class="fa-solid fa-circle-info" aria-hidden="true"></i><span>每次导入都会新增全部题目，不查重。导入前自动备份。</span></p>
+                            <button type="button" id="libraryImportBtn" onclick="importLibraryTransfer()" disabled class="glass-btn-primary min-h-[44px] px-4 py-2 rounded-xl text-xs font-medium disabled:opacity-50 disabled:cursor-wait"><i class="fa-solid fa-upload mr-1.5" aria-hidden="true"></i><span>批量导入</span></button>
+                        </section>
+                    </fieldset>
+                    <div id="libraryTransferStatus" role="status" aria-live="polite" aria-atomic="true" class="hidden rounded-xl border border-slate-200/80 dark:border-slate-700 p-3 text-xs text-slate-700 dark:text-slate-200 space-y-2 break-words">
+                        <p class="leading-relaxed"><i id="libraryTransferSpinner" class="hidden fa-solid fa-circle-notch fa-spin mr-1.5" aria-hidden="true"></i><span id="libraryTransferMessage"></span></p>
+                        <p id="libraryTransferBackup" class="hidden text-[11px] text-slate-500 dark:text-slate-400"></p>
+                    </div>
+                </div>
 
                 <!-- About & Version Update Tab Content -->
                 <div id="settings-tab-about" class="space-y-4 hidden">
@@ -1651,7 +1756,7 @@
                 <!-- End of Scrollable Settings Body -->
 
                 <div class="flex justify-end space-x-2 pt-2 border-t border-slate-200/50 shrink-0">
-                    <button type="button" onclick="closeSettingsModal()" class="glass-btn px-4 py-2 rounded-xl text-xs font-medium text-slate-500">关闭</button>
+                    <button type="button" onclick="closeSettingsModal()" class="glass-btn min-h-[44px] px-4 py-2 rounded-xl text-xs font-medium text-slate-500">关闭</button>
                     <button type="submit" id="btnSettingsSave" class="glass-btn-primary px-5 py-2 rounded-xl font-medium text-xs">保存配置</button>
                 </div>
             </form>
@@ -1970,6 +2075,12 @@
             <div id="importWorkspaceContent" class="import-workspace-content flex-1 flex overflow-hidden">
                 <!-- Left Pane: Inputs (Text sources and images) -->
                 <div id="importInputPane" class="import-source-pane w-5/12 border-r border-slate-200 p-6 overflow-y-auto space-y-4 bg-white/50 flex flex-col">
+                    <details id="documentProjectsPanel" class="import-config-card shrink-0 text-xs">
+                        <summary class="cursor-pointer font-semibold text-slate-700">本地 PDF 工程 · 保留 7 天</summary>
+                        <p class="mt-2 text-[11px] text-slate-500">原 PDF、识别工作稿和校对稿保存在本机服务，最后使用后保留 7 天。</p>
+                        <button id="documentProjectsRefresh" type="button" class="glass-btn rounded-lg px-3 py-2 my-2 text-xs font-semibold">刷新工程列表</button>
+                        <div id="documentProjectsList" class="space-y-2"></div>
+                    </details>
                     <!-- Step 1: Title -->
                     <div class="import-config-card space-y-1.5 shrink-0">
                         <label for="importPaperTitle" class="block text-xs font-bold text-slate-500">试卷标题（可选，用作题目来源）</label>
@@ -2039,6 +2150,8 @@
                             </div>
                         </div>
 
+                        <p class="text-[10px] text-slate-500 leading-normal">范围请包含题目与答案页；封面、细目表等可按需排除。留空处理全部页面，不会自动删除最后一页。</p>
+
                         <div class="grid grid-cols-1 sm:grid-cols-3 gap-2">
                             <label class="relative flex flex-col p-2 bg-white border border-slate-200 rounded-xl cursor-pointer shadow-sm hover:border-brand-500 transition-all group">
                                 <div class="flex items-center space-x-1.5">
@@ -2067,7 +2180,7 @@
                         <p class="text-[10px] text-slate-500 leading-normal">智能模式沿用已配置的识图模型核对配图，可能产生额外调用与等待。结果仍需对照原卷审查。</p>
                         <label class="flex items-start gap-2 text-xs text-slate-700 cursor-pointer">
                             <input type="checkbox" id="pdfVerifySuspicions" checked class="mt-0.5 h-4 w-4 rounded border-slate-300 text-brand-600 focus:ring-brand-500">
-                            <span><span class="font-semibold">自动核对疑点</span><span id="pdfVerifySuspicionsNote" class="block mt-1 text-[10px] text-slate-500 leading-normal">对照原页核对疑点；明确差异自动修正并复核，最多 3 轮，通过后不再提示。</span></span>
+                            <span><span class="font-semibold">自动核对疑点</span><span id="pdfVerifySuspicionsNote" class="block mt-1 text-[10px] text-slate-500 leading-normal">对照原页核对疑点，保留待核对说明；题文可在本地校对后入库。</span></span>
                         </label>
                     </div>
 
@@ -2200,7 +2313,7 @@
             <div class="flex flex-col-reverse gap-2 border-t border-slate-200/70 bg-slate-50/70 p-4 dark:border-slate-700 dark:bg-slate-900/70 sm:flex-row sm:items-center sm:justify-end sm:p-5">
                 <button id="duplicateReviewReturnBtn" type="button" onclick="closeParsedDuplicateReviewModal('review')" class="glass-btn min-h-11 rounded-xl px-4 py-2 text-xs font-bold text-slate-600 dark:text-slate-200">返回审查</button>
                 <button id="duplicateReviewSkipBtn" type="button" onclick="closeParsedDuplicateReviewModal('skip')" class="min-h-11 rounded-xl border border-amber-200 bg-amber-50 px-4 py-2 text-xs font-bold text-amber-700 transition-colors hover:bg-amber-100 dark:border-amber-500/40 dark:bg-amber-500/15 dark:text-amber-200 dark:hover:bg-amber-500/25">跳过疑似题，导入其余</button>
-                <button id="duplicateReviewIndependentBtn" type="button" onclick="closeParsedDuplicateReviewModal('independent')" class="min-h-11 rounded-xl bg-brand-600 px-4 py-2 text-xs font-bold text-white shadow-sm transition-colors hover:bg-brand-700">全部独立保存</button>
+                <button id="duplicateReviewIndependentBtn" type="button" onclick="closeParsedDuplicateReviewModal('independent')" class="min-h-11 rounded-xl bg-brand-600 px-4 py-2 text-xs font-bold text-white shadow-sm transition-colors hover:bg-brand-700">导入勾选题目及其余非重复题</button>
             </div>
         </div>
     </div>
@@ -2261,6 +2374,7 @@
     <script src="/static/js/editor.js"></script>
     <script src="/static/js/ocr.js"></script>
     <script src="/static/js/import.js"></script>
+    <script src="/static/js/document-import-session.js"></script>
     <script src="/static/js/paper.js"></script>
     <script src="/static/js/dashboard.js"></script>
     <!-- QA_START -->
@@ -2328,7 +2442,7 @@
 
                     <details id="answerTikzSourceDetails" class="mt-3 rounded-xl border border-slate-200 bg-white">
                         <summary class="flex min-h-[44px] cursor-pointer items-center justify-between gap-3 px-3 py-2 text-xs font-bold text-slate-600 outline-none focus:ring-2 focus:ring-inset focus:ring-indigo-500/25"><span class="flex items-center gap-1.5"><i class="fa-solid fa-code text-indigo-500" aria-hidden="true"></i>TikZ 源码（高级编辑）</span><span class="text-[10px] font-normal text-slate-400">可手动修改后重新编译</span></summary>
-                        <div class="border-t border-slate-100 p-3"><textarea id="answerTikzWorkbenchCode" rows="9" spellcheck="false" placeholder="\\begin{tikzpicture} ... \\end{tikzpicture}" class="w-full resize-y rounded-xl border border-slate-200 bg-slate-950 p-3 font-mono text-xs leading-5 text-slate-100 outline-none selection:bg-indigo-600 focus:border-indigo-400 focus:ring-2 focus:ring-indigo-500/20"></textarea></div>
+                        <div class="border-t border-slate-100 p-3"><textarea id="answerTikzWorkbenchCode" rows="9" spellcheck="false" placeholder="\begin{tikzpicture} ... \end{tikzpicture}" class="w-full resize-y rounded-xl border border-slate-200 bg-slate-950 p-3 font-mono text-xs leading-5 text-slate-100 outline-none selection:bg-indigo-600 focus:border-indigo-400 focus:ring-2 focus:ring-indigo-500/20"></textarea></div>
                     </details>
 
                     <div class="mt-4 flex shrink-0 flex-col-reverse gap-2 border-t border-slate-200/70 pt-4 sm:flex-row sm:justify-end">
@@ -2356,6 +2470,17 @@
                         <i class="fa-solid fa-xmark text-lg"></i>
                     </button>
                 </div>
+            </div>
+
+            <div class="border-b border-slate-200 px-6 py-3 space-y-2 shrink-0 bg-slate-50">
+                <label for="pdfCropTargetField" class="text-xs font-semibold text-slate-700">截图插入位置</label>
+                <select id="pdfCropTargetField" class="glass-select px-2 py-1 rounded-lg text-xs" aria-label="截图插入字段">
+                    <option value="content">题干</option>
+                    <option value="answer_markdown">答案与解析</option>
+                </select>
+                <p class="text-[11px] text-slate-600">在下方原文中点击需要插图的位置，再在原页上框选。选中的待补图标记会被原位替换。</p>
+                <textarea id="pdfCropTargetText" readonly rows="3" aria-label="点击原文选择截图插入位置" class="glass-input w-full px-3 py-2 rounded-lg text-xs font-mono resize-y max-h-36"></textarea>
+                <p id="pdfCropTargetHint" class="text-[10px] text-slate-500"></p>
             </div>
 
             <!-- Modal Content (Split Pane) -->

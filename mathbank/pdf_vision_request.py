@@ -140,6 +140,7 @@ def request_pdf_vision(
     provider, payload: dict, *, post: Callable, validate: Callable,
     label: str, stage: str, page_index: int | None = None,
     timeout_seconds: float = PDF_VISION_TIMEOUT_SECONDS,
+    max_attempts: int = PDF_VISION_MAX_ATTEMPTS,
     check_cancelled: Callable[[], None] = lambda: None,
     report_attempt: Callable[[dict], None] = lambda _event: None,
 ) -> dict:
@@ -149,11 +150,13 @@ def request_pdf_vision(
     with uncertain figure geometry is a successful response needing review;
     its validator must return that transcript instead of raising for a retry.
     """
+    if type(max_attempts) is not int or not 1 <= max_attempts <= PDF_VISION_MAX_ATTEMPTS:
+        raise ValueError("PDF 请求最多允许1或2次尝试。")
     attempts: list[dict] = []
-    for number in range(1, PDF_VISION_MAX_ATTEMPTS + 1):
+    for number in range(1, max_attempts + 1):
         check_cancelled()
         item = {"stage": stage, "page_index": page_index, "attempt": number,
-                "max_attempts": PDF_VISION_MAX_ATTEMPTS, "timeout_seconds": timeout_seconds,
+                "max_attempts": max_attempts, "timeout_seconds": timeout_seconds,
                 "status": "running", "usage": {}, **_request_metadata(provider, payload)}
         attempts.append(item)
         report_attempt(deepcopy(item))
@@ -228,7 +231,7 @@ def request_pdf_vision(
             if json_failure:
                 item["json_failure"] = json_failure
             item.update(status="failed", error=str(exc), elapsed_seconds=round(time.monotonic() - started, 3),
-                        retrying=retryable and number < PDF_VISION_MAX_ATTEMPTS)
+                        retrying=retryable and number < max_attempts)
             if item["retrying"]:
                 item["retry_delay_seconds"] = retry_delay
             report_attempt(deepcopy(item))

@@ -528,12 +528,12 @@ def test_word_lower_figure_uses_part_of_the_configured_solution_space(tmp_path):
 
     root = etree.fromstring(_document_xml(data))
     values = root.xpath(
-        ".//w:body/w:p[last()]/w:pPr/w:spacing/@w:after",
+        ".//w:body/w:p[last()]/w:pPr/w:spacing[@w:lineRule='exact']/@w:line",
         namespaces={"w": "http://schemas.openxmlformats.org/wordprocessingml/2006/main"},
     )
     assert values
     space_after_cm = int(values[0]) / 1440 * 2.54
-    assert space_after_cm == pytest.approx(1.2, abs=0.05)
+    assert space_after_cm == pytest.approx(1.5, abs=0.05)
     assert diagnostics["missing_images"] == 0
 
 
@@ -982,6 +982,6 @@ def test_create_word_bundle_zip():
     ans_bytes = b"fake_ans_docx"
     zip_bytes = word_export_helper.create_word_bundle_zip("高一数学月考", main_bytes, ans_bytes)
     with zipfile.ZipFile(io.BytesIO(zip_bytes), "r") as archive:
-        assert archive.namelist() == ["高一数学月考.docx", "高一数学月考_含答案与解析.docx"]
+        assert archive.namelist() == ["高一数学月考.docx", "高一数学月考_含答案与解析.docx", "content_sources.json", "CONTENT_SOURCES.txt"]
         assert archive.read("高一数学月考.docx") == main_bytes
         assert archive.read("高一数学月考_含答案与解析.docx") == ans_bytes

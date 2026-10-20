@@ -41,6 +41,7 @@ def state(tmp_path, monkeypatch):
                            response=response, decision=decision, calls=[], image=image)
     def post(provider, payload, **kwargs):
         data.calls.append((payload, kwargs))
+        assert kwargs['timeout'] == 600
         return SimpleNamespace(status_code=200, json=lambda: data.response)
     monkeypatch.setattr(verify, 'post_chat_completion', post)
     return data
@@ -61,6 +62,7 @@ def test_visual_confirmation_preserves_content_evidence_and_unrelated_unmatched(
     assert question['source_review']['verified_by'] == 'vision'
     assert question['source_review']['verification']['document_type'] == 'docx'
     assert state.diagnostics['unmatched_source'] == [{'source_excerpt': 'another missing question'}]
+    assert state.calls[0][1]['timeout'] == 600
     assert state.calls[0][1]['retry_connection'] is False
     assert state.calls[0][0]['max_tokens'] == 4096
 

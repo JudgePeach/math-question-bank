@@ -83,6 +83,8 @@ def test_complete_override_can_set_never_restart_for_one_instance(tmp_path):
 
 def test_missing_numbering_definition_still_admits_uncertainty(tmp_path):
     result = extract(paragraph(0,"Unknown",99),level(0),num(),tmp_path)
-    assert result["markdown"] == "[自动编号待核对] Unknown"
+    assert result["markdown"] == "Unknown"
     assert result["diagnostics"]["numbering_unavailable"] == 1
     assert result["diagnostics"]["review_required"] == 1
+    assert result["diagnostics"]["numbering_review_details"] == [
+        {"reason": "numbering_definition_unavailable", "num_id": "99", "level": 0}]

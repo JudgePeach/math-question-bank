@@ -1,6 +1,6 @@
 """Startup must preserve chapter-level, custom and cross-version classification."""
 import pytest
-from mathbank.curriculums import load_curriculum
+from mathbank.curriculums import CURRICULUM_NAMES, load_curriculum
 from mathbank.database import Question, QuestionCurriculum
 
 
@@ -39,7 +39,7 @@ def test_startup_preserves_stored_question_and_mirror_labels(db_session,compulso
     assert question.answer_markdown=='原解析' and question.review=='原点评'
 
 
-@pytest.mark.parametrize('version',['A','B','S','H'])
+@pytest.mark.parametrize('version',list(CURRICULUM_NAMES))
 def test_startup_preserves_each_textbook_version(db_session,version):
     import main
     tree=load_curriculum(version)

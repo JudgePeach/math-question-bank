@@ -20,6 +20,7 @@ from mathbank.ai_http import post_chat_completion
 from mathbank.ai_providers import apply_model_thinking_policy, resolve_ocr_provider
 from mathbank.asset_security import resolve_upload_asset
 from mathbank.content_locks import _source_parts, _plain_key, _IMAGE_REFERENCE, _REFERENCE, _NUMBER, _bare_math_spelling, _formulas
+from mathbank.document_requests import DOCUMENT_AI_TIMEOUT_SECONDS
 from mathbank.paths import UPLOADS_DIR, TEST_UPLOADS_DIR
 from mathbank.source_review_images import prepare_candidate_images, _visible_text, _references
 from mathbank.source_review_results import parse_review_response
@@ -568,7 +569,8 @@ def verify_docx_source_suspicions(questions, diagnostics, source, evidence, *, c
             payload.pop('max_tokens' if cap_key == 'max_completion_tokens' else 'max_completion_tokens', None)
             check_cancelled()
             report['calls'] += 1
-            response = post_chat_completion(provider, payload, timeout=120, check_status=False, retry_connection=False)
+            response = post_chat_completion(provider, payload, timeout=DOCUMENT_AI_TIMEOUT_SECONDS,
+                                            check_status=False, retry_connection=False)
             check_cancelled()
             check_render_evidence()
             if response.status_code != 200:

@@ -11,6 +11,9 @@ import re
 import signal
 import datetime
 import threading
+from functools import wraps
+import tempfile
+import shutil
 import requests
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -28,6 +31,7 @@ from fastapi import FastAPI, Depends, HTTPException, UploadFile, File, Form, Bac
 from fastapi.responses import FileResponse, JSONResponse, HTMLResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
+from starlette.background import BackgroundTask
 from sqlalchemy.orm import Session, selectinload
 from sqlalchemy import and_
 from dotenv import load_dotenv
@@ -36,7 +40,10 @@ from mathbank.database import (
     FIGURE_ALIGN_VALUES,
     FIGURE_SIZE_VALUES,
     Question,
+    DocumentImportReceipt,
     QuestionCurriculum,
+    QuestionKnowledgePoint,
+    KnowledgePointCurriculum,
     QuestionSubKnowledge,
     QuestionFingerprint as StoredQuestionFingerprint,
     Paper,
@@ -47,6 +54,24 @@ from mathbank.database import (
     normalize_figure_size,
 )
 from mathbank.sub_knowledge import detect_curriculum_version, normalize_sub_knowledge
+from mathbank.question_reads import find_association_candidates, question_summary_load_options
+from mathbank.knowledge_points import (
+    apply_knowledge_point_filters,
+    create_local_point,
+    list_catalog,
+    normalize_question_points,
+    replace_question_points,
+)
+from mathbank.ai_knowledge_points import (
+    annotate_ai_knowledge_points, load_ai_knowledge_catalog,
+)
+from mathbank.question_references import (
+    export_reference_text,
+    reference_payloads,
+    refresh_reference_targets_for_labels,
+    sync_question_references,
+    sync_question_source_labels,
+)
 from mathbank.question_duplicates import (
     QuestionDuplicateInput,
     build_question_fingerprint,
@@ -67,6 +92,7 @@ from mathbank.question_duplicate_service import (
     upsert_question_fingerprint,
     visible_image_signatures as build_visible_image_signatures,
 )
+from mathbank.export_preflight import ExportPreflightError, preflight_paper_export, read_export_preflight
 from mathbank.paper_helper import build_latex_document, build_answer_sheet_latex, compile_tex_to_pdf, create_tex_zip_package, create_full_bundle_zip_package, collect_referenced_images, build_restricted_tex_environment
 from mathbank.word_export_helper import build_word_document, create_word_bundle_zip
 from mathbank.runtime_components import (
@@ -74,9 +100,19 @@ from mathbank.runtime_components import (
     pandoc_status,
 )
 from mathbank.sync_helper import export_database_to_files
-from mathbank.backup import acquire_runtime_lock, create_full_backup_if_due
+from mathbank.background_export import DatabaseExportQueue
+from mathbank.backup import acquire_runtime_lock, create_full_backup, create_full_backup_if_due
+from mathbank.library_transfer import (
+    MAX_ARCHIVE_BYTES as MAX_LIBRARY_ARCHIVE_BYTES,
+    export_library_zip,
+    import_library_zip,
+    inspect_library_zip,
+    preview_library_questions,
+    select_library_question_ids,
+)
 from mathbank.health import readiness_report
 from mathbank.task_manager import (
+    iter_completed_futures,
     TaskCancelled,
     TaskManager,
     TaskQueueFull,
@@ -84,7 +120,9 @@ from mathbank.task_manager import (
 from mathbank.docx_helper import extract_docx_markdown
 from mathbank.content_locks import lock_visible_math, reconcile_visible_math
 from mathbank.source_metadata import prepare_word_source_metadata, source_metadata_diagnostics, normalize_source_fillin
-from mathbank.source_metadata_request import request_word_source_metadata
+from mathbank.source_metadata_request import request_word_source_metadata, SourceMetadataPermanentHTTPError
+from mathbank.document_task_store import DocumentTaskStore, DurableDocumentTasks
+from mathbank.formula_notices import separate_formula_notices
 from mathbank.paper_parse import (
     PAPER_SPLIT_TIMEOUT_SECONDS, PAPER_SPLIT_CACHE_MAX_CHARACTERS,
     parse_paper_completion, finalize_source_answers, request_pdf_paper_completion,
@@ -111,6 +149,18 @@ from mathbank.latex_diagnostics import (
     merge_ai_latex_diagnostic,
 )
 from mathbank.ai_json import parse_ai_json
+from mathbank.import_classification import (
+    normalize_import_classifications,
+    summarize_import_classifications,
+)
+from mathbank.document_projects import DocumentProjectStore, DocumentProjectError, ProjectConflict
+from mathbank.document_project_service import (
+    DocumentProjectService, project_question_ids, project_task_guard, project_dispatch_guard,
+)
+from mathbank.document_project_pipeline import parse_project_pdf
+from mathbank.document_project_import import (
+    project_import_guard, prepare_project_import, record_project_import,
+)
 from mathbank.ai_http import (
     post_chat_completion,
 )
@@ -125,11 +175,14 @@ from mathbank.ai_providers import (
 )
 from mathbank.curriculums import (
     build_default_metadata,
+    build_curriculum_routing_index,
     get_curriculum_preset,
     load_curriculum,
+    route_curriculum_location,
 )
 from mathbank.prompts import (
     COMMON_OCR_PROMPT,
+    PDF_ORIGINAL_COMMON_OCR_PROMPT,
     PDF_VISUAL_FIDELITY_RULE,
     ILLUSTRATION_BOX_PROMPT,
     SINGLE_OCR_STRUCTURED_INSTRUCTIONS,
@@ -174,6 +227,8 @@ from mathbank.pdf_vision_request import completion_content, request_pdf_vision, 
 from mathbank.paths import (
     DATABASE_PATH,
     DATA_BACKUP_DIR,
+    DOCUMENT_TASKS_DIR,
+    DOCUMENT_PROJECTS_DIR,
     ENV_FILE,
     PROJECT_ROOT,
     STATIC_CSS_DIR,
@@ -233,6 +288,7 @@ SERVER_INSTANCE_ID = (
 )
 _SHUTDOWN_SCHEDULED = threading.Event()
 _SHUTDOWN_SCHEDULE_LOCK = threading.Lock()
+_METADATA_SAVE_LOCK = threading.Lock()
 
 # Hold an OS-backed project lock before the first database access.  The restore
 # CLI takes the same lock, so a manually started uvicorn process is protected
@@ -247,6 +303,18 @@ if _RUNTIME_LOCK is not None:
 init_db()
 
 
+def _report_database_export_error(exc: Exception, operation: str) -> None:
+    print(
+        f"[Database Export] Post-commit export failed for {operation} "
+        f"(type={type(exc).__name__}); the next write can retry."
+    )
+
+
+DATABASE_EXPORT_QUEUE = DatabaseExportQueue(
+    lambda: export_database_to_files(), on_error=_report_database_export_error
+)
+
+
 def schedule_database_export(
     background_tasks: BackgroundTasks, *, operation: str
 ) -> None:
@@ -254,7 +322,12 @@ def schedule_database_export(
 
     def run_export_safely() -> None:
         try:
-            export_database_to_files()
+            if IS_TESTING:
+                # Isolated API tests finish their export before disposing the
+                # request's in-memory database; production uses one worker.
+                export_database_to_files()
+            else:
+                DATABASE_EXPORT_QUEUE.request(operation=operation)
         except Exception as exc:
             print(
                 f"[Database Export] Post-commit export failed for {operation} "
@@ -435,6 +508,11 @@ async def app_lifespan(_app: FastAPI):
         return
 
     DOCUMENT_TASKS.start_maintenance(interval_seconds=60.0)
+    project_service = _document_project_service()
+    if project_service:
+        project_service.migrate_tasks(copy.deepcopy(get_current_curriculum()))
+        _DOCUMENT_PROJECT_STOP.clear()
+        threading.Thread(target=_maintain_document_projects, name="mathbank-project-cleanup", daemon=True).start()
     threading.Thread(
         target=start_startup_cleanup,
         name="mathbank-post-startup-maintenance",
@@ -443,6 +521,11 @@ async def app_lifespan(_app: FastAPI):
     try:
         yield
     finally:
+        _DOCUMENT_PROJECT_STOP.set()
+        if DATABASE_EXPORT_QUEUE.started:
+            import asyncio
+
+            await asyncio.to_thread(DATABASE_EXPORT_QUEUE.close)
         DOCUMENT_TASKS.shutdown(wait=False)
 
 
@@ -515,6 +598,12 @@ def clean_orphaned_images():
         db = SessionLocal()
         try:
             referenced_images = _referenced_question_assets(db)
+            # A seven-day project owns its page/figure caches independently of
+            # formal questions and the runtime task's shorter TTL.
+            if DOCUMENT_PROJECTS:
+                for url in DOCUMENT_PROJECTS.referenced_assets():
+                    referenced_images.add(resolve_upload_asset(url, uploads_dir=UPLOAD_DIR,
+                        url_prefix=UPLOAD_DIR_REL, require_file=False))
                         
             # 2. 遍历本地图片目录及 tmp 子目录
             upload_dir = UPLOAD_DIR
@@ -571,15 +660,14 @@ def recalibrate_usage_counts():
         from sqlalchemy import func
         db = SessionLocal()
         try:
-            counts = db.query(PaperQuestion.question_id, func.count(PaperQuestion.id)).group_by(PaperQuestion.question_id).all()
-            ref_map = dict(counts)
-            questions = db.query(Question).all()
-            changed = False
-            for q in questions:
-                actual_ref = ref_map.get(q.id, 0)
-                if (q.usage_count or 0) != actual_ref:
-                    q.usage_count = actual_ref
-                    changed = True
+            actual_ref = db.query(func.count(PaperQuestion.id)).filter(
+                PaperQuestion.question_id == Question.id
+            ).correlate(Question).scalar_subquery()
+            # One SQL statement sees current paper references and never loads
+            # question text or the implicitly eager knowledge-point evidence.
+            changed = db.query(Question).filter(
+                func.coalesce(Question.usage_count, 0) != actual_ref
+            ).update({Question.usage_count: actual_ref}, synchronize_session=False)
             if changed:
                 db.commit()
         finally:
@@ -629,12 +717,103 @@ TMP_UPLOAD_DIR = os.path.join(UPLOAD_DIR, "tmp")
 os.makedirs(TMP_UPLOAD_DIR, exist_ok=True)
 
 # Bounded document task manager shared by PDF and Word imports.
-DOCUMENT_TASKS = TaskManager(
+PDF_CLOUD_ONLY = True
+DOCUMENT_TASK_STORE = None if IS_TESTING else DocumentTaskStore(DOCUMENT_TASKS_DIR)
+DOCUMENT_PROJECTS = None if IS_TESTING else DocumentProjectStore(DOCUMENT_PROJECTS_DIR)
+
+
+def _document_project_service():
+    if PDF_CLOUD_ONLY or DOCUMENT_PROJECTS is None:
+        return None
+    return DocumentProjectService(DOCUMENT_PROJECTS, DOCUMENT_TASKS,
+        source_reader=lambda task_id, task: _read_document_source(task_id, task),
+        asset_resolver=lambda url: resolve_upload_asset(url, uploads_dir=UPLOAD_DIR,
+            url_prefix=UPLOAD_DIR_REL, require_file=False))
+
+
+def _sync_document_project(task_id, snapshot):
+    service = _document_project_service()
+    if service:
+        service.sync(task_id, snapshot)
+
+
+DOCUMENT_TASKS = DurableDocumentTasks(
+    store=DOCUMENT_TASK_STORE,
+    on_snapshot=_sync_document_project,
+    transient_document_types={"pdf"} if PDF_CLOUD_ONLY else (),
     max_workers=2,
     max_queue=4,
     terminal_ttl_seconds=3600,
     temp_asset_cleanup=lambda paths: _delete_task_temp_assets(paths),
+    record_cleanup=lambda task_id: DOCUMENT_TASK_INPUTS.pop(task_id, None),
 )
+DOCUMENT_TASK_INPUTS = {}
+_DOCUMENT_PROJECT_STOP = threading.Event()
+
+
+def _document_request_id(value):
+    value = str(value or "").strip()
+    if value and not re.fullmatch(r"[A-Za-z0-9_-]{8,100}", value):
+        raise HTTPException(status_code=400, detail="文档请求标识格式无效。")
+    return value
+
+
+def _document_curriculum_sha256():
+    # Directory order determines classification priority, so its order is part
+    # of this stable serialization rather than sorting the textbook keys away.
+    return hashlib.sha256(json.dumps(get_current_curriculum(), ensure_ascii=False,
+        separators=(",", ":")).encode("utf-8")).hexdigest()
+
+
+def _register_document_input(task_id, content, document_type, filename, **options):
+    persistent = DOCUMENT_TASK_STORE is not None and not (PDF_CLOUD_ONLY and document_type == "pdf")
+    source = (DOCUMENT_TASK_STORE.source(task_id, content) if persistent else
+              {"sha256": hashlib.sha256(content).hexdigest(), "bytes": len(content)})
+    if not persistent:
+        DOCUMENT_TASK_INPUTS[task_id] = content
+    return {**source, "document_type": document_type, "filename": filename, "options": options,
+            "curriculum_sha256": _document_curriculum_sha256()}
+
+
+def _document_status(task_id, task):
+    result = {key: value for key, value in task.items()
+              if key not in {"pdf_resume_state", "docx_resume_state", "document_input", "retained_at"}}
+    result["task_id"] = task_id
+    project_id = task.get("project_id")
+    if project_id and DOCUMENT_PROJECTS and not PDF_CLOUD_ONLY:
+        try:
+            metadata = DOCUMENT_PROJECTS.get(project_id)
+            result.update(project_id=project_id, project_revision=metadata["revision"],
+                expires_at=metadata["expires_at"], retention_days=7)
+            revision_receipt = _document_project_service().validated_initial_revision_receipt(project_id)
+            if revision_receipt is not None:
+                result["project_revision_receipt"] = revision_receipt
+            if result.get("data"):
+                result["data"] = _document_project_service().question_ids(project_id, result["data"])
+        except DocumentProjectError:
+            result["project_warning"] = "本地工程暂不可用，已有任务结果仍保留。"
+    source_matches = (task.get("diagnostics") or {}).get("source_matches", [])
+    occurrences = {}
+    for index, question in enumerate(result.get("data") or []):
+        scopes = sorted((str(row.get("field", "")), row["source_start"], row["source_end"])
+                        for row in source_matches if row.get("question_index") == index
+                        and type(row.get("source_start")) is int and type(row.get("source_end")) is int)
+        identity = json.dumps(scopes or [question.get("content", ""), question.get("answer_markdown", "")], ensure_ascii=False)
+        digest = hashlib.sha256(identity.encode()).hexdigest()
+        occurrence = occurrences.get(digest, 0)
+        occurrences[digest] = occurrence + 1
+        question["import_item_id"] = question.get("project_card_id") or f"{task_id}:{digest}:{occurrence}"
+    result["source_available"] = bool(task.get("document_input")) and (
+        DOCUMENT_TASK_STORE.has_source(task_id) if DOCUMENT_TASK_STORE and not (
+            PDF_CLOUD_ONLY and task.get("document_type") == "pdf") else task_id in DOCUMENT_TASK_INPUTS)
+    result["can_resume"] = task.get("status") in {"error", "interrupted"} and result["source_available"] and not (PDF_CLOUD_ONLY and task.get("document_type") == "pdf")
+    if result["can_resume"]:
+        result["recovery_message"] = "已保留文档及成功阶段，可继续处理；不会重新识别已完成页面。"
+    return result
+from mathbank.pdf_ocr_capacity import PdfOcrCapacity, configured_pdf_ocr_concurrency
+PDF_OCR_CAPACITY = PdfOcrCapacity(configured_pdf_ocr_concurrency())
+# Auxiliary OCR/verification retains its four-request lane, sharing the same
+# process total with the wider first-pass PDF page lane.
 PDF_OCR_SEMAPHORE = threading.BoundedSemaphore(4)
 MAX_PDF_TASK_PAGES = 80
 
@@ -681,7 +860,7 @@ def read_index():
         html_content = render_qa_visibility(html_content, enabled=qa_enabled)
         
         # Inject dynamic cache-busting version parameter based on file mtime
-        js_files = ["api.js", "editor.js", "ocr.js", "import.js", "paper.js", "dashboard.js", "qa-data.js", "qa.js"]
+        js_files = ["api.js", "editor.js", "ocr.js", "import.js", "document-import-session.js", "paper.js", "dashboard.js", "qa-data.js", "qa.js"]
         for js in js_files:
             js_path = str(STATIC_JS_DIR / js)
             mtime = int(os.path.getmtime(js_path)) if os.path.exists(js_path) else 0
@@ -700,7 +879,7 @@ def read_index():
         html_content = html_content.replace('/static/favicon.png', f'/static/favicon.png?v={fav_mtime}')
             
         # Inject the token and server_instance_id directly into index.html to bypass any cookie blocking policies
-        token_script = f'<script>window.__localToken = "{LOCAL_TOKEN}"; window.__serverInstanceId = "{SERVER_INSTANCE_ID}"; window.__qaEnabled = {json.dumps(qa_enabled)};</script>'
+        token_script = f'<script>window.__localToken = "{LOCAL_TOKEN}"; window.__serverInstanceId = "{SERVER_INSTANCE_ID}"; window.__qaEnabled = {json.dumps(qa_enabled)}; window.__pdfCloudOnly = {json.dumps(PDF_CLOUD_ONLY)};</script>'
         html_content = html_content.replace('<head>', f'<head>\n    {token_script}')
             
         res = HTMLResponse(content=html_content)
@@ -859,6 +1038,7 @@ def ocr_via_provider(
     include_illustration_box: bool = False,
     *, pdf_page: bool = False, single_question_layout: bool = False, check_cancelled=lambda: None,
     report_attempt=lambda _event: None, page_index: int = None,
+    on_response=None,
 ) -> str:
     """Use one resolved multimodal provider for formula and text OCR."""
     import base64
@@ -881,7 +1061,8 @@ def ocr_via_provider(
 
     if pdf_page and single_question_layout:
         raise ValueError("PDF 页面识别不能使用单题配图协议。")
-    prompt = build_single_ocr_vision_prompt() if single_question_layout else COMMON_OCR_PROMPT
+    prompt = (build_single_ocr_vision_prompt() if single_question_layout else
+              PDF_ORIGINAL_COMMON_OCR_PROMPT if pdf_page else COMMON_OCR_PROMPT)
     if pdf_page:
         prompt += PDF_VISUAL_FIDELITY_RULE
     if include_illustration_box and not single_question_layout:
@@ -927,6 +1108,7 @@ def ocr_via_provider(
             provider, payload, post=post_chat_completion, validate=validate,
             label="PDF 页面识别", stage="page_ocr", page_index=page_index,
             check_cancelled=check_cancelled, report_attempt=report_attempt,
+            **({"on_response": on_response} if on_response is not None else {}),
         )
         return result["markdown"]
 
@@ -2242,6 +2424,177 @@ def require_expected_curriculum_version(expected_version_code):
             raise HTTPException(status_code=409, detail="教材版本已切换，请重新载入分类后保存")
 
 
+def serialize_curriculum_write(function):
+    """Bind a synchronous question write to one active textbook version."""
+    @wraps(function)
+    def serialized(*args, **kwargs):
+        with _METADATA_SAVE_LOCK:
+            return function(*args, **kwargs)
+    return serialized
+
+
+@app.get("/api/knowledge-points")
+def knowledge_point_catalog(
+    q: str = "", version_code: Optional[str] = None,
+    compulsory: str = "", chapter: str = "", knowledge: str = "",
+    limit: int = 700, offset: int = 0, db: Session = Depends(get_db),
+):
+    try:
+        return list_catalog(
+            db, version_code=version_code or get_active_version_code(), q=q,
+            compulsory=compulsory, chapter=chapter, knowledge=knowledge,
+            limit=limit, offset=offset,
+        )
+    except (ValueError, TypeError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.post("/api/knowledge-points")
+def create_knowledge_point(
+    payload: dict, background_tasks: BackgroundTasks,
+    db: Session = Depends(get_db),
+):
+    require_expected_curriculum_version(payload.get("expected_version_code"))
+    try:
+        result = create_local_point(db, payload)
+        db.commit()
+    except Exception as exc:
+        db.rollback()
+        raise HTTPException(status_code=400, detail=f"创建知识点失败: {exc}") from exc
+    schedule_database_export(background_tasks, operation="create_knowledge_point")
+    return result
+
+
+@app.post("/api/library-transfer/preview")
+def preview_library_transfer(payload: dict, db: Session = Depends(get_db)):
+    """Read one compact page for the sharing selector, without full answers."""
+    if set(payload) - {"filters", "question_ids", "page", "page_size"}:
+        raise HTTPException(status_code=400, detail="题目预览参数无效")
+    if "question_ids" in payload and not isinstance(payload["question_ids"], list):
+        raise HTTPException(status_code=400, detail="勾选题目须为 ID 列表")
+    try:
+        return preview_library_questions(
+            db, filters=payload.get("filters"), question_ids=payload.get("question_ids"),
+            page=payload.get("page", 1), page_size=payload.get("page_size", 10),
+            active_version=get_active_version_code(),
+        )
+    except (ValueError, TypeError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.post("/api/library-transfer/select-ids")
+def select_library_transfer_ids(payload: dict, db: Session = Depends(get_db)):
+    """Read only stable IDs when selecting all results across pages."""
+    if set(payload) - {"filters"}:
+        raise HTTPException(status_code=400, detail="全选筛选结果参数无效")
+    try:
+        ids = select_library_question_ids(
+            db, filters=payload.get("filters"), active_version=get_active_version_code(),
+        )
+        return {"ids": ids, "total": len(ids)}
+    except (ValueError, TypeError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.post("/api/library-transfer/export")
+@serialize_asset_lifecycle
+def export_library_transfer(payload: dict, db: Session = Depends(get_db)):
+    """Download a self-contained sharing archive from one database snapshot."""
+    if set(payload) - {"source_keywords", "question_ids"}:
+        raise HTTPException(status_code=400, detail="题库分享导出参数无效")
+    if "question_ids" in payload and not isinstance(payload["question_ids"], list):
+        raise HTTPException(status_code=400, detail="勾选题目须为 ID 列表")
+    workspace = None
+    try:
+        transfer_root = SYSTEM_GENERATED_DIR / "library_transfer"
+        transfer_root.mkdir(parents=True, exist_ok=True)
+        workspace = Path(tempfile.mkdtemp(prefix="export-", dir=transfer_root))
+        archive = workspace / "library.zip"
+        summary = export_library_zip(
+            db, archive, uploads_dir=Path(UPLOAD_DIR),
+            source_keywords=payload.get("source_keywords", []),
+            question_ids=payload.get("question_ids"),
+            active_version=get_active_version_code(),
+        )
+        timestamp = datetime.datetime.now(datetime.timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+        return FileResponse(
+            archive, media_type="application/zip",
+            filename=f"MathBank-{summary['question_count']}questions-{timestamp}.zip",
+            headers={"Cache-Control": "no-store"},
+            background=BackgroundTask(shutil.rmtree, workspace, ignore_errors=True),
+        )
+    except Exception as exc:
+        if workspace is not None:
+            shutil.rmtree(workspace, ignore_errors=True)
+        if isinstance(exc, ValueError):
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        raise HTTPException(status_code=500, detail="题库分享包生成失败，请检查图片文件和本地存储空间。") from exc
+
+
+@app.post("/api/library-transfer/import")
+@serialize_asset_lifecycle
+def import_library_transfer(
+    background_tasks: BackgroundTasks,
+    file: UploadFile = File(...),
+    db: Session = Depends(get_db),
+):
+    """Validate, back up and append; importing the same archive appends again."""
+    workspace = None
+    try:
+        if Path(file.filename or "").suffix.lower() != ".zip":
+            raise HTTPException(status_code=400, detail="请选择本题库导出功能生成的 ZIP 分享包。")
+        transfer_root = SYSTEM_GENERATED_DIR / "library_transfer"
+        transfer_root.mkdir(parents=True, exist_ok=True)
+        workspace = Path(tempfile.mkdtemp(prefix="import-", dir=transfer_root))
+        archive = workspace / "library.zip"
+        with archive.open("xb") as output:
+            size = 0
+            while chunk := file.file.read(1024 * 1024):
+                size += len(chunk)
+                if size > MAX_LIBRARY_ARCHIVE_BYTES:
+                    raise HTTPException(status_code=413, detail="题库分享包不能超过 512 MiB，请按来源分批导出。")
+                output.write(chunk)
+        # Invalid packages must fail before any backup or destination write.
+        inspect_library_zip(archive)
+        # Upload/inspection above need no textbook lock.  The verified backup
+        # and the synchronous importer (including its commit) must see one
+        # identity; a concurrent switch runs either before or after them.
+        with _METADATA_SAVE_LOCK:
+            import_version = get_active_version_code()
+            try:
+                backup_path = create_full_backup(
+                    database_path=Path(DATABASE_PATH), uploads_dir=Path(UPLOAD_DIR),
+                    metadata_path=DATA_BACKUP_DIR / "custom_metadata.json",
+                    output_dir=DATA_BACKUP_DIR / "snapshots", retention=None,
+                )
+            except Exception as exc:
+                raise HTTPException(status_code=500, detail="导入前的自动备份失败，尚未导入题目。请检查本地存储空间和现有图片。") from exc
+            result = import_library_zip(
+                db, archive, uploads_dir=Path(UPLOAD_DIR), active_version=import_version,
+            )
+        # The module has committed. Follow-up exports cannot turn a successful
+        # append into an error that invites an accidental second import.
+        schedule_database_export(background_tasks, operation="library_transfer")
+        return {
+            "status": "success", "imported_count": result["imported_count"],
+            "image_count": result["image_count"], "backup_path": str(backup_path),
+            "active_version_code": import_version,
+        }
+    except HTTPException:
+        raise
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail="题库导入失败，本次新增内容已回滚。请检查本地存储空间。") from exc
+    finally:
+        if workspace is not None:
+            shutil.rmtree(workspace, ignore_errors=True)
+        try:
+            file.file.close()
+        except OSError:
+            pass
+
+
 @app.get("/api/questions")
 def list_questions(
     q: str = None,
@@ -2255,6 +2608,11 @@ def list_questions(
     include_sub_knowledge: bool = False,
     sub_knowledge: Optional[List[str]] = Query(None),
     sub_knowledge_mode: str = "any",
+    knowledge_point_codes: Optional[List[str]] = Query(None),
+    knowledge_point_mode: str = "any",
+    knowledge_point_role: str = "main",
+    knowledge_point_status: str = "all",
+    knowledge_point_unlabeled: bool = False,
     qtype: str = None,
     question_type: str = None,
     difficulty: str = None,
@@ -2270,9 +2628,15 @@ def list_questions(
     know_val = knowledge or category_knowledge
     type_val = qtype or question_type
 
-    query = db.query(Question).options(
-        selectinload(Question.curriculum_mappings).selectinload(QuestionCurriculum.sub_knowledge_rows)
-    )
+    query = db.query(Question)
+    if page is not None:
+        query = query.options(*question_summary_load_options())
+    else:
+        # Legacy consumers of the unpaginated API retain their full evidence.
+        query = query.options(
+            selectinload(Question.curriculum_mappings).selectinload(QuestionCurriculum.sub_knowledge_rows),
+            selectinload(Question.knowledge_points),
+        )
     
     # Check if searching for a specific display sequence number
     target_id_by_seq = None
@@ -2318,6 +2682,11 @@ def list_questions(
             include_sub_knowledge=include_sub_knowledge,
             sub_knowledge=paths, sub_knowledge_mode=sub_knowledge_mode,
         )
+        query = apply_knowledge_point_filters(
+            query, knowledge_point_codes or [], match_mode=knowledge_point_mode,
+            role_scope=knowledge_point_role, status_scope=knowledge_point_status,
+            unlabeled=knowledge_point_unlabeled,
+        )
     except (ValueError, TypeError) as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     if type_val:
@@ -2344,9 +2713,10 @@ def list_questions(
             .all()
         )
         seq_map = get_seq_mapping(db, [item.id for item in questions])
+        refs_by_id = reference_payloads(db, questions)
         return {
             "items": [
-                {**item.to_summary_dict(get_active_version_code()), "seq_num": seq_map.get(item.id), "version_code": get_active_version_code(), "active_version_code": get_active_version_code()}
+                {**item.to_summary_dict(get_active_version_code(), compact_knowledge_points=True), "question_references": refs_by_id.get(item.id, []), "seq_num": seq_map.get(item.id), "version_code": get_active_version_code(), "active_version_code": get_active_version_code()}
                 for item in questions
             ],
             "total": total,
@@ -2357,7 +2727,8 @@ def list_questions(
 
     questions = query.order_by(*order_columns).all()
     seq_map = get_seq_mapping(db, [item.id for item in questions])
-    return [{**item.to_summary_dict(get_active_version_code()), "seq_num": seq_map.get(item.id), "version_code": get_active_version_code(), "active_version_code": get_active_version_code()} for item in questions]
+    refs_by_id = reference_payloads(db, questions)
+    return [{**item.to_summary_dict(get_active_version_code()), "question_references": refs_by_id.get(item.id, []), "seq_num": seq_map.get(item.id), "version_code": get_active_version_code(), "active_version_code": get_active_version_code()} for item in questions]
 
 def _duplicate_payload_list(value, *, field_name: str, max_items: int = 50):
     if value is None:
@@ -2608,6 +2979,26 @@ def check_question_duplicates(payload: dict, db: Session = Depends(get_db)):
         raise HTTPException(status_code=503, detail="查重暂不可用，可选择继续保存") from exc
 
 
+@app.get("/api/questions/association-candidates")
+def list_association_candidates(
+    q: str = "",
+    page: int = Query(1, ge=1),
+    page_size: int = Query(20, ge=1),
+    exclude_id: Optional[int] = Query(None, ge=1),
+    seq_num: Optional[int] = Query(None, ge=1),
+    question_id: Optional[int] = Query(None, ge=1),
+    db: Session = Depends(get_db),
+):
+    result = find_association_candidates(
+        db, q=q, page=page, page_size=page_size, exclude_id=exclude_id,
+        seq_num=seq_num, question_id=question_id,
+    )
+    sequences = get_seq_mapping(db, [item["id"] for item in result["items"]])
+    for item in result["items"]:
+        item["seq_num"] = sequences.get(item["id"])
+    return result
+
+
 @app.get("/api/questions/{question_id}")
 def get_question(question_id: int, db: Session = Depends(get_db)):
     q = db.query(Question).filter(Question.id == question_id).first()
@@ -2615,6 +3006,7 @@ def get_question(question_id: int, db: Session = Depends(get_db)):
         raise HTTPException(status_code=404, detail="未找到对应的题目")
     seq_map = get_seq_mapping(db, [q.id])
     q_dict = q.to_dict(get_active_version_code())
+    q_dict["question_references"] = reference_payloads(db, [q]).get(q.id, [])
     q_dict["version_code"] = get_active_version_code()
     q_dict["active_version_code"] = get_active_version_code()
     q_dict["curriculum_mappings"] = [mapping.to_dict() for mapping in q.curriculum_mappings]
@@ -2624,8 +3016,8 @@ def get_question(question_id: int, db: Session = Depends(get_db)):
 def normalize_fillin_macro(text: str) -> str:
     """Normalize proven blank lines; preserve literal TeX, subscripts and macros.
 
-    Self-contained: the private AST importer still needs only its existing re.
-    This proposal does not mutate source files or historical questions.
+    Keep the legacy callable available to internal tools; new math-shell
+    handling lives in the shared backend module and never migrates old rows.
     """
     if not text or not isinstance(text, str):
         return text or ""
@@ -2796,7 +3188,9 @@ def normalize_fillin_macro(text: str) -> str:
         result.append(text[start:end] if replacement is None else replacement)
         cursor = end
     result.append(normalize_segment(text[cursor:], cursor))
-    return "".join(result)
+    from mathbank.fillin import normalize_fillin_math_wrappers
+    from mathbank.fillin_placeholders import normalize_fillin_placeholder_clusters
+    return normalize_fillin_placeholder_clusters(normalize_fillin_math_wrappers("".join(result)))
 
 
 def committed_question_response(
@@ -2812,6 +3206,7 @@ def committed_question_response(
         db.refresh(db_question)
         seq_map = get_seq_mapping(db, [question_id])
         question = db_question.to_dict(get_active_version_code())
+        question["question_references"] = reference_payloads(db, [db_question]).get(question_id, [])
         question["version_code"] = get_active_version_code()
         question["active_version_code"] = get_active_version_code()
         question["seq_num"] = seq_map.get(question_id)
@@ -3013,6 +3408,8 @@ def duplicate_review_required_response(
 
 @app.post("/api/questions")
 @serialize_asset_lifecycle
+@serialize_curriculum_write
+@project_import_guard(lambda: DOCUMENT_PROJECTS)
 def create_question(
     background_tasks: BackgroundTasks,
     content: str = Form(...),
@@ -3021,6 +3418,7 @@ def create_question(
     category_chapter: str = Form(""),
     category_knowledge: str = Form(""),
     sub_knowledge: str = Form("[]"),
+    knowledge_points: Optional[str] = Form(None),
     expected_version_code: Optional[str] = Form(None),
     difficulty: str = Form(...),
     source: str = Form(""),
@@ -3039,14 +3437,33 @@ def create_question(
     image_paths: str = Form("[]"),  # JSON array string
     duplicate_snapshot_hash: str = Form(""),
     duplicate_override: str = Form(""),
+    import_project_id: str = Form(""),
+    import_card_id: str = Form(""),
+    import_draft_revision: Optional[int] = Form(None),
     db: Session = Depends(get_db)
 ):
     require_expected_curriculum_version(expected_version_code)
     asset_promotions: list[tuple[Path, Path]] = []
     asset_path_map: dict[str, str] = {}
     duplicate_warning = ""
+    project_digest = None
     try:
+        project_digest, existing_question_id = prepare_project_import(db, DOCUMENT_PROJECTS,
+            import_project_id, import_card_id, import_draft_revision, {
+                "content":content,"answer_markdown":answer_markdown,"question_type":question_type,
+                "difficulty":difficulty,"source":source,"review":review,"image_paths":image_paths,
+                "category_compulsory":category_compulsory,"category_chapter":category_chapter,
+                "category_knowledge":category_knowledge,"tikz_code":tikz_code,
+                "tikz_reference_image_path":tikz_reference_image_path,"content_tikz_assets":content_tikz_assets,
+                "answer_tikz_assets":answer_tikz_assets,"figure_align":figure_align,"figure_size":figure_size,
+                "figure_align_custom":figure_align_custom,"image_layouts":image_layouts,"tags":tags,
+                "related_question_id":related_question_id,"sub_knowledge":sub_knowledge,"knowledge_points":knowledge_points})
+        if existing_question_id is not None:
+            return committed_question_response(db, db.get(Question, existing_question_id), existing_question_id, operation="project_import_replay")
         parsed_sub_knowledge = normalize_sub_knowledge(sub_knowledge)
+        parsed_knowledge_points = normalize_question_points(
+            json.loads(knowledge_points) if knowledge_points is not None else [], db,
+        )
         duplicate_snapshot_hash = str(duplicate_snapshot_hash or "").strip()
         duplicate_override = str(duplicate_override or "").strip()
         if duplicate_override not in {"", "independent"}:
@@ -3185,8 +3602,17 @@ def create_question(
         )
         curriculum_map.sub_knowledge = parsed_sub_knowledge
         db.add(curriculum_map)
+        replace_question_points(db_question, parsed_knowledge_points, db)
+        sync_question_source_labels(db, db_question)
+        sync_question_references(db, db_question)
         committed_question_id = db_question.id
+        record_project_import(db, project_id=import_project_id, card_id=import_card_id,
+            revision=import_draft_revision, digest=project_digest, question_id=committed_question_id)
         db.commit()
+    except HTTPException:
+        db.rollback()
+        rollback_question_asset_promotions(asset_promotions)
+        raise
     except Exception as e:
         db.rollback()
         rollback_question_asset_promotions(asset_promotions)
@@ -3215,6 +3641,7 @@ def create_question(
 
 @app.put("/api/questions/{question_id}")
 @serialize_asset_lifecycle
+@serialize_curriculum_write
 def update_question(
     question_id: int,
     background_tasks: BackgroundTasks,
@@ -3224,6 +3651,7 @@ def update_question(
     category_chapter: str = Form(""),
     category_knowledge: str = Form(""),
     sub_knowledge: Optional[str] = Form(None),
+    knowledge_points: Optional[str] = Form(None),
     expected_version_code: Optional[str] = Form(None),
     difficulty: str = Form(...),
     source: str = Form(""),
@@ -3255,6 +3683,10 @@ def update_question(
     old_images = list(db_question.image_paths)
     try:
         parsed_sub_knowledge = normalize_sub_knowledge(sub_knowledge) if sub_knowledge is not None else None
+        parsed_knowledge_points = (
+            normalize_question_points(json.loads(knowledge_points), db)
+            if knowledge_points is not None else None
+        )
         duplicate_snapshot_hash = str(duplicate_snapshot_hash or "").strip()
         duplicate_override = str(duplicate_override or "").strip()
         if duplicate_override not in {"", "independent"}:
@@ -3365,6 +3797,8 @@ def update_question(
         curriculum_map.knowledge = category_knowledge
         if parsed_sub_knowledge is not None:
             curriculum_map.sub_knowledge = parsed_sub_knowledge
+        if parsed_knowledge_points is not None:
+            replace_question_points(db_question, parsed_knowledge_points, db)
 
         db.flush()
         try:
@@ -3419,6 +3853,8 @@ def update_question(
         if question_fingerprint is not None:
             upsert_question_fingerprint(db, db_question, question_fingerprint)
         
+        sync_question_source_labels(db, db_question)
+        sync_question_references(db, db_question)
         db.commit()
     except Exception as e:
         db.rollback()
@@ -3511,7 +3947,7 @@ def update_question_figure_layout(
 
 @app.get("/api/questions/{question_id}/associated")
 def get_associated_questions(question_id: int, db: Session = Depends(get_db)):
-    q = db.query(Question).filter(Question.id == question_id).first()
+    q = db.query(Question.id, Question.association_group_id).filter(Question.id == question_id).first()
     if not q:
         raise HTTPException(status_code=404, detail="未找到题目")
         
@@ -3519,13 +3955,14 @@ def get_associated_questions(question_id: int, db: Session = Depends(get_db)):
     if not grp or grp.strip() == "":
         return []
         
-    associated = db.query(Question).filter(
+    associated = db.query(Question).options(*question_summary_load_options()).filter(
         Question.association_group_id == grp,
         Question.id != question_id
     ).all()
     
     seq_map = get_seq_mapping(db, [item.id for item in associated])
-    return [{**item.to_dict(get_active_version_code()), "seq_num": seq_map.get(item.id)} for item in associated]
+    refs_by_id = reference_payloads(db, associated)
+    return [{**item.to_summary_dict(get_active_version_code(), compact_knowledge_points=True), "question_references": refs_by_id.get(item.id, []), "seq_num": seq_map.get(item.id)} for item in associated]
 
 @app.post("/api/questions/{question_id}/associate")
 def associate_questions_endpoint(
@@ -3623,6 +4060,12 @@ def delete_question(
     image_paths_to_check = list(db_question.image_paths)
     try:
         from sqlalchemy import func
+        from mathbank.database import QuestionSourceLabel
+
+        affected_reference_labels = {
+            (row.book_key, row.label_key)
+            for row in db.query(QuestionSourceLabel).filter_by(question_id=question_id)
+        }
 
         affected_paper_ids = [
             paper_id
@@ -3649,6 +4092,8 @@ def delete_question(
             ):
                 paper.total_score = int(remaining_scores.get(paper.id, 0))
         db.delete(db_question)
+        db.flush()
+        refresh_reference_targets_for_labels(db, affected_reference_labels)
         db.commit()
     except Exception as e:
         db.rollback()
@@ -3797,116 +4242,22 @@ def get_curriculum_preset_config(version: str):
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
 
-def route_chapter(comp: str, chap: str, know: str, target: str) -> tuple[str, str, str]:
-    """跨大纲版本智能章节与小节路由翻译算法，返回 (new_compulsory, new_chapter, new_knowledge)"""
-    combined = f"{comp} {chap} {know}"
-    new_comp, new_chap = "", ""
-    if target == "A":
-        if "集合" in combined: new_comp, new_chap = "必修一", "1. 集合与常用逻辑用语"
-        elif "逻辑" in combined: new_comp, new_chap = "必修一", "1. 集合与常用逻辑用语"
-        elif "等式" in combined or "不等式" in combined: new_comp, new_chap = "必修一", "2. 一元二次函数、方程和不等式"
-        elif "指数" in combined or "对数" in combined: new_comp, new_chap = "必修一", "4. 指数函数与对数函数"
-        elif "三角函数" in combined or "三角恒等" in combined: new_comp, new_chap = "必修一", "5. 三角函数"
-        elif "函数" in combined: new_comp, new_chap = "必修一", "3. 函数的概念与性质"
-        elif "解三角形" in combined or "正弦" in combined or "余弦" in combined: new_comp, new_chap = "必修二", "6. 平面向量及其应用"
-        elif "数量积" in combined or "平面向量" in combined: new_comp, new_chap = "必修二", "6. 平面向量及其应用"
-        elif "复数" in combined: new_comp, new_chap = "必修二", "7. 复数"
-        elif "立体几何" in combined and "空间向量" not in combined: new_comp, new_chap = "必修二", "8. 立体几何初步"
-        elif "空间向量" in combined: new_comp, new_chap = "选修一", "1. 空间向量与立体几何"
-        elif "直线" in combined or "圆的方程" in combined: new_comp, new_chap = "选修一", "2. 直线和圆的方程"
-        elif "圆" in combined and "圆锥曲线" not in combined: new_comp, new_chap = "选修一", "2. 直线和圆的方程"
-        elif "圆锥曲线" in combined or "椭圆" in combined or "双曲线" in combined or "抛物线" in combined: new_comp, new_chap = "选修一", "3. 圆锥曲线的方程"
-        elif "解析几何" in combined: new_comp, new_chap = "选修一", "2. 直线和圆的方程"
-        elif "数列" in combined: new_comp, new_chap = "选修二", "4. 数列"
-        elif "导数" in combined: new_comp, new_chap = "选修二", "5. 一元函数的导数及其应用"
-        elif "计数" in combined or "排列" in combined or "组合" in combined or "二项式" in combined: new_comp, new_chap = "选修三", "6. 计数原理"
-        elif "概率" in combined or "随机变量" in combined or "分布" in combined: new_comp, new_chap = "选修三", "7. 随机变量及其分布"
-        elif "统计" in combined or "回归" in combined or "独立性" in combined or "成对" in combined: new_comp, new_chap = "选修三", "8. 成对数据的统计分析"
-        else: new_comp, new_chap = "必修一", "1. 集合与常用逻辑用语"
-    elif target == "B":
-        if "集合" in combined: new_comp, new_chap = "必修一", "第一章 集合与常用逻辑用语"
-        elif "逻辑" in combined: new_comp, new_chap = "必修一", "第一章 集合与常用逻辑用语"
-        elif "等式" in combined or "不等式" in combined: new_comp, new_chap = "必修一", "第二章 等式与不等式"
-        elif "指数" in combined or "对数" in combined: new_comp, new_chap = "必修二", "第四章 指数函数、对数函数与幂函数"
-        elif "三角函数" in combined: new_comp, new_chap = "必修三", "第七章 三角函数"
-        elif "函数" in combined: new_comp, new_chap = "必修一", "第三章 函数"
-        elif "解三角形" in combined or "正弦" in combined or "余弦" in combined: new_comp, new_chap = "必修四", "第九章 解三角形"
-        elif "数量积" in combined or "三角恒等" in combined: new_comp, new_chap = "必修三", "第八章 向量的数量积与三角恒等变换"
-        elif "平面向量" in combined: new_comp, new_chap = "必修二", "第六章 平面向量初步"
-        elif "复数" in combined: new_comp, new_chap = "必修四", "第十章 复数"
-        elif "立体几何" in combined and "空间向量" not in combined: new_comp, new_chap = "必修四", "第十一章 立体几何初步"
-        elif "空间向量" in combined: new_comp, new_chap = "选修一", "第一章 空间向量与立体几何"
-        elif "直线" in combined or "圆" in combined or "圆锥曲线" in combined or "椭圆" in combined or "双曲线" in combined or "抛物线" in combined: new_comp, new_chap = "选修一", "第二章 平面解析几何"
-        elif "解析几何" in combined: new_comp, new_chap = "选修一", "第二章 平面解析几何"
-        elif "数列" in combined: new_comp, new_chap = "选修三", "第五章 数列"
-        elif "导数" in combined: new_comp, new_chap = "选修三", "第六章 导数及其应用"
-        elif "计数" in combined or "排列" in combined or "组合" in combined or "二项式" in combined: new_comp, new_chap = "选修二", "第三章 排列、组合与二项式定理"
-        elif "随机变量" in combined or "条件概率" in combined or "回归" in combined or "独立性" in combined or "成对" in combined: new_comp, new_chap = "选修二", "第四章 概率与统计"
-        elif "统计" in combined or "概率" in combined: new_comp, new_chap = "必修二", "第五章 统计与概率"
-        else: new_comp, new_chap = "必修一", "第一章 集合与常用逻辑用语"
-    elif target == "S":
-        if "集合" in combined: new_comp, new_chap = "必修一", "第1章 集合"
-        elif "逻辑" in combined: new_comp, new_chap = "必修一", "第2章 常用逻辑用语"
-        elif "等式" in combined or "不等式" in combined: new_comp, new_chap = "必修一", "第3章 不等式"
-        elif "指数" in combined or "对数" in combined: new_comp, new_chap = "必修一", "第4章 指数与对数"
-        elif "三角函数" in combined: new_comp, new_chap = "必修一", "第7章 三角函数"
-        elif "函数" in combined: new_comp, new_chap = "必修一", "第5章 函数概念与性质"
-        elif "解三角形" in combined or "正弦" in combined or "余弦" in combined: new_comp, new_chap = "必修二", "第11章 解三角形"
-        elif "数量积" in combined or "平面向量" in combined: new_comp, new_chap = "必修二", "第9章 平面向量"
-        elif "三角恒等" in combined: new_comp, new_chap = "必修二", "第10章 三角恒等变换"
-        elif "复数" in combined: new_comp, new_chap = "必修二", "第12章 复数"
-        elif "立体几何" in combined and "空间向量" not in combined: new_comp, new_chap = "必修二", "第13章 立体几何初步"
-        elif "空间向量" in combined: new_comp, new_chap = "选修二", "第6章 空间向量与立体几何"
-        elif "直线" in combined: new_comp, new_chap = "选修一", "第1章 直线与方程"
-        elif "圆" in combined and "圆锥曲线" not in combined: new_comp, new_chap = "选修一", "第2章 圆与方程"
-        elif "圆锥曲线" in combined or "椭圆" in combined or "双曲线" in combined or "抛物线" in combined: new_comp, new_chap = "选修一", "第3章 圆锥曲线与方程"
-        elif "解析几何" in combined: new_comp, new_chap = "选修一", "第1章 直线与方程"
-        elif "数列" in combined: new_comp, new_chap = "选修一", "第4章 数列"
-        elif "导数" in combined: new_comp, new_chap = "选修一", "第5章 导数及其应用"
-        elif "计数" in combined or "排列" in combined or "组合" in combined or "二项式" in combined: new_comp, new_chap = "选修二", "第7章 计数原理"
-        elif "随机变量" in combined or "条件概率" in combined: new_comp, new_chap = "选修二", "第8章 概率"
-        elif "回归" in combined or "独立性" in combined or "成对" in combined: new_comp, new_chap = "选修二", "第9章 统计"
-        elif "统计" in combined: new_comp, new_chap = "必修二", "第14章 统计"
-        elif "概率" in combined: new_comp, new_chap = "必修二", "第15章 概率"
-        else: new_comp, new_chap = "必修一", "第1章 集合"
-    elif target == "H":
-        if "集合与逻辑" in combined or ("集合" in combined and "选修" not in comp): new_comp, new_chap = "必修一", "第 1 章 集合与逻辑"
-        elif "等式" in combined or "不等式" in combined: new_comp, new_chap = "必修一", "第 2 章 等式与不等式"
-        elif "幂、指数" in combined or "指数与对数" in combined or ("指数" in combined and "函数" not in combined) or ("对数" in combined and "函数" not in combined): new_comp, new_chap = "必修一", "第 3 章 幂、指数与对数"
-        elif "幂函数" in combined or "指数函数" in combined or "对数函数" in combined: new_comp, new_chap = "必修一", "第 4 章 幂函数、指数函数与对数函数"
-        elif "反函数" in combined or "函数的概念" in combined or ("函数" in combined and "三角" not in combined and "导数" not in combined and "选修" not in comp and "必修二" not in comp and "必修三" not in comp): new_comp, new_chap = "必修一", "第 5 章 函数的概念、性质及应用"
-        elif "解三角形" in combined or "正弦定理" in combined or "余弦定理" in combined or "常用三角公式" in combined or ("三角" in combined and "函数" not in combined): new_comp, new_chap = "必修二", "第 6 章 三角"
-        elif "三角函数" in combined: new_comp, new_chap = "必修二", "第 7 章 三角函数"
-        elif "平面向量" in combined or ("向量" in combined and "空间" not in combined): new_comp, new_chap = "必修二", "第 8 章 平面向量"
-        elif "复数" in combined: new_comp, new_chap = "必修二", "第 9 章 复数"
-        elif "空间直线" in combined or "空间点" in combined or ("立体几何" in combined and "空间向量" not in combined and "简单几何体" not in combined and "球" not in combined and "柱体" not in combined and "锥体" not in combined): new_comp, new_chap = "必修三", "第 10 章 空间直线与平面"
-        elif "简单几何体" in combined or "柱体" in combined or "锥体" in combined or "多面体" in combined or "球" in combined: new_comp, new_chap = "必修三", "第 11 章 简单几何体"
-        elif "古典概" in combined or "随机现象" in combined or ("概率" in combined and "条件概率" not in combined and "随机变量" not in combined and "分布" not in combined and "选修" not in comp): new_comp, new_chap = "必修三", "第 12 章 概率初步"
-        elif "总体与样本" in combined or "抽样" in combined or "统计图表" in combined or ("统计" in combined and "成对" not in combined and "回归" not in combined and "列联表" not in combined and "选修" not in comp): new_comp, new_chap = "必修三", "第 13 章 统计"
-        elif "红绿灯" in combined or "优惠券" in combined or "车辆转弯" in combined or "雨中行" in combined or "出租车" in combined or "家具" in combined or "登山" in combined or "包装彩带" in combined or "削菠萝" in combined or "高度测量" in combined or "外卖" in combined or "必修四" in comp: new_comp, new_chap = "必修四", "第 1 部分 数学建模活动案例"
-        elif "平面直角坐标系中的直线" in combined or "直线与方程" in combined or ("直线" in combined and "空间" not in combined and "圆锥曲线" not in combined): new_comp, new_chap = "选修一", "第 1 章 平面直角坐标系中的直线"
-        elif "圆锥曲线" in combined or "椭圆" in combined or "双曲线" in combined or "抛物线" in combined or ("圆" in combined and "圆锥曲线" in combined): new_comp, new_chap = "选修一", "第 2 章 圆锥曲线"
-        elif "空间向量" in combined: new_comp, new_chap = "选修一", "第 3 章 空间向量及其应用"
-        elif "数列" in combined or "等差数列" in combined or "等比数列" in combined or "数学归纳法" in combined: new_comp, new_chap = "选修一", "第 4 章 数列"
-        elif "导数" in combined: new_comp, new_chap = "选修二", "第 5 章 导数及其应用"
-        elif "计数原理" in combined or "排列" in combined or "组合" in combined or "二项式" in combined: new_comp, new_chap = "选修二", "第 6 章 计数原理"
-        elif "条件概率" in combined or "随机变量" in combined or "常用分布" in combined or "二项分布" in combined or "正态分布" in combined: new_comp, new_chap = "选修二", "第 7 章 概率初步（续）"
-        elif "成对数据" in combined or "线性回归" in combined or "列联表" in combined or "独立性检验" in combined or "回归" in combined: new_comp, new_chap = "选修二", "第 8 章 成对数据的统计分析"
-        elif "刹车距离" in combined or "易拉罐" in combined or "珠穆朗玛峰" in combined or "水葫芦" in combined or "铅球" in combined or "电梯调度" in combined or "存款计划" in combined or "民生巨变" in combined or "教室里的照明" in combined or "选修三" in comp: new_comp, new_chap = "选修三", "第 1 部分 数学建模活动案例"
-        else: new_comp, new_chap = "必修一", "第 1 章 集合与逻辑"
-
-    active_v = get_active_version_code()
-    if target == active_v:
-        c_tree = METADATA_CACHE.get("curriculum", {})
-    else:
-        try:
-            c_tree = load_curriculum(target)
-        except ValueError:
-            c_tree = {}
-    
-    valid_knows = c_tree.get(new_comp, {}).get(new_chap, [])
-    new_know = know if know in valid_knows else ""
-    return new_comp, new_chap, new_know
+def route_chapter(comp: str, chap: str, know: str, target: str, *, target_curriculum=None,
+                  routing_index=None, point_codes=()) -> tuple[str, str, str]:
+    """Route only through exact directories and verified shared point paths."""
+    if routing_index is None:
+        if target_curriculum is None:
+            if target == get_active_version_code():
+                target_curriculum = METADATA_CACHE.get("curriculum", {})
+            else:
+                try:
+                    target_curriculum = load_curriculum(target)
+                except ValueError:
+                    return "", "", ""
+        routing_index = build_curriculum_routing_index(
+            [], get_active_version_code(), target, target_curriculum,
+        )
+    return route_curriculum_location(comp, chap, know, routing_index, point_codes=point_codes)
 
 @app.post("/api/config/metadata")
 def save_metadata_config(
@@ -3914,6 +4265,14 @@ def save_metadata_config(
     background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
 ):
+    # A switch updates database mirrors, a file and the process cache together.
+    # Serialize concurrent settings requests so compensation cannot replace a
+    # different request's already-committed metadata.
+    with _METADATA_SAVE_LOCK:
+        return _save_metadata_config(payload, background_tasks, db)
+
+
+def _save_metadata_config(payload: dict, background_tasks: BackgroundTasks, db: Session):
     global METADATA_CACHE
     # Validation
     if not isinstance(payload, dict):
@@ -3929,6 +4288,14 @@ def save_metadata_config(
         
     if not isinstance(payload["curriculum"], dict):
         raise HTTPException(status_code=400, detail="curriculum 必须是字典对象")
+
+    try:
+        target_version = detect_curriculum_version(payload)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    # Newly saved customizations retain their identity even after chapter
+    # titles are edited.  Existing files without it remain readable as before.
+    payload = {**payload, "curriculum_version": target_version}
         
     old_metadata = METADATA_CACHE
     metadata_path = Path(METADATA_FILE)
@@ -3937,44 +4304,76 @@ def save_metadata_config(
     )
     file_replaced = False
     transaction_committed = False
+    switch_summary = None
 
     # Update the curriculum mirror and metadata as one compensated operation.
     try:
         source_version = get_active_version_code()
-        # Detect target version
-        target_version = detect_curriculum_version(payload)
-
         # Incremental migration if curriculum version shifts
         if source_version != target_version:
-            # Check and run incremental migration for all questions that do not have classifications for target_version
-            all_questions = db.query(Question).all()
-            for q in all_questions:
-                target_map = db.query(QuestionCurriculum).filter(
-                    QuestionCurriculum.question_id == q.id,
-                    QuestionCurriculum.version_code == target_version
-                ).first()
-                if target_map is None:
-                    target_map = QuestionCurriculum(question_id=q.id, version_code=target_version)
-                    db.add(target_map)
-                    source_map = db.query(QuestionCurriculum).filter(
-                        QuestionCurriculum.question_id == q.id,
-                        QuestionCurriculum.version_code == source_version
-                    ).first()
-                    if source_map and source_map.compulsory:
-                        new_comp, new_chap, new_know = route_chapter(
-                            source_map.compulsory, source_map.chapter, source_map.knowledge, target_version
-                        )
-                        target_map.compulsory = new_comp
-                        target_map.chapter = new_chap
-                        target_map.knowledge = new_know
+            # Read only classification columns and batch all related evidence.
+            # Loading every full question or querying mirrors per row makes a
+            # first switch unnecessarily expensive for a large local library.
+            locations = db.query(Question.id, Question.category_compulsory,
+                                 Question.category_chapter, Question.category_knowledge).all()
+            mirrors = {(row.question_id, row.version_code): row
+                       for row in db.query(QuestionCurriculum).filter(
+                           QuestionCurriculum.version_code.in_((source_version, target_version))).all()}
+            missing_ids = {row.id for row in locations if (row.id, target_version) not in mirrors}
+            codes_by_question = {}
+            if missing_ids:
+                for question_id, point_code in db.query(
+                        QuestionKnowledgePoint.question_id, QuestionKnowledgePoint.point_code).filter(
+                            QuestionKnowledgePoint.role == "main").all():
+                    if question_id in missing_ids:
+                        codes_by_question.setdefault(question_id, []).append(point_code)
+                catalog_paths = [{"point_code": row.point_code, **row.to_dict()}
+                                 for row in db.query(KnowledgePointCurriculum).filter(
+                                     KnowledgePointCurriculum.version_code.in_((source_version, target_version))).all()]
+                from mathbank.knowledge_points import get_curriculum_ancestors
+                routing_index = build_curriculum_routing_index(
+                    catalog_paths, source_version, target_version, payload["curriculum"],
+                    target_ancestors=get_curriculum_ancestors(target_version),
+                )
+            switch_summary = {"source_version": source_version, "target_version": target_version,
+                              "restored_existing": len(locations) - len(missing_ids),
+                              "created": 0, "section": 0, "chapter": 0, "unclassified": 0,
+                              "preserved_source_mirrors": 0}
+            source_snapshots = []
+            for question in locations:
+                source_map = mirrors.get((question.id, source_version))
+                if source_map is None:
+                    # A legacy main-table position is genuine source evidence;
+                    # freeze it before leaving so a later return is lossless.
+                    source_location = (question.category_compulsory, question.category_chapter, question.category_knowledge)
+                    source_snapshots.append({"question_id": question.id, "version_code": source_version,
+                                             **dict(zip(("compulsory", "chapter", "knowledge"), source_location))})
+                    switch_summary["preserved_source_mirrors"] += 1
+                else:
+                    source_location = (source_map.compulsory, source_map.chapter, source_map.knowledge)
+                if question.id not in missing_ids:
+                    continue  # Existing empty or historical positions are user data.
+                new_comp, new_chap, new_know = route_chapter(
+                    *source_location, target_version,
+                    routing_index=routing_index, point_codes=codes_by_question.get(question.id, ()),
+                )
+                db.add(QuestionCurriculum(question_id=question.id, version_code=target_version,
+                                         compulsory=new_comp, chapter=new_chap, knowledge=new_know))
+                switch_summary["created"] += 1
+                switch_summary["section" if new_know else "chapter" if new_chap else "unclassified"] += 1
+            if source_snapshots:
+                # Core INSERT keeps explicit historical NULL values; ORM
+                # defaults would otherwise turn those original values into "".
+                db.execute(QuestionCurriculum.__table__.insert(), source_snapshots)
         # Batch update main questions table categories with target version values
         from sqlalchemy import text
         db.flush()
         db.execute(text("""
             UPDATE questions 
-            SET category_compulsory = COALESCE((SELECT compulsory FROM question_curriculums WHERE question_id = questions.id AND version_code = :v), ''),
-                category_chapter = COALESCE((SELECT chapter FROM question_curriculums WHERE question_id = questions.id AND version_code = :v), ''),
-                category_knowledge = COALESCE((SELECT knowledge FROM question_curriculums WHERE question_id = questions.id AND version_code = :v), '')
+            SET category_compulsory = (SELECT compulsory FROM question_curriculums WHERE question_id = questions.id AND version_code = :v),
+                category_chapter = (SELECT chapter FROM question_curriculums WHERE question_id = questions.id AND version_code = :v),
+                category_knowledge = (SELECT knowledge FROM question_curriculums WHERE question_id = questions.id AND version_code = :v)
+            WHERE EXISTS (SELECT 1 FROM question_curriculums WHERE question_id = questions.id AND version_code = :v)
         """), {"v": target_version})
 
         write_private_text_atomic(
@@ -4009,7 +4408,8 @@ def save_metadata_config(
         f"(Detected version: {target_version})"
     )
     schedule_database_export(background_tasks, operation="save_metadata")
-    return {"status": "success", "message": "元数据配置保存成功！"}
+    return {"status": "success", "message": "元数据配置保存成功！",
+            "curriculum_version": target_version, "classification_switch": switch_summary}
 
 # ----------------- DB Statistics API -----------------
 
@@ -4113,7 +4513,9 @@ def list_categories(db: Session = Depends(get_db)):
 # ----------------- AI Auto-Classification API -----------------
 
 @app.post("/api/ai/classify")
-def ai_classify(content: str = Form(...)):
+def ai_classify(content: str = Form(...), answer_markdown: str = Form(""),
+                review_markdown: str = Form(""), db: Session = Depends(get_db),
+                expected_version_code: Optional[str] = Form(None)):
     classify_model = (
         os.getenv("PREFER_CLASSIFY_MODEL") 
         or os.getenv("DEEPSEEK_CLASSIFY_MODEL") 
@@ -4137,18 +4539,26 @@ def ai_classify(content: str = Form(...)):
         )
         
     try:
-        system_instructions = build_classification_system_prompt(get_current_curriculum())
+        version_code = get_active_version_code()
+        if isinstance(expected_version_code, str) and expected_version_code != version_code:
+            return JSONResponse(content={"status": "error", "message": "当前教材版本已变化，请刷新后重新分类。"}, status_code=409)
+        curriculum = copy.deepcopy(get_current_curriculum())
+        knowledge_catalog = load_ai_knowledge_catalog(db)
+        system_instructions = build_classification_system_prompt(curriculum, knowledge_catalog)
+        question_input = {"content": content,
+                          "answer_markdown": answer_markdown if isinstance(answer_markdown, str) else "",
+                          "review_markdown": review_markdown if isinstance(review_markdown, str) else ""}
         data = {
             "model": model_name,
             "messages": [
                 {"role": "system", "content": system_instructions},
-                {"role": "user", "content": f"题目内容:\n{content}"}
+                {"role": "user", "content": json.dumps(question_input, ensure_ascii=False)}
             ],
             "response_format": {
                 "type": "json_object"
             },
             "temperature": 0.2,
-            "max_tokens": 512
+            "max_tokens": 4096
         }
         
         data = apply_model_thinking_policy(
@@ -4177,9 +4587,14 @@ def ai_classify(content: str = Form(...)):
             ai_message = "\n".join(lines).strip()
             
         result = json.loads(ai_message)
-        compulsory = result.get("compulsory", "")
-        chapter = result.get("chapter", "")
-        knowledge = result.get("knowledge", "")
+        annotate_ai_knowledge_points(question_input, knowledge_catalog, raw=result.get("knowledge_points", []))
+        placement = {"category_compulsory": result.get("compulsory", ""),
+                     "category_chapter": result.get("chapter", ""),
+                     "category_knowledge": result.get("knowledge", "")}
+        normalize_import_classifications([placement], curriculum)
+        compulsory = placement["category_compulsory"]
+        chapter = placement["category_chapter"]
+        knowledge = placement["category_knowledge"]
         structured_question_form = detect_structured_question_form(content)
         question_form = structured_question_form or normalize_ai_question_form(
             result.get("question_form")
@@ -4187,7 +4602,9 @@ def ai_classify(content: str = Form(...)):
         question_form_source = "structure" if structured_question_form else "ai"
         
         # Verification: make sure returned values exist in get_current_curriculum()
-        curr = get_current_curriculum()
+        if get_active_version_code() != version_code:
+            return JSONResponse(content={"status": "error", "message": "分类期间教材版本已变化，请保留当前编辑并重新分类。"}, status_code=409)
+        curr = curriculum
         if (compulsory in curr and chapter in curr[compulsory]
                 and isinstance(knowledge, str)
                 and (not knowledge or knowledge in curr[compulsory][chapter])):
@@ -4198,6 +4615,11 @@ def ai_classify(content: str = Form(...)):
                 "knowledge": knowledge,
                 "question_form": question_form,
                 "question_form_source": question_form_source,
+                "knowledge_points": question_input["knowledge_points"],
+                "knowledge_point_warnings": question_input["knowledge_point_warnings"],
+                "version_code": version_code,
+                **({"classification_review": placement["classification_review"]}
+                   if "classification_review" in placement else {}),
             }
         else:
             raise ValueError("AI 返回的学段、章节或小节不在当前教材大纲中，请保留原分类并人工核对。")
@@ -4335,8 +4757,9 @@ def parse_paper_text_internal(
     if not api_key:
         raise ValueError(f"未配置对应的 API Key ({provider.credential_label})，无法智能拆解试卷！请在工作台右上角设置面板进行配置。")
 
+    curriculum = copy.deepcopy(get_current_curriculum())
     system_instructions = build_pdf_parse_system_prompt(
-        get_current_curriculum(), generate_answers_bool
+        curriculum, generate_answers_bool, load_ai_knowledge_catalog()
     )
 
     max_output_tokens = 65536
@@ -4384,11 +4807,11 @@ def parse_paper_text_internal(
             diagnostics=diagnostics,
         )
     if preserve_source_answers:
-        validate_import_knowledge(parsed_questions, get_current_curriculum())
+        validate_import_knowledge(parsed_questions, curriculum, diagnostics=diagnostics)
         # Compare the original response before answer filtering or formula edits.
         return parsed_questions
 
-    validate_import_knowledge(parsed_questions, get_current_curriculum())
+    validate_import_knowledge(parsed_questions, curriculum, diagnostics=diagnostics)
 
     # 强制进行静默净化：若未勾选自动生成答案，则对于没有带有 [EXTRACTED_ORIGINAL] 的解析和解答，将其强行抹平为空。
     for q in parsed_questions:
@@ -4411,23 +4834,9 @@ def parse_paper_text_internal(
     return parsed_questions
 
 
-def validate_import_knowledge(questions: list[dict], curriculum: dict) -> None:
-    """Reject fabricated import subsections; empty knowledge means whole chapter."""
-    for index, question in enumerate(questions, start=1):
-        compulsory = question.get("category_compulsory", "")
-        chapter = question.get("category_chapter", "")
-        # Older parse providers may omit this optional field. Normalize omission
-        # to explicit whole-chapter status; never synthesize the chapter as a leaf.
-        knowledge = question.get("category_knowledge", "")
-        question["category_knowledge"] = knowledge
-        if not isinstance(knowledge, str):
-            raise ValueError(f"第 {index} 题的小节字段无效，请重新导入并核对。")
-        if compulsory or chapter:
-            if compulsory not in curriculum or chapter not in curriculum[compulsory]:
-                raise ValueError(f"第 {index} 题的学段或章节不在当前教材版本中，请重新导入并核对。")
-        if knowledge and (compulsory not in curriculum or chapter not in curriculum[compulsory]
-                          or knowledge not in curriculum[compulsory][chapter]):
-            raise ValueError(f"第 {index} 题的小节不属于所选版本、学段和章节，请重新导入并核对。")
+def validate_import_knowledge(questions: list[dict], curriculum: dict, *, diagnostics=None) -> None:
+    """Preserve imported source bodies while flagging uncertain placement."""
+    normalize_import_classifications(questions, curriculum, diagnostics)
 
 
 @app.post("/api/ai/parse-paper")
@@ -4481,7 +4890,9 @@ def ai_parse_paper(
         if not paper_title.strip() and tex_result["title"]:
             paper_title = tex_result["title"]
 
-        system_instructions = build_import_parse_system_prompt(get_current_curriculum(), source_format)
+        curriculum = copy.deepcopy(get_current_curriculum())
+        knowledge_catalog = load_ai_knowledge_catalog()
+        system_instructions = build_import_parse_system_prompt(curriculum, source_format, knowledge_catalog)
 
         max_output_tokens = 65536
 
@@ -4514,7 +4925,7 @@ def ai_parse_paper(
         parsed_questions = parse_paper_completion(
             response.json(), diagnostics=tex_diagnostics,
         )
-        validate_import_knowledge(parsed_questions, get_current_curriculum())
+        validate_import_knowledge(parsed_questions, curriculum, diagnostics=tex_diagnostics)
         lock_report = reconcile_visible_math(
             parsed_questions, math_locks, tex_result["model_source"],
             tex_comments=source_format != "markdown",
@@ -4638,6 +5049,9 @@ def ai_parse_paper(
             tex_diagnostics.setdefault("warnings", []).append(
                 "以下配图未能确定所属题目：" + "、".join(unassigned_images[:8])
             )
+        for question in parsed_questions:
+            annotate_ai_knowledge_points(question, knowledge_catalog)
+        separate_formula_notices(parsed_questions)
         make_source_review_advisory(parsed_questions, tex_diagnostics)
         return {
             "status": "success",
@@ -4735,7 +5149,7 @@ def _referenced_question_assets(db: Session) -> set[Path]:
         Question._content_tikz_assets,
         Question._answer_tikz_assets,
         Question.tikz_reference_image_path,
-    ).all()
+    ).yield_per(250)
     for raw_paths, content, answer_markdown, review, content_assets, answer_assets, legacy_reference in rows:
         references = []
         try:
@@ -4919,7 +5333,21 @@ def promote_question_temp_assets(
 
 @app.post("/api/ai/manual-crop-pdf")
 def manual_crop_pdf(payload: dict):
-    """用户在前端手动拖拽框选后，后端根据坐标裁剪 PDF 页面的特定区域"""
+    """Crop locally, including retained projects whose runtime task expired."""
+    project_id = payload.get("project_id") if isinstance(payload, dict) else None
+    if project_id:
+        try:
+            if not DOCUMENT_PROJECTS:
+                raise DocumentProjectError("本地工程未启用。")
+            with DOCUMENT_PROJECTS.operation(project_id):
+                DOCUMENT_PROJECTS.touch(project_id)
+                return _manual_crop_pdf_impl(payload, project_id)
+        except DocumentProjectError as exc:
+            return JSONResponse({"status":"error", "message":str(exc)}, status_code=409)
+    return _manual_crop_pdf_impl(payload)
+
+
+def _manual_crop_pdf_impl(payload, project_id=None):
     try:
         import math
 
@@ -4930,12 +5358,17 @@ def manual_crop_pdf(payload: dict):
         except (ValueError, AttributeError) as exc:
             raise ValueError("任务 ID 格式不正确。") from exc
         task = DOCUMENT_TASKS.snapshot(task_id)
+        if project_id:
+            metadata = DOCUMENT_PROJECTS.get(project_id)
+            task = DOCUMENT_PROJECTS.load_task(project_id)
+            task_id = metadata.get("task_id") or project_id
+            task = {**task, "document_type":"pdf"}
         if not task or task.get("document_type") != "pdf":
             return JSONResponse(
                 content={"status": "error", "message": "未找到对应的 PDF 任务！"},
                 status_code=404,
             )
-        if task.get("status") in {"cancelled", "error"}:
+        if not project_id and task.get("status") in {"cancelled", "error"}:
             raise ValueError("已取消或失败的 PDF 任务不能再裁剪。")
         page_index = int(payload.get("page_index", 0))
         selected_numbers = task.get("page_numbers")
@@ -4958,7 +5391,22 @@ def manual_crop_pdf(payload: dict):
 
         img_filename = f"pdf_page_{task_id}_{page_index}.png"
         img_filepath = Path(TMP_UPLOAD_DIR) / img_filename
-        
+        if project_id and isinstance(selected_numbers, list) and page_index+1 in selected_numbers:
+            page_images = task.get("page_images") or []
+            local_index = selected_numbers.index(page_index+1)
+            if local_index < len(page_images):
+                img_filepath = resolve_upload_asset(page_images[local_index], uploads_dir=UPLOAD_DIR,
+                    url_prefix=UPLOAD_DIR_REL, require_file=False)
+        if project_id and not img_filepath.is_file():
+            # Regenerate pixels from the saved original PDF, with zero AI calls.
+            import pymupdf as fitz
+            with fitz.open(stream=DOCUMENT_PROJECTS.load_source(project_id), filetype="pdf") as document:
+                if page_index >= len(document):
+                    raise ValueError("页码越界。")
+                pixmap = document[page_index].get_pixmap(matrix=fitz.Matrix(2, 2))
+                img_filepath = Path(TMP_UPLOAD_DIR) / img_filename
+                pixmap.save(str(img_filepath))
+                DOCUMENT_PROJECTS.register_assets(project_id, [f"/{UPLOAD_DIR_REL}/tmp/{img_filename}"])
         if not img_filepath.is_file() or img_filepath.is_symlink():
             return JSONResponse(
                 content={"status": "error", "message": "未找到对应的 PDF 页面图片！"},
@@ -4981,7 +5429,10 @@ def manual_crop_pdf(payload: dict):
         cropped.save(crop_filepath, format="PNG")
         
         img_url = f"/{UPLOAD_DIR_REL}/tmp/{crop_filename}"
-        if not DOCUMENT_TASKS.add_temp_asset(task_id, img_url):
+        if project_id:
+            DOCUMENT_PROJECTS.register_assets(project_id, [img_url])
+            DOCUMENT_TASKS.add_temp_asset(task_id, img_url)
+        elif not DOCUMENT_TASKS.add_temp_asset(task_id, img_url):
             crop_filepath.unlink(missing_ok=True)
             raise ValueError("任务记录已过期，无法登记裁剪图片。")
         return {"status": "success", "image_path": img_url}
@@ -5042,7 +5493,7 @@ def extract_title_from_latex(latex: str) -> str:
 # ----------------- PDF Import & AI Parsing Backend Logic -----------------
 
 def ocr_pdf_page_image(image_path: str, *, check_cancelled=lambda: None,
-                       report_attempt=lambda _event: None, page_index: int = None) -> str:
+                       report_attempt=lambda _event: None, page_index: int = None, on_response=None) -> str:
     """PDF pages share the configured provider's bounded retry budget."""
     check_cancelled()
     prefer_engine = os.getenv("OCR_PREFER_ENGINE", "siliconflow")
@@ -5050,7 +5501,8 @@ def ocr_pdf_page_image(image_path: str, *, check_cancelled=lambda: None,
     if not provider.api_key or not provider.chat_completions_url:
         raise ValueError("PDF 页面识别所用的识图服务未配置，请在系统设置中配置所选平台。")
     return ocr_via_provider(image_path, provider, pdf_page=True, check_cancelled=check_cancelled,
-                            report_attempt=report_attempt, page_index=page_index)
+                            report_attempt=report_attempt, page_index=page_index,
+                            **({"on_response": on_response} if on_response is not None else {}))
 
 
 def process_ocr_illustrations(text: str) -> str:
@@ -5150,7 +5602,8 @@ def ai_select_paper(payload: dict, db: Session = Depends(get_db)):
 
         # 1. 结构化过滤基础题目池
         query = db.query(Question).options(
-            selectinload(Question.curriculum_mappings).selectinload(QuestionCurriculum.sub_knowledge_rows)
+            selectinload(Question.curriculum_mappings).selectinload(QuestionCurriculum.sub_knowledge_rows),
+            selectinload(Question.knowledge_points),
         )
         if question_type:
             query = query.filter(Question.question_type == question_type)
@@ -5160,6 +5613,16 @@ def ai_select_paper(payload: dict, db: Session = Depends(get_db)):
             query, compulsory, chapter, knowledge, include_sub_knowledge=include_sub,
             sub_knowledge=sub_paths, sub_knowledge_mode=payload.get("sub_knowledge_mode", "any"),
         )
+        try:
+            query = apply_knowledge_point_filters(
+                query, payload.get("knowledge_point_codes") or [],
+                match_mode=payload.get("knowledge_point_mode", "any"),
+                role_scope=payload.get("knowledge_point_role", "main"),
+                status_scope=payload.get("knowledge_point_status", "all"),
+                unlabeled=payload.get("knowledge_point_unlabeled", False),
+            )
+        except (ValueError, TypeError) as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
             
         if is_review_intent:
             # 复习/旧题模式：优先提取已使用频次高的题目
@@ -5170,7 +5633,11 @@ def ai_select_paper(payload: dict, db: Session = Depends(get_db)):
         else:
             # 默认鲜活模式：优先提取从未被使用过的冷门题目
             candidates = query.order_by(Question.usage_count.asc(), Question.id.desc()).limit(35).all()
-            if not candidates and not any((question_type, difficulty, compulsory, chapter, knowledge, sub_paths)):
+            if not candidates and not any((
+                question_type, difficulty, compulsory, chapter, knowledge, sub_paths,
+                payload.get("knowledge_point_codes"),
+                payload.get("knowledge_point_unlabeled"),
+            )):
                 candidates = db.query(Question).order_by(Question.usage_count.asc(), Question.id.desc()).limit(35).all()
 
         # 2. 解题、拆卷、分类和组卷共用同一供应商解析规则。
@@ -5204,6 +5671,17 @@ def ai_select_paper(payload: dict, db: Session = Depends(get_db)):
                         "usage_count": q.usage_count or 0,
                         "knowledge": q.category_knowledge or "整章定位（待细分）",
                         "tags": q.tags or "",
+                        "knowledge_points": [
+                            {
+                                "code": row.point_code,
+                                "name": row.point.name,
+                                "role": row.role,
+                                "status": row.status,
+                            }
+                            for row in q.knowledge_points
+                            if row.status == "confirmed"
+                            or payload.get("knowledge_point_status", "all") == "all"
+                        ],
                         "stem_excerpt": clean_stem
                     })
 
@@ -5462,6 +5940,10 @@ def post_process_pdf_parsed_questions(parsed_questions: list, paper_title: str, 
     # Keep image markup in place. The preview already skips thumbnails for images
     # rendered in Markdown; stripping markup here empties image-only choices and
     # destroys the relationship between an option label and its graph.
+    knowledge_catalog = load_ai_knowledge_catalog()
+    for question in parsed_questions:
+        if "knowledge_points" in question:
+            annotate_ai_knowledge_points(question, knowledge_catalog)
     return parsed_questions
 
 
@@ -5862,7 +6344,7 @@ def run_pdf_parsing_task(
 
                 completed = 0
                 page_errors = []
-                for future in concurrent.futures.as_completed(futures):
+                for future in iter_completed_futures(futures, check_pdf_cancelled):
                     check_pdf_cancelled()
                     local_idx, text, error, joint = future.result()
                     if error:
@@ -5896,7 +6378,7 @@ def run_pdf_parsing_task(
                     raise RuntimeError("；".join(f"解析第 {item['page_number']} 页出错: {item['error']}"
                                                  for item in diagnostics["pdf_failed_pages"]))
             finally:
-                cancelled = DOCUMENT_TASKS.is_cancelled(task_id)
+                cancelled = DOCUMENT_TASKS.is_cancelled(task_id) or not DOCUMENT_TASKS.exists(task_id)
                 if cancelled:
                     for future in futures:
                         future.cancel()
@@ -5995,10 +6477,11 @@ def run_pdf_parsing_task(
         )
         DOCUMENT_TASKS.check_cancelled(task_id)
 
-        paper_title = os.path.splitext(filename)[0]
-        auto_title = extract_title_from_latex(full_latex_content)
-        if auto_title:
-            paper_title = auto_title
+        task = DOCUMENT_TASKS.snapshot(task_id) or {}
+        options = (task.get("document_input") or {}).get("options") or {}
+        paper_title = str(options.get("paper_title") or "").strip()
+        if not paper_title:
+            paper_title = extract_title_from_latex(full_latex_content) or os.path.splitext(filename)[0]
         if layout_result is not None:
             # Page markers track provenance, never count as question text and
             # must not become an artificial break in a cross-page question.
@@ -6119,7 +6602,7 @@ def run_pdf_parsing_task(
         make_source_review_advisory(final_questions, diagnostics)
         DOCUMENT_TASKS.check_cancelled(task_id)
         partial = bool(diagnostics.get("pdf_hybrid", {}).get("partial"))
-        completion_log = (f"PDF 已保留 {len(final_questions)} 道完整题目；部分疑点题组未完成，原文与未匹配题段可展开核对。"
+        completion_log = (f"PDF 已保留 {len(final_questions)} 道完整题目；部分疑点题组仍需校对，未处理范围已保留，可展开原文与未匹配题段核对。"
                           if partial else "拆分完成，可选择题目导入；原文和配图说明可按需展开查看。")
         completed = DOCUMENT_TASKS.complete(
             task_id,
@@ -6201,6 +6684,65 @@ def parse_page_range(range_str: str, total_pages: int) -> list:
 
 # ----------------- PDF Upload & Task Routing Endpoints -----------------
 
+def _queue_document_upload(content, filename, document_type, client_request_id, options, function, call_args):
+    """One request identity owns one immutable upload and one dispatch."""
+    with DOCUMENT_TASKS._request_lock:
+        if client_request_id:
+            with DOCUMENT_TASKS._lock:
+                previous_id = next((identifier for identifier, record in DOCUMENT_TASKS._records.items()
+                                    if record.state.get("client_request_id") == client_request_id), None)
+            previous = DOCUMENT_TASKS.snapshot(previous_id) if previous_id else None
+            if previous is not None:
+                source = previous.get("document_input") or {}
+                if (source.get("sha256") != hashlib.sha256(content).hexdigest()
+                        or source.get("bytes") != len(content) or source.get("filename") != filename
+                        or source.get("document_type") != document_type or source.get("options") != options):
+                    raise HTTPException(status_code=409, detail="本次上传标识已绑定其他文件或设置，请重新选择文件。")
+                return {"status": "success", "task_id": previous_id, "client_request_id": client_request_id,
+                        **({"project_id":previous["project_id"]} if previous.get("project_id") else {})}
+        project_id = None
+        if document_type == "pdf" and DOCUMENT_PROJECTS and not PDF_CLOUD_ONLY:
+            digest = hashlib.sha256(content).hexdigest()
+            existing = next((row for row in DOCUMENT_PROJECTS.find_existing(digest)
+                             if row.get("options") == options), None)
+            if existing:
+                project_id = existing["project_id"]
+                DOCUMENT_PROJECTS.touch(project_id)
+                live = DOCUMENT_TASKS.snapshot(existing.get("task_id")) if existing.get("task_id") else None
+                if live:
+                    return {"status":"success","task_id":existing["task_id"],"project_id":project_id,
+                            "reused_project":True,"client_request_id":client_request_id}
+                return {**_dispatch_document_project(project_id),"reused_project":True,
+                        "client_request_id":client_request_id}
+        task_id = str(uuid.uuid4())
+        if document_type == "pdf" and DOCUMENT_PROJECTS and not PDF_CLOUD_ONLY:
+            try:
+                project = DOCUMENT_PROJECTS.create(content, filename, options,
+                    copy.deepcopy(get_current_curriculum()), task_id)
+                project_id = project["project_id"]
+            except DocumentProjectError as exc:
+                raise HTTPException(400, str(exc)) from exc
+        source_input = _register_document_input(task_id, content, document_type, filename, **options)
+        try:
+            DOCUMENT_TASKS.create(task_id, status="pending", document_type=document_type, temp_assets=[],
+                log="任务已排队，正在准备提取题目与配图...", client_request_id=client_request_id,
+                document_input=source_input, **({"project_id":project_id} if project_id else {}))
+            if DOCUMENT_TASKS.request_cancelled(client_request_id):
+                DOCUMENT_TASKS.cancel(task_id)
+            else:
+                try:
+                    DOCUMENT_TASKS.submit(task_id, function, task_id, content, filename, *call_args)
+                except ValueError:
+                    if not DOCUMENT_TASKS.is_cancelled(task_id):
+                        raise
+        except TaskQueueFull as exc:
+            DOCUMENT_TASKS.remove(task_id)
+            DOCUMENT_TASK_INPUTS.pop(task_id, None)
+            raise HTTPException(status_code=429, detail=str(exc)) from exc
+        return {"status": "success", "task_id": task_id, "client_request_id": client_request_id,
+                **({"project_id":project_id,"project_revision":0,"expires_at":project["expires_at"]} if project_id else {})}
+
+
 @app.post("/api/upload/pdf-task")
 def upload_pdf_task(
     file: UploadFile = File(...),
@@ -6208,8 +6750,11 @@ def upload_pdf_task(
     page_range: Optional[str] = Form(None),
     pdf_strategy: str = Form("native_preferred"),
     pdf_verify_suspicions: bool = Form(True),
+    client_request_id: str = Form(""),
+    paper_title: str = Form(""),
 ):
     try:
+        client_request_id = _document_request_id(client_request_id)
         if pdf_strategy not in PDF_STRATEGIES:
             return JSONResponse(content={"status": "error", "message": "不支持的 PDF 解析策略。"}, status_code=400)
         generate_answers_bool = generate_answers.lower() in ("true", "1", "yes")
@@ -6236,38 +6781,15 @@ def upload_pdf_task(
                 status_code=400,
             )
             
-        task_id = str(uuid.uuid4())
-        
-        DOCUMENT_TASKS.create(
-            task_id,
-            status="pending",
-            log="任务已排队，正在准备运行异步切片分析...",
-            document_type="pdf",
-            temp_assets=[],
-        )
-        try:
-            DOCUMENT_TASKS.submit(
-                task_id,
-                run_pdf_parsing_task,
-                task_id,
-                content,
-                filename,
-                generate_answers_bool,
-                page_range,
-                pdf_strategy,
-                bool(pdf_verify_suspicions) if pdf_strategy == "layout_aware" else False,
-            )
-        except TaskQueueFull as exc:
-            DOCUMENT_TASKS.remove(task_id)
-            return JSONResponse(
-                content={"status": "error", "message": str(exc)},
-                status_code=429,
-            )
-        
-        return {
-            "status": "success",
-            "task_id": task_id
-        }
+        options = dict(
+            generate_answers=generate_answers_bool, page_range=page_range, pdf_strategy=pdf_strategy,
+            pdf_verify_suspicions=bool(pdf_verify_suspicions) if pdf_strategy == "layout_aware" else False,
+            paper_title=paper_title.strip())
+        return _queue_document_upload(content, filename, "pdf", client_request_id, options,
+            run_pdf_parsing_task, (generate_answers_bool, page_range, pdf_strategy,
+                                   options["pdf_verify_suspicions"]))
+    except HTTPException:
+        raise
     except Exception as e:
         return JSONResponse(
             content={"status": "error", "message": f"创建 PDF 解析任务失败: {str(e)}"},
@@ -6286,6 +6808,13 @@ def _delete_task_temp_assets(paths: list) -> int:
     try:
         with SessionLocal() as db:
             referenced = _referenced_question_assets(db)
+        if DOCUMENT_PROJECTS:
+            for url in DOCUMENT_PROJECTS.referenced_assets():
+                try:
+                    referenced.add(resolve_upload_asset(url, uploads_dir=UPLOAD_DIR,
+                        url_prefix=UPLOAD_DIR_REL, require_file=False))
+                except AssetSecurityError:
+                    pass
     except Exception as exc:
         print(f"[Storage Retention] Could not verify task image references; kept files ({type(exc).__name__}).")
         return 0
@@ -6318,6 +6847,7 @@ def run_docx_parsing_task(
     filename: str,
     generate_answers: bool = False,
     docx_verify_suspicions: bool = True,
+    resume_state: dict | None = None,
 ):
     temp_assets = []
     diagnostics = {}
@@ -6372,9 +6902,10 @@ def run_docx_parsing_task(
         )
 
         # 3. 智能提取标题与题目切片
-        paper_title = os.path.splitext(filename)[0]
+        task_options = (DOCUMENT_TASKS.snapshot(task_id) or {}).get("document_input", {}).get("options", {})
+        paper_title = task_options.get("paper_title") or os.path.splitext(filename)[0]
         auto_title = extract_title_from_latex(full_markdown_content)
-        if auto_title:
+        if auto_title and not task_options.get("paper_title"):
             paper_title = auto_title
 
         # Keep every formula visible in-place for the model's mathematical
@@ -6418,7 +6949,14 @@ def run_docx_parsing_task(
                 "error_type": type(exc).__name__,
             }
         parsed_questions = None
-        if hybrid_plan is not None and hybrid_plan["mode"] == "hybrid":
+        if resume_state:
+            if resume_state.get("source_sha256") != source_document_sha256:
+                raise ValueError("Word 原文件已变化，不能复用旧拆题结果。")
+            if resume_state.get("source_markdown") != full_markdown_content:
+                raise ValueError("Word 提取内容已变化，不能复用旧拆题结果。")
+            parsed_questions = copy.deepcopy(resume_state.get("split_questions"))
+            preserved_indices = frozenset(resume_state.get("preserved_indices", []))
+        if parsed_questions is None and hybrid_plan is not None and hybrid_plan["mode"] == "hybrid":
             parse_model = os.getenv("PREFER_PARSE_MODEL") or os.getenv("DEEPSEEK_PARSE_MODEL", "deepseek-flash")
             result = request_word_hybrid(hybrid_plan, get_current_curriculum(),
                 provider=resolve_text_provider(parse_model), post=post_chat_completion, diagnostics=diagnostics,
@@ -6441,17 +6979,16 @@ def run_docx_parsing_task(
                 )
             except TaskCancelled:
                 raise
+            except SourceMetadataPermanentHTTPError:
+                raise
             except Exception as exc:
                 diagnostics["word_source_metadata"].update(
                     status="fallback", error_type=type(exc).__name__,
                 )
         if parsed_questions is None:
             DOCUMENT_TASKS.check_cancelled(task_id)
-            fallback_kwargs = {}
-            if diagnostics["word_source_metadata"].get("calls"):
-                # At most one metadata POST followed by one ordinary split POST.
-                fallback_kwargs["connection_retry"] = False
-                fallback_kwargs["check_cancelled"] = lambda: DOCUMENT_TASKS.check_cancelled(task_id)
+            fallback_kwargs = {"connection_retry": False,
+                               "check_cancelled": lambda: DOCUMENT_TASKS.check_cancelled(task_id)}
             parsed_questions = parse_paper_text_internal(
                 locked_markdown_content,
                 False,  # Extract original answers; solve reviewed questions in the frontend.
@@ -6466,7 +7003,9 @@ def run_docx_parsing_task(
             "source_markdown": full_markdown_content,
             "split_questions": parsed_questions,
             "source_sha256": hashlib.sha256(file_bytes).hexdigest(),
+            "preserved_indices": sorted(preserved_indices),
         }
+        DOCUMENT_TASKS.update(task_id, docx_resume_state=copy.deepcopy(word_source_cache))
         if len(json.dumps(word_source_cache, ensure_ascii=False)) <= 500_000:
             DOCUMENT_TASKS.update(task_id, docx_source_cache=copy.deepcopy(word_source_cache))
         staged = copy.deepcopy(parsed_questions) if preserved_indices else parsed_questions
@@ -6567,10 +7106,12 @@ def run_docx_parsing_task(
             source_review_evidence=extraction_review_evidence,
             source_document_sha256=source_document_sha256,
         )
+        separate_formula_notices(final_questions)
         make_source_review_advisory(final_questions, diagnostics)
+        diagnostics["import_classification"] = summarize_import_classifications(final_questions)
         DOCUMENT_TASKS.check_cancelled(task_id)
         partial = bool(diagnostics.get("word_hybrid", {}).get("partial"))
-        completion_log = (f"Word 已保留 {len(final_questions)} 道完整题目；部分疑点题组未完成，原文与未匹配题段可展开核对。"
+        completion_log = (f"Word 已保留 {len(final_questions)} 道完整题目；部分疑点题组仍需校对，未处理范围已保留，可展开原文与未匹配题段核对。"
                           if partial else "Word 拆分完成，可选择题目导入；原文说明可按需展开查看。")
         completed = DOCUMENT_TASKS.complete(
             task_id,
@@ -6601,8 +7142,11 @@ def upload_docx_task(
     file: UploadFile = File(...),
     generate_answers: str = Form("false"),
     docx_verify_suspicions: str = Form("true"),
+    client_request_id: str = Form(""),
+    paper_title: str = Form(""),
 ):
     try:
+        client_request_id = _document_request_id(client_request_id)
         generate_answers_bool = generate_answers.lower() in ("true", "1", "yes")
         
         # 验证文件扩展名
@@ -6626,41 +7170,274 @@ def upload_docx_task(
                 status_code=400,
             )
             
-        task_id = str(uuid.uuid4())
-        
-        DOCUMENT_TASKS.create(
-            task_id,
-            status="pending",
-            log="Word 任务已排队，正在准备安全提取公式与配图...",
-            document_type="docx",
-            temp_assets=[],
-        )
-        try:
-            DOCUMENT_TASKS.submit(
-                task_id,
-                run_docx_parsing_task,
-                task_id,
-                content,
-                filename,
-                generate_answers_bool,
-                docx_verify_suspicions.lower() in ("true", "1", "yes"),
-            )
-        except TaskQueueFull as exc:
-            DOCUMENT_TASKS.remove(task_id)
-            return JSONResponse(
-                content={"status": "error", "message": str(exc)},
-                status_code=429,
-            )
-        
-        return {
-            "status": "success",
-            "task_id": task_id
-        }
+        options = dict(
+            generate_answers=generate_answers_bool,
+            docx_verify_suspicions=docx_verify_suspicions.lower() in ("true", "1", "yes"),
+            paper_title=paper_title.strip())
+        return _queue_document_upload(content, filename, "docx", client_request_id, options,
+            run_docx_parsing_task, (generate_answers_bool, options["docx_verify_suspicions"]))
+    except HTTPException:
+        raise
     except Exception as e:
         return JSONResponse(
             content={"status": "error", "message": f"创建 Word 解析任务失败: {str(e)}"},
             status_code=500
         )
+
+
+@app.get("/api/tasks/by-request/{client_request_id}/status")
+def get_document_task_by_request(client_request_id: str):
+    request_id = _document_request_id(client_request_id)
+    if not request_id:
+        raise HTTPException(status_code=400, detail="缺少文档请求标识。")
+    with DOCUMENT_TASKS._lock:
+        task_id = next((key for key, record in DOCUMENT_TASKS._records.items()
+                        if record.state.get("client_request_id") == request_id), None)
+    task = DOCUMENT_TASKS.snapshot(task_id) if task_id else None
+    if task is not None:
+        return _document_status(task_id, task)
+    if DOCUMENT_TASKS.request_cancelled(request_id):
+        return {"status": "cancelled", "client_request_id": request_id, "can_resume": False}
+    raise HTTPException(status_code=404, detail="尚未找到本次上传任务，请稍后重新连接。")
+
+
+@app.post("/api/tasks/cancel-by-request")
+def cancel_document_task_by_request(payload: dict):
+    request_id = _document_request_id(payload.get("client_request_id"))
+    if not request_id:
+        raise HTTPException(status_code=400, detail="缺少文档请求标识。")
+    records = DOCUMENT_TASKS.cancel_by_request(request_id, document_type=payload.get("document_type"))
+    if any(record and record.get("status") in {"completed", "error"} for record in records):
+        return {"status": "success", "cancelled": False, "task_status": records[0]["status"],
+                "task_id": records[0].get("task_id")}
+    return {"status": "success", "cancelled": bool(records), "cancellation_pending": not bool(records)}
+
+
+@app.post("/api/tasks/{task_id}/resume")
+def resume_document_task(task_id: str):
+    task = DOCUMENT_TASKS.snapshot(task_id)
+    if not task or not task.get("document_input"):
+        raise HTTPException(status_code=404, detail="没有可继续处理的原文档。")
+    if task.get("status") not in {"error", "interrupted"}:
+        raise HTTPException(status_code=409, detail="该任务当前不能继续处理。")
+    if PDF_CLOUD_ONLY and task.get("document_type") == "pdf":
+        raise HTTPException(status_code=409, detail="PDF 已恢复原版处理流程，请重新上传试卷。")
+    source = task["document_input"]
+    content = _read_document_source(task_id, task)
+    if source.get("curriculum_sha256") != _document_curriculum_sha256():
+        raise HTTPException(status_code=409, detail="教材目录已变化，请保留原结果与原文件，重新上传后按当前教材分类。")
+    options = source.get("options")
+    option_names = ({"generate_answers", "page_range", "pdf_strategy", "pdf_verify_suspicions", "paper_title"}
+                    if source.get("document_type") == "pdf" else
+                    {"generate_answers", "docx_verify_suspicions", "paper_title"})
+    if (source.get("document_type") not in {"pdf", "docx"} or not isinstance(options, dict)
+            or set(options) != option_names or not isinstance(source.get("filename"), str)):
+        raise HTTPException(status_code=409, detail="原文档解析设置不完整，请重新上传。")
+    if (type(options.get("generate_answers")) is not bool or not isinstance(options.get("paper_title"), str)
+            or (source["document_type"] == "pdf" and (
+                type(options.get("pdf_verify_suspicions")) is not bool
+                or options.get("pdf_strategy") not in PDF_STRATEGIES
+                or (options.get("page_range") is not None and not isinstance(options["page_range"], str))))
+            or (source["document_type"] == "docx" and type(options.get("docx_verify_suspicions")) is not bool)):
+        raise HTTPException(status_code=409, detail="原文档解析设置无效，请重新上传。")
+    options = dict(options)
+    options.pop("paper_title", None)
+    function = run_pdf_parsing_task if source["document_type"] == "pdf" else run_docx_parsing_task
+    checkpoint = (task.get("pdf_resume_state") if source["document_type"] == "pdf"
+                  else task.get("docx_resume_state") or task.get("docx_source_cache"))
+    try:
+        DOCUMENT_TASKS.restart(task_id)
+        DOCUMENT_TASKS.submit(task_id, function, task_id, content, source["filename"],
+                              **options, resume_state=checkpoint)
+    except TaskQueueFull as exc:
+        DOCUMENT_TASKS.fail(task_id, str(exc))
+        raise HTTPException(status_code=429, detail=str(exc))
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
+    return {"status": "success", "task_id": task_id}
+
+
+
+def _restore_document_project_asset(url):
+    """Old task TTL may have retired pixels before the project was adopted."""
+    path = resolve_upload_asset(url, uploads_dir=UPLOAD_DIR,
+                               url_prefix=UPLOAD_DIR_REL, require_file=False)
+    if not path.exists():
+        from mathbank.asset_lifecycle import restore_asset
+        restore_asset(path, uploads_dir=UPLOAD_DIR)
+    return path
+
+
+@project_dispatch_guard(lambda: DOCUMENT_TASKS, lambda: DOCUMENT_PROJECTS)
+def _dispatch_document_project(project_id, analyze=False):
+    service = _document_project_service()
+    if not service:
+        raise HTTPException(404,"本地工程服务未启用。")
+    metadata = DOCUMENT_PROJECTS.touch(project_id)
+    previous = DOCUMENT_PROJECTS.load_task(project_id)
+    old_task_id = metadata.get("task_id")
+    live = DOCUMENT_TASKS.snapshot(old_task_id) if old_task_id else None
+    if live and old_task_id in service.active_task_ids():
+        raise HTTPException(409,"该工程仍在处理中，请等待当前任务结束。")
+    draft = DOCUMENT_PROJECTS.get_draft(project_id).get("payload") or {}
+    state = service.checkpoint(project_id,analyze=analyze)
+    content = DOCUMENT_PROJECTS.load_source(project_id)
+    options = dict(metadata["options"])
+    task_id = str(uuid.uuid4())
+    if state:
+        from mathbank.pdf_task_resume import prepare_pdf_checkpoint, seal_pdf_checkpoint
+        state = prepare_pdf_checkpoint(state,task_id=state["task_id"],
+            document_sha256=metadata["source_sha256"],page_indices=state["page_indices"],
+            strategy=state["strategy"],verify_suspicions=state["verify_suspicions"],
+            resolve_asset=_restore_document_project_asset)
+        old_namespace = state.get("source_namespace") or state["task_id"].replace("-", "")[:16]
+        state["run"] -= 1  # The worker, rather than this validation, owns the next run number.
+        state.update(task_id=task_id,source_namespace=old_namespace)
+        if analyze:
+            state.pop("accepted_split",None)
+            state.pop("split_input",None)
+            state["page_edits"] = copy.deepcopy(draft.get("page_edits") or [])
+            state["analyze_local_only"] = True
+            state["force_structure"] = True
+        state = seal_pdf_checkpoint(state,assets=[],resolve_asset=_restore_document_project_asset)
+    source_input = _register_document_input(task_id,content,"pdf",metadata["filename"],**options)
+    DOCUMENT_PROJECTS.bind_task(project_id,task_id)
+    carried_assets = []
+    for url in previous.get("temp_assets") or []:
+        if state and url not in state.get("assets", {}):
+            path = resolve_upload_asset(url, uploads_dir=UPLOAD_DIR,
+                url_prefix=UPLOAD_DIR_REL, require_file=False)
+            if path.name.startswith(("pdf_page_", "pdf_detail_")) and not path.is_file():
+                # Failed registration of an obsolete navigation/detail cache
+                # is not part of the sealed source and can be rendered anew.
+                continue
+        carried_assets.append(url)
+    base = dict(project_id=project_id,document_type="pdf",document_input=source_input,
+                temp_assets=carried_assets,
+                diagnostics=copy.deepcopy(previous.get("diagnostics") or {}),
+                pdf_source_pages=copy.deepcopy(previous.get("pdf_source_pages") or []))
+    if state:
+        base["pdf_resume_state"] = state
+    pending_fragment_source = bool(state
+        and state.get("transcription_protocol") == "mathbank.pdf-page-fragments.v2"
+        and any(str(index) not in state.get("pages", {})
+            for index in state["page_indices"]
+            if index not in state.get("blank_page_indices", [])))
+    if draft.get("questions") and not analyze and not pending_fragment_source:
+        restored_diagnostics = copy.deepcopy(draft.get("diagnostics") or previous.get("diagnostics") or {})
+        restored_diagnostics["pdf_draft_restore"] = {"working_copy": True}
+        restored_partial = draft.get("partial")
+        if type(restored_partial) is not bool:
+            restored_partial = previous.get("partial")
+        if type(restored_partial) is not bool:
+            local_draft = restored_diagnostics.get("pdf_local_draft") or {}
+            restored_partial = bool(restored_diagnostics.get("pdf_project_partial")
+                or local_draft.get("status") in {"manual", "partial"}
+                or local_draft.get("unresolved_ranges") or local_draft.get("manual_reasons"))
+        DOCUMENT_TASKS.create(task_id,**base)
+        DOCUMENT_TASKS.complete(task_id,data=draft["questions"],log="已恢复本地校对稿，可继续编辑或入库。",
+            partial=restored_partial,
+            page_images=draft.get("pageImages") or previous.get("page_images") or [],
+            page_numbers=draft.get("pageNumbers") or previous.get("page_numbers") or [],
+            diagnostics=restored_diagnostics)
+    else:
+        DOCUMENT_TASKS.create(task_id,status="pending",log="正在复用本地工程中的已完成阶段...",**base)
+        try:
+            DOCUMENT_TASKS.submit(task_id,run_pdf_parsing_task,task_id,content,metadata["filename"],
+                generate_answers=options.get("generate_answers",False),page_range=options.get("page_range"),
+                pdf_strategy=options.get("pdf_strategy","layout_aware"),
+                pdf_verify_suspicions=options.get("pdf_verify_suspicions",True),resume_state=state)
+        except TaskQueueFull as exc:
+            DOCUMENT_TASKS.fail(task_id,"当前任务较多，工程已保留，请稍后继续。")
+            raise HTTPException(429,str(exc)) from exc
+    return {"status":"success","task_id":task_id,"project_id":project_id,
+            "project_revision":metadata["revision"],"expires_at":metadata["expires_at"]}
+
+
+@serialize_asset_lifecycle
+def _release_document_project_assets(urls):
+    """Purge only owned page/detail caches; question figures remain recoverable."""
+    if not urls:
+        return {"deleted":0,"retained_figures":0}
+    from mathbank.database import SessionLocal
+    try:
+        protected = DOCUMENT_PROJECTS.referenced_assets() if DOCUMENT_PROJECTS else set()
+        with SessionLocal() as db:
+            referenced = _referenced_question_assets(db)
+        with DOCUMENT_TASKS._lock:
+            for record in DOCUMENT_TASKS._records.values():
+                if record.future is not None:
+                    protected.update(record.state.get("temp_assets") or [])
+    except Exception:
+        return {"deleted":0,"retained":len(urls or []),"cleanup_pending":True}
+    deleted = 0
+    figures = []
+    for url in set(urls or []):
+        if url in protected:
+            continue
+        try:
+            path = resolve_upload_asset(url,uploads_dir=UPLOAD_DIR,url_prefix=UPLOAD_DIR_REL,require_file=False)
+            if path.parent != Path(TMP_UPLOAD_DIR).resolve() or path in referenced:
+                continue
+            if path.name.startswith(("pdf_page_","pdf_detail_")) and path.is_file() and not path.is_symlink():
+                path.unlink()
+                deleted += 1
+            else:
+                figures.append(url)
+        except (AssetSecurityError,OSError):
+            continue
+    if figures:
+        _delete_task_temp_assets(figures)
+    return {"deleted":deleted,"retained_figures":len(figures)}
+
+
+def _maintain_document_projects():
+    while not _DOCUMENT_PROJECT_STOP.is_set():
+        try:
+            service = _document_project_service()
+            if service:
+                result = DOCUMENT_PROJECTS.cleanup(active_task_ids=service.active_task_ids())
+                _release_document_project_assets(result.get("temp_assets") or [])
+        except Exception as exc:
+            print(f"[Document Projects] Cache cleanup deferred ({type(exc).__name__}).")
+        _DOCUMENT_PROJECT_STOP.wait(60)
+
+
+from mathbank.document_project_api import register_document_project_routes
+register_document_project_routes(app,get_service=_document_project_service,
+    dispatch_project=_dispatch_document_project,release_assets=_release_document_project_assets)
+
+
+def _read_document_source(task_id, task):
+    source = task.get("document_input")
+    if (not isinstance(source, dict) or type(source.get("bytes")) is not int
+            or not 0 <= source["bytes"] <= MAX_PDF_BYTES
+            or not isinstance(source.get("sha256"), str)):
+        raise HTTPException(status_code=409, detail="原文档恢复记录不完整，请重新上传。")
+    try:
+        content = (DOCUMENT_TASK_STORE.source(task_id) if DOCUMENT_TASK_STORE and not (
+            PDF_CLOUD_ONLY and source.get("document_type") == "pdf") else DOCUMENT_TASK_INPUTS[task_id])
+    except (OSError, KeyError, ValueError):
+        raise HTTPException(status_code=409, detail="恢复所需的原文档已不可用，请重新上传。")
+    if len(content) != source["bytes"] or hashlib.sha256(content).hexdigest() != source["sha256"]:
+        raise HTTPException(status_code=409, detail="原文档已变化，未发送任何识别请求。")
+    return content
+
+
+@app.get("/api/tasks/{task_id}/source")
+def download_document_source(task_id: str):
+    from urllib.parse import quote
+    task = DOCUMENT_TASKS.snapshot(task_id)
+    if not task or not task.get("document_input"):
+        raise HTTPException(status_code=404, detail="没有可下载的原文档。")
+    content = _read_document_source(task_id, task)
+    source = task["document_input"]
+    filename = str(source.get("filename") or ("原文档.pdf" if source.get("document_type") == "pdf" else "原文档.docx"))
+    filename = filename.replace("\\", "/").rsplit("/", 1)[-1]
+    media_type = ("application/pdf" if source.get("document_type") == "pdf"
+                  else "application/vnd.openxmlformats-officedocument.wordprocessingml.document")
+    return Response(content=content, media_type=media_type,
+                    headers={"Content-Disposition": "attachment; filename*=UTF-8''" + quote(filename, safe="")})
 
 
 @app.get("/api/tasks/{task_id}/status")
@@ -6671,7 +7448,7 @@ def get_pdf_task_status(task_id: str):
             content={"status": "error", "message": "未找到对应的任务 ID！"},
             status_code=404
         )
-    return task
+    return _document_status(task_id, task)
 
 
 @app.post("/api/tasks/{task_id}/retain")
@@ -6764,9 +7541,10 @@ def get_paper_questions(ids: str = "", db: Session = Depends(get_db)):
             return {"status": "success", "data": []}
         questions = db.query(Question).filter(Question.id.in_(id_list)).all()
         q_map = {q.id: q.to_dict(get_active_version_code()) for q in questions}
+        refs_by_id = reference_payloads(db, questions)
         seq_map = get_seq_mapping(db, id_list)
         result = [
-            {**q_map[qid], "seq_num": seq_map.get(qid)}
+            {**q_map[qid], "question_references": refs_by_id.get(qid, []), "seq_num": seq_map.get(qid)}
             for qid in id_list
             if qid in q_map
         ]
@@ -6981,12 +7759,15 @@ def _prepare_paper_export_questions(questions_input, db: Session) -> list[dict]:
         Question.id.in_(seen_question_ids)
     ).all()
     question_map = {question.id: question.to_dict(get_active_version_code()) for question in questions_db}
+    refs_by_id = reference_payloads(db, questions_db)
     if seen_question_ids - set(question_map):
         raise PaperExportValidationError("试卷中包含已删除或不存在的题目。")
 
     questions_data = []
     for item, question_id in normalized_items:
         question_data = dict(question_map[question_id])
+        question_data["question_references"] = refs_by_id.get(question_id, [])
+        question_data = export_reference_text(question_data)
         if item.get("figure_align"):
             question_data["figure_align"] = item.get("figure_align")
         if isinstance(item.get("figure_align_custom"), bool):
@@ -7005,6 +7786,15 @@ def _prepare_paper_export_questions(questions_input, db: Session) -> list[dict]:
             export_item["solution_space"] = item.get("solution_space")
         questions_data.append(export_item)
     return questions_data
+
+
+@app.get("/api/paper/export/preflight/{report_id}")
+def get_paper_export_preflight(report_id: str):
+    """Read the bounded local audit snapshot associated with one export."""
+    try:
+        return {"status": "success", "preflight": read_export_preflight(report_id)}
+    except (OSError, ValueError):
+        return JSONResponse(content={"status": "error", "message": "导出预检记录不存在或已过期。"}, status_code=404)
 
 
 @app.post("/api/paper/export/tex")
@@ -7027,15 +7817,20 @@ def export_paper_tex(payload: dict, db: Session = Depends(get_db)):
         else:
             tex_answer_sheet = None
 
-        image_paths = collect_referenced_images(questions_data, UPLOAD_DIR, UPLOAD_DIR_REL)
-        zip_bytes = create_tex_zip_package(title, tex_main, tex_ans, image_paths, answer_sheet_tex=tex_answer_sheet)
+        preflight, image_paths = preflight_paper_export(questions_data,
+            {"paper": tex_main, "answers": tex_ans, "answer_sheet": tex_answer_sheet},
+            target="tex", uploads_dir=UPLOAD_DIR, upload_url_prefix=UPLOAD_DIR_REL)
+        zip_bytes = create_tex_zip_package(title, tex_main, tex_ans, image_paths, answer_sheet_tex=tex_answer_sheet, preflight_report=preflight)
         
         from urllib.parse import quote
         safe_title = re.sub(r'[/\\?%*:|"<>]', '_', title.strip()) or "试卷"
         encoded_filename = quote(f"{safe_title}.zip")
         return Response(content=zip_bytes, media_type="application/zip", headers={
+            "X-Export-Preflight-ID": preflight["id"],
             "Content-Disposition": f"attachment; filename=\"paper_export.zip\"; filename*=utf-8''{encoded_filename}"
         })
+    except ExportPreflightError as e:
+        return JSONResponse(content={"status": "error", "message": str(e), "preflight": e.report}, status_code=400)
     except PaperExportValidationError as e:
         return JSONResponse(content={"status": "error", "message": str(e)}, status_code=400)
     except Exception as e:
@@ -7061,7 +7856,9 @@ def export_paper_bundle(payload: dict, db: Session = Depends(get_db)):
         else:
             tex_answer_sheet = None
 
-        image_paths = collect_referenced_images(questions_data, UPLOAD_DIR, UPLOAD_DIR_REL)
+        preflight, image_paths = preflight_paper_export(questions_data,
+            {"paper": tex_main, "answers": tex_ans, "answer_sheet": tex_answer_sheet},
+            target="bundle", uploads_dir=UPLOAD_DIR, upload_url_prefix=UPLOAD_DIR_REL)
 
         # Pre-compile PDFs
         main_pdf_bytes, _ = compile_tex_to_pdf(tex_main, image_paths)
@@ -7071,12 +7868,16 @@ def export_paper_bundle(payload: dict, db: Session = Depends(get_db)):
         else:
             answer_sheet_pdf_bytes = None
 
+        if not main_pdf_bytes or not ans_pdf_bytes or (tex_answer_sheet and not answer_sheet_pdf_bytes):
+            return JSONResponse(content={"status": "error", "message": "全套归档的 PDF 编译失败，未生成不完整归档。", "preflight": preflight}, status_code=400)
+
         zip_bytes = create_full_bundle_zip_package(
             title, tex_main, tex_ans, image_paths,
             answer_sheet_tex=tex_answer_sheet,
             main_pdf_bytes=main_pdf_bytes,
             ans_pdf_bytes=ans_pdf_bytes,
-            answer_sheet_pdf_bytes=answer_sheet_pdf_bytes
+            answer_sheet_pdf_bytes=answer_sheet_pdf_bytes,
+            preflight_report=preflight,
         )
         
         from urllib.parse import quote
@@ -7084,8 +7885,11 @@ def export_paper_bundle(payload: dict, db: Session = Depends(get_db)):
         filename = f"{safe_title}_全套归档.zip"
         encoded_filename = quote(filename)
         return Response(content=zip_bytes, media_type="application/zip", headers={
+            "X-Export-Preflight-ID": preflight["id"],
             "Content-Disposition": f"attachment; filename=\"paper_bundle.zip\"; filename*=utf-8''{encoded_filename}"
         })
+    except ExportPreflightError as e:
+        return JSONResponse(content={"status": "error", "message": str(e), "preflight": e.report}, status_code=400)
     except PaperExportValidationError as e:
         return JSONResponse(content={"status": "error", "message": str(e)}, status_code=400)
     except Exception as e:
@@ -7153,12 +7957,15 @@ def export_paper_pdf(payload: dict, db: Session = Depends(get_db)):
         else:
             tex_content = build_latex_document(title, subtitle, paper_type, questions_data, include_answers=include_answers, show_secret=show_secret, show_notice=show_notice, question_types=METADATA_CACHE.get("question_types", []), section_order=payload.get("section_order"))
 
-        image_paths = collect_referenced_images(questions_data, UPLOAD_DIR, UPLOAD_DIR_REL)
+        preflight, image_paths = preflight_paper_export(questions_data,
+            {"answer_sheet" if target == "sheet" else "paper": tex_content},
+            target="pdf", uploads_dir=UPLOAD_DIR, upload_url_prefix=UPLOAD_DIR_REL)
         pdf_bytes, log_or_err = compile_tex_to_pdf(tex_content, image_paths)
         
         if pdf_bytes:
             filename = f"sheet_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.pdf" if target == "sheet" else f"paper_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.pdf"
             return Response(content=pdf_bytes, media_type="application/pdf", headers={
+                "X-Export-Preflight-ID": preflight["id"],
                 "Content-Disposition": f'inline; filename="{filename}"'
             })
         else:
@@ -7168,9 +7975,12 @@ def export_paper_pdf(payload: dict, db: Session = Depends(get_db)):
                     "status": "error",
                     "message": diagnostic.get("summary", "PDF 编译失败"),
                     "diagnostic": diagnostic,
+                    "preflight": preflight,
                 },
                 status_code=400,
             )
+    except ExportPreflightError as e:
+        return JSONResponse(content={"status": "error", "message": str(e), "preflight": e.report}, status_code=400)
     except PaperExportValidationError as e:
         return JSONResponse(content={"status": "error", "message": str(e)}, status_code=400)
     except Exception as e:

@@ -202,7 +202,7 @@ const container={style:{},querySelectorAll(){return images;},appendChild(){}};
 '''+helpers+f'\napplyEditorFigureLayoutPreview(container, {json.dumps(SOURCE)});'+'''
 if(images[0].dataset.editorImageKey!=='a.png') throw Error('missing individual control');
 if(images[1].dataset.editorImageKey!=='') throw Error('missing trailing group control');
-if(images[1].style.maxHeight!=='240px') throw Error('trailing group size was ignored');
+if(images[1].style.maxHeight!==window.ImageLayoutTools.sizeDimensions('detached','medium').maxHeight+'px') throw Error('trailing group did not use shared size');
 '''
     result=subprocess.run([shutil.which('node'),'-e',script],capture_output=True,text=True)
     assert result.returncode==0,result.stderr

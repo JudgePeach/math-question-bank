@@ -11,8 +11,55 @@ import re
 
 
 WORD_FORMULA_EXTRACTION_REASON = "Word 原生公式提取存在疑点，请对照原页核对。"
+WORD_DRAWING_EXTRACTION_REASON = "Word 绘图或图片布局未能完整提取，请对照原页核对。"
+WORD_NUMBERING_EXTRACTION_REASON = "Word 自动编号未能完整还原，请对照原页核对。"
 _WORD_FORMULA_NOTICE = re.compile(r"\[(?:公式(?:结构)?|特殊字符)待核对(?:[：:][^\]\n]*)?\]")
 _WORD_FORMULA_WARNINGS = ("部分 Office 公式含暂未完整支持的结构", "MathType 公式包含无法识别的字符", "无法转换 Word 特殊字符：")
+
+
+def _word_document_owners(source, diagnostics, count, *, source_review_evidence=None,
+                          extraction_diagnostics=None, source_document_sha256=None):
+    """Map only privately bound drawing/numbering ranges to exact source matches.
+
+    A missing drawing with no emitted text cannot acquire an owner from physical
+    proximity. Keep that evidence at document scope instead of warning every card.
+    """
+    items = []
+    native = extraction_diagnostics if isinstance(extraction_diagnostics, dict) else {}
+    expected = sum(native.get(key, 0) for key in ("images_unavailable", "numbering_unavailable")
+                   if type(native.get(key)) is int and native[key] > 0)
+    if not expected:
+        diagnostics["word_document_extraction_unlocated"] = 0
+        return items
+    from mathbank.docx_source_scopes import verify_source_review_evidence
+    proof = verify_source_review_evidence(source, native, source_review_evidence,
+                                          source_document_sha256=source_document_sha256)
+    located = 0
+    for block in proof.get("blocks", []) if proof.get("status") == "ready" else []:
+        counters = block.get("risk_counters", {})
+        relevant = {key: counters[key] for key in ("images_unavailable", "numbering_unavailable")
+                    if counters.get(key, 0)}
+        if not relevant:
+            continue
+        start, end = block["range"]
+        owners = set()
+        for match in diagnostics.get("source_matches", []):
+            index, first, last = (match.get(key) for key in ("question_index", "source_start", "source_end"))
+            if (type(index) is int and 0 <= index < count and type(first) is int and type(last) is int
+                    and 0 <= first < last <= len(source) and first < end and last > start
+                    and source[first:last] == match.get("source_excerpt")
+                    and match.get("field") in {"content", "answer_markdown"}
+                    and source[max(first, start):min(last, end)].strip()):
+                owners.add(index)
+        if owners:
+            located += sum(relevant.values())
+        for index in sorted(owners) if owners else [None]:
+            items.append({"question_index": index, "source_start": start, "source_end": end,
+                          "risk_counters": relevant,
+                          "drawing_review_details": block.get("drawing_review_details", []),
+                          "numbering_review_details": block.get("numbering_review_details", [])})
+    diagnostics["word_document_extraction_unlocated"] = max(0, expected - located)
+    return items
 
 
 def _word_formula_owners(source: str, diagnostics: dict, count: int, *,
@@ -105,6 +152,28 @@ def prepare_word_extraction_reviews(questions: list[dict], diagnostics: dict, so
                 match["source_excerpt"] for match in diagnostics.get("source_matches", [])
                 if match.get("question_index") == index and isinstance(match.get("source_excerpt"), str)
             )
+    document_items = _word_document_owners(source, diagnostics, len(questions),
+        source_review_evidence=source_review_evidence, extraction_diagnostics=extraction_diagnostics,
+        source_document_sha256=source_document_sha256)
+    diagnostics["word_document_extraction_items"] = document_items
+    for item in document_items:
+        index = item["question_index"]
+        if index is None:
+            continue
+        review = questions[index].setdefault("source_review", {})
+        review["required"] = True
+        native_item = {key: value for key, value in item.items() if key != "question_index"}
+        if native_item not in review.setdefault("native_document_risks", []):
+            review["native_document_risks"].append(native_item)
+        reasons = review.setdefault("reasons", [])
+        for counter, reason in (("images_unavailable", WORD_DRAWING_EXTRACTION_REASON),
+                                ("numbering_unavailable", WORD_NUMBERING_EXTRACTION_REASON)):
+            if item["risk_counters"].get(counter) and reason not in reasons:
+                reasons.append(reason)
+        if not review.get("source_excerpt"):
+            review["source_excerpt"] = "\n\n".join(match["source_excerpt"]
+                for match in diagnostics.get("source_matches", []) if match.get("question_index") == index
+                and isinstance(match.get("source_excerpt"), str))
     diagnostics["source_review_count"] = sum(bool((q.get("source_review") or {}).get("required")) for q in questions)
 
 
@@ -147,6 +216,7 @@ def make_source_review_advisory(questions: list[dict], diagnostics: dict) -> Non
             review["disposition"] = "advisory"
     diagnostics.update(
         source_review_mode="advisory",
+        source_review_count=pending,
         source_review_notice_count=pending,
         source_review_blocking_count=0,
     )

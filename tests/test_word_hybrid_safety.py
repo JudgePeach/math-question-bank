@@ -168,6 +168,13 @@ def test_only_failed_group_is_sent_once_more_without_repeating_accepted_ids(tmp_
             else: parsed['splits'].pop(0)
         return Response(parsed)
     result, diagnostics = call(plan, post)
+    if mutation == 'bad_category':
+        # Classification uncertainty preserves the native question and is
+        # reviewed separately; it must not repeat a paid text request.
+        assert len(calls) == 1 and diagnostics['word_hybrid']['calls'] == 1
+        assert not result.partial and len(result.questions) == 5
+        assert any(q.get('classification_review', {}).get('required') for q in result.questions)
+        return
     assert len(calls) == 2 and diagnostics['word_hybrid']['calls'] == 2 and not result.partial
     first_meta = {q['id'] for q in calls[0]['metadata_items']}
     second_meta = {q['id'] for q in calls[1]['metadata_items']}

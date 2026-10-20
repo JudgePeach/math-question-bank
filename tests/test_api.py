@@ -270,6 +270,9 @@ def test_ai_classify_returns_coarse_form_without_question_type():
         "knowledge": "",
         "question_form": "choice",
         "question_form_source": "ai",
+        "knowledge_points": [],
+        "knowledge_point_warnings": [],
+        "version_code": "A",
     }
     assert fillin_result["question_form"] == "fill_in_blank"
     assert fillin_result["question_form_source"] == "structure"
@@ -383,13 +386,15 @@ def test_api_metadata_config(client):
 
 
 def test_curriculum_preset_api(client):
-    for version in ("A", "B", "S", "H"):
+    from mathbank.curriculums import CURRICULUM_NAMES
+    for version in CURRICULUM_NAMES:
         response = client.get(f"/api/config/curriculum-presets/{version}")
         assert response.status_code == 200
         data = response.json()
         assert data["version"] == version
         assert data["name"]
         assert data["metadata"]["curriculum"]
+        assert data["metadata"]["curriculum_version"] == version
 
     response = client.get("/api/config/curriculum-presets/unknown")
     assert response.status_code == 404

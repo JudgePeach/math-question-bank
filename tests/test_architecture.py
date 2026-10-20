@@ -1,7 +1,7 @@
 import ast
 import asyncio
 
-from mathbank.curriculums import get_curriculum_preset, load_curriculum
+from mathbank.curriculums import CURRICULUM_NAMES, get_curriculum_preset, load_curriculum
 from mathbank.paths import (
     CURRICULUMS_DIR,
     DATABASE_FILE,
@@ -42,10 +42,11 @@ def test_shared_paths_are_absolute_and_project_anchored():
 
 
 def test_all_curriculum_presets_load_from_resources():
-    for version in ("A", "B", "S", "H"):
+    for version in CURRICULUM_NAMES:
         preset = get_curriculum_preset(version)
         assert preset["version"] == version
         assert preset["metadata"]["curriculum"] == load_curriculum(version)
+        assert preset["metadata"]["curriculum_version"] == version
         assert preset["metadata"]["question_types"]
         assert preset["metadata"]["difficulties"]
 

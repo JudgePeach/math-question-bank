@@ -39,6 +39,7 @@ def test_index_route_serves_visibility_and_keeps_other_workspaces(monkeypatch, e
         "STATIC_DIR": ROOT / "static", "STATIC_JS_DIR": ROOT / "static/js",
         "STATIC_CSS_DIR": ROOT / "static/css", "LOCAL_TOKEN": "test-token",
         "SERVER_INSTANCE_ID": "test-instance",
+        "PDF_CLOUD_ONLY": True,
     }
     exec(compile(ast.Module(body=[route], type_ignores=[]), "index-route", "exec"), namespace)
     monkeypatch.setenv("MATHBANK_QA_ENABLED", "1" if enabled else "0")

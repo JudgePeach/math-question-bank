@@ -176,6 +176,8 @@ def test_association_switching_and_real_unsaved_changes(browser, tmp_path):
         browser.command("click", '[data-editor-panel-target="answer"]')
 
     open_question(first, '')
+    # Candidates load only after the user activates the association picker.
+    browser.evaluate("document.getElementById('editRelatedQuestion').focus(); true")
     browser.command("wait", "--fn", f"!!document.querySelector('#editRelatedQuestion option[value=\"{second}\"]')")
     browser.command("select", "#editRelatedQuestion", str(second))
     assert browser.evaluate("document.getElementById('editRelatedQuestion').value") == str(second)

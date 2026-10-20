@@ -20,7 +20,8 @@ _RISK_COUNTERS = (
     "images_unavailable", "symbols_unavailable", "numbering_unavailable", "tables_review_required",
     "native_missing_glyphs",
 )
-_RISK_LISTS = ("warnings", "unsupported_omml_tags", "heading_image_ownership")
+_RISK_LISTS = ("warnings", "unsupported_omml_tags", "heading_image_ownership",
+               "drawing_review_details", "numbering_review_details")
 MAX_SCOPE_NORMALIZATION_CHARACTERS = 4_000_000
 _NATIVE_DIAGNOSTIC_KEYS = (
     "omml_converted", "omml_unsupported", "omml_private_chars_converted", "omml_control_words_repaired",
@@ -32,6 +33,7 @@ _NATIVE_DIAGNOSTIC_KEYS = (
     "warnings", "review_required", "asset_paths", "heading_image_ownership",
     "native_missing_glyphs",
     "mtef_ignored_spacing_codes",
+    "drawing_review_details", "numbering_review_details",
 )
 
 
@@ -53,7 +55,8 @@ def _diagnostic_hash(diagnostics) -> str:
     if not isinstance(diagnostics, Mapping):
         raise ValueError("diagnostics_not_mapping")
     return _sha(_json({key: diagnostics.get(key, 0) if key == "native_missing_glyphs"
-                      else diagnostics.get(key, []) if key in {"asset_paths", "heading_image_ownership", "mtef_ignored_spacing_codes"}
+                      else diagnostics.get(key, []) if key in {"asset_paths", "heading_image_ownership", "mtef_ignored_spacing_codes",
+                                                               "drawing_review_details", "numbering_review_details"}
                       else diagnostics[key] for key in _NATIVE_DIAGNOSTIC_KEYS}))
 
 
@@ -194,6 +197,8 @@ def _finalize_source_review_evidence(source, diagnostics, document_sha256, prelu
                  "risk_counters": {key: delta[key] for key in _RISK_COUNTERS if delta.get(key)},
                  "warnings": delta["warnings"], "unsupported_omml_tags": delta["unsupported_omml_tags"],
                  "heading_image_ownership": delta["heading_image_ownership"],
+                 "drawing_review_details": delta["drawing_review_details"],
+                 "numbering_review_details": delta["numbering_review_details"],
                  "structural_risks": delta["structural_risks"],
                  "risk_related_numbers": related_numbers,
                  "has_risk": _has_risk(delta), "source_sha256": _sha(source[offset:end])}

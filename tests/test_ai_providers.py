@@ -381,7 +381,8 @@ def test_pdf_ocr_fallbacks_respect_claude_preference():
     ]
 
 
-@pytest.mark.parametrize("model", ["Qwen/Qwen3-VL-32B-Instruct", "Qwen/Qwen3.8-27B"])
+@pytest.mark.parametrize("model", ["Qwen/Qwen3-VL-32B-Instruct", "Qwen/Qwen3.8-27B",
+                                   "deepseek-ai/DeepSeek-V4.1-Flash"])
 @pytest.mark.parametrize("prefix", ["SILICONFLOW/", ""])
 def test_draw_provider_strips_siliconflow_prefix_and_detects_images(model, prefix):
     config = resolve_draw_provider(
@@ -395,7 +396,9 @@ def test_draw_provider_strips_siliconflow_prefix_and_detects_images(model, prefi
     assert "sf-key" not in repr(config)
 
 
-@pytest.mark.parametrize("model", ["Qwen/Qwen3.5-397B-A17B", "Qwen/Qwen3.8-27B-custom"])
+@pytest.mark.parametrize("model", ["Qwen/Qwen3.5-397B-A17B", "Qwen/Qwen3.8-27B-custom",
+    "deepseek-ai/DeepSeek-V4-Flash", "deepseek-ai/DeepSeek-V4.1-Pro",
+    "deepseek-ai/DeepSeek-V4.1-Flash-custom", "Pro/deepseek-ai/DeepSeek-V4.1-Flash"])
 def test_draw_provider_keeps_text_only_siliconflow_mode(model):
     config = resolve_draw_provider(
         model,

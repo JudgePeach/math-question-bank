@@ -1,0 +1,30 @@
+{
+  "schema_version": 1,
+  "title": "题目资料来源说明",
+  "scope_notice": "本说明是题库收录资料的来源总表，仅适用于下列各项明确说明的资料；不表示全部题目或题库软件采用同一许可。具体试卷名称、年份及题号仍保留在各题来源中。",
+  "sources": [
+    {
+      "id": "gaokao-math-problems-compilation",
+      "name": "高考数学题库",
+      "authors": ["DxAThing", "贡献者"],
+      "url": "https://github.com/DxAThing/Gaokao-Math-Problems-Compilation",
+      "revision": "f1ae169b58a75b3db6e35c670b3f0d5c78718188",
+      "scope": "从该仓库导入的2000—2026年高考数学资料。源仓许可只覆盖其作者有权许可的原创整理、编排、解析、索引、排版、重绘插图等贡献；高考原题及其他第三方内容的权利和来源声明继续保留。",
+      "license": {
+        "name": "CC BY-SA 4.0",
+        "url": "https://creativecommons.org/licenses/by-sa/4.0/"
+      },
+      "upstream": [
+        {
+          "name": "deekur/gaokaomath",
+          "url": "https://github.com/deekur/gaokaomath",
+          "license": {
+            "name": "CC BY 4.0",
+            "url": "https://creativecommons.org/licenses/by/4.0/"
+          }
+        }
+      ],
+      "changes": "已将源 TeX 宏、填空及分式格式和图片锚点适配为本地题库格式；部分题目依据保留的原卷证据校订。原源码、图像、来源核对与修改记录及哈希保存在导入与维护审计包。知识点和难度为后续题库标注，不属于原仓库提供的标注。"
+    }
+  ]
+}

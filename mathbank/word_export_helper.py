@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import copy
 import os
+import posixpath
 import re
 import shutil
 import subprocess
@@ -20,6 +21,7 @@ from dataclasses import dataclass, field
 from io import BytesIO
 from pathlib import Path
 from typing import Iterable
+from lxml import etree
 
 from docx import Document
 from docx.enum.section import WD_SECTION
@@ -32,6 +34,11 @@ from docx.shared import Cm, Inches, Pt, RGBColor
 from mathbank.runtime_components import find_usable_pandoc
 from mathbank.question_types import PAPER_TYPE_ORDER, custom_type_labels, is_written_question_type, paper_type_order
 from mathbank.geometry_symbols import normalize_school_math_symbols
+from mathbank.markdown_tables import find_markdown_tables, normalize_table_cell_math
+from mathbank.source_comments import strip_source_attribution_comment
+from mathbank.content_sources import content_source_export_files, content_sources_notice
+from mathbank.word_lists import LatexList, find_latex_lists
+from mathbank.paper_layout import item_solution_space_cm
 
 
 MATH_NS = "http://schemas.openxmlformats.org/officeDocument/2006/math"
@@ -49,7 +56,10 @@ EXAM_19_STARTS = {
     "fill_in_blank": 12,
     "detailed_answer": 15,
 }
-from .image_layout import split_image_anchors, image_key, normalize_image_layouts, SIZE_CM
+from .image_layout import (
+    split_image_anchors, image_key, normalize_image_layouts, SIZE_CM,
+    DETACHED_FIGURE_SIZE_CM, TABLE_IMAGE_MAX_HEIGHT_CM, COMPACT_CHOICE_IMAGE_SIZE_CM,
+)
 
 IMAGE_PATTERN = re.compile(r"!\[.*?\]\(([^)]+)\)")
 CHOICES_PATTERN = re.compile(
@@ -69,14 +79,10 @@ WORD_RIGHT_FIGURE_MAX_WIDTH_INCHES = 1.55
 WORD_AUTO_SINGLE_FIGURE_WIDTH_INCHES = 2.35
 WORD_AUTO_MULTI_FIGURE_WIDTH_INCHES = 1.85
 WORD_FIGURE_SIZE_WIDTHS_INCHES = {
-    "small": 1.97,
-    "medium": 3.15,
-    "large": 4.33,
+    size: dimensions[0] / 2.54 for size, dimensions in DETACHED_FIGURE_SIZE_CM.items()
 }
 WORD_FIGURE_SIZE_HEIGHTS_INCHES = {
-    "small": 1.57,
-    "medium": 2.36,
-    "large": 3.15,
+    size: dimensions[1] / 2.54 for size, dimensions in DETACHED_FIGURE_SIZE_CM.items()
 }
 WORD_AUTO_FIGURE_MAX_HEIGHT_INCHES = 2.36
 STIX_TWO_MATH_PATHS = (
@@ -168,22 +174,34 @@ def _should_preserve_inline_image_positions(content: str) -> bool:
     return bool(trailing)
 
 
-def _split_content_segments(content: str) -> list[tuple[str, str, str]]:
-    """Split prose on blank lines without cutting complete tabular blocks."""
+def _split_content_segments(content: str) -> list[tuple[str, str | LatexList, str]]:
+    """Locate whole lists/tables before splitting their surrounding prose."""
 
     source = str(content or "")
-    segments: list[tuple[str, str, str]] = []
+    segments: list[tuple[str, str | LatexList, str]] = []
 
     def add_text(value: str) -> None:
         for paragraph in re.split(r"\n\s*\n", value):
             if paragraph.strip():
                 segments.append(("text", paragraph.strip(), ""))
 
+    lists = find_latex_lists(source)
+    blocks = [(item.start, item.end, "list", item, "")
+              for item in lists]
+    tables = [(match.start(), match.end(), "table", match.group(1), match.group(2))
+              for match in TABULAR_PATTERN.finditer(source)]
+    tables.extend((table.start, table.end, "markdown_table",
+                   source[table.start:table.end], "")
+                  for table in find_markdown_tables(source))
+    # Tables inside an item belong to that item, not the surrounding question.
+    blocks.extend(block for block in tables if not any(
+        item.start < block[1] and block[0] < item.end for item in lists
+    ))
     cursor = 0
-    for match in TABULAR_PATTERN.finditer(source):
-        add_text(source[cursor:match.start()])
-        segments.append(("table", match.group(1), match.group(2)))
-        cursor = match.end()
+    for start, end, kind, first, second in sorted(blocks):
+        add_text(source[cursor:start])
+        segments.append((kind, first, second))
+        cursor = end
     add_text(source[cursor:])
     return segments
 
@@ -279,6 +297,42 @@ def _normalize_formula(formula: str) -> str:
     return value.strip()
 
 
+_WORD_EXAMZH_CONSTANTS = {"iu": "i", "upi": "i", "eu": "e", "upe": "e"}
+_WORD_FORMULA_COMMAND = re.compile(r"\\(?:[A-Za-z@]+|[^\n])|%")
+_WORD_FORMULA_LITERAL_COMMANDS = {
+    "string", "detokenize", "unexpanded", "noexpand", "meaning", "verb", "Verb", "lstinline", "texttt",
+    "url", "path", "href", "includegraphics", "label", "tikz",
+    "def", "gdef", "edef", "xdef", "let", "futurelet", "newcommand",
+    "renewcommand", "providecommand", "DeclareRobustCommand", "DeclareMathOperator",
+    "NewDocumentCommand", "RenewDocumentCommand", "ProvideDocumentCommand", "DeclareDocumentCommand",
+    "newenvironment", "renewenvironment", "catcode", "makeatletter", "makeatother",
+    "csname", "endcsname",
+}
+
+
+def _prepare_word_formula(formula: str) -> str:
+    r"""Adapt four known zero-argument atoms in a conversion copy only.
+
+    Keep the authored formula as the OMML/fallback cache key and diagnostic.
+    Full control tokens consume escaped backslash pairs before aliases; braces
+    keep each expansion one atom even in ``\frac\iu\eu`` or ``x^\iu``.
+    Literal/definition-bearing input stays intact rather than guessing TeX.
+    """
+    if not formula or not any("\\" + name in formula for name in _WORD_EXAMZH_CONSTANTS):
+        return formula
+    if ("`" in formula or re.search(r"https?://|/static/|<\s*(?:code|pre|mathbank-math)\b|\[\[MBM_", formula)
+            or re.search(r"\\begin\s*\{(?:verbatim\*?|Verbatim|lstlisting|minted|tikzpicture|pgfpicture|axis)\}", formula)):
+        return formula
+    commands = list(_WORD_FORMULA_COMMAND.finditer(formula))
+    if any(match.group() == "%" or match.group()[1:] in _WORD_FORMULA_LITERAL_COMMANDS
+           for match in commands):
+        return formula
+    return _WORD_FORMULA_COMMAND.sub(
+        lambda match: "{\\mathrm{" + _WORD_EXAMZH_CONSTANTS[match.group()[1:]] + "}}"
+        if match.group()[1:] in _WORD_EXAMZH_CONSTANTS else match.group(), formula,
+    )
+
+
 def _consume_math(text: str, start: int) -> tuple[MathToken | None, int]:
     if text.startswith("$$", start):
         end = text.find("$$", start + 2)
@@ -311,7 +365,8 @@ def _consume_math(text: str, start: int) -> tuple[MathToken | None, int]:
 
 def tokenize_mixed_content(text: str) -> list[str | MathToken | BlankToken]:
     """Split mixed Chinese/LaTeX text without relying on regex lookbehind."""
-    source = normalize_school_math_symbols(text or "", target="word")
+    from mathbank.fillin_placeholders import normalize_fillin_placeholder_clusters
+    source = normalize_school_math_symbols(normalize_fillin_placeholder_clusters(text or ""), target="word")
     source = source.replace("\r\n", "\n").replace("\r", "\n")
     tokens: list[str | MathToken | BlankToken] = []
     plain: list[str] = []
@@ -356,6 +411,67 @@ def _extract_formulas(texts: Iterable[str]) -> list[str]:
     return values
 
 
+def _word_formula_sources(source: str) -> list[str]:
+    """Collect the same nested item/cell math that the document will render."""
+    values: list[str] = []
+    for kind, first, second in _split_content_segments(source):
+        if kind == "list":
+            for item in first.items:
+                if item.label is not None:
+                    values.append(item.label)
+                values.extend(_word_formula_sources(item.content))
+        elif kind == "markdown_table":
+            for table in find_markdown_tables(first):
+                values.extend(
+                    part for row in (table.header, *table.rows) for cell in row
+                    for literal, part in _markdown_cell_parts(normalize_table_cell_math(cell))
+                    if not literal
+                )
+        else:
+            values.extend((first, second))
+    return values
+
+
+def _markdown_cell_parts(value: str) -> list[tuple[bool, str]]:
+    """Separate literal code from math-bearing text in a Markdown cell."""
+    parts: list[tuple[bool, str]] = []
+    cursor = copied = 0
+    while cursor < len(value):
+        token, next_index = _consume_math(value, cursor)
+        if token is not None:
+            cursor = next_index
+            continue
+        code = re.match(r"(`+)(.*?)\1", value[cursor:])
+        verb = re.match(
+            r"\\(?:verb|Verb|lstinline)\*?(?:\[[^]\n]*\])?"
+            r"(?P<sep>[^\w\s{])(?P<body>.*?)\1", value[cursor:])
+        match = code or verb
+        if match:
+            if copied < cursor:
+                parts.append((False, value[copied:cursor]))
+            parts.append((True, code[2] if code else verb["body"]))
+            cursor = copied = cursor + match.end()
+        else:
+            cursor += 1
+    if copied < len(value):
+        parts.append((False, value[copied:]))
+    return parts
+
+
+def _decode_markdown_cell_pipes(value: str) -> str:
+    parts: list[str] = []
+    cursor = copied = 0
+    while cursor < len(value):
+        token, next_index = _consume_math(value, cursor)
+        if token is not None:
+            parts.extend((value[copied:cursor].replace(r"\|", "|"), value[cursor:next_index]))
+            cursor = copied = next_index
+        else:
+            cursor += 1
+    parts.append(value[copied:].replace(r"\|", "|"))
+    return "".join(parts)
+
+
 class PandocOmmlConverter:
     """Batch-convert unique LaTeX formulas and return serialized m:oMath nodes."""
 
@@ -388,7 +504,7 @@ class PandocOmmlConverter:
         for index, formula in enumerate(formulas):
             marker = f"MBFORMULA{index:06d}"
             markers[marker] = formula
-            markdown_parts.extend((marker, "", f"$${formula}$$", ""))
+            markdown_parts.extend((marker, "", f"$${_prepare_word_formula(formula)}$$", ""))
         with tempfile.TemporaryDirectory(prefix="mathbank_word_math_") as temp_dir:
             temp_path = Path(temp_dir)
             source_path = temp_path / "formulas.md"
@@ -690,10 +806,11 @@ def _formula_fallback_png(formula: str) -> bytes | None:
     xelatex = shutil.which("xelatex")
     if not xelatex:
         return None
+    prepared_formula = _prepare_word_formula(formula)
     tex = rf"""\documentclass[preview,border=2pt]{{standalone}}
 \usepackage{{amsmath,amssymb,mathtools,cancel,extarrows,yhmath}}
 \begin{{document}}
-$\displaystyle {formula}$
+$\displaystyle {prepared_formula}$
 \end{{document}}
 """
     with tempfile.TemporaryDirectory(prefix="mathbank_word_fallback_") as temp_dir:
@@ -737,6 +854,7 @@ class WordExamBuilder:
         self.math_font = MATH_FONT
         self.fallback_cache: dict[str, bytes | None] = {}
         self.doc = Document()
+        self._list_abstract_ids: dict[tuple[str, int], int] = {}
         self._configure_document()
 
     def _configure_document(self) -> None:
@@ -822,7 +940,7 @@ class WordExamBuilder:
         *,
         images: list[Path] | None = None,
         max_image_width: float = 4.8,
-        max_image_height: float = 2.8,
+        max_image_height: float | None = None,
         image_layouts: dict | None = None,
     ) -> None:
         image_by_name = {path.name: path for path in (images or []) if path.exists()}
@@ -879,7 +997,7 @@ class WordExamBuilder:
             add_text((text or "")[cursor:match.start()])
             image_path = image_by_name.get(Path(match.group(1)).name)
             layout = (image_layouts or {}).get(image_key(match.group(1)))
-            width, height = max_image_width, max_image_height
+            width, height = max_image_width, 2.8 if max_image_height is None else max_image_height
             if layout:
                 if paragraph.runs:
                     next_paragraph = paragraph._parent.add_paragraph()
@@ -888,7 +1006,10 @@ class WordExamBuilder:
                 paragraph.alignment = {'left': WD_ALIGN_PARAGRAPH.LEFT, 'center': WD_ALIGN_PARAGRAPH.CENTER, 'right': WD_ALIGN_PARAGRAPH.RIGHT}[layout['align']]
                 if layout['size'] in SIZE_CM:
                     cm_width, cm_height = SIZE_CM[layout['size']]
-                    width, height = min(width, cm_width / 2.54), min(height, cm_height / 2.54)
+                    width = min(width, cm_width / 2.54)
+                    # The compatibility auto height must not truncate an authored
+                    # large body image. Explicit cell limits remain authoritative.
+                    height = cm_height / 2.54 if max_image_height is None else min(height, cm_height / 2.54)
             if image_path is not None:
                 self._add_image(
                     paragraph,
@@ -1225,11 +1346,21 @@ class WordExamBuilder:
             self.add_choices(item.choices, images=usable_images, image_layouts=image_layouts)
 
         if is_written_question_type(item.question.get("question_type", "single_choice")) and item.solution_space > 0:
-            spacer = self.doc.add_paragraph()
             figure_height_cm = detached_block_height * 2.54
-            spacer.paragraph_format.space_after = Cm(
-                max(0.2, item.solution_space - figure_height_cm - 0.3)
-            )
+            remaining = max(0.0, item.solution_space - figure_height_cm)
+            # Exact-height blank paragraphs can flow across pages. Paragraph
+            # spacing after one empty paragraph may be discarded or overflow.
+            while remaining > 0.001:
+                chunk = min(2.0, remaining)
+                spacer = self.doc.add_paragraph()
+                spacer.paragraph_format.space_before = Pt(0)
+                spacer.paragraph_format.space_after = Pt(0)
+                spacer.paragraph_format.line_spacing_rule = WD_LINE_SPACING.EXACTLY
+                spacer.paragraph_format.line_spacing = Cm(chunk)
+                spacer.paragraph_format.keep_together = False
+                spacer.paragraph_format.keep_with_next = False
+                spacer.paragraph_format.widow_control = False
+                remaining -= chunk
 
     def _format_question_paragraph(self, paragraph, number: int) -> None:
         paragraph.paragraph_format.left_indent = Cm(0)
@@ -1248,11 +1379,32 @@ class WordExamBuilder:
         single_paragraph: bool = False,
         images: list[Path] | None = None,
         image_layouts: dict | None = None,
+        list_depth: int = 0,
+        list_kind_depths: tuple[int, int] = (0, 0),
     ) -> None:
         segments = _split_content_segments(content)
         paragraph = first_paragraph
         has_output = False
         for kind, first_value, second_value in segments:
+            if kind == "list":
+                self._add_latex_list(
+                    first_value, parent=parent, depth=list_depth,
+                    images=images, image_layouts=image_layouts,
+                    kind_depths=list_kind_depths,
+                )
+                # A block has introduced sibling paragraphs. Subsequent prose
+                # must follow them, including with a floating question image.
+                single_paragraph = False
+                has_output = True
+                continue
+            if kind == "markdown_table":
+                self.add_markdown_table(
+                    first_value, parent=parent, images=images,
+                    image_layouts=image_layouts,
+                )
+                single_paragraph = False
+                has_output = True
+                continue
             if kind == "table":
                 self.add_tabular(
                     first_value,
@@ -1261,6 +1413,7 @@ class WordExamBuilder:
                     images=images,
                     image_layouts=image_layouts,
                 )
+                single_paragraph = False
                 has_output = True
                 continue
 
@@ -1270,12 +1423,104 @@ class WordExamBuilder:
                     paragraph.add_run().add_break()
                 else:
                     paragraph = parent.add_paragraph() if parent is not None else self.doc.add_paragraph()
-                    paragraph.paragraph_format.first_line_indent = Cm(0.74)
+                    if list_depth:
+                        paragraph.paragraph_format.left_indent = Cm(0.635 * list_depth)
+                        paragraph.paragraph_format.first_line_indent = Cm(0)
+                    else:
+                        paragraph.paragraph_format.first_line_indent = Cm(0.74)
                     paragraph.paragraph_format.space_after = Pt(2)
             if IMAGE_PATTERN.fullmatch(part.strip()):
                 paragraph.alignment = WD_ALIGN_PARAGRAPH.CENTER
             self.add_mixed(paragraph, part, images=images, image_layouts=image_layouts)
             has_output = True
+
+    def _new_list_numbering(self, environment: str, depth: int, kind_depth: int) -> int:
+        """Create a fresh native sequence; Word templates otherwise continue it."""
+        numbering = self.doc.part.numbering_part.element
+        # LaTeX's enumerate and itemize counters nest independently. An
+        # enumerate inside itemize still starts with decimal markers.
+        shift = (kind_depth - depth) % 4
+        key = (environment, shift)
+        abstract_id = self._list_abstract_ids.get(key)
+        if abstract_id is None:
+            abstract_id = max((int(node.get(qn("w:abstractNumId")))
+                               for node in numbering.findall(qn("w:abstractNum"))), default=-1) + 1
+            abstract = OxmlElement("w:abstractNum")
+            abstract.set(qn("w:abstractNumId"), str(abstract_id))
+            multilevel = OxmlElement("w:multiLevelType")
+            multilevel.set(qn("w:val"), "multilevel")
+            abstract.append(multilevel)
+            formats = ("decimal", "lowerLetter", "lowerRoman", "upperLetter")
+            bullets = ("•", "–", "∗", "·")
+            for level in range(9):
+                node = OxmlElement("w:lvl")
+                node.set(qn("w:ilvl"), str(level))
+                placeholder = f"%{level + 1}"
+                format_index = (level + shift) % 4
+                label = f"({placeholder})" if format_index == 1 else placeholder + "."
+                for tag, value in (
+                    ("start", "1"),
+                    ("numFmt", "bullet" if environment == "itemize" else formats[format_index]),
+                    ("lvlText", bullets[format_index] if environment == "itemize" else label),
+                    ("suff", "tab"), ("lvlJc", "left"),
+                ):
+                    child = OxmlElement("w:" + tag)
+                    child.set(qn("w:val"), value)
+                    node.append(child)
+                p_pr = OxmlElement("w:pPr")
+                tabs = OxmlElement("w:tabs")
+                tab = OxmlElement("w:tab")
+                tab.set(qn("w:val"), "num")
+                tab.set(qn("w:pos"), str((level + 1) * 360))
+                tabs.append(tab)
+                p_pr.append(tabs)
+                indent = OxmlElement("w:ind")
+                indent.set(qn("w:left"), str((level + 1) * 360))
+                indent.set(qn("w:hanging"), "360")
+                p_pr.append(indent)
+                node.append(p_pr)
+                abstract.append(node)
+            first_num = numbering.find(qn("w:num"))
+            if first_num is None:
+                numbering.append(abstract)
+            else:
+                first_num.addprevious(abstract)
+            self._list_abstract_ids[key] = abstract_id
+        num = numbering.add_num(abstract_id)
+        num.add_lvlOverride(ilvl=depth).add_startOverride(1)
+        return num.numId
+
+    def _add_latex_list(
+        self, block: LatexList, *, parent=None, depth: int = 0,
+        images: list[Path] | None = None, image_layouts: dict | None = None,
+        kind_depths: tuple[int, int] = (0, 0),
+    ) -> None:
+        if depth > 8:
+            raise WordExportError("Word 列表嵌套超过 9 层，无法保留原生编号。")
+        kind_index = 0 if block.environment == "enumerate" else 1
+        num_id = self._new_list_numbering(block.environment, depth, kind_depths[kind_index])
+        nested_depths = tuple(value + (index == kind_index)
+                              for index, value in enumerate(kind_depths))
+        target = parent if parent is not None else self.doc
+        for item in block.items:
+            paragraph = target.add_paragraph()
+            paragraph.paragraph_format.space_after = Pt(2)
+            if item.label is None:
+                num_pr = paragraph._p.get_or_add_pPr().get_or_add_numPr()
+                num_pr.get_or_add_ilvl().val = depth
+                num_pr.get_or_add_numId().val = num_id
+            else:
+                # Explicit TeX labels replace the marker without advancing
+                # enumerate's counter, so these items have no automatic numPr.
+                paragraph.paragraph_format.left_indent = Cm(0.635 * (depth + 1))
+                paragraph.paragraph_format.first_line_indent = Cm(-0.635)
+                self.add_mixed(paragraph, item.label)
+                paragraph.add_run("\t")
+            self._add_content_blocks(
+                paragraph, item.content, parent=parent, images=images,
+                image_layouts=image_layouts, list_depth=depth + 1,
+                list_kind_depths=nested_depths,
+            )
 
     def _add_image(
         self,
@@ -1307,6 +1552,12 @@ class WordExamBuilder:
         plain_lengths = [len(re.sub(r"\\[A-Za-z]+|[{}$\\]", "", IMAGE_PATTERN.sub("", value))) for value in choices]
         max_length = max(plain_lengths, default=0)
         columns = 4 if len(choices) <= 4 and max_length <= 10 else 2 if max_length <= 24 else 1
+        compact_images = len(choices) == 4 and all(
+            IMAGE_PATTERN.fullmatch(value.strip()) for value in choices
+        ) and not any(
+            (image_layouts or {}).get(image_key(match.group(1)))
+            for value in choices for match in IMAGE_PATTERN.finditer(value)
+        )
         rows = (len(choices) + columns - 1) // columns
         table = self.doc.add_table(rows=rows, cols=columns)
         table.alignment = WD_TABLE_ALIGNMENT.CENTER
@@ -1355,11 +1606,61 @@ class WordExamBuilder:
                 self.add_mixed(
                     p, choices[choice_index], BODY_FONT_SIZE,
                     images=images, image_layouts=image_layouts,
-                    max_image_width=max(0.4, (width - 440) / 1440),
-                    max_image_height=WORD_AUTO_FIGURE_MAX_HEIGHT_INCHES,
+                    max_image_width=min(max(0.4, (width - 440) / 1440), COMPACT_CHOICE_IMAGE_SIZE_CM[0] / 2.54) if compact_images else max(0.4, (width - 440) / 1440),
+                    max_image_height=COMPACT_CHOICE_IMAGE_SIZE_CM[1] / 2.54 if compact_images else WORD_AUTO_FIGURE_MAX_HEIGHT_INCHES,
                 )
         after = self.doc.add_paragraph()
         after.paragraph_format.space_after = Pt(1)
+
+    def add_markdown_table(
+        self,
+        source: str,
+        parent=None,
+        images: list[Path] | None = None,
+        image_layouts: dict | None = None,
+    ) -> None:
+        """Write explicit cells directly, preserving editable formulas and images."""
+        parsed = find_markdown_tables(source)
+        if len(parsed) != 1:
+            return
+        spec = parsed[0]
+        rows = (spec.header, *spec.rows)
+        count = len(spec.header)
+        total_width = (max(1, int(parent.width) // 635 - 120)
+                       if parent is not None and parent.width is not None else 9000)
+        widths = [total_width // count] * count
+        widths[-1] += total_width - sum(widths)
+        table = (parent.add_table(rows=len(rows), cols=count, width=Inches(total_width / 1440))
+                 if parent is not None else self.doc.add_table(rows=len(rows), cols=count))
+        table.alignment = WD_TABLE_ALIGNMENT.CENTER
+        table.autofit = False
+        _set_table_borders(table, "7F7F7F", 5)
+        _set_table_geometry(table, widths)
+        _repeat_table_header(table.rows[0])
+        for row_index, values in enumerate(rows):
+            row = table.rows[row_index]
+            _prevent_row_split(row)
+            for column_index, value in enumerate(values):
+                cell = row.cells[column_index]
+                cell.vertical_alignment = WD_CELL_VERTICAL_ALIGNMENT.CENTER
+                _set_cell_margins(cell, 65, 40, 65, 40)
+                paragraph = cell.paragraphs[0]
+                paragraph.paragraph_format.space_after = Pt(0)
+                paragraph.alignment = {"l": WD_ALIGN_PARAGRAPH.LEFT,
+                                       "c": WD_ALIGN_PARAGRAPH.CENTER,
+                                       "r": WD_ALIGN_PARAGRAPH.RIGHT}[spec.alignments[column_index]]
+                for literal, part in _markdown_cell_parts(normalize_table_cell_math(value)):
+                    if literal:
+                        _set_run_font(paragraph.add_run(part), SMALL_FONT_SIZE)
+                    else:
+                        self.add_mixed(
+                            paragraph, _decode_markdown_cell_pipes(part), SMALL_FONT_SIZE,
+                            images=images, image_layouts=image_layouts,
+                            max_image_width=max(0.05, (widths[column_index] - 80) / 1440),
+                            max_image_height=TABLE_IMAGE_MAX_HEIGHT_CM / 2.54,
+                        )
+        spacer = parent.add_paragraph() if parent is not None else self.doc.add_paragraph()
+        spacer.paragraph_format.space_after = Pt(1)
 
     def add_tabular(
         self,
@@ -1482,7 +1783,7 @@ class WordExamBuilder:
                                 0.5,
                                 sum(column_widths[start_col:end_col + 1]) / 1440 - 0.2,
                             ),
-                            max_image_height=1.65,
+                            max_image_height=TABLE_IMAGE_MAX_HEIGHT_CM / 2.54,
                         )
                         self.diagnostics.warnings.append(
                             f"表格第 {row_index + 1} 行合并区域冲突，内容已保留在相邻合并格。"
@@ -1510,7 +1811,7 @@ class WordExamBuilder:
                         0.5,
                         sum(column_widths[start_col:end_col + 1]) / 1440 - 0.2,
                     ),
-                    max_image_height=1.65,
+                    max_image_height=TABLE_IMAGE_MAX_HEIGHT_CM / 2.54,
                 )
         spacer = parent.add_paragraph() if parent is not None else self.doc.add_paragraph()
         spacer.paragraph_format.space_after = Pt(1)
@@ -1532,7 +1833,10 @@ class WordExamBuilder:
             run = p.add_run(f"{number}. ")
             _set_run_font(run, BODY_FONT_SIZE, bold=True)
             if item.answer.strip():
-                self._add_content_blocks(p, item.answer)
+                self._add_content_blocks(
+                    p, item.answer, images=item.images,
+                    image_layouts=item.question.get("image_layouts"),
+                )
             else:
                 run = p.add_run("暂无答案与解析。")
                 _set_run_font(run, SMALL_FONT_SIZE, color=RGBColor(127, 127, 127))
@@ -1555,7 +1859,87 @@ def create_word_bundle_zip(title: str, main_docx_bytes: bytes, ans_docx_bytes: b
     with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zf:
         zf.writestr(f"{safe_title}.docx", main_docx_bytes)
         zf.writestr(f"{safe_title}_含答案与解析.docx", ans_docx_bytes)
+        for filename, data in content_source_export_files().items():
+            zf.writestr(filename, data)
     return zip_buffer.getvalue()
+
+
+def _with_content_sources_docx_property(data: bytes, notice: str) -> bytes:
+    """Set one scoped custom property without resaving Word content or styles."""
+    custom_ns = "http://schemas.openxmlformats.org/officeDocument/2006/custom-properties"
+    values_ns = "http://schemas.openxmlformats.org/officeDocument/2006/docPropsVTypes"
+    rels_ns = "http://schemas.openxmlformats.org/package/2006/relationships"
+    types_ns = "http://schemas.openxmlformats.org/package/2006/content-types"
+    relationship_type = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/custom-properties"
+    content_type = "application/vnd.openxmlformats-officedocument.custom-properties+xml"
+    fmtid = "{D5CDD505-2E9C-101B-9397-08002B2CF9AE}"
+    property_name = "MathBankContentSources"
+    with zipfile.ZipFile(BytesIO(data)) as source:
+        relationships = etree.fromstring(source.read("_rels/.rels"))
+        candidates = [node for node in relationships if node.get("Type") == relationship_type]
+        if len(candidates) > 1:
+            raise WordExportError("Word 自定义属性关系不唯一，不能安全附加来源说明。")
+        updates = {}
+        if candidates:
+            relation = candidates[0]
+            target = relation.get("Target", "")
+            part = posixpath.normpath(target.lstrip("/"))
+            if relation.get("TargetMode") == "External" or "\\" in target or ":" in target or part in {".", ".."} or part.startswith("../"):
+                raise WordExportError("Word 自定义属性路径无效。")
+        else:
+            part = "docProps/custom.xml"
+            ids = {node.get("Id") for node in relationships}
+            number = 1
+            while f"rId{number}" in ids:
+                number += 1
+            etree.SubElement(relationships, f"{{{rels_ns}}}Relationship", Id=f"rId{number}", Type=relationship_type, Target=part)
+            updates["_rels/.rels"] = etree.tostring(relationships, encoding="UTF-8", xml_declaration=True, standalone=True)
+
+        if part in source.namelist():
+            properties = etree.fromstring(source.read(part))
+            if properties.tag != f"{{{custom_ns}}}Properties":
+                raise WordExportError("Word 自定义属性结构无效。")
+        else:
+            properties = etree.Element(f"{{{custom_ns}}}Properties", nsmap={None: custom_ns, "vt": values_ns})
+        owned = [node for node in properties if node.get("name") == property_name]
+        current = owned[0] if owned else None
+        exact = (len(owned) == 1 and len(current) == 1 and current[0].tag == f"{{{values_ns}}}lpwstr"
+                 and current[0].text == notice and current.get("fmtid") == fmtid)
+        if not exact:
+            ids = {node.get("pid") for node in properties if node not in owned}
+            pid = current.get("pid") if current is not None else None
+            if not pid or not pid.isdigit() or int(pid) < 2 or pid in ids:
+                pid = str(max([1, *(int(value) for value in ids if value and value.isdigit())]) + 1)
+            if current is None:
+                current = etree.SubElement(properties, f"{{{custom_ns}}}property")
+            for duplicate in owned[1:]:
+                properties.remove(duplicate)
+            for child in list(current):
+                current.remove(child)
+            current.set("fmtid", fmtid)
+            current.set("pid", pid)
+            current.set("name", property_name)
+            etree.SubElement(current, f"{{{values_ns}}}lpwstr").text = notice
+            updates[part] = etree.tostring(properties, encoding="UTF-8", xml_declaration=True, standalone=True)
+
+        types = etree.fromstring(source.read("[Content_Types].xml"))
+        overrides = [node for node in types if node.get("PartName") == "/" + part]
+        if not overrides:
+            etree.SubElement(types, f"{{{types_ns}}}Override", PartName="/" + part, ContentType=content_type)
+            updates["[Content_Types].xml"] = etree.tostring(types, encoding="UTF-8", xml_declaration=True, standalone=True)
+        elif overrides[0].get("ContentType") != content_type:
+            overrides[0].set("ContentType", content_type)
+            updates["[Content_Types].xml"] = etree.tostring(types, encoding="UTF-8", xml_declaration=True, standalone=True)
+        if not updates:
+            return data
+        result = BytesIO()
+        with zipfile.ZipFile(result, "w", zipfile.ZIP_DEFLATED) as output:
+            output.comment = source.comment
+            for info in source.infolist():
+                output.writestr(info, updates.pop(info.filename, source.read(info.filename)))
+            for name, payload in updates.items():
+                output.writestr(name, payload)
+        return result.getvalue()
 
 
 def _split_table_cells(row: str) -> list[str]:
@@ -1602,6 +1986,7 @@ def _resolve_image_paths(question: dict, uploads_dir: str | Path | None) -> list
 
 def _prepare_question(item: dict, uploads_dir: str | Path | None) -> PreparedQuestion:
     question = dict(item.get("question", {}) or {})
+    question["content"] = strip_source_attribution_comment(question.get("content", "") or "")
     content, _ = split_image_anchors(question.get("content", "") or "")
     choices: list[str] = []
     match = CHOICES_PATTERN.search(content)
@@ -1619,12 +2004,12 @@ def _prepare_question(item: dict, uploads_dir: str | Path | None) -> PreparedQue
         stem = "\n".join(stem_lines).strip()
     stem = re.sub(r"\\begin\{tikzpicture\}[\s\S]*?\\end\{tikzpicture\}", "", stem).strip()
     answer = question.get("answer_markdown", "") or ""
-    answer_clean = IMAGE_PATTERN.sub("", answer)
+    answer_tables = find_markdown_tables(answer)
+    answer_clean = IMAGE_PATTERN.sub(
+        lambda image: image.group(0) if any(table.start <= image.start() < table.end
+                                          for table in answer_tables) else "", answer)
     answer_clean = re.sub(r"\\begin\{tikzpicture\}[\s\S]*?\\end\{tikzpicture\}", "", answer_clean).strip()
-    try:
-        solution_space = max(0.0, float(item.get("solution_space") or question.get("solution_space") or 0))
-    except (TypeError, ValueError):
-        solution_space = 0.0
+    solution_space = item_solution_space_cm(item, question)
     return PreparedQuestion(
         question=question,
         score=int(item.get("score", 5)),
@@ -1658,7 +2043,10 @@ def build_word_document(
     formula_sources: list[str] = []
     for item in prepared:
         formula_sources.extend((item.stem, item.answer, *item.choices))
-    formulas = _extract_formulas(formula_sources)
+    table_formula_sources: list[str] = []
+    for source in formula_sources:
+        table_formula_sources.extend(_word_formula_sources(source))
+    formulas = _extract_formulas(table_formula_sources)
     converter = PandocOmmlConverter()
     omml_map = converter.convert_many(formulas)
     if formulas and not converter.pandoc_path:
@@ -1708,7 +2096,7 @@ def build_word_document(
         ordered_numbers = [number_by_object.get(id(item), index + 1) for index, item in enumerate(answer_items)]
         builder.add_answers(answer_items, ordered_numbers, title)
 
-    output = builder.save_bytes()
+    output = _with_content_sources_docx_property(builder.save_bytes(), content_sources_notice())
     if diagnostics.fallback_formulas:
         diagnostics.warnings.append(f"{diagnostics.fallback_formulas} 处公式以图片保真，不能在 Word 中直接编辑。")
     if diagnostics.failed_formulas:

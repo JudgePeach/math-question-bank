@@ -278,6 +278,559 @@ async function normalizeEditorFractions(target, button) {
 }
 window.normalizeEditorFractions = normalizeEditorFractions;
 
+// Shared point directory and picker. Names, paths and evidence are text nodes;
+// selecting a point never changes the question's curriculum location or tags.
+const knowledgePointCatalogCache = new Map();
+const knowledgePointViews = new Map();
+const knowledgePointNames = new Map();
+function knowledgePointVersion() { return window.activeCurriculumVersion || window.editorCurriculumVersion || 'A'; }
+function knowledgePointName(code) { return knowledgePointNames.get(code) || code; }
+function knowledgePointNode(tag, text = '', className = '') {
+    const node = document.createElement(tag); node.textContent = text;
+    if (className) node.className = className;
+    return node;
+}
+function knowledgePointButton(text, action) {
+    const node = knowledgePointNode('button', text, 'glass-btn mb-kp-button'); node.type = 'button';
+    node.addEventListener('click', event => { event.stopPropagation(); action(event); }); return node;
+}
+function currentKnowledgePointLocation(kind) {
+    if (kind === 'paper') {
+        const f = window.PaperStore?.filters || {};
+        return {compulsory: f.compulsory || '', chapter: f.chapter || '', knowledge: f.knowledge || ''};
+    }
+    const prefix = kind === 'edit' ? 'edit' : 'filter';
+    return {compulsory: document.getElementById(prefix + 'Compulsory')?.value || '',
+        chapter: document.getElementById(prefix + 'Chapter')?.value || '',
+        knowledge: document.getElementById(prefix + 'Knowledge')?.value || ''};
+}
+async function loadKnowledgePointCatalog(force = false) {
+    const version = knowledgePointVersion();
+    let entry = knowledgePointCatalogCache.get(version);
+    if (!force && entry?.ready) {
+        entry.items.forEach(item => knowledgePointNames.set(item.code, item.name));
+        return entry.items;
+    }
+    if (!force && entry?.promise) return entry.promise;
+    entry = {items: entry?.items || [], hierarchy: entry?.hierarchy || [], ready: false, error: '', promise: null};
+    knowledgePointCatalogCache.set(version, entry);
+    entry.promise = (async () => {
+        try {
+            const items = [], codes = new Set();
+            let total = null, hierarchy = [];
+            while (total === null || items.length < total) {
+                const offset = items.length;
+                const params = new URLSearchParams({version_code: version, limit: '1000', offset: String(offset)});
+                const response = await fetch('/api/knowledge-points?' + params.toString());
+                if (!response.ok) throw new Error('知识点目录加载失败');
+                const data = await response.json();
+                if (!data || !Array.isArray(data.items) || data.items.length > 1000
+                    || !Number.isSafeInteger(data.total) || data.total < 0
+                    || (data.version_code !== undefined && data.version_code !== version)
+                    || (data.offset !== undefined && data.offset !== offset)) throw new Error('知识点目录响应无效');
+                if (total !== null && data.total !== total) throw new Error('知识点目录已变化，请重新加载');
+                total = data.total;
+                if (offset === 0 && data.hierarchy !== undefined) {
+                    if (!Array.isArray(data.hierarchy)) throw new Error('知识点目录层级无效');
+                    const locations = new Set();
+                    for (const row of data.hierarchy) {
+                        if (!row || !['compulsory','chapter','knowledge'].every(field => typeof row[field] === 'string' && row[field].trim())
+                            || !Array.isArray(row.ancestors) || row.ancestors.some(value => typeof value !== 'string' || !value.trim())
+                            || new Set(row.ancestors).size !== row.ancestors.length || row.ancestors.includes(row.knowledge)) {
+                            throw new Error('知识点目录层级无效');
+                        }
+                        const key = JSON.stringify([row.compulsory,row.chapter,row.knowledge]);
+                        if (locations.has(key)) throw new Error('知识点目录层级重复');
+                        locations.add(key);
+                    }
+                    hierarchy = data.hierarchy;
+                }
+                if (!data.items.length && items.length < total) throw new Error('知识点目录不完整，请重新加载');
+                for (const item of data.items) {
+                    if (!item || typeof item.code !== 'string' || !item.code.trim()
+                        || typeof item.name !== 'string' || !item.name.trim() || codes.has(item.code)) {
+                        throw new Error('知识点目录编码重复或项目无效');
+                    }
+                    codes.add(item.code); items.push(item);
+                }
+                if (items.length > total) throw new Error('知识点目录数量不一致');
+            }
+            // Publish one complete catalogue. A failed later page must never
+            // replace the last complete cache with a partial tree.
+            entry.items = items;
+            entry.hierarchy = hierarchy;
+            if (knowledgePointCatalogCache.get(version) === entry && version === knowledgePointVersion()) {
+                items.forEach(item => knowledgePointNames.set(item.code, item.name));
+            }
+            entry.ready = true;
+            return entry.items;
+        } catch (error) { entry.error = error.message; throw error; }
+        finally {
+            entry.promise = null;
+            if (knowledgePointCatalogCache.get(version) === entry && version === knowledgePointVersion()) renderKnowledgePointViews();
+        }
+    })();
+    renderKnowledgePointViews();
+    return entry.promise;
+}
+function reloadBankKnowledgePointFilters() {
+    currentBankPage = currentDraftPage = 1;
+    updateBankFilterSummary();
+    if (activeSidebarTab === 'bank') loadQuestions(); else loadDrafts();
+}
+function updateKnowledgePointFilter(kind, patch) {
+    KnowledgePointState.setFilter(kind, patch);
+    renderKnowledgePointPicker(kind);
+    if (kind === 'paper' && typeof window.onPaperFilterChange === 'function') {
+        window.onPaperFilterChange('knowledge_point_codes', KnowledgePointState.filter(kind).knowledge_point_codes);
+    } else reloadBankKnowledgePointFilters();
+}
+function positionKnowledgePointPicker(view) {
+    if (view.picker.hidden) return;
+    const anchor = view.toggle.getBoundingClientRect();
+    if (!anchor.width || !anchor.height) { setKnowledgePointPickerOpen(view, false); return; }
+    const viewport = window.visualViewport;
+    const leftEdge = (viewport?.offsetLeft || 0) + 12;
+    const topEdge = (viewport?.offsetTop || 0) + 12;
+    const rightEdge = leftEdge + (viewport?.width || innerWidth) - 24;
+    const bottomEdge = topEdge + (viewport?.height || innerHeight) - 24;
+    const width = Math.min(520, rightEdge - leftEdge);
+    const below = Math.max(0, bottomEdge - anchor.bottom - 6);
+    const above = Math.max(0, anchor.top - topEdge - 6);
+    const preferredHeight = view.options.classList.contains('mb-kp-tree') ? 660 : 430;
+    const opensBelow = below >= Math.min(preferredHeight, above);
+    const maximumHeight = Math.max(44, Math.min(preferredHeight, opensBelow ? below : above));
+    view.picker.style.width = width + 'px';
+    view.picker.style.left = Math.max(leftEdge, Math.min(anchor.left, rightEdge - width)) + 'px';
+    view.picker.style.setProperty('--mb-kp-panel-height', maximumHeight + 'px');
+    const height = view.picker.getBoundingClientRect().height;
+    const top = opensBelow ? anchor.bottom + 6 : anchor.top - 6 - height;
+    view.picker.style.top = Math.max(topEdge, Math.min(top, bottomEdge - height)) + 'px';
+}
+function setKnowledgePointPickerOpen(view, open) {
+    if (open) knowledgePointViews.forEach(other => { if (other !== view) setKnowledgePointPickerOpen(other, false); });
+    view.picker.open = Boolean(open); view.picker.hidden = !open;
+    view.toggle.setAttribute('aria-expanded', String(Boolean(open)));
+    view.host.classList.toggle('mb-kp-open', Boolean(open));
+    if (open) {
+        view.panel.scrollTop = 0; renderKnowledgePointOptions(view);
+        loadKnowledgePointCatalog().catch(() => {});
+        view.search.focus({preventScroll: true});
+    }
+}
+function mountKnowledgePointPicker(kind, host) {
+    if (!host) return;
+    const old = knowledgePointViews.get(kind);
+    if (old?.host === host && host.childNodes.length) { renderKnowledgePointPicker(kind); return; }
+    old?.picker.remove();
+    const view = {host, kind, query: old?.query || '', scope: old?.scope || 'current', page: old?.page || 0, menuCode: '',
+        treeExpanded: old?.treeExpanded || new Map()};
+    host.replaceChildren();
+    host.classList.add('mb-knowledge-point-field');
+    host.classList.toggle('mb-kp-edit', kind === 'edit');
+    host.classList.remove('mb-kp-open', 'mb-kp-create-open');
+    const header = knowledgePointNode('div', '', 'mb-kp-header');
+    const heading = knowledgePointNode('div', '知识点', 'mb-kp-heading');
+    view.selected = knowledgePointNode('div', '', 'mb-kp-selected');
+    view.selected.setAttribute('aria-live', 'polite');
+    view.menu = knowledgePointNode('div', '', 'mb-kp-menu');
+    view.menu.hidden = true;
+    view.picker = knowledgePointNode('div', '', 'mb-kp-picker'); view.picker.id = 'mb-kp-picker-' + kind;
+    view.picker.open = false; view.picker.hidden = true;
+    view.toggle = knowledgePointButton(kind === 'edit' ? '选择知识点' : '选择／设置', () => setKnowledgePointPickerOpen(view, view.picker.hidden));
+    view.toggle.classList.add('mb-kp-toggle'); view.toggle.setAttribute('aria-controls', view.picker.id);
+    view.toggle.setAttribute('aria-expanded', 'false');
+    header.append(heading, view.toggle, view.selected); host.append(header);
+    if (kind === 'edit') {
+        view.aiClassify = knowledgePointButton('AI 分类', () => { window.openClassifyModal(); window.runAIClassify(); });
+        view.aiClassify.setAttribute('data-tooltip', '使用同一分类模型分析教材定位、题型与知识点');
+        header.insertBefore(view.aiClassify, view.selected);
+    }
+    const panel = knowledgePointNode('div', '', 'mb-kp-panel'); view.panel = panel; view.picker.append(panel);
+    if (kind !== 'edit') {
+        const controls = knowledgePointNode('div', '', 'mb-kp-filter-controls');
+        [['knowledge_point_mode', '匹配方式', [['any','任意一个'],['all','同时包含全部']]],
+            ['knowledge_point_role', '考查作用', [['main','主要考查'],['all','包括辅助']]]].forEach(([key, title, options]) => {
+                const label = knowledgePointNode('label', title); const select = document.createElement('select');
+                select.className = 'glass-select'; select.setAttribute('aria-label', title);
+                options.forEach(([value, text]) => { const option = knowledgePointNode('option', text); option.value = value; select.append(option); });
+                select.addEventListener('change', () => updateKnowledgePointFilter(kind, {[key]: select.value}));
+                view[key] = select; label.append(select); controls.append(label);
+            });
+        const unlabelled = knowledgePointNode('label', '', 'mb-kp-check');
+        view.unlabeled = document.createElement('input'); view.unlabeled.type = 'checkbox';
+        view.unlabeled.addEventListener('change', () => updateKnowledgePointFilter(kind,
+            {knowledge_point_unlabeled: view.unlabeled.checked, ...(view.unlabeled.checked ? {knowledge_point_codes: []} : {})}));
+        unlabelled.append(view.unlabeled, knowledgePointNode('span','未标注')); controls.append(unlabelled); view.controls = controls;
+    }
+    const tools = knowledgePointNode('div', '', 'mb-kp-tools');
+    view.current = knowledgePointButton('本节推荐', () => { view.scope = 'current'; view.query = ''; view.page = 0; view.options.scrollTop = 0; renderKnowledgePointPicker(kind); });
+    view.global = knowledgePointButton('全库目录', () => { view.scope = 'global'; view.query = ''; view.page = 0; view.options.scrollTop = 0; renderKnowledgePointPicker(kind); });
+    view.search = document.createElement('input'); view.search.type = 'search'; view.search.className = 'glass-input';
+    view.search.placeholder = '搜索知识点名称，编码用 #1230';
+    view.search.setAttribute('aria-label','搜索知识点名称，按编码查找请输入井号加完整编码');
+    view.search.addEventListener('input', () => { view.query = view.search.value; view.scope = 'global'; view.page = 0; view.options.scrollTop = 0; renderKnowledgePointOptions(view); });
+    tools.append(view.current, view.global, view.search); panel.append(tools);
+    view.info = knowledgePointNode('div', '', 'mb-kp-info'); view.options = knowledgePointNode('div', '', 'mb-kp-options');
+    view.pager = knowledgePointNode('div', '', 'mb-kp-pager');
+    view.previous = knowledgePointButton('上一组', () => { view.page -= 1; view.options.scrollTop = 0; renderKnowledgePointOptions(view); });
+    view.pageLabel = knowledgePointNode('span'); view.next = knowledgePointButton('下一组', () => { view.page += 1; view.options.scrollTop = 0; renderKnowledgePointOptions(view); });
+    view.pager.append(view.previous, view.pageLabel, view.next); panel.append(view.info, view.options, view.pager);
+    if (view.controls) panel.append(view.controls);
+    (host.closest('[role="dialog"]') || document.body).append(view.picker);
+    host.append(view.menu);
+    if (kind === 'edit') {
+        view.aiClassify.disabled = Boolean(KnowledgePointState.busy);
+        const create = document.createElement('details'); create.className = 'mb-kp-create'; create.append(knowledgePointNode('summary','自定义'));
+        create.addEventListener('toggle', () => host.classList.toggle('mb-kp-create-open', create.open));
+        const nameLabel = knowledgePointNode('label','知识点名称'); view.createName = document.createElement('input'); view.createName.className = 'glass-input'; nameLabel.append(view.createName);
+        const aliasLabel = knowledgePointNode('label','别名（每行一个，可不填）'); view.createAliases = document.createElement('textarea'); view.createAliases.className = 'glass-input'; view.createAliases.rows = 2; aliasLabel.append(view.createAliases);
+        const pathLabel = knowledgePointNode('label', '', 'mb-kp-check'); view.createPath = document.createElement('input'); view.createPath.type = 'checkbox';
+        pathLabel.append(view.createPath, knowledgePointNode('span','关联当前教材位置（可选）'));
+        view.createError = knowledgePointNode('div', '', 'mb-kp-info'); view.createError.setAttribute('role','alert');
+        view.createButton = knowledgePointButton('新增并选用', () => createEditorKnowledgePoint(view));
+        create.append(nameLabel, aliasLabel, pathLabel, view.createError, view.createButton); host.insertBefore(create, view.menu);
+    }
+    knowledgePointViews.set(kind, view); renderKnowledgePointPicker(kind);
+}
+function knowledgePointMatchesQuery(point, query) {
+    if (query.startsWith('#')) {
+        const code = query.slice(1).trim();
+        return [point.code, ...(Array.isArray(point.source_codes) ? point.source_codes : [])]
+            .some(value => typeof value === 'string' && value.toLowerCase() === code);
+    }
+    return [point.name, point.original_name || '', ...(Array.isArray(point.aliases) ? point.aliases : [])]
+        .some(value => String(value).toLowerCase().includes(query));
+}
+// Curriculum paths are recommendations, not selectable parent points. Keep
+// their real version and directory order, and discard only redundant parent
+// mappings for the same point; a point can still appear in several leaf paths.
+function buildKnowledgePointTree(items, version, curriculum = {}, hierarchy = []) {
+    const makeBranch = (label, path, order = Number.MAX_SAFE_INTEGER) => ({label, path,
+        key: JSON.stringify([version, ...path]), order, children: new Map(), points: new Map()});
+    const root = makeBranch('', []);
+    const numberOf = label => String(label).match(/^(\d+(?:\.\d+)+)(?:\s|$)/)?.[1] || '';
+    const ensure = (parent, label, order = Number.MAX_SAFE_INTEGER) => {
+        if (!parent.children.has(label)) parent.children.set(label, makeBranch(label, [...parent.path, label], order));
+        return parent.children.get(label);
+    };
+    const books = Object.keys(curriculum || {});
+    const at = (values, value) => { const index = values.indexOf(value); return index < 0 ? Number.MAX_SAFE_INTEGER : index; };
+    const sectionHierarchy = new Map((Array.isArray(hierarchy) ? hierarchy : []).map(row =>
+        [JSON.stringify([row.compulsory,row.chapter,row.knowledge]),row.ancestors]));
+    const ancestorsOf = path => sectionHierarchy.get(JSON.stringify([path.compulsory,path.chapter,path.knowledge]));
+    (Array.isArray(items) ? items : []).forEach(point => {
+        if (!point || typeof point.code !== 'string' || typeof point.name !== 'string') return;
+        const paths = (Array.isArray(point.curriculum_paths) ? point.curriculum_paths : []).filter(path =>
+            path && path.version_code === version && typeof path.compulsory === 'string' && path.compulsory
+            && typeof path.chapter === 'string' && path.chapter);
+        const specific = paths.filter(path => !paths.some(other => other !== path
+            && other.compulsory === path.compulsory && other.chapter === path.chapter
+            && ((!path.knowledge && other.knowledge)
+                || (path.knowledge && path.knowledge === other.knowledge && path.level === 'parent' && other.level === 'leaf')
+                || (path.knowledge && ancestorsOf(other)?.includes(path.knowledge)))));
+        if (!specific.length) {
+            ensure(root, '未关联当前教材').points.set(point.code, point);
+            return;
+        }
+        specific.forEach(path => {
+            const chapters = curriculum?.[path.compulsory] || {};
+            let branch = ensure(root, path.compulsory, at(books, path.compulsory));
+            branch = ensure(branch, path.chapter, at(Object.keys(chapters), path.chapter));
+            if (path.knowledge) {
+                const sections = Array.isArray(chapters[path.chapter]) ? chapters[path.chapter] : [];
+                const ancestors = ancestorsOf(path);
+                (ancestors || []).forEach(ancestor => { branch = ensure(branch, ancestor, at(sections, ancestor)); });
+                branch = ensure(branch, path.knowledge, at(sections, path.knowledge));
+                const sectionNumber = numberOf(path.knowledge);
+                const referenceNumber = numberOf(path.reference_section);
+                if (!ancestors && path.level === 'leaf' && sectionNumber && referenceNumber.startsWith(sectionNumber + '.')) {
+                    branch = ensure(branch, path.reference_section);
+                }
+            }
+            branch.points.set(point.code, point);
+        });
+    });
+    const finalize = branch => {
+        const codes = new Set(branch.points.keys());
+        const children = [...branch.children.values()].sort((left, right) => left.order - right.order
+            || left.label.localeCompare(right.label, 'zh-CN', {numeric: true})).map(child => {
+                const result = finalize(child); result.codes.forEach(code => codes.add(code)); return result;
+            });
+        return {...branch, children, points: [...branch.points.values()], codes, count: codes.size};
+    };
+    return finalize(root).children;
+}
+function knowledgePointPathMatchesLocation(path, version, location, hierarchy = []) {
+    if (!path || path.version_code !== version || path.compulsory !== location.compulsory || path.chapter !== location.chapter) return false;
+    if (!location.knowledge || path.knowledge === location.knowledge) return true;
+    return (Array.isArray(hierarchy) ? hierarchy : []).some(row => row.compulsory === path.compulsory
+        && row.chapter === path.chapter && row.knowledge === path.knowledge && row.ancestors.includes(location.knowledge));
+}
+function toggleKnowledgePointSelection(view, point) {
+    if (view.kind === 'edit') {
+        if (KnowledgePointState.busy) return;
+        const selected = KnowledgePointState.snapshot().some(item => item.code === point.code);
+        if (selected) KnowledgePointState.remove(point.code); else KnowledgePointState.add({code: point.code, name: point.name});
+    } else {
+        const selected = KnowledgePointState.filter(view.kind).knowledge_point_codes;
+        updateKnowledgePointFilter(view.kind, {knowledge_point_unlabeled: false,
+            knowledge_point_codes: selected.includes(point.code) ? selected.filter(code => code !== point.code) : [...selected, point.code]});
+    }
+}
+function knowledgePointOption(view, point, selected, tree = false) {
+    const isSelected = selected.includes(point.code);
+    const option = tree ? knowledgePointNode('label', '', 'mb-kp-option mb-kp-tree-leaf')
+        : knowledgePointButton('', () => toggleKnowledgePointSelection(view, point));
+    option.classList.add('mb-kp-option'); option.dataset.kpCode = point.code; option.dataset.code = point.code;
+    option.setAttribute('aria-pressed', String(isSelected));
+    if (tree) {
+        const checkbox = document.createElement('input'); checkbox.type = 'checkbox'; checkbox.checked = isSelected;
+        checkbox.className = 'mb-kp-tree-checkbox'; checkbox.disabled = view.kind === 'edit' && Boolean(KnowledgePointState.busy);
+        checkbox.addEventListener('change', () => {
+            const restoreFocus = document.activeElement === checkbox;
+            toggleKnowledgePointSelection(view, point);
+            if (restoreFocus) {
+                const replacement = [...view.options.querySelectorAll('.mb-kp-tree-leaf')].find(node =>
+                    node.dataset.kpCode === point.code && node.dataset.treePath === option.dataset.treePath);
+                replacement?.querySelector('input')?.focus({preventScroll: true});
+            }
+        });
+        option.append(checkbox);
+    } else option.disabled = view.kind === 'edit' && Boolean(KnowledgePointState.busy);
+    option.append(knowledgePointNode('span', point.name));
+    return option;
+}
+function renderKnowledgePointTree(view, roots, selected, location) {
+    const version = knowledgePointVersion();
+    if (!view.treeExpanded.has(version) && roots.length && !view.picker.hidden) {
+        const expanded = new Set();
+        let branches = roots;
+        const hierarchy = knowledgePointCatalogCache.get(version)?.hierarchy || [];
+        const ancestors = hierarchy.find(row => row.compulsory === location.compulsory && row.chapter === location.chapter
+            && row.knowledge === location.knowledge)?.ancestors || [];
+        const wanted = [location.compulsory, location.chapter, ...ancestors, location.knowledge];
+        // Open the current path initially; with no location, show a first
+        // concrete path so the tree immediately includes selectable leaves.
+        for (let depth = 0; branches.length; depth += 1) {
+            const branch = branches.find(item => item.label === wanted[depth]) || branches[0];
+            expanded.add(branch.key); branches = branch.children;
+        }
+        view.treeExpanded.set(version, expanded);
+    }
+    const expanded = view.treeExpanded.get(version) || new Set();
+    const list = knowledgePointNode('ul', '', 'mb-kp-tree-list');
+    list.setAttribute('aria-label','按当前教材查找知识点');
+    const appendBranch = (parent, branch, depth) => {
+        const row = knowledgePointNode('li', '', 'mb-kp-tree-branch');
+        const toggle = knowledgePointButton('', () => {
+            if (expanded.has(branch.key)) expanded.delete(branch.key); else expanded.add(branch.key);
+            const scrollTop = view.options.scrollTop;
+            renderKnowledgePointOptions(view); view.options.scrollTop = scrollTop;
+            const replacement = [...view.options.querySelectorAll('.mb-kp-tree-toggle')].find(node => node.dataset.treeKey === branch.key);
+            replacement?.focus({preventScroll: true});
+        });
+        toggle.classList.add('mb-kp-tree-toggle'); toggle.dataset.treeKey = branch.key;
+        toggle.setAttribute('aria-expanded', String(expanded.has(branch.key)));
+        toggle.setAttribute('aria-label', `${branch.label}，${branch.count} 个知识点，${expanded.has(branch.key) ? '收起' : '展开'}`);
+        toggle.style.setProperty('--mb-kp-tree-depth', String(depth));
+        const arrow = knowledgePointNode('i', '', 'fa-solid fa-chevron-right mb-kp-tree-arrow'); arrow.setAttribute('aria-hidden','true');
+        toggle.append(arrow, knowledgePointNode('span', branch.label, 'mb-kp-tree-label'),
+            knowledgePointNode('span', String(branch.count), 'mb-kp-tree-count'));
+        row.append(toggle);
+        if (expanded.has(branch.key)) {
+            const group = knowledgePointNode('ul', '', 'mb-kp-tree-list');
+            branch.children.forEach(child => appendBranch(group, child, depth + 1));
+            branch.points.forEach(point => {
+                const leaf = knowledgePointNode('li'); const option = knowledgePointOption(view, point, selected, true);
+                option.dataset.treePath = branch.key;
+                option.style.setProperty('--mb-kp-tree-depth', String(depth + 1)); leaf.append(option); group.append(leaf);
+            });
+            row.append(group);
+        }
+        parent.append(row);
+    };
+    roots.forEach(branch => appendBranch(list, branch, 0)); view.options.append(list);
+}
+function renderKnowledgePointOptions(view) {
+    const entry = knowledgePointCatalogCache.get(knowledgePointVersion());
+    const location = currentKnowledgePointLocation(view.kind);
+    view.current.disabled = !location.compulsory || !location.chapter;
+    if (view.search.value !== view.query) view.search.value = view.query;
+    const query = view.query.trim().toLowerCase();
+    const recommended = view.scope === 'current' && !query && !view.current.disabled;
+    const tree = !recommended && !query;
+    view.current.setAttribute('aria-pressed', String(recommended));
+    view.global.setAttribute('aria-pressed', String(!recommended));
+    const candidates = (entry?.items || []).filter(point => {
+        if (query && !knowledgePointMatchesQuery(point, query)) return false;
+        return !recommended || (point.curriculum_paths || []).some(path =>
+            knowledgePointPathMatchesLocation(path, knowledgePointVersion(), location, entry?.hierarchy));
+    });
+    const pages = tree ? 1 : Math.max(1, Math.ceil(candidates.length / 6)); view.page = Math.max(0, Math.min(view.page, pages - 1));
+    const scrollTop = view.options.scrollTop;
+    view.info.replaceChildren(); view.options.replaceChildren();
+    view.options.classList.toggle('mb-kp-tree', tree);
+    if (entry?.error) view.info.append(knowledgePointNode('span', entry.error), knowledgePointButton('重试', () => loadKnowledgePointCatalog(true).catch(() => {})));
+    else view.info.textContent = entry?.promise ? '正在加载知识点目录…' : `${recommended ? '本节关联考点' : query ? '搜索结果' : '全库目录'} · ${candidates.length} 项`;
+    const selected = view.kind === 'edit' ? KnowledgePointState.snapshot().map(item => item.code)
+        : KnowledgePointState.filter(view.kind).knowledge_point_codes;
+    if (tree) renderKnowledgePointTree(view, buildKnowledgePointTree(candidates, knowledgePointVersion(), window.systemMetadata?.curriculum || {}, entry?.hierarchy), selected, location);
+    else candidates.slice(view.page * 6, (view.page + 1) * 6).forEach(point => view.options.append(knowledgePointOption(view, point, selected)));
+    if (entry?.ready && !candidates.length) view.options.append(knowledgePointNode('span',
+        query ? '未找到匹配的知识点。' : recommended ? '本节暂无推荐，可切换全库目录。' : '暂无可选知识点。','mb-kp-info'));
+    view.pager.hidden = pages <= 1; view.previous.disabled = view.page === 0; view.next.disabled = view.page === pages - 1;
+    view.pageLabel.textContent = `${view.page + 1} / ${pages}`;
+    view.options.scrollTop = scrollTop;
+    positionKnowledgePointPicker(view);
+}
+function renderKnowledgePointPicker(kind) {
+    const view = knowledgePointViews.get(kind); if (!view?.host.isConnected) return;
+    view.selected.replaceChildren(); view.menu.replaceChildren();
+    if (kind === 'edit') {
+        if (view.aiClassify) view.aiClassify.disabled = Boolean(KnowledgePointState.busy);
+        if (view.editorGeneration !== EditorState.generation) {
+            view.menuCode = ''; setKnowledgePointPickerOpen(view, false);
+            view.editorGeneration = EditorState.generation;
+        }
+        const labels = KnowledgePointState.snapshot(); labels.forEach(item => { if (item.name) knowledgePointNames.set(item.code,item.name); });
+        const accepted = labels;
+        accepted.forEach(item => {
+            const button = knowledgePointButton(item.name || knowledgePointName(item.code), () => {
+                if (KnowledgePointState.busy) return;
+                view.menuCode = view.menuCode === item.code ? '' : item.code;
+                if (view.menuCode) setKnowledgePointPickerOpen(view, false);
+                renderKnowledgePointPicker(kind);
+            });
+            button.setAttribute('aria-label',(item.name || knowledgePointName(item.code)) + '，' + (item.role === 'auxiliary' ? '辅助涉及' : '主要考查') + '，编辑');
+            button.setAttribute('aria-expanded',String(view.menuCode === item.code)); button.disabled = Boolean(KnowledgePointState.busy); view.selected.append(button);
+        });
+        const menuItem = accepted.find(item => item.code === view.menuCode);
+        view.menu.hidden = !menuItem;
+        if (menuItem) {
+            view.menu.append(knowledgePointNode('span',menuItem.name || knowledgePointName(menuItem.code)));
+            const select = document.createElement('select'); select.className = 'glass-select'; select.setAttribute('aria-label','知识点考查作用');
+            [['main','主要考查'],['auxiliary','辅助涉及']].forEach(([value,text]) => { const option = knowledgePointNode('option',text); option.value = value; select.append(option); });
+            select.value = menuItem.role; select.addEventListener('change', () => { if (!KnowledgePointState.busy) KnowledgePointState.setRole(menuItem.code,select.value); });
+            view.menu.append(select, knowledgePointButton('移除', () => { if (!KnowledgePointState.busy) { KnowledgePointState.remove(menuItem.code); view.menuCode = ''; } }),
+                knowledgePointButton('完成', () => { view.menuCode = ''; renderKnowledgePointPicker(kind); }));
+            const provenance = document.createElement('details'); provenance.className = 'mb-kp-label-details';
+            provenance.append(knowledgePointNode('summary','查看来源与依据'));
+            const origin = menuItem.origin;
+            const research = origin && typeof origin === 'object' && (origin.source === 'ai_research_candidates' || origin.kind === 'reviewed_research_candidate');
+            provenance.append(knowledgePointNode('p',research ? 'AI研究标注（已接入，可修改）' : origin === 'manual' ? '手动标注' : origin === 'ai_classification' ? 'AI 自动分类（可修改）' : '已有知识点标注'));
+            if (Array.isArray(menuItem.scope)) {
+                const scope = menuItem.scope.filter(value => typeof value === 'string' || typeof value === 'number').join('、');
+                if (scope) provenance.append(knowledgePointNode('p','范围：' + scope));
+            }
+            const sourceLabel = new Map([['content','题干'],['analysis','解析'],['answer_markdown','解析'],['review','教师评析'],['review_markdown','教师评析']]).get(menuItem.evidence_source);
+            if (typeof menuItem.evidence === 'string' && menuItem.evidence) provenance.append(knowledgePointNode('p',(sourceLabel ? sourceLabel + '原文：' : '原文证据：') + menuItem.evidence));
+            if (typeof menuItem.reason === 'string' && menuItem.reason) provenance.append(knowledgePointNode('p','标注理由：' + menuItem.reason));
+            view.menu.append(provenance);
+        }
+        view.createPath.disabled = !currentKnowledgePointLocation('edit').compulsory || !currentKnowledgePointLocation('edit').chapter;
+        if (view.createPath.disabled) view.createPath.checked = false;
+    } else {
+        const f = KnowledgePointState.filter(kind);
+        f.knowledge_point_codes.forEach(code => view.selected.append(knowledgePointButton(knowledgePointName(code) + ' ×', () => updateKnowledgePointFilter(kind,
+            {knowledge_point_codes: f.knowledge_point_codes.filter(item => item !== code)}))));
+        ['knowledge_point_mode','knowledge_point_role'].forEach(key => { view[key].value = f[key]; });
+        view.unlabeled.checked = f.knowledge_point_unlabeled;
+    }
+    view.selected.querySelectorAll('button').forEach(button => { button.dataset.tooltip = button.textContent; });
+    if (!view.selected.childNodes.length) view.selected.append(knowledgePointNode('span',
+        kind === 'edit' ? '未选择' : KnowledgePointState.filter(kind).knowledge_point_unlabeled ? '未标注' : '不限','mb-kp-info'));
+    renderKnowledgePointOptions(view);
+}
+function renderKnowledgePointViews() {
+    knowledgePointViews.forEach((view, kind) => renderKnowledgePointPicker(kind));
+    if (typeof window.renderEditorPaperMeta === 'function') window.renderEditorPaperMeta();
+    if (typeof window.renderBankKnowledgePointConditions === 'function') window.renderBankKnowledgePointConditions();
+}
+async function createEditorKnowledgePoint(view) {
+    if (view.createButton.disabled || KnowledgePointState.busy) return;
+    const name = view.createName.value.trim(); view.createError.textContent = '';
+    if (!name) { view.createError.textContent = '请填写知识点名称。'; return; }
+    const version = knowledgePointVersion(); const session = EditorState.snapshot();
+    const aliases = view.createAliases.value.split(/\r?\n/).map(value => value.trim()).filter(Boolean);
+    const existing = (knowledgePointCatalogCache.get(version)?.items || []).find(point =>
+        [point.name, ...(point.aliases || [])].some(value => String(value).trim().toLowerCase() === name.toLowerCase()));
+    if (existing) { view.createError.textContent = '目录中已存在该名称或别名，请直接选择：' + existing.name; return; }
+    const paths = view.createPath.checked ? [{version_code: version, ...currentKnowledgePointLocation('edit')}] : [];
+    view.createButton.disabled = true; view.createButton.setAttribute('aria-busy','true');
+    try {
+        const response = await fetch('/api/knowledge-points', {method:'POST', headers:{'Content-Type':'application/json'},
+            body:JSON.stringify({name, aliases, curriculum_paths: paths, expected_version_code: version})});
+        const point = await response.json();
+        if (!response.ok || !point || typeof point.code !== 'string') throw new Error(typeof point?.detail === 'string' ? point.detail : '新增知识点失败，请检查名称是否重复。');
+        knowledgePointCatalogCache.delete(version); knowledgePointNames.set(point.code,point.name);
+        if (EditorState.isCurrent(session) && knowledgePointVersion() === version) {
+            KnowledgePointState.add({code:point.code,name:point.name}); view.createName.value = ''; view.createAliases.value = '';
+        }
+        await loadKnowledgePointCatalog(true);
+    } catch (error) { if (EditorState.isCurrent(session)) view.createError.textContent = error.message; }
+    finally { view.createButton.disabled = false; view.createButton.removeAttribute('aria-busy'); }
+}
+function renderKnowledgePointBadges(host, value, f = null, compact = false) {
+    if (!host) return;
+    const labels = KnowledgePointState.normalize(value); labels.forEach(item => { if (item.name) knowledgePointNames.set(item.code,item.name); });
+    const filtered = f?.knowledge_point_codes.length ? KnowledgePointState.matching(labels,f) : labels;
+    if (!filtered.length) return;
+    const container = knowledgePointNode('div', '', 'mb-kp-badges');
+    if (f?.knowledge_point_codes.length) container.append(knowledgePointNode('span','命中考点：','mb-kp-info'));
+    (compact ? filtered.slice(0,3) : filtered).forEach(item => container.append(knowledgePointNode('span',
+        (item.name || knowledgePointName(item.code)) + ' · ' + (item.role === 'auxiliary' ? '辅助' : '主要'),'mb-kp-badge')));
+    if (compact && filtered.length > 3) container.append(knowledgePointNode('span',`+${filtered.length - 3}`,'mb-kp-badge'));
+    host.append(container);
+}
+function renderBankKnowledgePointConditions() {
+    const host = document.getElementById('bankKnowledgePointConditions'); if (!host) return;
+    host.replaceChildren();
+    const f = KnowledgePointState.filter('bank');
+    f.knowledge_point_codes.forEach(code => host.append(knowledgePointButton(knowledgePointName(code) + ' ×', () =>
+        updateKnowledgePointFilter('bank',{knowledge_point_codes:f.knowledge_point_codes.filter(item => item !== code)}))));
+    if (f.knowledge_point_unlabeled) host.append(knowledgePointButton('未标注知识点 ×', () => updateKnowledgePointFilter('bank',{knowledge_point_unlabeled:false})));
+    if (f.knowledge_point_codes.length) host.append(knowledgePointNode('span',
+        (f.knowledge_point_mode === 'all' ? '同时包含全部' : '包含任意一个') + ' · '
+        + (f.knowledge_point_role === 'all' ? '含辅助' : '主要考查'),'mb-kp-info'));
+    const filters = document.getElementById('bankFilterFields');
+    host.hidden = Boolean(filters?.classList.contains('is-open')) || !host.childNodes.length;
+}
+window.onEditorKnowledgePointChange = () => {
+    renderKnowledgePointPicker('edit');
+    if (typeof window.renderEditorPaperMeta === 'function') window.renderEditorPaperMeta();
+    if (typeof window.refreshEditorFeedback === 'function') window.refreshEditorFeedback();
+};
+Object.assign(window,{loadKnowledgePointCatalog, mountKnowledgePointPicker, renderKnowledgePointPicker, renderKnowledgePointViews,
+    renderKnowledgePointBadges, knowledgePointName, updateKnowledgePointFilter,
+    renderBankKnowledgePointConditions,
+    hydrateEditorKnowledgePoints(record) { KnowledgePointState.hydrate(record?.knowledge_points || []); },
+    getEditorKnowledgePointsSnapshot() { return KnowledgePointState.snapshot(); }});
+document.addEventListener('DOMContentLoaded', () => {
+    mountKnowledgePointPicker('edit',document.getElementById('editKnowledgePointPicker'));
+    mountKnowledgePointPicker('bank',document.getElementById('bankKnowledgePointPicker'));
+});
+window.addEventListener('pointerdown', event => {
+    knowledgePointViews.forEach(view => {
+        if (!view.picker.hidden && !view.picker.contains(event.target) && !view.toggle.contains(event.target)) {
+            setKnowledgePointPickerOpen(view, false);
+        }
+    });
+}, true);
+window.addEventListener('keydown', event => {
+    if (event.key !== 'Escape' && event.key !== 'Esc') return;
+    const view = [...knowledgePointViews.values()].find(item => !item.picker.hidden);
+    if (!view) return;
+    event.preventDefault(); event.stopImmediatePropagation();
+    setKnowledgePointPickerOpen(view, false); view.toggle.focus({preventScroll: true});
+}, true);
+const repositionKnowledgePointPickers = () => knowledgePointViews.forEach(positionKnowledgePointPicker);
+window.addEventListener('resize', repositionKnowledgePointPickers);
+window.addEventListener('scroll', repositionKnowledgePointPickers, true);
+window.visualViewport?.addEventListener('resize', repositionKnowledgePointPickers);
+window.visualViewport?.addEventListener('scroll', repositionKnowledgePointPickers);
+
+
         function initResizers() {
             const workspace = document.getElementById('bankWorkspaceSection');
             const sidebar = document.getElementById('sidebarSection');
@@ -412,6 +965,7 @@ window.normalizeEditorFractions = normalizeEditorFractions;
                 category_compulsory: document.getElementById('editCompulsory').value,
                 category_chapter: document.getElementById('editChapter').value,
                 category_knowledge: document.getElementById('editKnowledge').value,
+                knowledge_points: KnowledgePointState.snapshot(),
                 related_question_id: document.getElementById('editRelatedQuestion').value,
                 image_paths: JSON.stringify(uploadedImages),
                 tikz_code: TikzState.contentAssets[0] ? TikzState.contentAssets[0].tikz_code : '',
@@ -438,6 +992,7 @@ window.normalizeEditorFractions = normalizeEditorFractions;
                 category_compulsory: snapshot.category_compulsory,
                 category_chapter: snapshot.category_chapter,
                 category_knowledge: snapshot.category_knowledge,
+                knowledge_points: KnowledgePointState.normalize(snapshot.knowledge_points),
                 sub_knowledge: typeof normalizeSubKnowledge === 'function' ? normalizeSubKnowledge(snapshot.sub_knowledge) : (snapshot.sub_knowledge || []),
                 sub_knowledge_by_version: requestSnapshot && requestSnapshot.version_code ? {
                     ...(originalQuestionState?.sub_knowledge_by_version || {}),
@@ -576,6 +1131,7 @@ window.normalizeEditorFractions = normalizeEditorFractions;
                    currentComp === snapshot.category_compulsory &&
                    currentChap === snapshot.category_chapter &&
                    currentKnow === snapshot.category_knowledge &&
+                   KnowledgePointState.signature(KnowledgePointState.snapshot()) === KnowledgePointState.signature(snapshot.knowledge_points) &&
                    (typeof subKnowledgeSignature !== 'function' || subKnowledgeSignature(getEditorSubKnowledge()) === subKnowledgeSignature(snapshot.sub_knowledge)) &&
                    (typeof subKnowledgeVersionsSignature !== 'function' || !snapshot.sub_knowledge_by_version || subKnowledgeVersionsSignature(editorSubKnowledgeVersionSnapshot()) === subKnowledgeVersionsSignature(snapshot.sub_knowledge_by_version)) &&
                    currentRelatedQuestionId === (snapshot.related_question_id || '') &&
@@ -780,6 +1336,44 @@ window.normalizeEditorFractions = normalizeEditorFractions;
             hint.classList.toggle('is-complete', missing.length === 0);
         }
         window.refreshEditorFeedback = refreshEditorFeedback;
+        function renderBankFilterConditions(selected, subdivisions, open) {
+            const host = document.getElementById('bankFilterConditions');
+            if (!host) return;
+            host.replaceChildren();
+            function appendCondition(title, remove) {
+                const button = document.createElement('button');
+                button.type = 'button';
+                button.className = 'bank-filter-condition';
+                button.setAttribute('aria-label', '移除筛选条件 ' + title);
+                button.setAttribute('data-tooltip', title);
+                const label = document.createElement('span');
+                label.className = 'bank-filter-condition-text';
+                label.textContent = title;
+                const close = document.createElement('span');
+                close.className = 'bank-filter-condition-remove';
+                close.textContent = '×';
+                close.setAttribute('aria-hidden', 'true');
+                button.append(label, close);
+                button.addEventListener('click', remove);
+                host.append(button);
+            }
+            selected.forEach(input => {
+                const title = input.tagName === 'SELECT' ? input.selectedOptions[0]?.textContent || input.value : input.value;
+                appendCondition(title, () => {
+                    input.value = '';
+                    if (input.id === 'filterSource') {
+                        document.getElementById('clearFilterSourceBtn')?.classList.add('hidden');
+                        reloadBankKnowledgePointFilters();
+                    } else input.dispatchEvent(new Event('change', {bubbles: true}));
+                });
+            });
+            subdivisions.forEach(path => appendCondition(subKnowledgePathLabel(path), () => {
+                const signature = JSON.stringify(path);
+                renderSubKnowledgeOptions('filter', getFilterSubKnowledge().filter(item => JSON.stringify(item) !== signature));
+                reloadBankKnowledgePointFilters();
+            }));
+            host.hidden = open || !host.childNodes.length;
+        }
         function updateBankFilterSummary() {
             const button = document.querySelector('.bank-filter-toggle');
             const clear = document.getElementById('clearBankFiltersBtn');
@@ -787,12 +1381,21 @@ window.normalizeEditorFractions = normalizeEditorFractions;
             const selected = ['filterCompulsory', 'filterChapter', 'filterKnowledge', 'filterType', 'filterDifficulty', 'filterSource']
                 .map(id => document.getElementById(id)).filter(element => element && element.value);
             const subdivisions = getFilterSubKnowledge();
-            const count = selected.length + (subdivisions.length ? 1 : 0);
+            const pointFilter = KnowledgePointState.filter('bank');
+            const count = selected.length + (subdivisions.length ? 1 : 0)
+                + (pointFilter.knowledge_point_codes.length || pointFilter.knowledge_point_unlabeled ? 1 : 0);
+            const open = Boolean(document.getElementById('bankFilterFields')?.classList.contains('is-open'));
             button.textContent = count ? `筛选 (${count})` : '筛选';
             button.setAttribute('data-tooltip', [...selected.map(element => element.tagName === 'SELECT' ? element.selectedOptions[0]?.textContent : element.value), ...subdivisions.map(subKnowledgePathLabel)].join(' / ') || '按学段、章节、小节、细分知识点等条件筛选');
             clear.hidden = count === 0;
+            renderBankFilterConditions(selected, subdivisions, open);
+            renderBankKnowledgePointConditions();
+            document.getElementById('bankWorkspaceSection')?.classList.toggle('bank-has-filter-summary', !open && count > 0);
         }
         function clearBankFilters() {
+            KnowledgePointState.setFilter('bank', {knowledge_point_codes: [], knowledge_point_mode:'any',
+                knowledge_point_role:'main', knowledge_point_status:'all', knowledge_point_unlabeled:false});
+            renderKnowledgePointPicker('bank');
             ['filterCompulsory', 'filterChapter', 'filterKnowledge', 'filterType', 'filterDifficulty', 'filterSource'].forEach(id => {
                 const element = document.getElementById(id);
                 if (element) element.value = '';
@@ -814,6 +1417,7 @@ window.normalizeEditorFractions = normalizeEditorFractions;
             const open = fields.classList.toggle('is-open');
             button.setAttribute('aria-expanded', String(open));
             document.getElementById('bankWorkspaceSection').classList.toggle('bank-filters-open', open);
+            updateBankFilterSummary();
         }
         function showBankDetail() {
             if (!window.matchMedia('(max-width: 960px)').matches || (window.PaperStore && window.PaperStore.activeWorkspace !== 'bank')) return;
@@ -1060,6 +1664,7 @@ window.normalizeEditorFractions = normalizeEditorFractions;
                 category_compulsory: compulsory,
                 category_chapter: chapter,
                 category_knowledge: knowledge,
+                knowledge_points: KnowledgePointState.snapshot(),
                 sub_knowledge: getEditorSubKnowledge(),
                 version_code: window.activeCurriculumVersion || '',
                 sub_knowledge_by_version: {
@@ -1164,6 +1769,7 @@ window.normalizeEditorFractions = normalizeEditorFractions;
                 }
             }
             hydrateEditorSubKnowledge(draft, true);
+            KnowledgePointState.hydrate(draft.knowledge_points || []);
             
             // Load images
             const allDraftImages = Array.isArray(draft.image_paths)
@@ -1210,6 +1816,11 @@ window.normalizeEditorFractions = normalizeEditorFractions;
             
             document.getElementById('editorTitle').textContent = `编辑草稿 - 暂存中`;
             
+            // Restore one stable association target without downloading the bank.
+            if (typeof refreshRelatedDropdown === 'function') {
+                refreshRelatedDropdown(draft.related_question_id || '', {expectedValue: ''});
+            }
+
             // Backup draft state
             backupEditorState(EditorState.questionId, draft.id);
             setQuestionDetailEditAvailability(true);
@@ -1264,6 +1875,7 @@ window.normalizeEditorFractions = normalizeEditorFractions;
                     category_knowledge: classification.category_knowledge || ''},
                     {compulsory, chapter, knowledge}, subKnowledgeForDraft(item));
             });
+            drafts = drafts.filter(item => KnowledgePointState.matches(item.knowledge_points || [], KnowledgePointState.filter('bank')));
 
             // Filter by source
             if (source) {
@@ -1465,6 +2077,7 @@ window.normalizeEditorFractions = normalizeEditorFractions;
                         
                         // Render total counters
                         document.getElementById('statsTotalCount').textContent = data.total_count;
+                        document.getElementById('statsNormalCount').textContent = data.normal_count;
                         document.getElementById('statsEasyErrorCount').textContent = data.easy_error_count;
                         document.getElementById('statsChallengeCount').textContent = data.challenge_count;
                         document.getElementById('statsQiangjiCount').textContent = data.qiangji_count;
@@ -1724,6 +2337,7 @@ window.normalizeEditorFractions = normalizeEditorFractions;
                 } else {
                     chapSelect.disabled = true;
                 }
+                renderKnowledgePointPicker('edit');
             };
             
             chapSelect.onchange = () => {
@@ -1739,6 +2353,7 @@ window.normalizeEditorFractions = normalizeEditorFractions;
                 } else {
                     knowSelect.disabled = !(comp && chap);
                 }
+                renderKnowledgePointPicker('edit');
             };
 
             // Retain historical classifications exactly, including a chapter
@@ -1754,6 +2369,8 @@ window.normalizeEditorFractions = normalizeEditorFractions;
                 }
             }
             renderSubKnowledgeOptions('edit');
+            knowSelect.onchange = () => renderKnowledgePointPicker('edit');
+            renderKnowledgePointPicker('edit');
         }
 
         // Populate Categories in Filters
@@ -1785,6 +2402,7 @@ window.normalizeEditorFractions = normalizeEditorFractions;
                 currentBankPage = 1;
                 currentDraftPage = 1;
                 updateBankFilterSummary();
+                renderKnowledgePointPicker('bank');
                 if (activeSidebarTab === 'bank') loadQuestions();
                 else loadDrafts();
             }
@@ -1796,6 +2414,7 @@ window.normalizeEditorFractions = normalizeEditorFractions;
             const mode = document.getElementById('filterSubKnowledgeMode');
             if (mode) mode.onchange = reload;
             renderSubKnowledgeOptions('filter');
+            renderKnowledgePointPicker('bank');
             updateBankFilterSummary();
         }
 
@@ -1832,6 +2451,7 @@ window.normalizeEditorFractions = normalizeEditorFractions;
             if (compulsory) params.append('compulsory', compulsory);
             if (chapter) params.append('chapter', chapter);
             if (knowledge) params.append('knowledge', knowledge);
+            KnowledgePointState.appendParams(params, KnowledgePointState.filter('bank'));
             if (source) params.append('source', source);
             params.append('page', String(requestedPage));
             params.append('page_size', String(PAGE_LIMIT));
@@ -1942,6 +2562,7 @@ window.normalizeEditorFractions = normalizeEditorFractions;
                             </div>
                         `;
                         
+                        renderKnowledgePointBadges(itemCard, item.knowledge_points || [], KnowledgePointState.filter('bank'), true);
                         // Render KaTeX inline for this card
                         try {
                             renderMathInElement(itemCard.querySelector('.card-formula-render'), {
@@ -2118,18 +2739,21 @@ window.normalizeEditorFractions = normalizeEditorFractions;
                 ${createdAtBadge}
                 ${paperTagsHtml}
             `;
+            renderKnowledgePointBadges(badges, KnowledgePointState.snapshot(), KnowledgePointState.filter('bank'));
             sourceEl.textContent = `来源: ${editSource.value || '本地教研录入'}`;
         }
         window.renderEditorPaperMeta = renderEditorPaperMeta;
 
-        const choicesGridResizeObservers = new WeakMap();
+        const choicesGridSizes = new WeakMap();
+        const choicesGridObserved = new Set();
+        const choicesGridPending = new Set();
+        const choicesGridImages = new WeakSet();
+        let choicesGridResizeObserver = null;
+        let choicesGridFrame = null;
 
         function getPreferredChoicesColumns(grid) {
             const stored = parseInt(grid.dataset.preferredColumns || '', 10);
-            if ([1, 2, 4].includes(stored)) return stored;
-            if (grid.classList.contains('grid-cols-1')) return 1;
-            if (grid.classList.contains('grid-cols-2')) return 2;
-            return 4;
+            return [1, 2, 4].includes(stored) ? stored : 4;
         }
 
         function choicesGridOverflows(grid) {
@@ -2143,34 +2767,101 @@ window.normalizeEditorFractions = normalizeEditorFractions;
             });
         }
 
-        function adaptSingleChoicesGrid(grid) {
-            if (!grid || !grid.isConnected || grid.clientWidth <= 0) return;
-            // Measure the complete options before allowing prose to wrap. Only
-            // an indivisible formula wider than one column needs its own scroll.
-            grid.querySelectorAll('.choices-math-scroll').forEach(math => math.classList.remove('choices-math-scroll'));
-            grid.dataset.choicesMeasuring = 'true';
-            const preferred = getPreferredChoicesColumns(grid);
-            const candidates = [4, 2, 1].filter(cols => cols <= preferred);
-            let selected = 1;
+        function pruneDetachedChoicesGridTargets() {
+            for (const grid of choicesGridObserved) {
+                if (grid.isConnected) continue;
+                if (choicesGridResizeObserver) choicesGridResizeObserver.unobserve(grid);
+                choicesGridObserved.delete(grid);
+                choicesGridPending.delete(grid);
+                choicesGridSizes.delete(grid);
+            }
+        }
 
-            for (const columns of candidates) {
-                grid.style.setProperty('--choices-columns', String(columns));
-                // Force the browser to resolve the candidate track widths before
-                // comparing each rendered KaTeX option's real scroll width.
-                void grid.offsetWidth;
-                if (!choicesGridOverflows(grid)) {
-                    selected = columns;
-                    break;
+        function adaptChoicesGridsBatch(grids) {
+            // Keep this entry synchronous: pagination and scroll anchoring read
+            // the final option heights immediately after preview rendering.
+            const live = Array.from(new Set(grids)).filter(grid =>
+                grid && grid.isConnected && grid.clientWidth > 0
+            );
+            if (!live.length) return;
+            const preferred = live.map(getPreferredChoicesColumns);
+            const selected = new Array(live.length).fill(0);
+            for (const grid of live) {
+                choicesGridPending.delete(grid);
+                grid.querySelectorAll('.choices-math-scroll').forEach(math => math.classList.remove('choices-math-scroll'));
+                grid.dataset.choicesMeasuring = 'true';
+            }
+            // Write every pending grid before reading any candidate. The
+            // browser resolves at most one layout per candidate for this batch.
+            for (const columns of [4, 2, 1]) {
+                const pending = [];
+                for (let index = 0; index < live.length; index++) {
+                    if (selected[index] || columns > preferred[index]) continue;
+                    live[index].style.setProperty('--choices-columns', String(columns));
+                    pending.push(index);
+                }
+                if (!pending.length) continue;
+                void live[pending[0]].offsetWidth;
+                for (const index of pending) {
+                    if (!choicesGridOverflows(live[index]) || columns === 1) selected[index] = columns;
                 }
             }
+            for (let index = 0; index < live.length; index++) {
+                const grid = live[index];
+                grid.style.setProperty('--choices-columns', String(selected[index]));
+                grid.dataset.choiceColumns = String(selected[index]);
+                delete grid.dataset.choicesMeasuring;
+            }
+            // Only indivisible inline formulas need horizontal scrolling. Use
+            // layout pixels throughout, including inside the scaled A4 preview.
+            const scrollingMath = [];
+            for (const grid of live) {
+                grid.querySelectorAll('.choices-content .katex').forEach(math => {
+                    const content = math.closest('.choices-content');
+                    if (!math.closest('.katex-display') && math.offsetWidth > content.clientWidth + 1) scrollingMath.push(math);
+                });
+            }
+            for (const math of scrollingMath) math.classList.add('choices-math-scroll');
+            // Capture the final border-box after all writes, so our own height
+            // changes do not trigger a ResizeObserver measurement loop.
+            for (const grid of live) {
+                choicesGridSizes.set(grid, { width: grid.offsetWidth, height: grid.offsetHeight });
+            }
+        }
 
-            grid.style.setProperty('--choices-columns', String(selected));
-            grid.dataset.choiceColumns = String(selected);
-            delete grid.dataset.choicesMeasuring;
-            grid.querySelectorAll('.choices-content .katex').forEach(math => {
-                const content = math.closest('.choices-content');
-                if (!math.closest('.katex-display') && math.getBoundingClientRect().width > content.clientWidth + 1) {
-                    math.classList.add('choices-math-scroll');
+        function flushChoicesGridPending() {
+            choicesGridFrame = null;
+            const grids = Array.from(choicesGridPending);
+            choicesGridPending.clear();
+            pruneDetachedChoicesGridTargets();
+            adaptChoicesGridsBatch(grids);
+        }
+
+        function scheduleChoicesGridLayout(grid) {
+            if (!grid.isConnected) return;
+            choicesGridPending.add(grid);
+            if (choicesGridFrame !== null) return;
+            if (typeof window.requestAnimationFrame === 'function') {
+                choicesGridFrame = window.requestAnimationFrame(flushChoicesGridPending);
+            } else {
+                flushChoicesGridPending();
+            }
+        }
+
+        function ensureChoicesGridResizeObserver() {
+            if (choicesGridResizeObserver || typeof ResizeObserver === 'undefined') return;
+            choicesGridResizeObserver = new ResizeObserver(entries => {
+                pruneDetachedChoicesGridTargets();
+                for (const entry of entries) {
+                    const grid = entry.target;
+                    if (!grid.isConnected) continue;
+                    const previous = choicesGridSizes.get(grid);
+                    const boxes = entry.borderBoxSize;
+                    const box = Array.isArray(boxes) ? boxes[0] : boxes;
+                    const width = box ? Math.round(box.inlineSize) : grid.offsetWidth;
+                    const height = box ? Math.round(box.blockSize) : grid.offsetHeight;
+                    if (previous && previous.width === width && previous.height === height) continue;
+                    scheduleChoicesGridLayout(grid);
                 }
             });
         }
@@ -2180,22 +2871,24 @@ window.normalizeEditorFractions = normalizeEditorFractions;
             const grids = [];
             if (root.matches && root.matches('.choices-grid')) grids.push(root);
             if (root.querySelectorAll) grids.push(...root.querySelectorAll('.choices-grid'));
-
-            grids.forEach(grid => {
-                adaptSingleChoicesGrid(grid);
+            ensureChoicesGridResizeObserver();
+            pruneDetachedChoicesGridTargets();
+            adaptChoicesGridsBatch(grids);
+            for (const grid of grids) {
+                if (!grid.isConnected) continue;
                 grid.querySelectorAll('img').forEach(img => {
-                    if (!img.complete) {
-                        img.addEventListener('load', () => adaptSingleChoicesGrid(grid), { once: true });
+                    if (!img.complete && !choicesGridImages.has(img)) {
+                        choicesGridImages.add(img);
+                        const update = () => scheduleChoicesGridLayout(grid);
+                        img.addEventListener('load', update);
+                        img.addEventListener('error', update);
                     }
                 });
-                if (typeof ResizeObserver !== 'undefined' && !choicesGridResizeObservers.has(grid)) {
-                    const observer = new ResizeObserver(() => {
-                        window.requestAnimationFrame(() => adaptSingleChoicesGrid(grid));
-                    });
-                    observer.observe(grid);
-                    choicesGridResizeObservers.set(grid, observer);
+                if (choicesGridResizeObserver && !choicesGridObserved.has(grid)) {
+                    choicesGridObserved.add(grid);
+                    choicesGridResizeObserver.observe(grid);
                 }
-            });
+            }
         }
         window.adaptChoicesGridLayout = adaptChoicesGridLayout;
 
@@ -2223,8 +2916,13 @@ window.normalizeEditorFractions = normalizeEditorFractions;
                     return;
                 }
                 
-                const preparedHtml = renderQuestionPreviewContent(previewContainer, text, { imageLayouts: FigureLayoutState.imageLayouts });
-                renderQuestionPreviewContent(paperContainer, text, { preparedHtml: preparedHtml });
+                const referenceContext = window.QuestionReferenceState.context('content', text);
+                const preparedHtml = renderQuestionPreviewContent(previewContainer, text, {
+                    imageLayouts: FigureLayoutState.imageLayouts, referenceContext
+                });
+                renderQuestionPreviewContent(paperContainer, text, {
+                    preparedHtml, imageLayouts: FigureLayoutState.imageLayouts, referenceContext
+                });
                 if (typeof window.applyEditorFigureLayoutPreview === 'function') {
                     window.applyEditorFigureLayoutPreview(previewContainer, text);
                     window.applyEditorFigureLayoutPreview(paperContainer, text);
@@ -2246,7 +2944,7 @@ window.normalizeEditorFractions = normalizeEditorFractions;
                     return;
                 }
                 
-                let html = parseMarkdownWithMath(text);
+                let html = parseMarkdownWithMath(text, {}, window.QuestionReferenceState.context('answer_markdown', text));
                 previewContainer.innerHTML = html;
                 paperContainer.innerHTML = html;
                 
@@ -2293,7 +2991,7 @@ window.normalizeEditorFractions = normalizeEditorFractions;
                 }
                 
                 if (wrapper) wrapper.classList.remove('hidden');
-                let html = parseMarkdownWithMath(text);
+                let html = parseMarkdownWithMath(text, {}, window.QuestionReferenceState.context('review', text));
                 if (content) content.innerHTML = html;
                 
                 try {
@@ -2574,6 +3272,7 @@ window.normalizeEditorFractions = normalizeEditorFractions;
         }
         if (typeof katex !== 'undefined') {
             katex.__defineMacro('\\textdollar', '\\text{\\$}');
+            katex.__defineMacro('\\strut', '\\rule[-0.36em]{0em}{1.2em}');
             registerParallelogramSymbol(katex);
             registerSchoolMathSymbols(katex);
         }
@@ -2649,6 +3348,8 @@ window.normalizeEditorFractions = normalizeEditorFractions;
             protect(/\\ang\s*\{[+\-\d.,;\s]*\}/g, match => '\\(' + match + '\\)');
 
             [
+                // Choice layout keys are TeX parameters, not naked equations.
+                /\\begin\{choices\}(?:\[[^\]\n]*\])?/g,
                 /\\(?:begin|end)\{[^}\n]+\}/g,
                 /\\item\b/g,
                 /\\fillin\b/g,
@@ -2688,7 +3389,7 @@ window.normalizeEditorFractions = normalizeEditorFractions;
         }
 
         function previewLiteralPattern() {
-            return /```[\s\S]*?(?:```|$)|~~~[\s\S]*?(?:~~~|$)|(`+)[^\n]*?\1(?!`)|\\begin\{(tikzpicture|verbatim\*?|Verbatim\*?|lstlisting|minted|comment)\}[\s\S]*?(?:\\end\{\2\}|$)|\\(?:verb|Verb|lstinline)\*?(?:\[[^\]\n]*\])?([^\w\s{])[^\n]*?(?:\3|(?=\r?\n)|$)|\\mintinline(?:\[[^\]\n]*\])?\{[^{}\n]*\}([^\w\s{])[^\n]*?(?:\4|(?=\r?\n)|$)|\\(?:detokenize|url|path|lstinline\*?(?:\[[^\]\n]*\])?|mintinline(?:\[[^\]\n]*\])?\{[^{}\n]*\})\s*\{|<(?:[cC][oO][dD][eE]|[pP][rR][eE])\b[^>]*>[\s\S]*?(?:<\/(?:[cC][oO][dD][eE]|[pP][rR][eE])\s*>|$)|!\[[^\]\n]*\]\([^\n)]*\)|\]\([^\n)]*\)|[hH][tT][tT][pP][sS]?:\/\/[^\s<>"']+|<mathbank-math\b[^>]*>[\s\S]*?<\/mathbank-math\s*>|<\/?[A-Za-z][^>\n]*>|\[\[MBM_[A-Za-z0-9_:-]+\]\]/g;
+            return /```[\s\S]*?(?:```|$)|~~~[\s\S]*?(?:~~~|$)|(`+)[\s\S]*?\1(?!`)|\\begin\{(tikzpicture|verbatim\*?|Verbatim\*?|lstlisting|minted|comment)\}[\s\S]*?(?:\\end\{\2\}|$)|\\(?:verb|Verb|lstinline)\*?(?:\[[^\]\n]*\])?([^\w\s{])[^\n]*?(?:\3|(?=\r?\n)|$)|\\mintinline(?:\[[^\]\n]*\])?\{[^{}\n]*\}([^\w\s{])[^\n]*?(?:\4|(?=\r?\n)|$)|\\(?:detokenize|url|path|lstinline\*?(?:\[[^\]\n]*\])?|mintinline(?:\[[^\]\n]*\])?\{[^{}\n]*\})\s*\{|<(?:[cC][oO][dD][eE]|[pP][rR][eE])\b[^>]*>[\s\S]*?(?:<\/(?:[cC][oO][dD][eE]|[pP][rR][eE])\s*>|$)|!\[[^\]\n]*\]\([^\n)]*\)|\]\([^\n)]*\)|[hH][tT][tT][pP][sS]?:\/\/[^\s<>"']+|<mathbank-math\b[^>]*>[\s\S]*?<\/mathbank-math\s*>|<\/?[A-Za-z][^>\n]*>|\[\[MBM_[A-Za-z0-9_:-]+\]\]/g;
         }
 
         function previewLiteralEnd(text, match) {
@@ -2705,8 +3406,8 @@ window.normalizeEditorFractions = normalizeEditorFractions;
                     + '{' + opening[1].length + ',}[ \\t]*\\r?$', 'm').exec(text.slice(bodyStart));
                 return closing ? bodyStart + closing.index + closing[0].length : text.length;
             }
-            // Inline code may use three or more ticks; the broad fence token
-            // must not stop at a shorter run inside that literal payload.
+            // Inline code may span lines and use three or more ticks; the
+            // broad fence token must not stop at a shorter run in its payload.
             const ticks = /^`+/.exec(tail);
             if (ticks) {
                 const closing = new RegExp('`+', 'g');
@@ -2857,7 +3558,7 @@ window.normalizeEditorFractions = normalizeEditorFractions;
             return parts.join('');
         }
 
-        function replaceLatexEnvironmentsForPreview(text, replace) {
+        function replaceLatexEnvironmentsForPreview(text, replace, allEnvironments = false) {
             const recognized = /^(tabular\*?|tabularx|longtable|tblr|longtblr|talltblr|equation\*?|align\*?|alignat\*?|gather\*?|multline\*?|displaymath|math|cases|aligned|alignedat|gathered|matrix|pmatrix|bmatrix|Bmatrix|vmatrix|Vmatrix|smallmatrix|array|split)$/;
             const tokenPattern = /\\(begin|end)\{([^{}\n]+)\}/g;
             const literalPattern = previewLiteralPattern();
@@ -2877,12 +3578,14 @@ window.normalizeEditorFractions = normalizeEditorFractions;
                 }
                 if (literal && literal.index <= match.index && previewLiteralEnd(text, literal) > match.index) continue;
                 const name = match[2];
-                if (match[1] !== 'begin' || !recognized.test(name) || isLatexTokenEscaped(text, match.index)) continue;
+                if (match[1] !== 'begin' || (!allEnvironments && !recognized.test(name))
+                        || isLatexTokenEscaped(text, match.index)) continue;
                 const bodyStart = tokenPattern.lastIndex;
                 const nestedPattern = /\\(begin|end)\{([^{}\n]+)\}/g;
                 nestedPattern.lastIndex = bodyStart;
                 const stack = [name];
                 let nested;
+                let complete = false;
                 while ((nested = nestedPattern.exec(text))) {
                     if (isLatexTokenEscaped(text, nested.index)) continue;
                     if (nested[1] === 'begin') stack.push(nested[2]);
@@ -2894,8 +3597,16 @@ window.normalizeEditorFractions = normalizeEditorFractions;
                             text.slice(match.index, end), name, text.slice(bodyStart, nested.index)
                         ));
                         copied = tokenPattern.lastIndex = end;
+                        complete = true;
                         break;
                     }
+                }
+                if (allEnvironments && !complete) {
+                    // A malformed/unclosed TeX block cannot provide reliable
+                    // Markdown row boundaries. Leave its entire tail intact.
+                    parts.push(text.slice(copied, match.index), replace(text.slice(match.index), name, ''));
+                    copied = text.length;
+                    break;
                 }
             }
             parts.push(text.slice(copied));
@@ -2903,9 +3614,304 @@ window.normalizeEditorFractions = normalizeEditorFractions;
         }
         window.normalizeNakedMathForPreview = normalizeNakedMathForPreview;
 
+        function padTallMathRowsForPreview(text) {
+            // A transparent native KaTeX box contributes real height/depth to
+            // array layout. CSS line-height and arraystretch cannot add space
+            // once a tall fraction already exceeds the default row strut.
+            function groupEnd(source, start, opening = '{', closing = '}') {
+                if (source[start] !== opening) return -1;
+                let depth = 0;
+                for (let index = start; index < source.length; index++) {
+                    if (isLatexTokenEscaped(source, index)) continue;
+                    if (source[index] === opening) depth++;
+                    else if (source[index] === closing && --depth === 0) return index + 1;
+                }
+                return -1;
+            }
+
+            function padEnvironment(environment, name, originalBody, commentMarkers) {
+                if (!originalBody) return environment;
+                const bodyStart = environment.indexOf('}') + 1;
+                const rebuild = body => environment.slice(0, bodyStart) + body
+                    + environment.slice(bodyStart + originalBody.length);
+                const displayStyle = /^(aligned|alignedat|gathered|split|align\*?|alignat\*?|gather\*?)$/.test(name);
+                const textStyle = /^(array|matrix|pmatrix|bmatrix|Bmatrix|vmatrix|Vmatrix|cases)$/.test(name);
+                if (!displayStyle && !textStyle) {
+                    return rebuild(padEnvironments(originalBody, commentMarkers));
+                }
+                // Do not reinterpret literal separators or malformed groups.
+                if (/\\(?:verb|Verb|lstinline|mintinline)\b/.test(originalBody)) return environment;
+                let prefixEnd = 0;
+                const spaces = () => { while (/\s/.test(originalBody[prefixEnd] || '')) prefixEnd++; };
+                spaces();
+                if (/^(array|aligned|alignedat|gathered)$/.test(name) && originalBody[prefixEnd] === '[') {
+                    prefixEnd = groupEnd(originalBody, prefixEnd, '[', ']');
+                    if (prefixEnd < 0) return environment;
+                    spaces();
+                }
+                if (/^(array|alignedat|alignat\*?)$/.test(name)) {
+                    prefixEnd = groupEnd(originalBody, prefixEnd);
+                    if (prefixEnd < 0) return environment;
+                }
+
+                const body = originalBody.slice(prefixEnd);
+                const pieces = [];
+                const environments = [];
+                let depth = 0, copied = 0;
+                for (let index = 0; index < body.length; index++) {
+                    if (isLatexTokenEscaped(body, index)) continue;
+                    if (body[index] === '%') {
+                        const end = body.indexOf('\n', index);
+                        index = end < 0 ? body.length : end;
+                        continue;
+                    }
+                    if (body[index] === '\\') {
+                        const nested = /^\\(begin|end)\{([^{}\n]+)\}/.exec(body.slice(index));
+                        if (nested) {
+                            if (nested[1] === 'begin') environments.push(nested[2]);
+                            else if (environments.pop() !== nested[2]) return environment;
+                            index += nested[0].length - 1;
+                            continue;
+                        }
+                    }
+                    if (body[index] === '{') depth++;
+                    else if (body[index] === '}' && --depth < 0) return environment;
+                    if (depth || environments.length) continue;
+                    let end = index;
+                    if (body[index] === '&') end++;
+                    else if (body.startsWith('\\\\', index) || /^\\cr\b/.test(body.slice(index))) {
+                        end += body.startsWith('\\\\', index) ? 2 : 3;
+                        if (body[end] === '*') end++;
+                        const gapStart = end + (/^\s*/.exec(body.slice(end))[0].length);
+                        if (body[gapStart] === '[') {
+                            end = groupEnd(body, gapStart, '[', ']');
+                            if (end < 0) return environment;
+                        }
+                    }
+                    if (end > index) {
+                        pieces.push({cell: body.slice(copied, index), separator: body.slice(index, end)});
+                        copied = end;
+                        index = end - 1;
+                    }
+                }
+                if (depth || environments.length) return environment;
+                pieces.push({cell: body.slice(copied), separator: ''});
+                let rowCount = 0, rowHasContent = false;
+                pieces.forEach(({cell, separator}) => {
+                    let visible = cell.replace(/\\(?:hline|hdashline)\b/g, '');
+                    commentMarkers.forEach(marker => { visible = visible.split(marker).join(''); });
+                    if (visible.trim()) rowHasContent = true;
+                    if (separator !== '&') {
+                        if (rowHasContent) rowCount++;
+                        rowHasContent = false;
+                    }
+                });
+                const multiline = rowCount > 1;
+                const style = displayStyle ? '\\displaystyle ' : '\\textstyle ';
+                const padded = pieces.map(({cell, separator}) => {
+                    // Keep rules and numbering at their original array level.
+                    // Numbering in a cell must never be duplicated or hidden
+                    // inside a text box; other cells can still gain padding.
+                    const leading = /^(\s*(?:(?:\\hline|\\hdashline)\b\s*)*)/.exec(cell)[0];
+                    let content = padEnvironments(cell.slice(leading.length), commentMarkers);
+                    const tall = multiline && /\\(?:dfrac|cfrac|frac|dbinom|binom)(?![A-Za-z])/.test(content);
+                    // A top-level tag is invisible in the cell, but must be
+                    // parsed once at the array level, outside the color box.
+                    let tags = '', taggedBody = '', tagCopied = 0, tagDepth = 0;
+                    const tagEnvironments = [];
+                    let validTags = true;
+                    for (let index = 0; index < content.length; index++) {
+                        if (isLatexTokenEscaped(content, index)) continue;
+                        if (content[index] === '{') tagDepth++;
+                        else if (content[index] === '}') tagDepth--;
+                        if (content[index] !== '\\') continue;
+                        const nested = /^\\(begin|end)\{([^{}\n]+)\}/.exec(content.slice(index));
+                        if (nested) {
+                            if (nested[1] === 'begin') tagEnvironments.push(nested[2]);
+                            else tagEnvironments.pop();
+                            index += nested[0].length - 1;
+                            continue;
+                        }
+                        if (tagDepth || tagEnvironments.length) continue;
+                        const tag = /^\\(?:tag(?![A-Za-z])|notag\b|nonumber\b)/.exec(content.slice(index));
+                        if (!tag) continue;
+                        let end = index + tag[0].length;
+                        if (tag[0] === '\\tag') {
+                            if (content[end] === '*') end++;
+                            end += /^\s*/.exec(content.slice(end))[0].length;
+                            end = groupEnd(content, end);
+                            if (end < 0) { validTags = false; break; }
+                        }
+                        taggedBody += content.slice(tagCopied, index);
+                        tags += content.slice(index, end);
+                        tagCopied = end;
+                        index = end - 1;
+                    }
+                    taggedBody += content.slice(tagCopied);
+                    if (tall && validTags && !/\\(?:tag|notag|nonumber|hline|hdashline)\b/.test(taggedBody)) {
+                        // Explicit style restores the cell's original math
+                        // style after colorbox enters text mode. A newline
+                        // prevents a trailing TeX comment consuming our braces.
+                        content = '\\colorbox{transparent}{\\ensuremath{' + style + taggedBody + '\n}}' + tags;
+                    }
+                    return leading + content + separator;
+                }).join('');
+                return rebuild(originalBody.slice(0, prefixEnd) + padded);
+            }
+            function padEnvironments(source, inheritedComments = []) {
+                // The shared environment scanner sees source tokens, so hide
+                // comment payloads before it can mistake a commented end for
+                // the real end. Escaped percentages still belong to the math.
+                const comments = [];
+                const prefix = previewGuardPrefix(source, 'C');
+                let protectedSource = '', copied = 0;
+                for (let index = source.indexOf('%'); index >= 0; index = source.indexOf('%', index + 1)) {
+                    if (isLatexTokenEscaped(source, index)) continue;
+                    const newline = source.indexOf('\n', index);
+                    const end = newline < 0 ? source.length : newline;
+                    const marker = prefix + comments.length + '\uE003';
+                    comments.push({marker, original: source.slice(index, end)});
+                    protectedSource += source.slice(copied, index) + marker;
+                    copied = end;
+                    index = end - 1;
+                }
+                protectedSource += source.slice(copied);
+                let padded = replaceLatexEnvironmentsForPreview(protectedSource, (environment, name, body) =>
+                    padEnvironment(environment, name, body, inheritedComments.concat(comments.map(comment => comment.marker))));
+                comments.forEach(({marker, original}) => { padded = padded.split(marker).join(original); });
+                return padded;
+            }
+            return replaceDelimitedMathForPreview(text, (whole, inner, opening, closing) =>
+                opening + padEnvironments(inner) + closing);
+        }
+
+        function extractMarkdownTablesForPreview(text) {
+            // Only complete, rectangular pipe tables are layout evidence.
+            // Hide math and literal payloads before looking for column pipes;
+            // neither P(A|B), code, image paths nor existing TeX tables provide
+            // Markdown separators. Keep every original cell for the shared
+            // renderer, instead of parsing mixed TeX as a Markdown document.
+            const saved = [];
+            const guardPrefix = previewGuardPrefix(text, 'D');
+            const tablePrefix = previewGuardPrefix(text, 'T');
+            const save = original => {
+                const marker = guardPrefix + saved.length + '\uE003';
+                saved.push({marker, original});
+                return marker;
+            };
+            const restore = value => {
+                saved.slice().reverse().forEach(({marker, original}) => {
+                    value = value.split(marker).join(original);
+                });
+                return value;
+            };
+            let source = text.replace(/<(table|script|style|textarea)\b[^>]*>[\s\S]*?(?:<\/\1\s*>|$)/gi, save);
+            source = replacePreviewLiteralSpans(source, original => {
+                // The shared scanner owns the ](URL) suffix of a Markdown
+                // link. Keep its closing label bracket visible to the group
+                // scanner, while the complete URL remains a literal guard.
+                return original.startsWith('](') ? ']' + save(original.slice(1)) : save(original);
+            });
+            source = replaceDelimitedMathForPreview(source, save);
+            source = replaceLatexEnvironmentsForPreview(source, save, true);
+
+            function splitRow(line) {
+                // Four-space indentation belongs to a code block. Require
+                // both outer pipes and at least two columns; a vertical-bar
+                // expression or an incomplete table remains ordinary text.
+                if (!/^[ ]{0,3}\|/.test(line)) return null;
+                const value = line.trim();
+                if (!value.endsWith('|') || isLatexTokenEscaped(value, value.length - 1)) return null;
+                const cells = [];
+                const groups = [];
+                let cell = '';
+                for (let index = 1; index < value.length - 1; index++) {
+                    const char = value[index];
+                    const escaped = isLatexTokenEscaped(value, index);
+                    // Complete math/code is already guarded. An opener still
+                    // visible here is unfinished, so do not guess its columns.
+                    if ((char === '$' || char === '`') && !escaped) return null;
+                    if ('{[('.includes(char) && !escaped) {
+                        groups.push({'{':'}', '[':']', '(':')'}[char]);
+                    } else if ('}])'.includes(char) && !escaped) {
+                        const expected = groups.pop();
+                        if (!expected || (expected !== char
+                                && !([expected, char].includes(']') && [expected, char].includes(')')))) return null;
+                    }
+                    if (value[index] === '\\' && value[index + 1] === '|'
+                            && !escaped && !groups.length) {
+                        cell += '|';
+                        index++;
+                    } else if (value[index] === '|' && !escaped && !groups.length) {
+                        cells.push(cell.trim());
+                        cell = '';
+                    } else {
+                        cell += value[index];
+                    }
+                }
+                cells.push(cell.trim());
+                return !groups.length && cells.length >= 2 && cells.length <= 32 ? cells : null;
+            }
+
+            const lines = source.replace(/\r\n/g, '\n').split('\n');
+            const output = [];
+            const tables = [];
+            for (let index = 0; index < lines.length; index++) {
+                const header = splitRow(lines[index]);
+                const separator = index + 1 < lines.length ? splitRow(lines[index + 1]) : null;
+                if (!header || !separator || header.length !== separator.length
+                        || !separator.every(cell => /^:?-{3,}:?$/.test(cell))) {
+                    output.push(lines[index]);
+                    continue;
+                }
+                const rows = [];
+                let next = index + 2;
+                let rectangular = true;
+                while (next < lines.length && /^[ ]*\|/.test(lines[next])) {
+                    const row = splitRow(lines[next]);
+                    if (!row || row.length !== header.length) rectangular = false;
+                    if (row && row.every(cell => /^:?-{3,}:?$/.test(cell))) rectangular = false;
+                    if (row) rows.push(row);
+                    next++;
+                }
+                if (!rectangular || !rows.length) {
+                    output.push(...lines.slice(index, next));
+                    index = next - 1;
+                    continue;
+                }
+                const marker = tablePrefix + tables.length + '\uE003';
+                tables.push({
+                    marker,
+                    header: header.map(restore),
+                    rows: rows.map(row => row.map(restore)),
+                    align: separator.map(cell => cell.startsWith(':') && cell.endsWith(':')
+                        ? 'text-center' : cell.endsWith(':') ? 'text-right'
+                        : 'text-left')
+                });
+                output.push(marker);
+                index = next - 1;
+            }
+            return {source: restore(output.join('\n')), tables};
+        }
+
+        function stripSourceAttributionComment(text) {
+            const prefix = '<!-- MathBank source attribution:\n';
+            if (!text.startsWith(prefix)) return text;
+            const closing = text.indexOf('-->', prefix.length);
+            if (closing < 0) return text;
+            const body = text.slice(prefix.length, closing);
+            if (!body.endsWith('\n') || body.includes('<!--')) return text;
+            if (!text.startsWith('\n-->\n\n', closing - 1)) return text;
+            return text.slice(closing + '-->\n\n'.length);
+        }
+
         function preprocessFormulaForKaTeX(text, imageLayouts = {}) {
             if (!text) return "";
 
+            text = stripSourceAttributionComment(text);
+
+            const markdownTables = extractMarkdownTablesForPreview(text);
+            text = markdownTables.source;
             const literalEntries = [];
             const literalPrefix = previewGuardPrefix(text, 'L');
             const protectedText = replacePreviewLiteralSpans(text, original => {
@@ -2921,11 +3927,24 @@ window.normalizeEditorFractions = normalizeEditorFractions;
                 return marker;
             });
             
-            // Clean up any historical \vphantom{...} or \strut from underline text to prevent KaTeX rendering artifact letters
-            let clean = protectedText.replace(/\\vphantom\s*\{\s*[^}]*?\}/g, '')
-                            .replace(/\\strut\b/g, '');
+            // Only remove legacy struts from prose. Inside complete math and
+            // tables they are intentional row-height information.
+            const strutGuards = [];
+            const strutPrefix = previewGuardPrefix(protectedText, 'S');
+            const saveStrutMath = original => {
+                const marker = strutPrefix + strutGuards.length + '\uE003';
+                strutGuards.push({marker, original});
+                return marker;
+            };
+            let clean = replaceDelimitedMathForPreview(protectedText, saveStrutMath);
+            clean = replaceLatexEnvironmentsForPreview(clean, saveStrutMath);
+            clean = clean.replace(/\\vphantom\s*\{\s*[^}]*?\}/g, '').replace(/\\strut\b/g, '');
+            strutGuards.slice().reverse().forEach(({marker, original}) => {
+                clean = clean.split(marker).join(original);
+            });
 
             clean = normalizeNakedMathForPreview(clean);
+            clean = padTallMathRowsForPreview(clean);
 
             // Move terminal blank punctuation only within a complete math
             // span. The closing $ of $x$ cannot open a prose \fillin span.
@@ -2997,32 +4016,15 @@ window.normalizeEditorFractions = normalizeEditorFractions;
                                .replace(/\\\\\s*\\item/g, '\\item')
                                .replace(/\\item\s*\\\\/g, '\\item');
 
-            // Process choices environment (exam-zh-choices)
-            tempText = tempText.replace(/\\begin\{choices\}([\s\S]*?)\\end\{choices\}/g, function(match, inner) {
+            // Process choices environment (exam-zh-choices). Automatic grids
+            // always test 4/2/1 rendered widths; TeX length is not a width bound.
+            tempText = tempText.replace(/\\begin\{choices\}(?:\[([^\]]*)\])?([\s\S]*?)\\end\{choices\}/g, function(match, parameters, inner) {
                 const items = inner.split(/\\item/).map(item => item.trim()).filter(item => item.length > 0);
                 const labels = ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H'];
-                let maxLen = 0;
                 const hasImages = items.some(item => /!\[[^\]]*\]\([^)]+\)/.test(item));
-                const fourImageOptions = items.length === 4 && items.every(item =>
-                    /^!\[[^\]]*\]\([^)]+\)$/.test(item.trim())
-                );
-                items.forEach(item => {
-                    const approxText = item.replace(/!\[[^\]]*\]\([^)]+\)/g, '')
-                        .replace(/@@MATH_PLACEHOLDER_\d+@@/g, '********');
-                    if (approxText.length > maxLen) {
-                        maxLen = approxText.length;
-                    }
-                });
-
-                let gridCols = "grid-cols-4";
-                if (maxLen > 24) {
-                    gridCols = "grid-cols-1";
-                } else if ((hasImages && !fourImageOptions) || maxLen > 10) {
-                    gridCols = "grid-cols-2";
-                }
-
-                const preferredColumns = gridCols === 'grid-cols-1' ? 1 : (gridCols === 'grid-cols-2' ? 2 : 4);
-                let html = `<div class="grid ${gridCols} gap-2 my-2 select-none choices-grid ${hasImages ? 'choices-has-images' : ''} items-baseline" data-preferred-columns="${preferredColumns}">`;
+                const explicitColumns = /(?:^|,)\s*columns\s*=\s*(1|2|4)\s*(?:,|$)/.exec(parameters || '');
+                const preferredColumns = explicitColumns ? Number(explicitColumns[1]) : 4;
+                let html = `<div class="grid grid-cols-${preferredColumns} gap-2 my-2 select-none choices-grid ${hasImages ? 'choices-has-images' : ''} items-baseline" data-preferred-columns="${preferredColumns}">`;
                 items.forEach((item, idx) => {
                     const label = labels[idx] || (idx + 1);
                     let cleanItem = item;
@@ -3253,7 +4255,13 @@ window.normalizeEditorFractions = normalizeEditorFractions;
             const paragraphBreak = '<span class="mb-preview-paragraph-break" aria-hidden="true"></span>';
             // Keep subquestions on distinct paragraphs without adding a second
             // gap when the source already has a blank line or a hard break.
-            tempText = tempText.replace(/(?:\r?\n|\s+|([。；;!！\.])\s*)([(（]?(?:[1-9]|10|[ivxIVX]+|[①②③④⑤⑥⑦⑧⑨⑩])[)）\.]|\([1-9]\)|（[1-9]）|\([ivxIVX]+\)|（[ivxIVX]+）)(?=\s*[\u4e00-\u9fa5a-zA-Z\$])/g, function(match, punctuation, marker) {
+            tempText = tempText.replace(/(?:\r?\n|\s+|([。；;!！\.])\s*)([(（]?(?:[1-9]|10|[ivxIVX]+|[①②③④⑤⑥⑦⑧⑨⑩])[)）\.]|\([1-9]\)|（[1-9]）|\([ivxIVX]+\)|（[ivxIVX]+）)(?=\s*[\u4e00-\u9fa5a-zA-Z\$])/g, function(match, punctuation, marker, offset, source) {
+                const beforeMarker = source.slice(0, offset + match.length - marker.length);
+                // The optional opening bracket must not let a suffix such as
+                // 5) in (6.9.5), or 8. at the end of 2, 4, 6, 8., become a
+                // subquestion. These are continuous prose in the source.
+                if (!/^[(（]/.test(marker)
+                        && /(?:\d[.．]\s*|\d\s*[,，]\s*)$/.test(beforeMarker)) return match;
                 return (punctuation || '') + paragraphBreak + marker + ' ';
             });
 
@@ -3290,6 +4298,11 @@ window.normalizeEditorFractions = normalizeEditorFractions;
                     .replace(new RegExp(paragraphBreak + '\\s*' + placeholder, 'g'), placeholder)
                     .replace(new RegExp(placeholder + '\\s*' + paragraphBreak, 'g'), placeholder);
             });
+            markdownTables.tables.forEach(({marker}) => {
+                tempText = tempText
+                    .replace(new RegExp(paragraphBreak + '\\s*' + marker, 'g'), marker)
+                    .replace(new RegExp(marker + '\\s*' + paragraphBreak, 'g'), marker);
+            });
                                
             // Restore math blocks with HTML escaping
             function escapeHtml(str) {
@@ -3310,14 +4323,196 @@ window.normalizeEditorFractions = normalizeEditorFractions;
                 const html = '<code class="mb-preview-literal">' + escapeHtml(visible) + '</code>';
                 tempText = tempText.split(marker).join(html);
             });
+
+            // A table owns its rows, so prose line folding and subquestion
+            // inference above cannot alter its cells. Each cell still uses
+            // the same formula, image and literal protections. The final
+            // parseMarkdownWithMath call sanitizes the complete result.
+            markdownTables.tables.forEach(table => {
+                const renderRow = (cells, tag) => '<tr>' + cells.map((cell, index) => {
+                    const weight = tag === 'th' ? 'font-semibold' : 'font-normal';
+                    return '<' + tag + ' class="px-3 py-1.5 border border-slate-300 dark:border-slate-700 '
+                        + table.align[index] + ' ' + weight + ' align-middle whitespace-nowrap">'
+                        + preprocessFormulaForKaTeX(cell, imageLayouts) + '</' + tag + '>';
+                }).join('') + '</tr>';
+                const html = '<div class="mb-markdown-table-preview overflow-x-auto my-3 max-w-full text-center">'
+                    + '<table class="inline-table mx-auto border-collapse border border-slate-300 dark:border-slate-600 '
+                    + 'bg-slate-50/60 dark:bg-slate-800/40 rounded-lg shadow-sm">'
+                    + '<thead>' + renderRow(table.header, 'th') + '</thead><tbody>'
+                    + table.rows.map(row => renderRow(row, 'td')).join('') + '</tbody></table></div>';
+                tempText = tempText.split(table.marker).join(html);
+            });
             
             return tempText;
         }
         window.preprocessFormulaForKaTeX = preprocessFormulaForKaTeX;
             
-        function parseMarkdownWithMath(text, imageLayouts = {}) {
+        const QuestionReferenceTools = (() => {
+            let counter = 0;
+            let jumpSequence = 0;
+            const controls = new Map();
+            function prepare(text, context) {
+                const source = String(text || '');
+                if (!context || context.source !== source || !Array.isArray(context.references)) {
+                    return {source, entries: []};
+                }
+                const chars = Array.from(source);
+                // Even a corrupt/imported relation must never turn code, a URL,
+                // an image path or a mathematical expression into a jump control.
+                let prose = replacePreviewLiteralSpans(source, value => ' '.repeat(value.length));
+                prose = replaceDelimitedMathForPreview(prose, value => ' '.repeat(value.length));
+                prose = replaceLatexEnvironmentsForPreview(prose, (value, name) =>
+                    /^(?:tikzpicture|math|displaymath|equation\*?|align\*?|alignat\*?|gather\*?|multline\*?|array|cases|aligned|gathered)$/.test(name)
+                        ? ' '.repeat(value.length) : value);
+                const groups = [], groupsBySpan = new Map();
+                let lastEnd = -1;
+                context.references.slice().sort((a, b) => Number(a.start) - Number(b.start)).forEach(reference => {
+                    const start = reference.start, end = reference.end;
+                    const spanKey = start + ':' + end;
+                    const existing = groupsBySpan.get(spanKey);
+                    if (reference.field !== context.field || !Number.isSafeInteger(start)
+                            || !Number.isSafeInteger(end) || start < 0 || end <= start || end > chars.length
+                            || (start < lastEnd && !existing) || typeof reference.text !== 'string'
+                            || chars.slice(start, end).join('') !== reference.text
+                            || prose.slice(chars.slice(0, start).join('').length,
+                                chars.slice(0, end).join('').length) !== reference.text) return;
+                    const prefix = String(reference.prefix || ''), suffix = String(reference.suffix || '');
+                    if (prefix && chars.slice(Math.max(0, start - Array.from(prefix).length), start).join('') !== prefix) return;
+                    if (suffix && chars.slice(end, end + Array.from(suffix).length).join('') !== suffix) return;
+                    const target = Number(reference.target_question_id), seq = Number(reference.seq_num);
+                    const resolved = reference.status === 'resolved' && Number.isSafeInteger(target) && target > 0
+                        && Number.isSafeInteger(seq) && seq > 0;
+                    if (!resolved && !['target_deleted', 'unresolved'].includes(reference.status)) return;
+                    const member = {reference, target, seq, resolved};
+                    if (existing) {
+                        if (!existing.members.some(item => item.reference.label_key === reference.label_key)) existing.members.push(member);
+                    } else {
+                        const group = {
+                            reference, members: [member], isCurrent: context.isCurrent,
+                            sourceQuestionId: context.sourceQuestionId,
+                            originalSource: typeof context.originalSource === 'string' ? context.originalSource : source
+                        };
+                        groups.push(group); groupsBySpan.set(spanKey, group); lastEnd = end;
+                    }
+                });
+                const entries = [];
+                groups.forEach(group => {
+                    group.isRange = group.members.length > 1 || group.reference.is_range === true
+                        || (Array.isArray(group.reference.candidate_label_keys) && group.reference.candidate_label_keys.length > 1);
+                    if (!group.isRange && !group.members[0].resolved
+                            && group.members[0].reference.status !== 'target_deleted') return;
+                    let marker;
+                    do { marker = '\uE010' + (++counter) + '\uE011'; } while (source.includes(marker));
+                    entries.push({...group, marker, ...group.members[0], members: group.members});
+                });
+                entries.slice().reverse().forEach(entry => { chars.splice(entry.reference.end, 0, entry.marker); });
+                return {source: chars.join(''), entries};
+            }
+            function appendControls(html, entries) {
+                if (!entries.length) return html;
+                const template = document.createElement('template');
+                template.innerHTML = html;
+                const walker = document.createTreeWalker(template.content, NodeFilter.SHOW_TEXT);
+                const nodes = []; while (walker.nextNode()) nodes.push(walker.currentNode);
+                nodes.forEach(node => {
+                    const matches = entries.filter(entry => node.nodeValue.includes(entry.marker));
+                    if (!matches.length) return;
+                    const fragment = document.createDocumentFragment();
+                    let remaining = node.nodeValue;
+                    while (matches.length) {
+                        matches.sort((a, b) => remaining.indexOf(a.marker) - remaining.indexOf(b.marker));
+                        const entry = matches.shift(), index = remaining.indexOf(entry.marker);
+                        fragment.appendChild(document.createTextNode(remaining.slice(0, index)));
+                        // Controls are created only after the normal rich-HTML
+                        // sanitizer. Its allowed tags/attributes remain unchanged.
+                        if (!node.parentElement || !node.parentElement.closest('code,pre,a,.katex')) {
+                            entry.members.forEach((member, memberIndex) => {
+                                const label = String(member.reference.label_key || member.reference.text);
+                                const unavailable = member.reference.status === 'target_deleted' ? '目标已删除' : '待关联';
+                                const control = document.createElement(member.resolved ? 'button' : 'span');
+                                control.className = 'mb-question-reference' + (member.resolved ? '' : ' is-unavailable');
+                                control.textContent = (entry.isRange ? label + '：' : '')
+                                    + (member.resolved ? '题库 #' + member.seq : unavailable);
+                                if (member.resolved) {
+                                    control.type = 'button';
+                                    control.setAttribute('aria-label', '打开' + label + '对应的题库题目 #' + member.seq);
+                                    const key = entry.marker.slice(1, -1) + '-' + memberIndex;
+                                    control.setAttribute('data-question-reference-key', key);
+                                    controls.set(key, {...member, isCurrent: entry.isCurrent,
+                                        sourceQuestionId: entry.sourceQuestionId, originalSource: entry.originalSource});
+                                } else control.setAttribute('aria-label', label + '对应的题目' + unavailable);
+                                fragment.appendChild(control);
+                            });
+                        }
+                        remaining = remaining.slice(index + entry.marker.length);
+                    }
+                    fragment.appendChild(document.createTextNode(remaining));
+                    node.replaceWith(fragment);
+                });
+                // Detached previews should not keep an unbounded registry alive.
+                // Keep controls that are still on screen even in a very large
+                // paper; dropping an arbitrary oldest key would disable it.
+                if (controls.size > 4096) {
+                    const retained = new Set(Array.from(document.querySelectorAll('button[data-question-reference-key]'))
+                        .map(button => button.getAttribute('data-question-reference-key')));
+                    entries.forEach(entry => entry.members.forEach((_, index) => retained.add(entry.marker.slice(1, -1) + '-' + index)));
+                    for (const key of controls.keys()) if (!retained.has(key)) controls.delete(key);
+                }
+                return template.innerHTML;
+            }
+            if (typeof document !== 'undefined') document.addEventListener('click', async event => {
+                const button = event.target && event.target.closest
+                    ? event.target.closest('button[data-question-reference-key]') : null;
+                if (!button) return;
+                const entry = controls.get(button.getAttribute('data-question-reference-key'));
+                if (!entry) return;
+                event.preventDefault(); event.stopPropagation();
+                if (typeof entry.isCurrent === 'function' && !entry.isCurrent()) {
+                    showToast('引用信息已变化，请稍候或保存后再查看', 'info');
+                    return;
+                }
+                const sourceId = Number(entry.sourceQuestionId), sequence = ++jumpSequence;
+                if (!Number.isSafeInteger(sourceId) || sourceId <= 0) return;
+                const session = EditorState.snapshot();
+                try {
+                    // Read the owner's current binding before following a stable
+                    // ID. External deletion/import can reuse an SQLite ID without
+                    // this page having received a mutation/focus event yet.
+                    const response = await fetch(`/api/questions/${sourceId}`);
+                    if (!response.ok) throw new Error('引用来源题目已失效');
+                    const owner = await response.json();
+                    if (sequence !== jumpSequence || !EditorState.isCurrent(session)
+                            || (typeof entry.isCurrent === 'function' && !entry.isCurrent())) return;
+                    const reference = entry.reference;
+                    const current = (owner.question_references || []).find(item => item.field === reference.field
+                        && item.start === (reference.original_start == null ? reference.start : reference.original_start)
+                        && item.end === (reference.original_end == null ? reference.end : reference.original_end)
+                        && item.book_key === reference.book_key && item.label_key === reference.label_key);
+                    if (Number(owner.id) !== sourceId || String(owner[reference.field] || '') !== entry.originalSource
+                            || !current || current.status !== 'resolved'
+                            || Number(current.target_question_id) !== entry.target) {
+                        window.dispatchEvent(new Event('mathbank-question-mutated'));
+                        showToast('此处引用已变化，已刷新引用信息，请重新查看', 'info');
+                        return;
+                    }
+                } catch (_) {
+                    showToast('无法核对引用题目，请稍候再试', 'error');
+                    return;
+                }
+                selectQuestionById(entry.target);
+            }, true);
+            return Object.freeze({prepare, appendControls});
+        })();
+        window.QuestionReferenceTools = QuestionReferenceTools;
+
+        function parseMarkdownWithMath(text, imageLayouts = {}, referenceContext = null) {
             if (!text) return "";
-            return window.MathBankSafe.sanitizeRichHtml(preprocessFormulaForKaTeX(text, imageLayouts));
+            if (!referenceContext) {
+                return window.MathBankSafe.sanitizeRichHtml(preprocessFormulaForKaTeX(text, imageLayouts));
+            }
+            const prepared = QuestionReferenceTools.prepare(text, referenceContext);
+            const html = window.MathBankSafe.sanitizeRichHtml(preprocessFormulaForKaTeX(prepared.source, imageLayouts));
+            return QuestionReferenceTools.appendControls(html, prepared.entries);
         }
         window.parseMarkdownWithMath = parseMarkdownWithMath;
 
@@ -3326,7 +4521,7 @@ window.normalizeEditorFractions = normalizeEditorFractions;
             const settings = options && typeof options === 'object' ? options : {};
             const includeImages = settings.includeImages !== false;
             let preparedHtml;
-            if (typeof settings.preparedHtml === 'string') {
+            if (typeof settings.preparedHtml === 'string' && !settings.referenceContext) {
                 preparedHtml = window.MathBankSafe.sanitizeRichHtml(settings.preparedHtml);
                 if (!includeImages) {
                     preparedHtml = preparedHtml.replace(/<img\b[^>]*>/gi, '');
@@ -3338,7 +4533,11 @@ window.normalizeEditorFractions = normalizeEditorFractions;
                         .replace(/!\[[^\]\n]*\]\(\s*(?:<[^>\n]*>|[^\s)]+)(?:\s+(?:"[^"\n]*"|'[^'\n]*'))?\s*\)/gi, '')
                         .replace(/<img\b[^>]*>/gi, '');
                 }
-                preparedHtml = parseMarkdownWithMath(source, settings.imageLayouts || {});
+                if (settings.referenceContext) {
+                    preparedHtml = parseMarkdownWithMath(source, settings.imageLayouts || {}, settings.referenceContext);
+                } else {
+                    preparedHtml = parseMarkdownWithMath(source, settings.imageLayouts || {});
+                }
             }
             container.innerHTML = preparedHtml;
             try {

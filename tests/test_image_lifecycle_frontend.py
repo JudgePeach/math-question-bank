@@ -31,6 +31,11 @@ function loadQuestions() {}
 function loadCategories() {}
 function refreshRelatedDropdown() {}
 function updateQuestionSaveButtonState() {}
+// The save slice calls reference lifecycle helpers declared earlier in import.js.
+let referenceRefreshSequence = 0;
+window.QuestionReferenceState = {reset() {}, hydrate() {}, invalidate() {}};
+window.refreshCurrentQuestionReferences = () => false;
+function updateEditorReferencePreviews() {}
 function clearContentOcrPreview() {}
 function clearOcrPreview() {}
 function renderParsedCardPreview() {}

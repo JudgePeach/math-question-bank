@@ -12,7 +12,7 @@ def test_details_are_registered_only_for_full_joint_pages(monkeypatch, mode):
     import main
     from mathbank import pdf_page_vision, pdf_region_vision, pdf_vision_details, pdf_native_regions
     with fitz.open() as document:
-        document.new_page(width=595, height=842)
+        document.new_page(width=595, height=842).insert_text((30, 40), "PDF fixture")
         raw_pdf = document.tobytes()
     task_id = "details-flow-" + uuid4().hex
     main.DOCUMENT_TASKS.create(task_id, document_type="pdf", temp_assets=[])

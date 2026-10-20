@@ -60,6 +60,36 @@ assert.equal(paragraphs(preprocessFormulaForKaTeX(multiline)),0);
 ''')
 
 
+def test_equation_references_and_numeric_lists_are_continuous_prose():
+    run_preview_script(r'''
+const paragraphs=html=>(html.match(/mb-preview-paragraph-break/g)||[]).length;
+for(const source of [
+    '式(6.9.5)与式(6.9.6)相加可得 $2P(A)=1$。',
+    '由不等式(6.0.1)可得结论，代入式（6.0.2）得到结果。',
+    '卡片数字依次为 2, 4, 6, 8. 两人进行四轮比赛。',
+    '可能取值为 0,1,2. 相应的概率为 $P(A)$。',
+    '可能取值为 0，1，2. 相应的概率为 $P(A)$。',
+    '参数为 0.5 时，结果为 1.2。',
+]) {
+    const html=preprocessFormulaForKaTeX(source);
+    assert.equal(paragraphs(html),0,html);
+    assert(!html.includes('<br>'),html);
+}
+for(const source of [
+    '解题过程。(1) 求 $x$；(2) 说明理由。',
+    '解题过程\n(1) 求 $x$。\n(2) 说明理由。',
+    '解题过程。1. 求 $x$；2. 说明理由。',
+    '解题过程。(i) 求 $x$；(ii) 说明理由。',
+]) {
+    const html=preprocessFormulaForKaTeX(source);
+    assert.equal(paragraphs(html),2,html);
+    assert.deepEqual(parsedFormulas(html),['x']);
+}
+assert.equal(preprocessFormulaForKaTeX(String.raw`式(6.9.5)\\与式(6.9.6)`),
+    '式(6.9.5)<br>与式(6.9.6)');
+''')
+
+
 @pytest.mark.skipif(os.environ.get("MATHBANK_TEST_BROWSER") != "1", reason="opt-in real paragraph layout")
 def test_word_answer_paragraph_spacing(browser, tmp_path):
     capture = os.environ.get("MATHBANK_TEST_WORD_SPACING_TASK")

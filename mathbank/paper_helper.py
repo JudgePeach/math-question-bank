@@ -1,5 +1,19 @@
-from .image_layout import split_image_anchors, image_key, normalize_image_layouts, SIZE_CM
+from .image_layout import split_image_anchors, image_key, normalize_image_layouts, SIZE_CM, DETACHED_FIGURE_SIZE_CM, TABLE_IMAGE_MAX_HEIGHT_CM, COMPACT_CHOICE_IMAGE_SIZE_CM
 from .geometry_symbols import normalize_school_math_symbols
+from .markdown_tables import find_markdown_tables, replace_markdown_tables_for_latex
+from .source_comments import strip_source_attribution_comment
+from .content_sources import (
+    CONTENT_SOURCES_JSON_NAME,
+    CONTENT_SOURCES_NOTICE_NAME,
+    content_source_export_files,
+    content_sources_notice,
+)
+from .export_preflight import assert_tex_image_files
+from .fillin import normalize_fillin_math_wrappers
+from .paper_layout import item_solution_space_cm
+from .content_locks import _reference_literal_ranges
+from .question_assets import markdown_literal_ranges
+from .math_markdown import _replace_delimited_math, _replace_latex_environments
 
 import hashlib
 import os
@@ -23,6 +37,37 @@ _PDF_CACHE_LOCK = threading.Lock()
 _PDF_CACHE = OrderedDict()  # key -> (pdf_bytes, log_or_err)
 _MAX_PDF_CACHE_SIZE = 20
 
+_CONTENT_SOURCE_TEX_BEGIN = f"% MathBank content sources: {CONTENT_SOURCES_JSON_NAME}\n"
+_CONTENT_SOURCE_TEX_END = "% End MathBank content sources\n\n"
+
+
+def _with_content_source_tex_notice(source: str, notice: str | None = None) -> str:
+    """Keep one artifact-level source notice in comments, outside the page body."""
+    if source.startswith(_CONTENT_SOURCE_TEX_BEGIN):
+        end = source.find(_CONTENT_SOURCE_TEX_END, len(_CONTENT_SOURCE_TEX_BEGIN))
+        if end >= 0:
+            source = source[end + len(_CONTENT_SOURCE_TEX_END):]
+    notice = content_sources_notice() if notice is None else notice
+    comments = "".join("% " + line + "\n" for line in notice.splitlines())
+    return _CONTENT_SOURCE_TEX_BEGIN + comments + _CONTENT_SOURCE_TEX_END + source
+
+
+def _with_content_source_pdf_metadata(pdf_bytes: bytes, notice: str) -> bytes:
+    """Attach scoped credits to document metadata without touching page content."""
+    import pymupdf
+
+    with pymupdf.open(stream=pdf_bytes, filetype="pdf") as document:
+        keys = {"title", "author", "subject", "keywords", "creator", "producer",
+                "creationDate", "modDate", "trapped"}
+        metadata = {key: value for key, value in (document.metadata or {}).items() if key in keys}
+        subject = metadata.get("subject", "") or ""
+        notice = notice.rstrip()
+        if notice in subject:
+            return pdf_bytes
+        metadata["subject"] = subject.rstrip() + ("\n\n" if subject else "") + notice
+        document.set_metadata(metadata)
+        return document.tobytes()
+
 # Only these known, offline TeX Live packages may be inserted automatically.
 # A model response can never add a package to this allowlist at runtime.
 _AUTO_LATEX_PACKAGES = frozenset({
@@ -38,11 +83,12 @@ _AUTO_LATEX_PACKAGES = frozenset({
 _MAX_AUTO_PACKAGE_REPAIRS = 3
 
 _FIGURE_SIZE_LIMITS = {
-    "small": ("5.0cm", "4.0cm"),
-    "medium": ("8.0cm", "6.0cm"),
-    "large": ("11.0cm", "8.0cm"),
+    size: tuple(f"{value:.1f}cm" for value in dimensions)
+    for size, dimensions in DETACHED_FIGURE_SIZE_CM.items()
 }
 _DEFAULT_FIGURE_MAX_HEIGHT = "6.0cm"
+_TABLE_IMAGE_MAX_HEIGHT = f"{TABLE_IMAGE_MAX_HEIGHT_CM:.1f}cm"
+_COMPACT_CHOICE_IMAGE_LIMITS = tuple(f"{value:.1f}cm" for value in COMPACT_CHOICE_IMAGE_SIZE_CM)
 
 
 def _normalize_figure_size(value: object) -> str:
@@ -151,6 +197,122 @@ def clean_choice_stem_parentheses(text: str) -> str:
             cleaned = cleaned[:last_dollar.start()].rstrip()
 
     return cleaned
+
+
+def _export_literal_ranges(text: str, *, include_table_cells: bool = False) -> list[tuple[int, int]]:
+    ranges = markdown_literal_ranges(text, include_links=False)
+    images = [match.span() for match in _MARKDOWN_IMAGE_RE.finditer(text)]
+    tables = [] if include_table_cells else [(table.start, table.end) for table in find_markdown_tables(text)]
+    ranges = [(start, end) for start, end in ranges
+              if not any(left <= start and end <= right for left, right in tables)]
+    ranges.extend(
+        (start, end) for start, end in _reference_literal_ranges(text, tex_comments=False)
+        if not text[start:end].startswith("![")
+        and not any(left <= start and end <= right for left, right in images)
+        and not any(left <= start and end <= right for left, right in tables)
+    )
+    merged: list[tuple[int, int]] = []
+    for start, end in sorted(ranges):
+        if merged and start < merged[-1][1]:
+            merged[-1] = (merged[-1][0], max(end, merged[-1][1]))
+        else:
+            merged.append((start, end))
+    return merged
+
+
+def _protect_export_literals(text: str, token_prefix: str) -> tuple[str, dict[str, str], dict[str, str]]:
+    """Keep source examples intact; actual standalone TikZ remains a visual slot."""
+    output, literals, visuals = [], {}, {}
+    cursor = 0
+    for start, end in _export_literal_ranges(text):
+        original = text[start:end]
+        is_drawing = original.startswith(r"\begin{tikzpicture}") and original.endswith(r"\end{tikzpicture}")
+        blocks = visuals if is_drawing else literals
+        token = f"{token_prefix}{'N' if is_drawing else 'L'}{len(blocks)}END"
+        blocks[token] = original
+        output.extend((text[cursor:start], token))
+        cursor = end
+    output.append(text[cursor:])
+    return "".join(output), literals, visuals
+
+
+def _split_export_image_anchors(text: str) -> tuple[str, str]:
+    """Use normal anchor rules, without reading environments inside source examples."""
+    text = strip_source_attribution_comment(text)
+    chars = list(text)
+    for start, end in _export_literal_ranges(text, include_table_cells=True):
+        for index in range(start, end):
+            if not chars[index].isspace():
+                chars[index] = "X"
+    scan = "".join(chars)
+    _, tail = split_image_anchors(scan)
+    if not tail:
+        return text, ""
+    start = len(scan.rstrip()) - len(tail)
+    return text[:start].rstrip(), text[start:].strip()
+
+
+def _place_export_choice_paren(text: str, visual_tokens: set[str], *, append: bool) -> str:
+    """Put one answer blank at the prose tail, before trailing standalone figures.
+
+    Images have protected slots at this stage. Tables, complete math and
+    source examples cannot provide an option boundary or an answer blank.
+    Only an empty terminal placeholder is removed; meaningful parentheses
+    and placeholders in earlier prose/structures are retained.
+    """
+    def mask(value: str) -> str:
+        return "".join(char if char in "\r\n" else " " for char in value)
+
+    scan = _replace_delimited_math(text, mask)
+    scan = _replace_latex_environments(scan, lambda value, name: mask(value))
+    choices = re.search(r"\\begin\{choices\}|^[ \t]*[-*]?[ \t]*[A-D][.、][ \t]+", scan, re.MULTILINE)
+    boundary = choices.start() if choices else len(text)
+    stem, rest = text[:boundary].rstrip(), text[boundary:]
+    visual_start = len(stem)
+    # Strip no source bytes from the visual tail; just locate its first slot.
+    while True:
+        before = stem[:visual_start].rstrip()
+        token = next((item for item in visual_tokens if before.endswith(item)), None)
+        if token is None:
+            break
+        visual_start = len(before) - len(token)
+    prose_end = len(stem[:visual_start].rstrip())
+    prose, figures = stem[:prose_end], stem[prose_end:]
+    blank = r"(?:\\quad|\\qquad|\\hspace\{[^{}]*\}|[\s\xa0\u3000_])*"
+    plain = rf"[(（]{blank}[)）]"
+    dollar_blank = rf"\${blank}\$"
+    tex_blank = rf"\\\({blank}\\\)"
+    empty = (
+        rf"(?:\${plain}\$|\\\({plain}\\\)|"
+        rf"[(（](?:{dollar_blank}|{tex_blank})[)）]|{tex_blank}|{plain}|\\paren\b)\s*$"
+    )
+    while match := re.search(empty, prose):
+        # An escaped delimiter belongs to the source, not to the blank syntax.
+        if (len(prose[:match.start()]) - len(prose[:match.start()].rstrip("\\"))) % 2:
+            break
+        prose = prose[:match.start()].rstrip()
+    # Preserve the legacy lone OCR dollar repair, without changing paired math.
+    if prose.endswith("$") and len(re.findall(r"(?<!\\)\$", prose)) % 2:
+        prose = prose[:-1].rstrip()
+    if append:
+        prose += r" \paren"
+    return prose + figures + ("\n" if rest else "") + rest
+
+
+def _export_choices_start(text: str) -> int | None:
+    """Find the real choices boundary after protected source has been restored."""
+    chars = list(text)
+    for start, end in [*markdown_literal_ranges(text, include_links=False),
+                       *_reference_literal_ranges(text, tex_comments=False)]:
+        for index in range(start, end):
+            if chars[index] not in "\r\n":
+                chars[index] = " "
+    def mask(value: str) -> str:
+        return "".join(char if char in "\r\n" else " " for char in value)
+    scan = _replace_delimited_math("".join(chars), mask)
+    scan = _replace_latex_environments(scan, lambda value, name: mask(value))
+    match = re.search(r"\\begin\{choices\}", scan)
+    return match.start() if match else None
 
 def format_stem_paragraphs(stem_text: str) -> str:
     r"""
@@ -363,6 +525,87 @@ def _normalize_simple_three_column_tables(content: str) -> str:
     return pattern.sub(replace, content)
 
 
+def _normalize_display_array_tags(content: str) -> str:
+    """Adapt a sole display tag to amsmath's exportable display context.
+
+    amsmath forbids tags inside array cells and raw $$ displays. A complete,
+    sole simple array may move its tag out; tagged $$ uses the equivalent
+    amsmath-aware \\[ shell. Rows and tag text stay unchanged.
+    Ambiguous structures and literal content are left exactly as authored.
+    """
+    source = str(content or "")
+    ranges: list[tuple[int, int]] = []
+    literal = re.compile(
+        r"```[\s\S]*?(?:```|$)|~~~[\s\S]*?(?:~~~|$)|`[^`]*`|"
+        r"\\begin\{(?P<env>tikzpicture|verbatim\*?|Verbatim\*?|lstlisting|minted|comment)\}"
+        r"[\s\S]*?(?:\\end\{(?P=env)\}|$)|"
+        r"(?i:<(?:pre|code)\b[^>]*>[\s\S]*?(?:</(?:pre|code)\s*>|$))|"
+        r"\\(?:verb|Verb|lstinline)\*?(?:\[[^]\n]*\])?(?P<sep>[^\w\s{])"
+        r"[^\n]*?(?P=sep)"
+    )
+    ranges.extend((match.start(), match.end()) for match in literal.finditer(source))
+    for match in re.finditer(r"\\(?:detokenize|url|path|texttt)\s*\{", source):
+        group = _read_balanced_latex_group(source, match.end() - 1)
+        ranges.append((match.start(), group[1] if group else len(source)))
+    display = re.compile(r"\$\$[\s\S]*?\$\$|\\\[[\s\S]*?\\\]")
+
+    def replace(match: re.Match) -> str:
+        start, end = match.span()
+        if any(first < end and last > start for first, last in ranges):
+            return match[0]
+        if ((start > 0 and source[start - 1] in "\\$")
+                or (end < len(source) and source[end] == "$")):
+            return match[0]
+        original = match[0]
+        inner = original[2:-2]
+        array = re.fullmatch(
+            r"(?P<before>\s*\\begin\{array\}\s*\{[lcr|\s]+\})"
+            r"(?P<body>[\s\S]*?)(?P<after>\\end\{array\}\s*)", inner)
+        if array is None and original[:2] != "$$":
+            return original
+        body = array["body"] if array is not None else inner
+        if re.search(r"\\(?:begin|end)\{|(?<!\\)%", body):
+            return original
+        tags = list(re.finditer(r"(?<!\\)\\tag\*?\s*\{", body))
+        if len(tags) != 1:
+            return original
+        tag = tags[0]
+        depth = 0
+        index = 0
+        while index < tag.start():
+            if body[index] == "\\":
+                index += 2
+                continue
+            depth += (body[index] == "{") - (body[index] == "}")
+            if depth < 0:
+                return original
+            index += 1
+        if depth:
+            return original
+        group = _read_balanced_latex_group(body, tag.end() - 1)
+        if group is None:
+            return original
+        depth = index = 0
+        while index < len(body):
+            if body[index] == "\\":
+                index += 2
+                continue
+            depth += (body[index] == "{") - (body[index] == "}")
+            if depth < 0:
+                return original
+            index += 1
+        if depth:
+            return original
+        tag_source = body[tag.start():group[1]]
+        new_body = body[:tag.start()] + body[group[1]:]
+        rendered = (array["before"] + new_body + array["after"] + tag_source
+                    if array is not None else inner)
+        opening, closing = (r"\[", r"\]") if original[:2] == "$$" else (original[:2], original[-2:])
+        return opening + rendered + closing
+
+    return display.sub(replace, source)
+
+
 def clean_content_for_latex(
     content: str,
     q_type: str = "",
@@ -376,22 +619,29 @@ def clean_content_for_latex(
     Preserves math delimiters $...$ and $$...$$, tikz code, and handles choices & \paren environments.
     """
     if not content:
-        return ""
+        return r"\paren" if q_type in {"single_choice", "multi_choice"} else ""
     
-    text = normalize_school_math_symbols(content.strip(), target="latex")
-    # Restore rendered TikZ only after all prose/table/choice transformations.
-    # Otherwise paragraph joining can make a '%' comment swallow drawing code.
-    tikz_blocks = {}
+    text = strip_source_attribution_comment(content)
     token_prefix = "MATHBANKTIKZ" + hashlib.sha256(text.encode()).hexdigest()
     while token_prefix in text or any(token_prefix in code for code in (tikz_sources or {}).values()):
         token_prefix += "X"
-    
-    # 如果是选择题，先清洗题干末尾残留的全角/半角供填答空括号，避免与右侧 \paren 生成括号重叠
-    if q_type in ["single_choice", "multi_choice"] or r"\begin{choices}" in text or re.search(r'^\s*[-*]?\s*[A-D][\.、\s]', text, re.MULTILINE):
-        text = clean_choice_stem_parentheses(text)
+    text, literal_blocks, tikz_blocks = _protect_export_literals(text, token_prefix)
+    text = text.strip()
+    # Repair legacy/model-only math wrappers in the export copy. Do not run
+    # general underscore normalization over historical question source here.
+    from .fillin_placeholders import normalize_fillin_placeholder_clusters
+    text = normalize_fillin_placeholder_clusters(normalize_fillin_math_wrappers(text))
+    visual_tokens = set(tikz_blocks)
+    text = normalize_school_math_symbols(text, target="latex")
+    text = _normalize_display_array_tags(text)
+    # Interpret only complete Markdown table blocks before image conversion:
+    # their images must be sized against a cell, rather than the whole page.
+    text = replace_markdown_tables_for_latex(text)
+    # Restore source/TikZ only after prose/table/choice transformations. A '%'
+    # inside a drawing or literal example must never swallow following code.
     
     # If TikZ code is present in text, remove ANY markdown image tags ![](...) to avoid duplicate image rendering
-    if r"\begin{tikzpicture}" in text and not preserve_image_positions:
+    if visual_tokens and not preserve_image_positions:
         text = re.sub(r'!\[.*?\]\([^)]+\)', '', text)
 
     # Four image-only options form one compact row. Mark only complete groups;
@@ -428,9 +678,9 @@ def clean_content_for_latex(
                 if r"\begin{tikzpicture}" not in code:
                     code = "\\begin{tikzpicture}\n" + code + "\n\\end{tikzpicture}"
                 rendered = (r"\adjustbox{max width=\linewidth}{"
-                            r"\adjustbox{max width=3.0cm,max height=3.0cm,keepaspectratio}{" + code + "\n}}")
+                            rf"\adjustbox{{max width={_COMPACT_CHOICE_IMAGE_LIMITS[0]},max height={_COMPACT_CHOICE_IMAGE_LIMITS[1]},keepaspectratio}}{{" + code + "\n}}")
             else:
-                rendered = _bounded_includegraphics(base_name, "3.0cm", "3.0cm")
+                rendered = _bounded_includegraphics(base_name, *_COMPACT_CHOICE_IMAGE_LIMITS)
             token = f"{token_prefix}N{len(tikz_blocks)}END"
             tikz_blocks[token] = rendered
             return token
@@ -439,7 +689,7 @@ def clean_content_for_latex(
             # token so subsequent prose formatting cannot alter generated TeX.
             width, height = SIZE_CM.get(layout['size'], (9.0, 6.0))
             if inside_table:
-                height = min(height, 4.0)
+                height = min(height, TABLE_IMAGE_MAX_HEIGHT_CM)
             if code:
                 if r"\begin{tikzpicture}" not in code:
                     code = "\\begin{tikzpicture}\n" + code + "\n\\end{tikzpicture}"
@@ -467,7 +717,7 @@ def clean_content_for_latex(
             if inside_table:
                 rendered = (
                     r"\adjustbox{valign=m,margin=0pt 3pt}{"
-                    r"\adjustbox{max width=\linewidth,max height=4.0cm,keepaspectratio}{"
+                    rf"\adjustbox{{max width=\linewidth,max height={_TABLE_IMAGE_MAX_HEIGHT},keepaspectratio}}{{"
                     + code + "\n}}"
                 )
             elif inside_choices:
@@ -489,7 +739,7 @@ def clean_content_for_latex(
         if inside_table:
             return (
                 r"\adjustbox{valign=m,margin=0pt 3pt}{"
-                rf"\includegraphics[max width=\linewidth,max height=4.0cm,keepaspectratio]{{{base_name}}}"
+                rf"\includegraphics[max width=\linewidth,max height={_TABLE_IMAGE_MAX_HEIGHT},keepaspectratio]{{{base_name}}}"
                 r"}"
             )
         if inside_choices:
@@ -502,9 +752,86 @@ def clean_content_for_latex(
             )
         return f"\n\\begin{{center}}\n\\includegraphics[max width=0.85\\linewidth]{{{base_name}}}\n\\end{{center}}\n"
     
-    text = _MARKDOWN_IMAGE_RE.sub(replace_img, text)
+    def protected_image(match):
+        rendered = replace_img(match)
+        if rendered.strip() in tikz_blocks:
+            token = rendered.strip()
+        else:
+            token = f"{token_prefix}N{len(tikz_blocks)}END"
+            tikz_blocks[token] = rendered
+        if not _image_is_inside_table_environment(text, match.start()) and not _image_is_inside_choices_environment(text, match.start()):
+            visual_tokens.add(token)
+        return rendered if rendered.strip() == token else token
+
+    text = _MARKDOWN_IMAGE_RE.sub(protected_image, text)
     text = _normalize_simple_three_column_tables(text)
+
+    # A pure authored figure wrapper is one visual slot too. Keep the wrapper
+    # and its exact drawing/image body, rather than putting a blank inside it.
+    def protected_visual_wrapper(match):
+        body = match.group(2)
+        used = [token for token in visual_tokens if token in body]
+        for token in used:
+            body = body.replace(token, "")
+        body = re.sub(r"\\centering\b", "", body)
+        if not used or body.strip():
+            return match.group(0)
+        rendered = match.group(0)
+        for token in used:
+            rendered = rendered.replace(token, tikz_blocks[token])
+        token = f"{token_prefix}N{len(tikz_blocks)}END"
+        tikz_blocks[token] = rendered
+        visual_tokens.add(token)
+        return token
+
+    text = re.sub(r"\\begin\{(center|figure|flushleft|flushright)\}([\s\S]*?)\\end\{\1\}", protected_visual_wrapper, text)
+    if q_type in {"single_choice", "multi_choice"} or r"\begin{choices}" in text:
+        text = _place_export_choice_paren(text, visual_tokens, append=q_type in {"single_choice", "multi_choice"})
     
+    # Choice inference and paragraph assembly must never reinterpret complete
+    # math shells or the wrapping tables generated above. Restore these before
+    # rendered image/TikZ tokens, because a protected table can contain them.
+    format_blocks: dict[str, str] = {}
+
+    def save_format_block(value: str) -> str:
+        token = f"{token_prefix}F{len(format_blocks)}END"
+        format_blocks[token] = value
+        return token
+
+    text = re.sub(
+        r"\\begingroup\s*\\setlength\{\\tabcolsep\}\{(?:2|4)pt\}"
+        r"\s*\\renewcommand\{\\arraystretch\}\{1\.2\}"
+        r"\s*\\noindent\\begin\{tabularx\}[\s\S]*?\\end\{tabularx\}\s*\\endgroup",
+        lambda match: save_format_block(match[0]), text)
+    math_output: list[str] = []
+    cursor = copied = 0
+
+    def is_escaped(position: int) -> bool:
+        preceding = position - 1
+        while preceding >= 0 and text[preceding] == "\\":
+            preceding -= 1
+        return (position - preceding - 1) % 2 == 1
+
+    while cursor < len(text):
+        opening = next((token for token in ("$$", "$", r"\(", r"\[")
+                        if text.startswith(token, cursor)), None)
+        if opening is None or is_escaped(cursor):
+            cursor += 1
+            continue
+        closing = {r"\(": r"\)", r"\[": r"\]"}.get(opening, opening)
+        end = text.find(closing, cursor + len(opening))
+        while end >= 0 and is_escaped(end):
+            end = text.find(closing, end + len(closing))
+        if end < 0:
+            cursor += len(opening)
+            continue
+        end += len(closing)
+        math_output.extend((text[copied:cursor], save_format_block(text[cursor:end])))
+        cursor = copied = end
+    math_output.append(text[copied:])
+    text = "".join(math_output)
+
+
     # Check choices formatting: if markdown list like - A. xx - B. xx, convert to \begin{choices}
     if r"\begin{choices}" not in text and re.search(r'^\s*[-*]?\s*[A-D][\.、\s]', text, re.MULTILINE):
         lines = text.split('\n')
@@ -523,18 +850,6 @@ def clean_content_for_latex(
             choices_block = "  \\begin{choices}\n" + "\n".join(choices_items) + "\n  \\end{choices}"
             text = "\n".join(stem_lines).strip() + "\n" + choices_block
 
-    # For choice questions (single_choice, multi_choice), ensure \paren is present before \begin{choices} if not already present
-    if q_type in ["single_choice", "multi_choice"]:
-        if r"\begin{choices}" in text:
-            parts = text.split(r"\begin{choices}", 1)
-            stem = clean_choice_stem_parentheses(parts[0])
-            rest = r"\begin{choices}" + parts[1]
-            stem += r" \paren"
-            text = stem + "\n  " + rest
-        else:
-            stem = clean_choice_stem_parentheses(text)
-            text = stem + r" \paren"
-
     if is_answer:
         # 解答/解析步骤（is_answer=True）：在带小问/解答步骤前自动补全空行
         text = re.sub(r'([^\n])\n(?=[（(]?[0-9一二三四五六七八九十]+[）\.\)]|解[:：]|证明[:：]|因为|所以|故|又因为|由|综上|因此|得|【)', r'\1\n\n', text)
@@ -542,8 +857,12 @@ def clean_content_for_latex(
         # 题干文本处理：安全地按行首拆分与段落重组
         text = format_stem_paragraphs(text)
 
+    for token, original in reversed(list(format_blocks.items())):
+        text = text.replace(token, original)
     for token, rendered in tikz_blocks.items():
         text = text.replace(token, rendered)
+    for token, original in literal_blocks.items():
+        text = text.replace(token, original)
     return text
 
 def _escape_paper_type_label(value: str) -> str:
@@ -636,6 +955,15 @@ def build_latex_document(
         r"\newcommand{\mathbankneedspace}[1]{\par\begingroup\dimen0=#1\relax"
         r"\ifdim\pagegoal<\maxdimen\ifdim\dimexpr\pagegoal-\pagetotal\relax<\dimen0"
         r"\newpage\fi\fi\endgroup}"
+    )
+    # Small, non-discardable empty boxes preserve the requested physical space
+    # across page breaks. A single vspace or tall minipage cannot do that.
+    lines.append(
+        r"\newcommand{\mathbanksolutionspace}[1]{\par\begingroup\dimen0=#1\relax"
+        r"\loop\ifdim\dimen0>0pt\dimen2=.25cm\relax"
+        r"\ifdim\dimen0<\dimen2\dimen2=\dimen0\fi"
+        r"\nointerlineskip\vbox to\dimen2{\vfil}\penalty0"
+        r"\advance\dimen0 by-\dimen2\repeat\endgroup}"
     )
     lines.append(r"\usepackage{caption}")
     lines.append(r"\usepackage{wrapfig}")
@@ -789,7 +1117,7 @@ def build_latex_document(
 
 
             fig_body = ""
-            anchored_raw, detached_raw = split_image_anchors(raw_content)
+            anchored_raw, detached_raw = _split_export_image_anchors(raw_content)
             cleaned_raw = anchored_raw
             figure_specs = []
             img_matches = _MARKDOWN_IMAGE_RE.findall(detached_raw)
@@ -890,23 +1218,16 @@ def build_latex_document(
             lines.append(f"\\begin{{{env_name}}}{points_arg}")
             if fig_body:
                 choices_part = ""
-                if r"\begin{choices}" in cleaned_content:
-                    parts = cleaned_content.split(r"\begin{choices}", 1)
-                    stem_text = parts[0].strip()
-                    choices_part = r"\begin{choices}" + parts[1]
+                choices_start = _export_choices_start(cleaned_content)
+                if choices_start is not None:
+                    stem_text = cleaned_content[:choices_start].strip()
+                    choices_part = cleaned_content[choices_start:]
                 else:
                     stem_text = cleaned_content
 
-                sol_space = item.get("solution_space") or q.get("solution_space") or "0.0"
-                try:
-                    space_val = float(sol_space)
-                except Exception:
-                    space_val = 0.0
+                space_val = item_solution_space_cm(item, q)
                 is_sol_spaced = (written_type and not include_answers and space_val > 0)
-                figure_solution_box_height = max(
-                    space_val,
-                    figure_height_reserve_cm,
-                )
+                figure_solution_box_height = figure_height_reserve_cm
                 figure_in_solution_box = bool(
                     is_sol_spaced
                     and fig_align in {"bottom_left", "center", "bottom_right"}
@@ -967,14 +1288,12 @@ def build_latex_document(
             
             # Inject solution space for detailed_answer questions on papers
             if written_type and not include_answers:
-                sol_space = item.get("solution_space") or q.get("solution_space") or "0.0"
-                try:
-                    space_val = float(sol_space)
-                except Exception:
-                    space_val = 0.0
+                space_val = item_solution_space_cm(item, q)
                 if space_val > 0:
-                    if not (fig_body and figure_in_solution_box):
-                        lines.append(f"\\vspace*{{{space_val:.1f}cm}}")
+                    remaining_space = max(0.0, space_val - figure_solution_box_height) if (
+                        fig_body and figure_in_solution_box) else space_val
+                    if remaining_space > 0:
+                        lines.append(f"\\mathbanksolutionspace{{{remaining_space:.1f}cm}}")
 
             lines.append(f"\\end{{{env_name}}}")
 
@@ -987,7 +1306,7 @@ def build_latex_document(
             lines.append("")
 
     lines.append(r"\end{document}")
-    return "\n".join(lines)
+    return _with_content_source_tex_notice("\n".join(lines))
 
 def collect_referenced_images(
     questions_data: list,
@@ -1089,13 +1408,19 @@ def compile_tex_to_pdf(tex_content: str, image_paths: list = None) -> tuple:
     if image_paths is None:
         image_paths = []
 
+    try:
+        image_paths = assert_tex_image_files([tex_content], image_paths)
+    except (OSError, ValueError) as exc:
+        return None, str(exc)
+
     # 1. Compute MD5 Cache Key from TeX content & image modification times
     img_signatures = []
     for img_p in image_paths:
         if os.path.exists(img_p):
             img_signatures.append(f"{img_p}:{os.path.getmtime(img_p)}")
     
-    cache_raw_str = f"{tex_content}||{'|'.join(img_signatures)}"
+    source_notice = content_sources_notice()
+    cache_raw_str = f"{tex_content}||{'|'.join(img_signatures)}||{source_notice}"
     cache_key = hashlib.md5(cache_raw_str.encode("utf-8")).hexdigest()
 
     # 2. Check LRU Cache
@@ -1113,11 +1438,10 @@ def compile_tex_to_pdf(tex_content: str, image_paths: list = None) -> tuple:
         tex_path = os.path.join(temp_dir, "paper.tex")
         # Copy images into temp_dir
         for img_p in image_paths:
-            if os.path.exists(img_p):
-                try:
-                    shutil.copy(img_p, temp_dir)
-                except Exception:
-                    pass
+            try:
+                shutil.copy(img_p, temp_dir)
+            except OSError:
+                return None, "导出图片复制失败：" + os.path.basename(img_p)
 
         # Try compiling with xelatex (requires 2 passes to resolve \pageref{LastPage} and .aux references)
         try:
@@ -1176,6 +1500,7 @@ def compile_tex_to_pdf(tex_content: str, image_paths: list = None) -> tuple:
                 if proc.returncode == 0 and os.path.exists(pdf_path) and os.path.getsize(pdf_path) > 0:
                     with open(pdf_path, "rb") as pf:
                         pdf_bytes = pf.read()
+                    pdf_bytes = _with_content_source_pdf_metadata(pdf_bytes, source_notice)
 
                     # Save to LRU Cache on success, using the user's original source key.
                     with _PDF_CACHE_LOCK:
@@ -1520,22 +1845,29 @@ def build_answer_sheet_latex(title: str, subtitle: str, questions_data: list) ->
 
     return tex_str
 
-def create_tex_zip_package(title: str, tex_content: str, ans_tex_content: str, image_paths: list, answer_sheet_tex: str = None) -> bytes:
+def create_tex_zip_package(title: str, tex_content: str, ans_tex_content: str, image_paths: list, answer_sheet_tex: str = None, preflight_report: dict = None) -> bytes:
     """
     Creates an in-memory ZIP package containing paper.tex, answer.tex, answer_sheet.tex (if present), and referenced images.
     """
+    image_paths = assert_tex_image_files([tex_content, ans_tex_content, answer_sheet_tex], image_paths)
+    source_files = content_source_export_files()
+    notice = source_files[CONTENT_SOURCES_NOTICE_NAME].decode("utf-8")
     zip_buffer = BytesIO()
     with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zf:
-        zf.writestr("试卷正文.tex", tex_content.encode("utf-8"))
+        zf.writestr("试卷正文.tex", _with_content_source_tex_notice(tex_content, notice).encode("utf-8"))
         if ans_tex_content:
-            zf.writestr("参考答案与解析.tex", ans_tex_content.encode("utf-8"))
+            zf.writestr("参考答案与解析.tex", _with_content_source_tex_notice(ans_tex_content, notice).encode("utf-8"))
         if answer_sheet_tex:
-            zf.writestr("答题卡.tex", answer_sheet_tex.encode("utf-8"))
+            zf.writestr("答题卡.tex", _with_content_source_tex_notice(answer_sheet_tex, notice).encode("utf-8"))
+        for filename, data in source_files.items():
+            zf.writestr(filename, data)
             
+        if preflight_report is not None:
+            import json
+            zf.writestr("export-preflight.json", json.dumps(preflight_report, ensure_ascii=False, indent=2))
         for img_p in image_paths:
-            if os.path.exists(img_p):
-                fname = os.path.basename(img_p)
-                zf.write(img_p, arcname=f"images/{fname}")
+            fname = os.path.basename(img_p)
+            zf.write(img_p, arcname=f"images/{fname}")
 
     return zip_buffer.getvalue()
 
@@ -1547,21 +1879,15 @@ def create_full_bundle_zip_package(
     answer_sheet_tex: str = None,
     main_pdf_bytes: bytes = None,
     ans_pdf_bytes: bytes = None,
-    answer_sheet_pdf_bytes: bytes = None
+    answer_sheet_pdf_bytes: bytes = None,
+    preflight_report: dict = None,
 ) -> bytes:
     """
     Creates an in-memory ZIP package containing LaTeX TeX files, compiled PDF files, and referenced images.
     """
-    zip_buffer = BytesIO()
-    with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zf:
-        # 1. TeX files
-        zf.writestr("试卷正文.tex", tex_content.encode("utf-8"))
-        if ans_tex_content:
-            zf.writestr("参考答案与解析.tex", ans_tex_content.encode("utf-8"))
-        if answer_sheet_tex:
-            zf.writestr("答题卡.tex", answer_sheet_tex.encode("utf-8"))
-            
-        # 2. PDF files
+    zip_buffer = BytesIO(create_tex_zip_package(title, tex_content, ans_tex_content, image_paths, answer_sheet_tex, preflight_report))
+    with zipfile.ZipFile(zip_buffer, "a", zipfile.ZIP_DEFLATED) as zf:
+        # Reuse the source package so a combined archive has one catalog/notice.
         if main_pdf_bytes:
             zf.writestr("试卷正文.pdf", main_pdf_bytes)
         if ans_pdf_bytes:
@@ -1569,10 +1895,4 @@ def create_full_bundle_zip_package(
         if answer_sheet_pdf_bytes:
             zf.writestr("答题卡.pdf", answer_sheet_pdf_bytes)
             
-        # 3. Referenced images
-        for img_p in image_paths:
-            if os.path.exists(img_p):
-                fname = os.path.basename(img_p)
-                zf.write(img_p, arcname=f"images/{fname}")
-
     return zip_buffer.getvalue()

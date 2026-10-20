@@ -43,7 +43,7 @@ def test_untrusted_html_uses_dompurify_and_local_image_allowlist():
     assert "sanitizeRichHtml(preprocessFormulaForKaTeX(text, imageLayouts))" in editor_source
     assert "MathBankSafe.safeImageUrl(src)" in editor_source
     assert "MathBankSafe.safeImageUrl(m[1])" in paper_source
-    assert "window.parseMarkdownWithMath(html)" in paper_source
+    assert "window.parseMarkdownWithMath(html, imageLayouts, paperContentReferenceContext(html, qid))" in paper_source
     assert "MathBankSafe.sanitizeRichHtml(html)" in import_source
     assert "MathBankSafe.escapeAttribute(rawModel)" in api_source
     assert r"\.(?:png|jpe?g|gif|webp)$" in api_source
@@ -768,6 +768,11 @@ def test_request_snapshot_keeps_post_submit_edits_dirty_in_real_js():
     helper_start = editor_source.index("function backupEditorState")
     helper_end = editor_source.index("// Custom Premium Confirmation Modal", helper_start)
     helper_source = editor_source[helper_start:helper_end]
+    api_source = _read(STATIC_JS_DIR / 'api.js')
+    point_start = api_source.index('const KnowledgePointState = (() =>')
+    point_marker = 'window.KnowledgePointState = KnowledgePointState;'
+    point_end = api_source.index(point_marker, point_start) + len(point_marker)
+    point_state = api_source[point_start:point_end]
     script = f"""
 const window = {{}};
 let originalQuestionState = null;
@@ -791,6 +796,7 @@ const FigureLayoutState = {{
 }};
 window.EditorState = EditorState;
 window.FigureLayoutState = FigureLayoutState;
+{point_state}
 const values = {{
   editContent: 'request payload',
   editAnswerMarkdown: 'saved answer',
@@ -952,7 +958,7 @@ if (confirmCalls !== 1) throw new Error('clear stayed blocked after save settled
 
 def test_parsed_question_imports_use_question_identity_and_generation():
     import_source = _read(STATIC_JS_DIR / "import.js")
-    save_start = import_source.index("function saveParsedQuestion(index)")
+    save_start = import_source.index("function captureParsedQuestionSaveSnapshot(index, q, card)")
     save_end = import_source.index("function confirmClearAllParsed()", save_start)
     save_source = import_source[save_start:save_end]
 
@@ -1112,8 +1118,10 @@ def test_shared_question_preview_pipeline_is_used_by_editor_and_duplicate_review
     update_start = editor_source.index("const updateContentPreview = () =>")
     update_end = editor_source.index("const updateAnswerPreview = () =>", update_start)
     update_source = editor_source[update_start:update_end]
-    assert "const preparedHtml = renderQuestionPreviewContent(previewContainer, text, { imageLayouts: FigureLayoutState.imageLayouts })" in update_source
-    assert "renderQuestionPreviewContent(paperContainer, text, { preparedHtml: preparedHtml })" in update_source
+    assert "const preparedHtml = renderQuestionPreviewContent(previewContainer, text," in update_source
+    assert "imageLayouts: FigureLayoutState.imageLayouts, referenceContext" in update_source
+    assert "renderQuestionPreviewContent(paperContainer, text," in update_source
+    assert "preparedHtml, imageLayouts: FigureLayoutState.imageLayouts, referenceContext" in update_source
     assert "renderMathInElement(" not in update_source
 
     scheduler_start = import_source.index("function resetParsedDuplicateCandidateRendering")
@@ -1158,9 +1166,13 @@ def test_parsed_save_generation_prevents_index_reuse_and_stale_callback_in_real_
     helpers_start = import_source.index("const parsedSourceVisionVerifications = new WeakMap()")
     helpers_end = import_source.index("function openImportModal()", helpers_start)
     helpers_source = import_source[helpers_start:helpers_end]
-    save_start = import_source.index("function saveParsedQuestion(index)")
+    save_start = import_source.index("function captureParsedQuestionSaveSnapshot(index, q, card)")
     save_end = import_source.index("function confirmClearAllParsed()", save_start)
     save_source = import_source[save_start:save_end]
+    api_source = _read(STATIC_JS_DIR / "api.js")
+    points_start = api_source.index("const KnowledgePointState = (() =>")
+    points_end = api_source.index("window.KnowledgePointState = KnowledgePointState;", points_start)
+    points_source = api_source[points_start:points_end]
 
     for start_marker, end_marker, mutation_marker in (
         ("function closeImportModal()", "// PDF & Crop Global States", "performOrphanedTempCropsCleanup"),
@@ -1176,6 +1188,7 @@ def test_parsed_save_generation_prevents_index_reuse_and_stale_callback_in_real_
 
     script = f"""
 const window = {{ MathBankSafe: {{ safeImageUrl(value) {{ return value; }} }} }};
+{points_source}
 let parsedQuestionsData = [];
 let parsedQuestionsGeneration = 0;
 const parsedQuestionSaveInFlight = new Map();

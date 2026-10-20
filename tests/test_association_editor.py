@@ -60,8 +60,11 @@ const fetch = async (url, options = {}) => {
   }
   if (options.method === 'POST') { linked = true; return response({status: 'success'}); }
   if (options.method === 'DELETE') { linked = false; return response({status: 'success'}); }
-  return response(url === '/api/questions' ? all : linked ? [all.find(q => q.id !== EditorState.questionId)] : []);
+  assert.notEqual(url, '/api/questions', 'association UI cannot download the full library');
+  return response(url.startsWith('/api/questions/association-candidates?')
+    ? candidates(all) : linked ? [all.find(q => q.id !== EditorState.questionId)] : []);
 };
+const candidates = items => ({items, total: items.length, page: 1, page_size: 20, total_pages: 1});
 const flush = () => new Promise(resolve => setImmediate(resolve));
 function pause(matches) { hold = {matches}; return hold; }
 function clean(id = 17) {
@@ -111,14 +114,15 @@ function clean(id = 17) {
   assert.equal(dropdown.value, '31');
   assert.equal(isEditorModified(), true, 'save refresh must preserve later selection');
 
-  // Preserve newer selections during both stages of association hydration.
+  // Preserve newer selections during hydration and user-triggered candidate loading.
   for (const stage of ['associated', 'options']) {
     clean(); linked = true;
-    const delayed = pause(url => stage === 'associated' ? url.endsWith('/associated') : url === '/api/questions');
-    const pending = loadAssociatedQuestionsInList(17);
+    if (stage === 'options') await loadAssociatedQuestionsInList(17);
+    const delayed = pause(url => stage === 'associated' ? url.endsWith('/associated') : url.startsWith('/api/questions/association-candidates?'));
+    const pending = stage === 'associated' ? loadAssociatedQuestionsInList(17) : loadRelatedQuestionCandidates();
     await flush();
     dropdown.value = '31';
-    delayed.resolve(response(stage === 'associated' ? [all[1]] : all));
+    delayed.resolve(response(stage === 'associated' ? [all[1]] : candidates(all)));
     await pending;
     assert.equal(dropdown.value, '31', stage + ' must preserve later selection');
     assert.equal(isEditorModified(), true);
@@ -145,16 +149,17 @@ function clean(id = 17) {
   // A -> B -> A must reject old responses even though the question ID matches.
   for (const stage of ['associated', 'options', 'POST', 'DELETE']) {
     clean(); linked = true;
+    if (stage === 'options') await loadAssociatedQuestionsInList(17);
     const delayed = pause((url, options) => stage === 'associated' ? url.endsWith('/associated')
-      : stage === 'options' ? url === '/api/questions' : options.method === stage);
+      : stage === 'options' ? url.startsWith('/api/questions/association-candidates?') : options.method === stage);
     if (stage === 'POST') dropdown.value = '23';
     const pending = stage === 'POST' ? associateRelatedQuestion()
-      : stage === 'DELETE' ? clearRelatedQuestion() : loadAssociatedQuestionsInList(17);
+      : stage === 'DELETE' ? clearRelatedQuestion() : stage === 'options' ? loadRelatedQuestionCandidates() : loadAssociatedQuestionsInList(17);
     await flush();
     clean(23); clean(17);
     dropdown.value = '31'; backupEditorState(17);
     delayed.resolve(response(stage === 'associated' ? [all[1]]
-      : stage === 'options' ? all : {status: 'success'}));
+      : stage === 'options' ? candidates(all) : {status: 'success'}));
     await pending;
     assert.equal(dropdown.value, '31', stage + ' response must not touch new session');
     assert.equal(isEditorModified(), false);

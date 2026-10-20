@@ -15,6 +15,7 @@ import re
 
 from mathbank import prompts
 from mathbank.ai_providers import apply_model_thinking_policy
+from mathbank.document_requests import DOCUMENT_AI_TIMEOUT_SECONDS
 from mathbank.source_review_images import _references
 from mathbank.source_review_results import parse_review_response
 from mathbank.task_manager import TaskCancelled
@@ -91,7 +92,7 @@ def repair_verified_differences(items, decisions, *, provider, request, attachme
                                 verification_content, parse_verdicts, validate_output,
                                 check_evidence, check_cancelled, budget, max_chars=24000,
                                 max_output_tokens=4096, progress=lambda message: None,
-                                timeout_seconds=120):
+                                timeout_seconds=DOCUMENT_AI_TIMEOUT_SECONDS):
     """Return confirmed outputs and audit records; never mutate caller questions.
 
     Adapters reapply their local gates to every edited candidate and verify the

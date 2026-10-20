@@ -71,6 +71,15 @@ def test_prompt_budget_does_not_retry_a_failed_old_path(request_case, monkeypatc
     assert posts == [] and fallbacks == [True]
 
 
+def test_shared_request_sends_the_knowledge_catalogue_once(request_case, monkeypatch):
+    plan, curriculum, *_ = request_case
+    monkeypatch.setattr(source_hybrid_request, "load_ai_knowledge_catalog", lambda: [
+        {"code": "local:one-directory-copy", "name": "混合请求知识点", "original_name": "原名", "aliases": []}
+    ])
+    messages, _locks = source_hybrid_request.build_source_hybrid_messages(plan, curriculum, plan["groups"])
+    assert messages[0]["content"].count("local:one-directory-copy") == 1
+
+
 def test_cancellation_during_budget_preparation_prevents_any_old_path(request_case, monkeypatch):
     _, _, diagnostics, posts, fallbacks, _, run = request_case
     monkeypatch.setattr(source_hybrid_request, "MAX_METADATA_MESSAGE_CHARACTERS", 1)

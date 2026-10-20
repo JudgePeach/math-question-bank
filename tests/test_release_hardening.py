@@ -21,12 +21,13 @@ INTERNAL_TOOL_MODULE_NAMES = (
     "knowledge_backfill_apply",
     "association_batch",
     "question_exchange",
+    "difficulty_batch",
 )
 INTERNAL_TOOL_MODULE_PATHS = tuple(
     f"{package}/{name}.py"
     for package in ("mathbank", "scripts")
     for name in INTERNAL_TOOL_MODULE_NAMES
-)
+) + ("scripts/difficulty_classify.py", "scripts/backfill_question_references.py")
 NON_RUNTIME_RELEASE_SCRIPT_PATHS = (
     "scripts/migrate_word_math_private_chars.py",
     "scripts/build_release.py",
@@ -42,6 +43,16 @@ INTERNAL_TOOL_FORBIDDEN_MEMBERS = (
     "Scripts/Resources/",
     "Scripts/Migrate_Word_Math_Private_Chars.py",
     "Scripts/Build_Release.py",
+    "MathBank/Difficulty_Batch.py",
+    "Scripts/Difficulty_Batch.py",
+    "Scripts/Difficulty_Classify.py",
+    "mathbank/difficulty_batch.py/",
+    "scripts/difficulty_batch.py/",
+    "scripts/difficulty_classify.py/",
+    "scripts/backfill_question_references.py/",
+    "Scripts/Backfill_Question_References.py",
+    "tests/test_backfill_question_references.py",
+    "tests/test_question_references_exchange.py",
 )
 
 
@@ -514,6 +525,8 @@ sys.modules["mathbank.database"] = database
 
 paths = types.ModuleType("mathbank.paths")
 paths.TEMPLATES_DIR = Path(".")
+paths.PROJECT_ROOT = Path(".")
+paths.EXPORT_PREFLIGHTS_DIR = Path(".system_generated/export_preflights")
 sys.modules["mathbank.paths"] = paths
 
 diagnostics = types.ModuleType("mathbank.latex_diagnostics")
@@ -522,6 +535,7 @@ sys.modules["mathbank.latex_diagnostics"] = diagnostics
 
 security = types.ModuleType("mathbank.asset_security")
 security.AssetSecurityError = RuntimeError
+security.SAFE_IMAGE_EXTENSIONS = frozenset({".png", ".jpg", ".jpeg", ".gif", ".webp"})
 security.resolve_upload_asset = lambda *_args, **_kwargs: None
 sys.modules["mathbank.asset_security"] = security
 
@@ -645,7 +659,10 @@ def test_release_copy_excludes_internal_tools_and_preserves_runtime_imports(
         # These names belong to other package paths and must survive.
         "mathbank/resources/classification_proposal.example.json",
         "mathbank/vendor/knowledge_backfill.py",
+        "mathbank/vendor/difficulty_batch.py",
         "scripts/vendor/question_exchange.py",
+        "scripts/vendor/difficulty_classify.py",
+        "scripts/vendor/backfill_question_references.py",
         "templates/template.tex",
     ):
         path = source / relative_path
@@ -709,7 +726,10 @@ def test_release_copy_excludes_internal_tools_and_preserves_runtime_imports(
         "mathbank/ocr_raster_layout.py",
         "mathbank/resources/classification_proposal.example.json",
         "mathbank/vendor/knowledge_backfill.py",
+        "mathbank/vendor/difficulty_batch.py",
         "scripts/vendor/question_exchange.py",
+        "scripts/vendor/difficulty_classify.py",
+        "scripts/vendor/backfill_question_references.py",
         "templates/template.tex",
         *("mathbank/resources/curriculums/" + version + ".json" for version in ("A", "B", "S", "H")),
         *(name.replace(".", "/") + ".py" for name in safe_modules),
@@ -720,6 +740,15 @@ def test_release_copy_excludes_internal_tools_and_preserves_runtime_imports(
     ) is None
     assert build_release._release_path_violation(
         "python/site-packages/scripts/resources/protocol.json"
+    ) is None
+    assert build_release._release_path_violation(
+        "python/site-packages/vendor/difficulty_batch.py"
+    ) is None
+    assert build_release._release_path_violation(
+        "python/site-packages/vendor/difficulty_classify.py"
+    ) is None
+    assert build_release._release_path_violation(
+        "python/site-packages/vendor/backfill_question_references.py"
     ) is None
 
     smoke_code = """
@@ -752,11 +781,13 @@ def test_git_ignores_only_local_batch_tools_and_their_dedicated_tests(tmp_path):
         *INTERNAL_TOOL_MODULE_PATHS,
         "scripts/migrate_word_math_private_chars.py",
         "tests/test_migrate_word_math_private_chars.py",
+        "tests/test_backfill_question_references.py",
+        "tests/test_question_references_exchange.py",
         "scripts/resources/classification_proposal.schema.json",
         "scripts/resources/classification_proposal.example.json",
         *("tests/test_" + name + ".py" for name in (
             "association_batch", "classification_proposals", "knowledge_backfill",
-            "knowledge_backfill_apply", "question_exchange",
+            "knowledge_backfill_apply", "question_exchange", "difficulty_batch",
         )),
     ]
     runtime_paths = [
@@ -766,6 +797,9 @@ def test_git_ignores_only_local_batch_tools_and_their_dedicated_tests(tmp_path):
         "scripts/local_launcher.py", "scripts/backup.py", "scripts/restore.py",
         "tests/test_release_hardening.py", "tests/test_sub_knowledge.py",
         "tests/test_single_ocr_illustrations.py",
+        "mathbank/vendor/difficulty_batch.py", "scripts/vendor/difficulty_classify.py",
+        "scripts/vendor/backfill_question_references.py", "mathbank/question_references.py",
+        "tests/test_question_references.py", "tests/test_question_references_api.py",
     ]
     result = subprocess.run(
         ["git", "check-ignore", "--no-index", "-z", "--stdin"],

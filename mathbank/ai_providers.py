@@ -165,6 +165,15 @@ def apply_model_thinking_policy(
             thinking_enabled=thinking_enabled,
         )
 
+    if _is_siliconflow_deepseek_v41_flash(provider.provider_code, provider.model_name):
+        # The domestic endpoint defaults to reasoning despite the public card.
+        # Only enable_thinking has been verified for this exact model; neither
+        # old V4 effort mapping nor another vendor's budget is transferable.
+        for key in ("thinking", "reasoning_effort", "thinking_budget"):
+            result.pop(key, None)
+        result["enable_thinking"] = bool(thinking_enabled) if task == "solve" else task == "draw"
+        return result
+
     if _is_siliconflow_qwen38_27b(provider):
         # This exact model defaults to thinking on SiliconFlow. Recognition,
         # splitting and classification must emit their requested result rather
@@ -249,6 +258,12 @@ def _is_siliconflow_qwen38_27b(provider) -> bool:
     )
 
 
+def _is_siliconflow_deepseek_v41_flash(provider_code: str, model_name: str) -> bool:
+    """Bind the tested domestic contract to the selected provider and exact ID."""
+    return (provider_code == "siliconflow"
+            and model_name.lower() == "deepseek-ai/deepseek-v4.1-flash")
+
+
 def supports_pdf_split_stream(provider) -> bool:
     """The streaming PDF adapter has been verified for this exact contract."""
     return _is_siliconflow_qwen38_27b(provider)
@@ -259,7 +274,8 @@ def apply_structured_output_policy(
 ) -> Dict[str, Any]:
     """Enable verified JSON mode only for explicitly structured call sites."""
     result = dict(payload)
-    if _is_siliconflow_qwen38_27b(provider):
+    if (_is_siliconflow_qwen38_27b(provider)
+            or _is_siliconflow_deepseek_v41_flash(provider.provider_code, provider.model_name)):
         result.setdefault("response_format", {"type": "json_object"})
         messages = result.get("messages")
         if (system_instruction and isinstance(messages, list) and messages
@@ -643,7 +659,7 @@ def resolve_draw_provider(
         _deepseek_supports_images(model_name) if spec.code == "deepseek"
         else force_multimodal or (
             spec.code == "siliconflow" and model_name.lower() == "qwen/qwen3.8-27b"
-        ) or any(
+        ) or _is_siliconflow_deepseek_v41_flash(spec.code, model_name) or any(
             marker in model_name.lower() for marker in ("vl", "thinking")
         )
     )

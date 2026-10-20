@@ -559,7 +559,8 @@ def test_paper_figure_size_presets_and_auto_wide_resolution_are_executable():
         "function shouldPreserveInlinePaperImages(raw)"
     )
     helper_end = paper_source.index("// Init on DOMContentLoaded", helper_start)
-    helper_source = paper_source[helper_start:helper_end]
+    page_geometry = next(line for line in paper_source.splitlines() if 'const A4_PAGE =' in line)
+    helper_source = page_geometry + '\n' + paper_source[helper_start:helper_end]
 
     node = shutil.which("node")
     assert node, "Node.js is required for the frontend executable regression"
@@ -1268,7 +1269,7 @@ def test_ai_classification_requires_manual_single_or_multi_choice_confirmation()
     assert 'role="radiogroup"' in index_source
     assert index_source.count("question-type-choice-check") == 2
     assert "已识别为选择题，请手动确认" in index_source
-    assert "确认分类并保存题目" in index_source
+    assert "应用分类并保存题目" in index_source
     assert '.question-type-choice-button[aria-checked="true"]:hover' in css_source
     assert 'color: #ffffff;' in css_source
     assert '.question-type-choice-button[aria-checked="true"] .question-type-choice-check' in css_source
@@ -1865,7 +1866,7 @@ def test_paper_question_answers_are_collapsible_and_loaded_on_demand():
         "window.togglePaperQuestionAnswer",
         "window.collapseAllPaperAnswers",
         "fetch(`/api/questions/${qid}`)",
-        "window.parseMarkdownWithMath(answerText)",
+        "window.parseMarkdownWithMath(answerText, {},",
         'aria-expanded="${answerExpanded ? \'true\' : \'false\'}"',
         "参考答案与解析",
         "收起全部答案",
@@ -1977,6 +1978,11 @@ def test_sidebar_uses_server_pagination_and_latest_request_wins():
 
 def test_paper_bank_stream_uses_server_pagination_and_latest_request_wins():
     paper_source = _read(STATIC_JS_DIR / "paper.js")
+    api_source = _read(STATIC_JS_DIR / 'api.js')
+    point_start = api_source.index('const KnowledgePointState = (() =>')
+    point_marker = 'window.KnowledgePointState = KnowledgePointState;'
+    point_end = api_source.index(point_marker, point_start) + len(point_marker)
+    point_state = api_source[point_start:point_end]
     fetch_start = paper_source.index("let bankQuestionsAbortController = null;")
     fetch_end = paper_source.index("// Render Full Paper Workspace", fetch_start)
     fetch_source = paper_source[fetch_start:fetch_end]
@@ -2061,7 +2067,7 @@ global.fetch = (url, options = {}) => {
   fetchCalls.push({ url, options, pending });
   return pending.promise;
 };
-''' + fetch_source + r'''
+''' + point_state + '\n' + fetch_source + r'''
 
 (async () => {
   const first = fetchBankQuestions(2);
@@ -2324,6 +2330,8 @@ def test_paper_selected_stream_paginates_with_full_cart_indexes_and_total_counts
     render_start = paper_source.index("function getPaperStreamPageNumbers")
     render_end = paper_source.index("// Render Part 4", render_start)
     render_source = paper_source[render_start:render_end]
+    api_source = _read(STATIC_JS_DIR / "api.js")
+    safe_source = api_source[api_source.index("function asString(value)"):api_source.index("function purify(value")]
 
     for marker in (
         ".slice(startIndex, startIndex + PAPER_STREAM_PAGE_SIZE)",
@@ -2341,6 +2349,8 @@ def test_paper_selected_stream_paginates_with_full_cart_indexes_and_total_counts
     assert node, "Node.js is required for the frontend executable regression"
     script = r'''
 const PAPER_STREAM_PAGE_SIZE = 15;
+const sourceAttack = '2026 "试卷" <img src=x onerror="alert(1)"> & 来源';
+const longSource = '2026年高三数学质量检测·原始卷名'.repeat(20);
 const container = {
   innerHTML: '',
   scrollTop: 41,
@@ -2352,6 +2362,7 @@ const questionsMap = Object.fromEntries(cart.map(item => [item.id, {
   id: item.id,
   seq_num: item.id,
   content: `question-${item.id}`,
+  source: item.id === 16 ? sourceAttack : item.id === 22 ? longSource : '   ',
   question_type: 'single_choice',
   difficulty: 'easy',
   usage_count: 0,
@@ -2364,6 +2375,7 @@ global.window = {
       id: 100 + index,
       seq_num: 100 + index,
       content: `bank-${index}`,
+      source: index === 0 ? sourceAttack : '',
       question_type: 'single_choice',
       difficulty: 'easy',
       usage_count: 0,
@@ -2400,15 +2412,20 @@ function getQuestionTypeCn() { return '单选题'; }
 function getDifficultyBadge() { return ''; }
 function seedPaperAnswerCache() {}
 function hasCachedPaperAnswer() { return false; }
-function escapeHtml(value) { return String(value); }
+function escapeHtml(value) { return escapeHtmlRaw(value); }
 function formatQuestionContentHtml(content, qid) { return `<span>render-${qid}</span>`; }
 function getQuestionFigAlign() { return 'right'; }
 function getQuestionFigSize() { return 'auto'; }
 function initializeAutoFigureSizing() {}
-''' + state_source + '\n' + render_source + r'''
+''' + safe_source + '\n' + state_source + '\n' + render_source + r'''
 
 renderPart3QuestionStream();
 let html = container.innerHTML;
+if ((html.match(/class="paper-resource-source"/g) || []).length !== 2 ||
+    !html.includes(`title="${escapeHtml(sourceAttack)}">来源：${escapeHtml(sourceAttack)}</p>`) ||
+    !html.includes(`title="${escapeHtml(longSource)}"`) || html.includes('<img src=x')) {
+  throw new Error('selected sources must display safely, retain full tooltips, and hide blank values');
+}
 if (window.PaperStore.streamPagination.selected.page !== 2) {
   throw new Error('selected page was not clamped to the last page');
 }
@@ -2432,6 +2449,10 @@ if (!html.includes("movePaperQuestion(15, 'up')") ||
 window.PaperStore.filters.tab = 'all';
 renderPart3QuestionStream();
 html = container.innerHTML;
+if ((html.match(/class="paper-resource-source"/g) || []).length !== 1 ||
+    !html.includes(`来源：${escapeHtml(sourceAttack)}</p>`)) {
+  throw new Error('all-bank candidates must show their persisted source');
+}
 if (!html.includes('全库试题 (47)') || !html.includes('共 47 题 / 4 页') ||
     !html.includes('aria-current="page"')) {
   throw new Error('all-bank tab rendered page length instead of server totals');
@@ -2448,6 +2469,7 @@ if (window.PaperStore.streamPagination.selected.page !== 1 ||
     !html.includes('共 5 题 / 1 页')) {
   throw new Error('selected page did not clamp after cart shrink');
 }
+if (html.includes('paper-resource-source')) throw new Error('blank sources must not create an information row');
 '''
     result = subprocess.run(
         [node, "-"],
@@ -2458,6 +2480,18 @@ if (window.PaperStore.streamPagination.selected.page !== 1 ||
         check=False,
     )
     assert result.returncode == 0, result.stderr
+
+
+def test_paper_source_information_is_ellipsized_and_outside_the_printed_canvas():
+    paper_source = _read(STATIC_JS_DIR / "paper.js")
+    canvas_start = paper_source.index("// Render Part 4")
+    assert 'paper-resource-source' not in paper_source[canvas_start:]
+    css = _read(CSS_PATH)
+    rule = re.search(r"#paperQuestionStream \.paper-resource-source\s*\{([^}]+)\}", css)
+    assert rule
+    for declaration in ('text-overflow: ellipsis', 'white-space: nowrap', 'overflow: hidden'):
+        assert declaration in rule.group(1)
+    assert re.search(r'@media print\s*\{\s*#paperQuestionStream \.paper-resource-source\s*\{\s*display: none !important;', css)
 
 
 def test_paper_cart_actions_reject_changed_hydration_snapshot_and_are_single_flight():

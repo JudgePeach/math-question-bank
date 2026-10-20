@@ -170,9 +170,10 @@ def test_protected_math_code_and_image_paths_do_not_reach_fillin_normalizer():
     assert r"$\underline{AB}$" in again and "`x___ ![](/static/uploads/code___x.png)`" in again
 
 
-@pytest.mark.parametrize("change", ["missing", "unknown", "duplicate", "content", "bad_category", "cross_category", "bad_type", "bad_difficulty", "outer_extra"])
+@pytest.mark.parametrize("change", ["missing", "unknown", "duplicate", "content", "bad_type", "bad_difficulty", "outer_extra"])
 def test_model_contract_failure_cannot_edit_or_drop_the_local_source(change):
-    plan = prepare("1. 求$x$。\n2. 求$y$。")
+    plan = prepare("1. 已知变量$x=3$，求其值。\n2. 给定参数$y=4$，写出结果。\n参考答案：\n2. $4$。\n1. $3$。")
+    assert plan["eligible"], plan["fallback_reasons"]
     original = deepcopy(plan["questions"])
     parsed = metadata(plan)
     if change == "missing":
@@ -183,10 +184,6 @@ def test_model_contract_failure_cannot_edit_or_drop_the_local_source(change):
         parsed["items"][1] = deepcopy(parsed["items"][0])
     elif change == "content":
         parsed["items"][0]["content"] = "changed"
-    elif change == "bad_category":
-        parsed["items"][0]["category_chapter"] = "未知章节"
-    elif change == "cross_category":
-        parsed["items"][0]["category_compulsory"] = "必修二"
     elif change == "bad_type":
         parsed["items"][0]["question_type"] = "unknown"
     elif change == "bad_difficulty":
@@ -196,6 +193,25 @@ def test_model_contract_failure_cannot_edit_or_drop_the_local_source(change):
     with pytest.raises(SourceMetadataContractError):
         apply_source_metadata_response(parsed, plan, CURRICULUM)
     assert plan["questions"] == original
+
+
+@pytest.mark.parametrize("field,value", [
+    ("category_chapter", "未知章节"),
+    ("category_compulsory", "必修二"),
+])
+def test_uncertain_classification_keeps_complete_local_sources(field, value):
+    plan = prepare("1. 已知变量$x=3$，求其值。\n2. 给定参数$y=4$，写出结果。\n参考答案：\n2. $4$。\n1. $3$。")
+    assert plan["eligible"], plan["fallback_reasons"]
+    original = deepcopy(plan["questions"])
+    parsed = metadata(plan)
+    parsed["items"][0][field] = value
+    questions = apply_source_metadata_response(parsed, plan, CURRICULUM)
+    assert len(questions) == 2
+    assert questions[0]["classification_review"]["required"] is True
+    assert questions[0]["classification_review"]["original"][field] == value
+    assert questions[0]["category_chapter"] == ""
+    assert plan["questions"] == original
+    assert [q["content"] for q in questions] == [q["content"] for q in original]
 
 
 def test_response_order_does_not_reorder_original_questions_or_pair_answers_by_index():

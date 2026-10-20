@@ -56,10 +56,12 @@ def test_custom_questions_labels_order_scores_and_answers(paper_type, mixed, ans
         if paper_type == "exam":
             assert "共 12 分" in output
     assert r"\begin{problem}[points = 7]" in tex
-    assert (r"\vspace*{1.5cm}" in tex) is (not answers)
+    assert (r"\mathbanksolutionspace{1.5cm}" in tex) is (not answers)
     assert [int(n) for n in re.findall(r"^(\d+)\. STEM", text, re.M)] == list(range(1, len(data) + 1))
     assert diagnostics["failed_formulas"] == 0
-    assert any(p.paragraph_format.space_after and p.paragraph_format.space_after.cm > 1 for p in document.paragraphs)
+    assert any(not p.text and p.paragraph_format.line_spacing
+               and isinstance(p.paragraph_format.line_spacing, int)
+               and p.paragraph_format.line_spacing.cm > 1 for p in document.paragraphs)
 
 
 def test_exam_19_keeps_existing_builtin_sections_and_fixed_numbers():

@@ -172,6 +172,214 @@ def test_full_backup_round_trip_restores_database_uploads_and_metadata(tmp_path)
     assert json.loads(metadata.read_text(encoding="utf-8"))["curriculum"] == "original"
 
 
+def _rewrite_backup_sources(path, *, remove=(), replacements=None, manifest_update=None):
+    with zipfile.ZipFile(path) as archive:
+        entries = {name: archive.read(name) for name in archive.namelist()}
+    manifest = json.loads(entries["manifest.json"])
+    for name in remove:
+        entries.pop(name, None)
+        manifest["files"].pop(name, None)
+    for name, data in (replacements or {}).items():
+        entries[name] = data
+        manifest["files"][name] = {"size": len(data), "sha256": hashlib.sha256(data).hexdigest()}
+    if manifest_update:
+        manifest_update(manifest)
+    entries["manifest.json"] = json.dumps(manifest).encode()
+    with zipfile.ZipFile(path, "w", zipfile.ZIP_DEFLATED) as archive:
+        for name, data in entries.items():
+            archive.writestr(name, data)
+
+
+def test_backup_has_one_verified_source_snapshot_and_restore_preserves_old_bytes(tmp_path, monkeypatch):
+    from mathbank.content_sources import content_source_export_files, load_content_sources
+    catalog = load_content_sources()
+    catalog["title"] += "（历史快照）"
+    historical = content_source_export_files(catalog)
+    database = tmp_path / "bank.db"
+    uploads = tmp_path / "uploads"
+    uploads.mkdir()
+    _create_database(database)
+    current_catalog = tmp_path / "program-resources" / "content_sources.json"
+    current_catalog.parent.mkdir()
+    current_catalog.write_bytes(b"current program catalog must remain unchanged")
+    monkeypatch.setattr(backup_module, "CONTENT_SOURCES_PATH", current_catalog)
+    monkeypatch.setattr(backup_module, "content_source_export_files", lambda: historical)
+    archive = create_full_backup(output_dir=tmp_path / "snapshots", database_path=database,
+        uploads_dir=uploads, metadata_path=tmp_path / "custom_metadata.json", retention=None)
+    manifest = verify_full_backup(archive)
+    assert manifest["content_sources_included"] is True
+    with zipfile.ZipFile(archive) as zipped:
+        for name, data in historical.items():
+            assert zipped.namelist().count(name) == 1
+            assert zipped.read(name) == data
+            assert manifest["files"][name] == {"size": len(data), "sha256": hashlib.sha256(data).hexdigest()}
+    # Safety backups use the current declaration; restored documentation must
+    # retain the archive's older snapshot rather than regenerate it.
+    monkeypatch.setattr(backup_module, "content_source_export_files", content_source_export_files)
+    safety = restore_full_backup(archive, database_path=database, uploads_dir=uploads,
+        metadata_path=tmp_path / "custom_metadata.json", safety_backup_dir=tmp_path / "safety",
+        runtime_lock_path=tmp_path / "runtime.lock")
+    saved = database.parent / "restored_content_sources" / safety.stem
+    assert {x.name: x.read_bytes() for x in saved.iterdir()} == historical
+    assert current_catalog.read_bytes() == b"current program catalog must remain unchanged"
+
+
+@pytest.mark.parametrize("version", (1, 2))
+def test_old_backup_without_source_snapshot_still_restores(tmp_path, version):
+    database, uploads = tmp_path / "bank.db", tmp_path / "uploads"
+    uploads.mkdir()
+    _create_database(database)
+    archive = create_full_backup(output_dir=tmp_path / "snapshots", database_path=database,
+        uploads_dir=uploads, metadata_path=tmp_path / "custom_metadata.json", retention=None)
+    _rewrite_backup_sources(archive, remove=("content_sources.json", "CONTENT_SOURCES.txt"),
+        manifest_update=lambda m: (m.pop("content_sources_included"), m.update(format_version=version)))
+    assert verify_full_backup(archive)["format_version"] == version
+    restore_full_backup(archive, database_path=database, uploads_dir=uploads,
+        metadata_path=tmp_path / "custom_metadata.json", safety_backup_dir=tmp_path / "safety",
+        runtime_lock_path=tmp_path / "runtime.lock")
+    assert not (tmp_path / "restored_content_sources").exists()
+
+
+@pytest.mark.parametrize("mutation", ("missing", "hash", "invalid_json", "invalid_text", "flag"))
+def test_backup_rejects_corrupt_or_incomplete_source_snapshot(tmp_path, mutation):
+    database, uploads = tmp_path / "bank.db", tmp_path / "uploads"
+    uploads.mkdir()
+    _create_database(database)
+    archive = create_full_backup(output_dir=tmp_path / "snapshots", database_path=database,
+        uploads_dir=uploads, metadata_path=tmp_path / "custom_metadata.json", retention=None)
+    if mutation == "missing":
+        _rewrite_backup_sources(archive, remove=("CONTENT_SOURCES.txt",))
+    elif mutation == "hash":
+        _rewrite_backup_sources(archive, manifest_update=lambda m: m["files"]["content_sources.json"].update(sha256="0" * 64))
+    elif mutation == "invalid_json":
+        _rewrite_backup_sources(archive, replacements={"content_sources.json": b"[]"})
+    elif mutation == "invalid_text":
+        _rewrite_backup_sources(archive, replacements={"CONTENT_SOURCES.txt": b"\xff"})
+    else:
+        _rewrite_backup_sources(archive, manifest_update=lambda m: m.update(content_sources_included=False))
+    with pytest.raises(RuntimeError):
+        verify_full_backup(archive)
+
+
+def test_restore_source_document_install_failure_rolls_back_data(tmp_path, monkeypatch):
+    database, uploads = tmp_path / "bank.db", tmp_path / "uploads"
+    uploads.mkdir()
+    _create_database(database)
+    archive = create_full_backup(output_dir=tmp_path / "snapshots", database_path=database,
+        uploads_dir=uploads, metadata_path=tmp_path / "custom_metadata.json", retention=None)
+    database.unlink()
+    _create_database(database, question_count=2)
+    documents = tmp_path / "chosen-documents"
+    documents.mkdir()
+    (documents / "earlier.txt").write_bytes(b"keep existing documents")
+    replace = backup_module.os.replace
+    def fail_document_install(source, target):
+        if Path(source).parent == documents and Path(source).name.startswith(".restore-new-"):
+            raise OSError("injected source document install failure")
+        return replace(source, target)
+    monkeypatch.setattr(backup_module.os, "replace", fail_document_install)
+    with pytest.raises(OSError, match="source document"):
+        restore_full_backup(archive, database_path=database, uploads_dir=uploads,
+            metadata_path=tmp_path / "custom_metadata.json", safety_backup_dir=tmp_path / "safety",
+            runtime_lock_path=tmp_path / "runtime.lock", content_sources_dir=documents)
+    with _sqlite_connection(database) as c:
+        assert c.execute("SELECT COUNT(*) FROM questions").fetchone()[0] == 2
+    assert {x.name: x.read_bytes() for x in documents.iterdir()} == {"earlier.txt": b"keep existing documents"}
+
+
+def test_restore_rejects_program_resource_directory_for_historical_sources(tmp_path):
+    with pytest.raises(RuntimeError, match="程序资源"):
+        restore_full_backup(tmp_path / "missing.zip", database_path=tmp_path / "bank.db",
+            uploads_dir=tmp_path / "uploads", metadata_path=tmp_path / "custom_metadata.json",
+            safety_backup_dir=tmp_path / "safety", runtime_lock_path=tmp_path / "runtime.lock",
+            content_sources_dir=backup_module.CONTENT_SOURCES_PATH.parent)
+
+
+def test_backup_captures_native_hidden_and_rendered_references(tmp_path):
+    database, uploads = tmp_path / "bank.db", tmp_path / "uploads"
+    uploads.mkdir()
+    _create_database(database)
+    with _sqlite_connection(database) as c:
+        c.executescript("ALTER TABLE questions ADD COLUMN content_tikz_assets TEXT;"
+                       "ALTER TABLE questions ADD COLUMN answer_tikz_assets TEXT;"
+                       "ALTER TABLE questions ADD COLUMN tikz_reference_image_path TEXT;")
+        c.execute("UPDATE questions SET content_tikz_assets=?,answer_tikz_assets=?,tikz_reference_image_path=?", (
+            json.dumps([{"image_path": "/static/uploads/native.png", "reference_image_path": "/static/uploads/hidden.png"}]),
+            json.dumps([{"reference_image_path": "/static/uploads/answer-reference.jpg"}]),
+            "/static/uploads/legacy-reference.webp"))
+    names = ("native.png", "hidden.png", "answer-reference.jpg", "legacy-reference.webp")
+    for name in names:
+        (uploads / name).write_bytes(name.encode())
+    archive = create_full_backup(output_dir=tmp_path / "snapshots", database_path=database,
+        uploads_dir=uploads, metadata_path=tmp_path / "missing.json", retention=None)
+    manifest = verify_full_backup(archive)
+    assert manifest["database"]["structured_upload_references"] is True
+    assert set(manifest["database"]["referenced_uploads"]) == {"uploads/" + name for name in names}
+    (uploads / "hidden.png").unlink()
+    with pytest.raises(RuntimeError, match="缺少数据库引用"):
+        create_full_backup(output_dir=tmp_path / "snapshots", database_path=database,
+            uploads_dir=uploads, metadata_path=tmp_path / "missing.json", retention=None)
+
+
+@pytest.mark.parametrize("version", (1, 2))
+def test_old_backup_native_reference_scope_remains_backward_compatible(tmp_path, version):
+    database, uploads = tmp_path / "bank.db", tmp_path / "uploads"
+    uploads.mkdir()
+    _create_database(database)
+    archive = create_full_backup(output_dir=tmp_path / "snapshots", database_path=database,
+        uploads_dir=uploads, metadata_path=tmp_path / "missing.json", retention=None)
+    with zipfile.ZipFile(archive) as zipped:
+        entries = {name: zipped.read(name) for name in zipped.namelist()}
+    manifest = json.loads(entries["manifest.json"])
+    database_member = next(name for name in entries if name.startswith("database/"))
+    historical_db = tmp_path / "historical.db"
+    historical_db.write_bytes(entries[database_member])
+    with _sqlite_connection(historical_db) as c:
+        c.execute("ALTER TABLE questions ADD COLUMN tikz_reference_image_path TEXT")
+        c.execute("UPDATE questions SET tikz_reference_image_path='/static/uploads/not-captured-by-old-writer.png'")
+    entries[database_member] = historical_db.read_bytes()
+    manifest["files"][database_member] = {"size": len(entries[database_member]), "sha256": hashlib.sha256(entries[database_member]).hexdigest()}
+    manifest["database"].pop("structured_upload_references")
+    manifest["format_version"] = version
+    entries["manifest.json"] = json.dumps(manifest).encode()
+    with zipfile.ZipFile(archive, "w", zipfile.ZIP_DEFLATED) as zipped:
+        for name, data in entries.items():
+            zipped.writestr(name, data)
+    assert verify_full_backup(archive)["format_version"] == version
+
+
+@pytest.mark.parametrize("version", ("N", "X"))
+def test_full_backup_restores_new_curriculum_identity_and_old_mirrors(tmp_path, version):
+    from mathbank.curriculums import build_default_metadata
+    from mathbank.sub_knowledge import resolve_active_version
+
+    database = tmp_path / "math_question_bank.db"
+    uploads = tmp_path / "uploads"
+    metadata = tmp_path / "custom_metadata.json"
+    uploads.mkdir()
+    _create_database(database)
+    with _sqlite_connection(database) as connection:
+        connection.executemany("INSERT INTO question_curriculums(question_id, version_code) VALUES(1, ?)",
+                               [(code,) for code in ("A", "B", "S", "H", "N", "X")])
+    original = (json.dumps(build_default_metadata(version), ensure_ascii=False, indent=2) + "\n").encode("utf-8")
+    metadata.write_bytes(original)
+    assert resolve_active_version(metadata, strict=True) == version
+    archive = create_full_backup(output_dir=tmp_path / "snapshots", database_path=database,
+        uploads_dir=uploads, metadata_path=metadata, retention=None)
+    assert verify_full_backup(archive)["database"]["row_counts"]["question_curriculums"] == 6
+    metadata.write_text('{"version_code":"A","curriculum":{}}', encoding="utf-8")
+    with _sqlite_connection(database) as connection:
+        connection.execute("DELETE FROM question_curriculums WHERE version_code IN ('B','S','N','X')")
+    restore_full_backup(archive, database_path=database, uploads_dir=uploads, metadata_path=metadata,
+        safety_backup_dir=tmp_path / "pre_restore", runtime_lock_path=tmp_path / "runtime.lock")
+    assert metadata.read_bytes() == original
+    assert resolve_active_version(metadata, strict=True) == version
+    with _sqlite_connection(database) as connection:
+        assert connection.execute("SELECT version_code FROM question_curriculums ORDER BY version_code").fetchall() == [
+            (code,) for code in sorted(("A", "B", "S", "H", "N", "X"))
+        ]
+
+
 def test_backup_verifier_rejects_modified_payload(tmp_path):
     database = tmp_path / "math_question_bank.db"
     uploads = tmp_path / "uploads"
@@ -318,6 +526,19 @@ def test_restore_rejects_future_schema_before_replacing_current_database(tmp_pat
             "REFERENCES question_curriculums(id) ON DELETE CASCADE, "
             "compulsory TEXT NOT NULL, chapter TEXT NOT NULL, knowledge TEXT NOT NULL, "
             "position INTEGER NOT NULL)"
+        )
+        # Unknown future schemas still include the supported v14 data tables;
+        # restore rejects their newer version before replacing current data.
+        for table in ("knowledge_points", "knowledge_point_curriculums", "question_knowledge_points"):
+            connection.execute(f'CREATE TABLE "{table}" (id INTEGER PRIMARY KEY)')
+        for table in ("question_source_labels", "question_references"):
+            connection.execute(f'CREATE TABLE "{table}" (id INTEGER PRIMARY KEY)')
+        connection.execute(
+            "CREATE TABLE document_import_receipts ("
+            "id INTEGER PRIMARY KEY, project_id VARCHAR(36) NOT NULL, card_id VARCHAR(160) NOT NULL, "
+            "payload_sha256 VARCHAR(64) NOT NULL, draft_revision INTEGER NOT NULL, "
+            "question_id INTEGER REFERENCES questions(id) ON DELETE SET NULL, created_at DATETIME NOT NULL, "
+            "UNIQUE(project_id,card_id))"
         )
     archive = create_full_backup(
         output_dir=tmp_path / "snapshots",

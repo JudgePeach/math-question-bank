@@ -102,7 +102,11 @@ def import_flow(client, monkeypatch):
             )
         assert len(sent) == 1, "Import must not silently issue another model request."
         assert request_options[0]["timeout"] == 600
-        assert "retry_connection" not in request_options[0] and "allow_redirects" not in request_options[0]
+        if channel == "word":
+            assert request_options[0]["retry_connection"] is False
+            assert request_options[0]["allow_redirects"] is False
+        else:
+            assert "retry_connection" not in request_options[0] and "allow_redirects" not in request_options[0]
         result.payload = sent[0]
         result.raw_response = raw_response
         return result

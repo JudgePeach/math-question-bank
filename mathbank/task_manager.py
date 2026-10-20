@@ -5,7 +5,7 @@ from __future__ import annotations
 import copy
 import datetime as dt
 import threading
-from concurrent.futures import Future, ThreadPoolExecutor
+from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, wait
 from dataclasses import dataclass, field
 from typing import Any, Callable
 
@@ -19,6 +19,24 @@ class TaskCancelled(RuntimeError):
 
 class TaskQueueFull(RuntimeError):
     """Raised when the bounded worker queue has no capacity."""
+
+
+def iter_completed_futures(futures, check_cancelled, *, poll_seconds=0.1):
+    """Observe cancellation while requests are still awaiting a response.
+
+    In-flight HTTP calls retain their existing timeout and capacity accounting;
+    their parent import worker need not wait for them to acknowledge a cancel.
+    """
+    if poll_seconds <= 0:
+        raise ValueError("任务取消检查间隔必须大于零")
+    pending = set(futures)
+    while pending:
+        check_cancelled()
+        completed, pending = wait(pending, timeout=poll_seconds,
+                                  return_when=FIRST_COMPLETED)
+        for future in completed:
+            check_cancelled()
+            yield future
 
 
 @dataclass
@@ -47,6 +65,7 @@ class TaskManager:
         terminal_ttl_seconds: int = 3600,
         max_records: int = 1024,
         temp_asset_cleanup: Callable[[list[str]], Any] | None = None,
+        record_cleanup: Callable[[str], Any] | None = None,
     ) -> None:
         if (
             max_workers < 1
@@ -65,6 +84,7 @@ class TaskManager:
         self._terminal_ttl = dt.timedelta(seconds=terminal_ttl_seconds)
         self._max_records = max_records
         self._temp_asset_cleanup = temp_asset_cleanup
+        self._record_cleanup = record_cleanup
         self._maintenance_stop = threading.Event()
         self._maintenance_thread: threading.Thread | None = None
 
@@ -97,6 +117,7 @@ class TaskManager:
                 record.cancel_event.set()
                 if record.future and not record.future.running():
                     record.future.cancel()
+                self._cleanup_record_locked(task_id)
             return copy.deepcopy(record.state) if record else None
 
     def update(self, task_id: str, **changes: Any) -> bool:
@@ -300,6 +321,7 @@ class TaskManager:
             record = self._records.pop(task_id, None)
             if record is not None:
                 self._cleanup_temp_assets_locked(record)
+                self._cleanup_record_locked(task_id)
         return len(expired)
 
     @staticmethod
@@ -333,9 +355,19 @@ class TaskManager:
             record = self._records.pop(task_id, None)
             if record is not None:
                 self._cleanup_temp_assets_locked(record)
+                self._cleanup_record_locked(task_id)
             if len(self._records) < self._max_records:
                 return
         raise TaskQueueFull("任务记录容量已满，请等待现有任务结束。")
+
+    def _cleanup_record_locked(self, task_id: str) -> None:
+        """Release task-owned memory independently of optional file assets."""
+        if self._record_cleanup is not None:
+            try:
+                self._record_cleanup(task_id)
+            except Exception:
+                # A failed external cleanup must not prevent bounded eviction.
+                pass
 
     def _cleanup_temp_assets_locked(self, record: _TaskRecord) -> None:
         if self._temp_asset_cleanup is None:

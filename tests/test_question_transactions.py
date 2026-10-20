@@ -593,5 +593,6 @@ def test_metadata_save_succeeds_when_post_commit_export_scheduling_fails(
     )
 
     assert response.status_code == 200
-    assert json.loads(metadata_path.read_text(encoding="utf-8")) == new_metadata
-    assert main.METADATA_CACHE == new_metadata
+    expected_metadata = {**new_metadata, "curriculum_version": "B"}
+    assert json.loads(metadata_path.read_text(encoding="utf-8")) == expected_metadata
+    assert main.METADATA_CACHE == expected_metadata

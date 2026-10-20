@@ -9,6 +9,8 @@ import json
 import re
 from pathlib import Path
 
+from mathbank.curriculums import normalize_version_code
+
 
 MAX_SUB_KNOWLEDGE_ITEMS = 64
 MAX_SUB_KNOWLEDGE_LENGTH = 100
@@ -65,7 +67,13 @@ def read_sub_knowledge(value) -> list[dict[str, str]]:
 
 
 def detect_curriculum_version(metadata, *, strict: bool = False) -> str:
-    """Use the existing service's preset detection, without importing main."""
+    """Prefer preset identity; retain chapter detection for legacy metadata."""
+
+    if isinstance(metadata, dict) and "curriculum_version" in metadata:
+        version = metadata["curriculum_version"]
+        if not isinstance(version, str) or not version.strip():
+            raise ValueError("curriculum_version 必须是有效的教材版本编码")
+        return normalize_version_code(version)
 
     curriculum = metadata.get("curriculum", {}) if isinstance(metadata, dict) else {}
     chapters = " ".join(str(chapter) for book in curriculum.values()
@@ -89,8 +97,10 @@ def resolve_active_version(metadata_path=None, *, strict: bool = False) -> str:
         metadata_path = DATA_BACKUP_DIR / "custom_metadata.json"
     try:
         metadata = json.loads(Path(metadata_path).read_text(encoding="utf-8"))
-        return detect_curriculum_version(metadata, strict=strict)
     except (OSError, ValueError, TypeError) as exc:
         if strict:
             raise ValueError("对应数据库的教材元数据缺失、无效或无法识别") from exc
         return "A"
+    # An explicit but invalid identity must never silently select another
+    # version, including for ordinary exports that use non-strict resolution.
+    return detect_curriculum_version(metadata, strict=strict)

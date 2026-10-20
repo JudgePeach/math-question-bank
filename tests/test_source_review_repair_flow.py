@@ -23,7 +23,7 @@ def flow(request, monkeypatch):
         state.diagnostics['source_review_count'] = 1
     state.questions[0]['content'] = state.questions[0]['content'].replace('x^2', 'x^3')
     identifier, number = ('word_001', 1) if kind == 'word' else ('item_001', 14)
-    calls, responses = [], []
+    calls, responses, timeouts = [], [], []
     def verdict(decision='equivalent', evidence='原页函数指数是二，候选题干和答案与原页完整一致。'):
         item = {'id': identifier, 'source_number': number, 'decision': decision, 'evidence': evidence,
                 'checks': {key: True for key in module._CHECKS}}
@@ -36,7 +36,8 @@ def flow(request, monkeypatch):
             'evidence': '原页题干中的函数指数明确为二，修正误识别的三。'}]}
     def post(provider, payload, **kwargs):
         calls.append(deepcopy(payload))
-        assert kwargs['timeout'] == (600 if kind == 'pdf' else 120)
+        timeouts.append(kwargs['timeout'])
+        assert kwargs['timeout'] == 600
         assert kwargs['retry_connection'] is False
         assert len(calls) <= 7
         value = responses.pop(0)
@@ -50,7 +51,7 @@ def flow(request, monkeypatch):
         if kind == 'word':
             return word.verify_docx_source_suspicions(state.questions, state.diagnostics, state.source, state.evidence, **kwargs)
         return pdf.verify_pdf_source_suspicions(state.questions, state.diagnostics, state.urls, state.numbers, **kwargs)
-    return SimpleNamespace(kind=kind, state=state, calls=calls, responses=responses, run=run,
+    return SimpleNamespace(kind=kind, state=state, calls=calls, responses=responses, timeouts=timeouts, run=run,
                            verdict=verdict, proposal=proposal, module=module)
 
 
@@ -65,6 +66,8 @@ def test_confirmed_repair_is_committed_only_after_independent_full_review(flow):
     report = flow.run()
     result = flow.state.questions[0]
     assert report['calls'] == 3 and report['repaired'] == report['confirmed'] == 1
+    assert report['repair_calls'] == report['recheck_calls'] == 1
+    assert flow.timeouts == [600, 600, 600]
     assert report['usage'] == {'prompt_tokens': 30, 'completion_tokens': 15, 'total_tokens': 45}
     assert result['content'] == original['content'].replace('x^3', 'x^2')
     assert result['answer_markdown'] == original['answer_markdown']

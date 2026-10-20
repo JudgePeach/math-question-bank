@@ -400,7 +400,7 @@ const pdfScenarios = {
     assert.ok(repairAudit.querySelector('div').textContent.includes('修正稿：$x-2$'));
     assert.equal(repairAudit.querySelector('script'),null);
     assert.equal(card(1).querySelector('.card-source-review-reasons').textContent,'原页右下角模糊，无法判断指数。');
-    assert.equal(card(2).querySelector('.card-source-review-reasons').textContent,'未找到可用的原始页面。');
+    assert.equal(card(2).querySelector('.card-source-review-reasons').textContent,'未找到可用的原始页面。\n公式位置不能对应。');
     assert.equal(card(3).querySelector('.card-source-review-reasons').textContent,'修复后的公式和原页一致。');
     assert.ok(card(3).querySelector('.card-source-review-repair').textContent.includes('自动修复后已核验'));
     assert.equal(card(3).querySelector('.card-source-review-panel').open,false);
@@ -408,7 +408,7 @@ const pdfScenarios = {
     let lines=report.querySelector('.pdf-review-question-list').querySelectorAll('span').map(span=>span.textContent);
     assert.ok(lines[0].startsWith('：模型发现差异：原文是'));
     assert.ok(lines[1].startsWith('：模型尚无法确认：原页右下角'));
-    assert.equal(lines[2],'：未完成视觉核验：未找到可用的原始页面。');
+    assert.equal(lines[2],'：未完成视觉核验：未找到可用的原始页面。；公式位置不能对应。');
     assert.equal(lines.join('').includes('旧的泛化提示'),false);
     assert.equal(report.querySelector('img'),null);
     assert.deepEqual(getCheckedUnsavedIndices(),[0,1,2,3]);
@@ -704,11 +704,11 @@ const pdfScenarios = {
   },
   async joint_and_separate_visual_call_counts() {
     const joint=pdfLayoutReportSummary({pages_checked:2,joint_visual_calls:2,visual_calls:0});
-    assert.ok(joint.includes('联合识图 2 次，单独配图核对 0 次'));
+    assert.ok(joint.includes('联合识图 2 次，单独配图定位 0 次'));
     const mixed=pdfLayoutReportSummary({joint_visual_calls:1,visual_calls:3});
-    assert.ok(mixed.includes('联合识图 1 次，单独配图核对 3 次'));
+    assert.ok(mixed.includes('联合识图 1 次，单独配图定位 3 次'));
     const legacy=pdfLayoutReportSummary({visual_calls:2});
-    assert.ok(legacy.includes('配图核对调用 2 次'));
+    assert.ok(legacy.includes('配图定位调用 2 次'));
     assert.equal(legacy.includes('联合识图'),false);
   },
   async native_structure_repair_summary_and_notes_are_local_only() {
@@ -855,14 +855,14 @@ const pdfScenarios = {
     tick();
     requests.at(-1).resolve({ok:true,json:async()=>({status:'source_verification',log:'正在对照原页核验...',progress:90})});
     await flush();
-    assert.ok(document.getElementById('importSubLoadingText').textContent.includes('自动核验原页疑点'));
+    assert.ok(document.getElementById('importSubLoadingText').textContent.includes('对照原页核验疑点'));
     tick();
     requests.at(-1).resolve({ok:true,json:async()=>({status:'completed',log:'完成',document_type:'pdf',data:[],
       diagnostics:{pdf_layout:{pages_checked:2,figures_extracted:1,figures_attached:1,visual_calls:2,warnings:[]},
         math_locks_created:3,math_locks_restored_by_id:3},generate_answers:false})});
     await flush();
     assert.equal(intervals.size,0);
-    assert.ok(logs.some(line=>line.includes('配图核对调用 2 次')));
+    assert.ok(logs.some(line=>line.includes('配图定位调用 2 次')));
     assert.ok(logs.some(line=>line.includes('公式核对：3 处')),'PDF formula report also appears');
     assert.ok(document.getElementById('parsedSourceIntegrityReport'));
   },

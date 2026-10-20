@@ -10,22 +10,22 @@ from test_preview_browser import browser, pytestmark  # noqa: F401
 
 
 CONTENT = (
-    r"分式规范回归：主体 $\frac{x+1}{x-1}$；"
+    r"分式规范回归：主体 $\eu^x-\frac{x+1}{x-1}$；"
     r"指数 $x^{\dfrac{1}{2}}$；下标 $a_{\dfrac{m}{n}}$；"
     r"嵌套 $\frac{1+\dfrac{x}{y}}{\dfrac{a}{b}}$。"
 )
 NORMALIZED_CONTENT = (
-    r"分式规范回归：主体 $\dfrac{x+1}{x-1}$；"
+    r"分式规范回归：主体 $\eu^x-\dfrac{x+1}{x-1}$；"
     r"指数 $x^{\frac{1}{2}}$；下标 $a_{\frac{m}{n}}$；"
     r"嵌套 $\dfrac{1+\frac{x}{y}}{\frac{a}{b}}$。"
 )
 ANSWER = (
-    r"解析：主体 $\frac{2x}{x+3}$；"
+    r"解析：主体 $\upe-\frac{2x}{x+3}$；"
     r"指数 $2^{\dfrac{p}{q}}$；下标 $b_{\dfrac{1}{3}}$；"
     r"嵌套 $\frac{\dfrac{u}{v}+1}{2}$。"
 )
 NORMALIZED_ANSWER = (
-    r"解析：主体 $\dfrac{2x}{x+3}$；"
+    r"解析：主体 $\upe-\dfrac{2x}{x+3}$；"
     r"指数 $2^{\frac{p}{q}}$；下标 $b_{\frac{1}{3}}$；"
     r"嵌套 $\dfrac{\frac{u}{v}+1}{2}$。"
 )
@@ -95,13 +95,13 @@ def test_fraction_buttons_preserve_compact_contexts_and_unsaved_state(browser, t
     ))
     browser.command("wait", "--fn", (
         "document.querySelector('#contentPreview annotation').textContent === "
-        + json.dumps(r"\dfrac{x+1}{x-1}")
+        + json.dumps(r"\eu^x-\dfrac{x+1}{x-1}")
     ))
     browser.settle()
     after = _preview_metrics(browser, "contentPreview")
     assert not after["errors"]
     assert [formula["tex"] for formula in after["formulas"]] == [
-        r"\dfrac{x+1}{x-1}", r"x^{\frac{1}{2}}", r"a_{\frac{m}{n}}",
+        r"\eu^x-\dfrac{x+1}{x-1}", r"x^{\frac{1}{2}}", r"a_{\frac{m}{n}}",
         r"\dfrac{1+\frac{x}{y}}{\frac{a}{b}}",
     ]
     assert after["formulas"][0]["height"] > before["formulas"][0]["height"] + 3
@@ -123,13 +123,13 @@ def test_fraction_buttons_preserve_compact_contexts_and_unsaved_state(browser, t
     ))
     browser.command("wait", "--fn", (
         "document.querySelector('#answerPreview annotation').textContent === "
-        + json.dumps(r"\dfrac{2x}{x+3}")
+        + json.dumps(r"\upe-\dfrac{2x}{x+3}")
     ))
     browser.settle()
     answer = _preview_metrics(browser, "answerPreview")
     assert not answer["errors"]
     assert [formula["tex"] for formula in answer["formulas"]] == [
-        r"\dfrac{2x}{x+3}", r"2^{\frac{p}{q}}", r"b_{\frac{1}{3}}",
+        r"\upe-\dfrac{2x}{x+3}", r"2^{\frac{p}{q}}", r"b_{\frac{1}{3}}",
         r"\dfrac{\frac{u}{v}+1}{2}",
     ]
     assert browser.evaluate("isEditorModified()")

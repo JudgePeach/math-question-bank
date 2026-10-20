@@ -17,16 +17,23 @@ PAPER_SPLIT_CACHE_MAX_CHARACTERS = 500_000
 def request_pdf_paper_completion(
     provider, payload: dict, *, post: Callable, raw_markdown: str = "",
     diagnostics: dict | None = None,
+    completion_parser: Callable | None = None,
+    diagnostics_key: str = "pdf_splitting",
+    label: str = "PDF 试卷拆题",
+    max_attempts: int = 2,
+    on_completion: Callable[[dict], None] | None = None,
     check_cancelled: Callable[[], None] = lambda: None,
     report_attempt: Callable[[dict], None] = lambda _event: None,
-) -> list[dict[str, Any]]:
+) -> Any:
     """Retry only the PDF's prepared text request; never repeat page extraction."""
     report = diagnostics if diagnostics is not None else {}
+    if type(max_attempts) is not int or max_attempts not in (1, 2):
+        raise ValueError("PDF 拆题请求最多允许1或2次尝试。")
     if not provider.api_key or not provider.chat_completions_url:
         raise ValueError("PDF 试卷拆题所用的模型服务未配置。")
-    split_report = {"timeout_seconds": PAPER_SPLIT_TIMEOUT_SECONDS, "max_attempts": 2,
+    split_report = {"timeout_seconds": PAPER_SPLIT_TIMEOUT_SECONDS, "max_attempts": max_attempts,
                     "calls": 0, "retries": 0, "attempts": [], "usage": {}, "usage_complete": False}
-    report["pdf_splitting"] = split_report
+    report[diagnostics_key] = split_report
     attempt_metadata = {}
     use_stream = supports_pdf_split_stream(provider) if hasattr(provider, "provider_code") else False
     if use_stream:
@@ -67,26 +74,38 @@ def request_pdf_paper_completion(
         nonlocal attempt_metadata
         attempt_metadata = {}
         choices = body.get("choices") if isinstance(body, dict) else None
+        if isinstance(choices, list) and choices and isinstance(choices[0], dict):
+            message = choices[0].get("message")
+            raw = message.get("content") if isinstance(message, dict) else None
+            attempt_metadata["output_characters"] = len(raw) if isinstance(raw, str) else 0
         if (isinstance(choices, list) and choices and isinstance(choices[0], dict)
                 and choices[0].get("finish_reason") == "content_filter"):
             raise PDFVisionResponseError("PDF 试卷拆题被服务方过滤，未接受结果。", retryable=False)
         if use_stream and (not isinstance(body, dict) or not body.get("_stream_complete", False)
                            or body.get("_stream_error")):
             raise PDFVisionResponseError("PDF 试卷流式响应未完整stop并收到DONE，未采用不完整结果。")
-        questions = parse_paper_completion(body, raw_markdown=raw_markdown, diagnostics=attempt_metadata)
+        if (isinstance(choices, list) and choices and isinstance(choices[0], dict)
+                and choices[0].get("finish_reason") not in (None, "stop")):
+            raise PDFVisionResponseError(f"{label}未正常完成，未采用不完整结果。")
+        if on_completion is not None:
+            on_completion(body)
+            check_cancelled()
+        questions = (completion_parser(body, attempt_metadata) if completion_parser is not None
+                     else parse_paper_completion(body, raw_markdown=raw_markdown, diagnostics=attempt_metadata))
         return {"questions": questions, "parse_diagnostics": attempt_metadata}
 
     def run(request_post):
         return request_pdf_vision(
             provider, payload, post=request_post, validate=validate,
-            label="PDF 试卷拆题", stage="paper_split", timeout_seconds=PAPER_SPLIT_TIMEOUT_SECONDS,
+            label=label, stage="paper_split", timeout_seconds=PAPER_SPLIT_TIMEOUT_SECONDS,
+            max_attempts=max_attempts,
             check_cancelled=check_cancelled, report_attempt=record,
         )
 
     if use_stream:
         # Reserving precedes the shared helper's attempt/POST accounting. Each
         # daemon keeps its own permit until public close eventually completes.
-        with reserve_stream_attempts(2, check_cancelled=check_cancelled,
+        with reserve_stream_attempts(max_attempts, check_cancelled=check_cancelled,
                                      timeout_seconds=PAPER_SPLIT_TIMEOUT_SECONDS) as permits:
             pending = iter(permits)
             def stream_progress(stats):
@@ -144,6 +163,8 @@ def parse_paper_completion(
     if finish_reason in ("length", "max_tokens", "max_output_tokens"):
         raise ValueError("AI 拆题输出被截断，结果可能漏题。请分段导入或调整模型后重试。")
     if finish_reason in ("content_filter", "tool_calls", "function_call"):
+        raise ValueError("AI 未正常完成拆题，未接收不完整的题目结果。")
+    if finish_reason not in (None, "stop"):
         raise ValueError("AI 未正常完成拆题，未接收不完整的题目结果。")
     parsed = parse_ai_json(raw, raw_markdown=raw_markdown)
     if isinstance(parsed, dict):
