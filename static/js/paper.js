@@ -1609,6 +1609,13 @@
 
     let paperStreamLayoutRevision = 0;
     let paperStreamLayoutFrame = null;
+    let paperStreamVirtualList = null;
+
+    function destroyPaperStreamVirtualList() {
+        if (!paperStreamVirtualList) return;
+        paperStreamVirtualList.destroy();
+        paperStreamVirtualList = null;
+    }
 
     // Render Part 3: Full-Width Question Stream
     function renderPart3QuestionStream() {
@@ -1619,6 +1626,7 @@
         paperStreamLayoutFrame = null;
         const savedScrollTop = container.scrollTop;
         const activeWorkspace = window.PaperStore.activeWorkspace;
+        destroyPaperStreamVirtualList();
 
         const cart = window.PaperStore.cart;
         const bankQuestions = window.PaperStore.bankQuestions;
@@ -1752,9 +1760,10 @@
             return;
         }
 
-        html += `<div class="space-y-4">`;
+        displayList.forEach(seedPaperAnswerCache);
 
-        displayEntries.forEach((entry) => {
+        function buildPaperResourceCardHtml(entry, currentTab) {
+            const cart = window.PaperStore.cart;
             const q = entry.question;
             const cartIndex = entry.cartIndex;
             const inCart = window.isInCart(q.id);
@@ -1764,14 +1773,13 @@
             const diffTag = getDifficultyBadge(q.difficulty);
             const usageCount = q.usage_count || 0;
             const questionSource = typeof q.source === 'string' ? q.source.trim() : '';
-            seedPaperAnswerCache(q);
             const { answerExpanded, answerLoading, hasAnswer, answerBodyHtml } = getPaperQuestionAnswerState(q);
 
             const cardBorderClass = inCart 
                 ? 'border-brand-500 ring-2 ring-brand-500/20 bg-brand-50/10 dark:border-brand-500/60 dark:bg-brand-900/20'
                 : 'border-slate-200/80 hover:border-brand-200/80 bg-white/80 dark:bg-slate-800/80 dark:border-slate-700/70';
 
-            html += `
+            return `
                 <div data-paper-question-id="${q.id}" class="paper-resource-card p-5 rounded-2xl border ${cardBorderClass} shadow-sm hover:shadow-md transition-all">
                     <!-- Card Top Controls Bar -->
                     <div class="paper-resource-header">
@@ -1856,73 +1864,133 @@
                         </section>
                 </div>
             `;
-        });
+        }
 
-        html += `</div>`;
+        const useVirtualList = Boolean(window.MathBankVirtualList);
+        if (useVirtualList) {
+            html += '<div id="paperQuestionVirtualRoot"></div>';
+        } else {
+            html += `<div class="space-y-4">`;
+            displayEntries.forEach(entry => {
+                html += buildPaperResourceCardHtml(entry, currentTab);
+            });
+            html += `</div>`;
+        }
         html += renderPaperStreamPagination(currentTab, currentPage, total, totalPages);
         container.innerHTML = html;
 
-        // Render a few full cards per frame when entering a page at its top.
-        // Rebuilds that preserve a scrolled viewport stay synchronous so a later
-        // callback cannot overwrite scrolling performed after an add/remove.
-        const layoutQuestion = q => {
-            const el = document.getElementById(`paper-q-render-${q.id}`);
-            if (el) {
-                const pointMeta = document.createElement('div');
-                renderKnowledgePointBadges(pointMeta, q.knowledge_points || [], currentTab === 'all' ? KnowledgePointState.filter('paper') : null, true);
-                if (pointMeta.childNodes.length) el.before(pointMeta);
-            }
-            if (el && typeof renderMathInElement === 'function') {
-                try {
-                    renderMathInElement(el, {
-                        delimiters: [
-                            { left: '$$', right: '$$', display: true },
-                            { left: '$', right: '$', display: false },
-                            { left: '\\(', right: '\\)', display: false },
-                            { left: '\\[', right: '\\]', display: true }
-                        ],
-                        throwOnError: false
-                    });
-                    if (typeof window.adaptChoicesGridLayout === 'function') {
-                        window.adaptChoicesGridLayout(el);
-                    }
-                } catch (e) { }
-            }
-
-            if (window.PaperStore.expandedAnswerIds.has(q.id)) renderPaperAnswerMath(q.id);
-        };
-        if (savedScrollTop > 0 || displayList.length <= 6 || typeof requestAnimationFrame !== 'function') {
-            displayList.forEach(layoutQuestion);
-            initializeAutoFigureSizing(container);
-            container.scrollTop = savedScrollTop;
-        } else {
-            container.setAttribute('aria-busy', 'true');
-            let nextIndex = 0;
-            const renderNextCards = () => {
-                paperStreamLayoutFrame = null;
-                if (layoutRevision !== paperStreamLayoutRevision || container.isConnected === false
-                        || document.getElementById('paperQuestionStream') !== container) return;
-                if (window.PaperStore.activeWorkspace !== activeWorkspace) {
-                    container.setAttribute('aria-busy', 'false');
-                    return;
-                }
-                const end = Math.min(nextIndex + 6, displayList.length);
-                while (nextIndex < end) {
-                    const question = displayList[nextIndex++];
-                    layoutQuestion(question);
-                    const card = document.getElementById(`paper-q-render-${question.id}`);
-                    if (card) initializeAutoFigureSizing(card);
-                }
-                if (nextIndex < displayList.length) paperStreamLayoutFrame = requestAnimationFrame(renderNextCards);
-                else {
-                    const state = window.PaperStore;
-                    const stillLoading = state.filters?.tab === 'selected'
-                        ? state.cartQuestionLoad?.loading : state.streamPagination?.all?.loading;
-                    container.setAttribute('aria-busy', stillLoading ? 'true' : 'false');
-                }
-            };
-            renderNextCards();
+    // Render a few full cards per frame when entering a page at its top.
+    // Rebuilds that preserve a scrolled viewport stay synchronous so a later
+    // callback cannot overwrite scrolling performed after an add/remove.
+    const layoutQuestion = q => {
+        const el = document.getElementById(`paper-q-render-${q.id}`);
+        if (el) {
+            const pointMeta = document.createElement('div');
+            renderKnowledgePointBadges(pointMeta, q.knowledge_points || [], currentTab === 'all' ? KnowledgePointState.filter('paper') : null, true);
+            if (pointMeta.childNodes.length) el.before(pointMeta);
         }
+        if (el && typeof renderMathInElement === 'function') {
+            try {
+                renderMathInElement(el, {
+                    delimiters: [
+                        { left: '$$', right: '$$', display: true },
+                        { left: '$', right: '$', display: false },
+                        { left: '\\(', right: '\\)', display: false },
+                        { left: '\\[', right: '\\]', display: true }
+                    ],
+                    throwOnError: false
+                });
+                if (typeof window.adaptChoicesGridLayout === 'function') {
+                    window.adaptChoicesGridLayout(el);
+                }
+            } catch (e) { }
+        }
+
+        if (window.PaperStore.expandedAnswerIds.has(q.id)) renderPaperAnswerMath(q.id);
+    };
+
+    if (useVirtualList) {
+        const root = document.getElementById('paperQuestionVirtualRoot');
+        if (!root) return;
+        // 虚拟滚动态只挂载视口附近若干行，KaTeX、考点标签与配图自适应必须按行补做；
+        // 同一节点只排版一次，避免每次滚动都重新渲染已可见的公式。
+        const laidOutCards = new WeakSet();
+        function typesetPaperStreamCards(scope) {
+            if (!scope || typeof scope.querySelectorAll !== 'function') return;
+            scope.querySelectorAll('.paper-stream-row').forEach(row => {
+                const card = row.querySelector('.paper-resource-card');
+                if (!card) return;
+                const el = card.querySelector('[id^="paper-q-render-"]');
+                const question = el && el.__paperQuestion;
+                if (!question || laidOutCards.has(el)) return;
+                laidOutCards.add(el);
+                layoutQuestion(question);
+                initializeAutoFigureSizing(card);
+            });
+        }
+        container.style.position = 'relative';
+        paperStreamVirtualList = new window.MathBankVirtualList({
+            scroller: container,
+            root: root,
+            overscan: 6,
+            estimateHeight(index) {
+                const entry = displayEntries[index];
+                return entry && window.PaperStore.expandedAnswerIds.has(entry.question.id) ? 520 : 260;
+            },
+            renderRow(index) {
+                const entry = displayEntries[index];
+                const wrapper = document.createElement('div');
+                wrapper.className = 'paper-stream-row pb-4';
+                wrapper.innerHTML = buildPaperResourceCardHtml(entry, currentTab);
+                const el = wrapper.querySelector(`#paper-q-render-${entry.question.id}`);
+                if (el) el.__paperQuestion = entry.question;
+                return { element: wrapper };
+            },
+            onRangeChange() {
+                typesetPaperStreamCards(root);
+            }
+        });
+        paperStreamVirtualList.reset(displayEntries.length, index => {
+            const q = displayEntries[index].question;
+            return `${q.id}|${window.PaperStore.expandedAnswerIds.has(q.id) ? 'e' : 'c'}`;
+        });
+        typesetPaperStreamCards(root);
+        container.scrollTop = savedScrollTop;
+        return;
+    }
+
+    if (savedScrollTop > 0 || displayList.length <= 6 || typeof requestAnimationFrame !== 'function') {
+        displayList.forEach(layoutQuestion);
+        initializeAutoFigureSizing(container);
+        container.scrollTop = savedScrollTop;
+    } else {
+        container.setAttribute('aria-busy', 'true');
+        let nextIndex = 0;
+        const renderNextCards = () => {
+            paperStreamLayoutFrame = null;
+            if (layoutRevision !== paperStreamLayoutRevision || container.isConnected === false
+                    || document.getElementById('paperQuestionStream') !== container) return;
+            if (window.PaperStore.activeWorkspace !== activeWorkspace) {
+                container.setAttribute('aria-busy', 'false');
+                return;
+            }
+            const end = Math.min(nextIndex + 6, displayList.length);
+            while (nextIndex < end) {
+                const question = displayList[nextIndex++];
+                layoutQuestion(question);
+                const card = document.getElementById(`paper-q-render-${question.id}`);
+                if (card) initializeAutoFigureSizing(card);
+            }
+            if (nextIndex < displayList.length) paperStreamLayoutFrame = requestAnimationFrame(renderNextCards);
+            else {
+                const state = window.PaperStore;
+                const stillLoading = state.filters?.tab === 'selected'
+                    ? state.cartQuestionLoad?.loading : state.streamPagination?.all?.loading;
+                container.setAttribute('aria-busy', stillLoading ? 'true' : 'false');
+            }
+        };
+        renderNextCards();
+    }
     }
 
     // Render Part 4: Right A4 Canvas & Action Bar

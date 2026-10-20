@@ -860,7 +860,7 @@ def read_index():
         html_content = render_qa_visibility(html_content, enabled=qa_enabled)
         
         # Inject dynamic cache-busting version parameter based on file mtime
-        js_files = ["api.js", "editor.js", "ocr.js", "import.js", "document-import-session.js", "paper.js", "dashboard.js", "qa-data.js", "qa.js"]
+        js_files = ["api.js", "editor.js", "ocr.js", "import.js", "document-import-session.js", "virtual_list.js", "paper.js", "dashboard.js", "qa-data.js", "qa.js"]
         for js in js_files:
             js_path = str(STATIC_JS_DIR / js)
             mtime = int(os.path.getmtime(js_path)) if os.path.exists(js_path) else 0
@@ -6469,12 +6469,29 @@ def run_pdf_parsing_task(
         if not full_latex_content.strip():
             raise ValueError("所选 PDF 页面未能提取出可解析的文字内容。")
 
+        # Optional local split diagnostics: pure local, no AI and no DB writes.
+        local_split_enabled = os.getenv("MATHBANK_PDF_LOCAL_SPLIT", "").strip().lower() in (
+            "1", "true", "yes", "on",
+        )
+        if local_split_enabled:
+            from mathbank.pdf_local_split import plan_pdf_local_split
+            local_plan = plan_pdf_local_split(full_latex_content, generate_answers=generate_answers)
+            diagnostics["pdf_local_split"] = {
+                "trustworthy": local_plan.trustworthy,
+                "cover_ok": local_plan.cover_ok,
+                "clean_blocks": len(local_plan.clean_blocks),
+                "suspicious_blocks": len(local_plan.suspicious_blocks),
+                "judge_report": dict(local_plan.judge_report),
+            }
+
         DOCUMENT_TASKS.update(
             task_id,
             status="ai_splitting",
             progress=80,
             log="文本与公式准备就绪！正在调用大模型拆解题目与标注属性...",
         )
+        if local_split_enabled:
+            DOCUMENT_TASKS.update(task_id, diagnostics=copy.deepcopy(diagnostics))
         DOCUMENT_TASKS.check_cancelled(task_id)
 
         task = DOCUMENT_TASKS.snapshot(task_id) or {}

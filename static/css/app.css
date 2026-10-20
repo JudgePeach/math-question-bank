@@ -3998,6 +3998,10 @@ body.question-editor-open {
         padding: 0.85rem !important;
     }
 
+    .paper-question-panel #paperQuestionStream > #paperQuestionVirtualRoot > .paper-stream-row > div[class*="rounded-2xl"] {
+        padding: 0.85rem !important;
+    }
+
 }
 
 @media (max-width: 1100px) {
@@ -5032,6 +5036,17 @@ button[aria-disabled="true"]:hover,
 }
 
 .dark #paperQuestionStream > .space-y-4 > div[class*="rounded-2xl"]:hover {
+    border-color: rgba(var(--brand-500-rgb), 0.48) !important;
+    background: rgba(35, 47, 68, 0.94) !important;
+}
+
+.dark #paperQuestionStream > #paperQuestionVirtualRoot > .paper-stream-row > div[class*="rounded-2xl"] {
+    border-color: rgba(71, 85, 105, 0.78) !important;
+    background: rgba(30, 41, 59, 0.82) !important;
+    color: #e2e8f0;
+}
+
+.dark #paperQuestionStream > #paperQuestionVirtualRoot > .paper-stream-row > div[class*="rounded-2xl"]:hover {
     border-color: rgba(var(--brand-500-rgb), 0.48) !important;
     background: rgba(35, 47, 68, 0.94) !important;
 }
