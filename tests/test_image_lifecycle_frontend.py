@@ -79,9 +79,12 @@ SOURCES = (
 def run_js(checks, sources=SOURCES):
     node = shutil.which('node')
     assert node, 'Node is required for isolated frontend regression checks'
-    result = subprocess.run([node, '-e', COMMON + sources + '\n(async()=>{\n' + checks
-                             + '\n})().catch(error=>{console.error(error);process.exitCode=1;});'],
-                            capture_output=True, text=True, cwd=ROOT)
+    script = COMMON + sources + '\n(async()=>{\n' + checks \
+        + '\n})().catch(error=>{console.error(error);process.exitCode=1;});'
+    # Shipped source slices can exceed Linux's 128 KiB per-argument limit.
+    # stdin keeps the actual script and every ownership/race assertion intact.
+    result = subprocess.run([node, '-'], input=script,
+                            capture_output=True, text=True, encoding='utf-8', cwd=ROOT)
     assert result.returncode == 0, result.stderr + result.stdout
 
 

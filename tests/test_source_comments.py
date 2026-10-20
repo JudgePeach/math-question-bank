@@ -83,13 +83,32 @@ def test_latex_export_hides_before_formula_choice_and_image_scanning():
     assert original == BLOCK + STEM
 
 
-def test_word_preparation_uses_a_copy_before_choices_images_and_math(tmp_path):
+def _word_source_comment_item(tmp_path):
     Image.new("RGB", (30, 20), "blue").save(tmp_path / "visible.png")
     Image.new("RGB", (30, 20), "red").save(tmp_path / "hidden.png")
-    item = {"question": {
+    return {"question": {
         "content": BLOCK + STEM, "question_type": "single_choice",
         "answer_markdown": "答案为 $1$。", "image_paths": [],
     }, "score": 5}
+
+
+def test_word_preparation_uses_a_copy_before_choices_images_and_math(tmp_path, monkeypatch):
+    # This checks the source-hiding/preparation boundary, independent of the
+    # optional external converter. The real Pandoc case below checks OMML.
+    formulas_seen = []
+    def convert(_converter, formulas):
+        formulas_seen.extend(formulas)
+        result = {}
+        for formula in formulas:
+            root = etree.Element("{" + word.MATH_NS + "}oMath", nsmap={"m": word.MATH_NS})
+            for character in formula:
+                run = etree.SubElement(root, "{" + word.MATH_NS + "}r")
+                etree.SubElement(run, "{" + word.MATH_NS + "}t").text = character
+            result[formula] = etree.tostring(root)
+        return result
+    monkeypatch.setattr(word, "_find_pandoc", lambda: "unit-test-pandoc-adapter")
+    monkeypatch.setattr(word.PandocOmmlConverter, "convert_many", convert)
+    item = _word_source_comment_item(tmp_path)
     original = deepcopy(item)
     prepared = word._prepare_question(item, tmp_path)
     assert item == original
@@ -105,6 +124,8 @@ def test_word_preparation_uses_a_copy_before_choices_images_and_math(tmp_path):
         show_secret=False, show_notice=False,
     )
     assert item == original
+    assert formulas_seen == ["x^2+1", "1", "2", "3", "4"]
+    assert diagnostics["native_formulas"] == 5 and diagnostics["fallback_formulas"] == 0
     assert diagnostics["missing_images"] == diagnostics["failed_formulas"] == 0
     with zipfile.ZipFile(io.BytesIO(data)) as archive:
         xml = archive.read("word/document.xml")
@@ -115,6 +136,29 @@ def test_word_preparation_uses_a_copy_before_choices_images_and_math(tmp_path):
     assert "隐藏" not in visible
     assert len(root.xpath(".//w:drawing", namespaces=namespace)) == 1
     assert "x" in root.xpath(".//m:t/text()", namespaces=namespace)
+
+
+def test_native_word_source_comment_hiding_keeps_real_omml_and_visible_image(tmp_path):
+    if word._find_pandoc() is None:
+        pytest.skip("Real Pandoc is required for native source-comment Word acceptance")
+    item = _word_source_comment_item(tmp_path)
+    original = deepcopy(item)
+    data, diagnostics = word.build_word_document(
+        "来源注释原生核验", "", "exam", [item], uploads_dir=tmp_path,
+        show_secret=False, show_notice=False,
+    )
+    assert item == original
+    assert diagnostics["native_formulas"] == 5
+    assert diagnostics["fallback_formulas"] == diagnostics["failed_formulas"] == diagnostics["missing_images"] == 0
+    with zipfile.ZipFile(io.BytesIO(data)) as archive:
+        root = etree.fromstring(archive.read("word/document.xml"))
+    namespace = {"w": word.WORD_NS, "m": word.MATH_NS}
+    visible = "".join(root.xpath(".//w:t/text()", namespaces=namespace))
+    assert "example.invalid" not in visible and "隐藏" not in visible
+    assert len(root.xpath(".//w:drawing", namespaces=namespace)) == 1
+    assert len(root.xpath(".//m:oMath", namespaces=namespace)) == 5
+    assert root.xpath(".//m:sSup/m:e//m:t[text()='x']", namespaces=namespace)
+    assert root.xpath(".//m:sSup/m:sup//m:t[text()='2']", namespaces=namespace)
 
 
 def test_duplicate_semantics_ignore_block_but_raw_hash_keeps_it():

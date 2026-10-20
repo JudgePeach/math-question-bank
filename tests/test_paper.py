@@ -1,5 +1,8 @@
 import os
+import io
 import json
+import shutil
+import zipfile
 import pytest
 from unittest.mock import MagicMock, patch
 
@@ -57,10 +60,21 @@ def test_paper_api_flow(client):
     assert tex_res.status_code == 200
     assert tex_res.headers.get("content-type") == "application/zip"
 
-    # 4b. Export Full Bundle Zip (TeX + PDF)
-    bundle_res = client.post("/api/paper/export/bundle", json=paper_payload, headers=headers)
+    # Exercise the API/package contract independently of the optional desktop
+    # compiler. Native compilation and fail-closed errors have separate tests.
+    compiled_pdfs = (b"%PDF-1.7\n% student API fixture", b"%PDF-1.7\n% teacher API fixture")
+    with patch("main.compile_tex_to_pdf", side_effect=[(pdf, "") for pdf in compiled_pdfs]) as compile_pdf:
+        bundle_res = client.post("/api/paper/export/bundle", json=paper_payload, headers=headers)
     assert bundle_res.status_code == 200
     assert bundle_res.headers.get("content-type") == "application/zip"
+    assert compile_pdf.call_count == 2
+    assert "故选" not in compile_pdf.call_args_list[0].args[0]
+    assert "故选" in compile_pdf.call_args_list[1].args[0]
+    with zipfile.ZipFile(io.BytesIO(bundle_res.content)) as bundle:
+        assert bundle.testzip() is None
+        assert {"试卷正文.tex", "参考答案与解析.tex", "试卷正文.pdf", "参考答案与解析.pdf"} <= set(bundle.namelist())
+        assert bundle.read("试卷正文.pdf") == compiled_pdfs[0]
+        assert bundle.read("参考答案与解析.pdf") == compiled_pdfs[1]
 
     # 5. AI Paper Selection
     ai_res = client.post("/api/paper/ai-select", json={"prompt": "函数", "limit": 5}, headers=headers)
@@ -83,6 +97,59 @@ def test_paper_api_flow(client):
     del_res = client.delete(f"/api/papers/{paper_id}", headers=headers)
     assert del_res.status_code == 200
     assert del_res.json()["status"] == "success"
+
+
+@pytest.mark.parametrize("failed_output", [0, 1])
+def test_paper_bundle_compile_failure_never_returns_a_partial_archive(client, failed_output):
+    headers = {"X-Local-Token": LOCAL_TOKEN}
+    created = client.post("/api/questions", data={
+        "content": r"合成组卷题 $x+1$。", "question_type": "detailed_answer",
+        "difficulty": "normal", "answer_markdown": r"合成解析 $x+2$。",
+    }, headers=headers)
+    assert created.status_code == 200
+    payload = {"title": "编译失败归档验证", "paper_type": "exam",
+               "questions": [{"id": created.json()["question"]["id"], "score": 5}]}
+    results = [(b"%PDF-1.7\n% successful sibling fixture", "")] * 2
+    results[failed_output] = (None, "XeLaTeX is unavailable in this test")
+    with patch("main.compile_tex_to_pdf", side_effect=results) as compile_pdf:
+        response = client.post("/api/paper/export/bundle", json=payload, headers=headers)
+    assert compile_pdf.call_count == 2
+    assert response.status_code == 400
+    assert response.headers.get("content-type") == "application/json"
+    assert "未生成不完整归档" in response.json()["message"]
+    assert response.json()["preflight"]["status"] == "passed"
+
+
+@pytest.mark.skipif(os.environ.get("MATHBANK_TEST_EXPORT_NATIVE") != "1" or not shutil.which("xelatex"),
+                    reason="Opt-in real XeLaTeX API bundle validation")
+def test_native_paper_bundle_contains_both_real_pdfs_and_formula_content(client):
+    import re
+    import unicodedata
+    import pymupdf
+
+    headers = {"X-Local-Token": LOCAL_TOKEN}
+    created = client.post("/api/questions", data={
+        "content": r"原生组卷测试题：计算 $\dfrac{x+1}{2}$。", "question_type": "detailed_answer",
+        "difficulty": "normal", "answer_markdown": r"原生参考解析：结果为 $x+2$。",
+    }, headers=headers)
+    assert created.status_code == 200
+    payload = {"title": "原生归档验证", "paper_type": "exam", "show_secret": False, "show_notice": False,
+               "questions": [{"id": created.json()["question"]["id"], "score": 5}]}
+    response = client.post("/api/paper/export/bundle", json=payload, headers=headers)
+    assert response.status_code == 200, response.text
+    assert response.headers.get("content-type") == "application/zip"
+    with zipfile.ZipFile(io.BytesIO(response.content)) as bundle:
+        assert bundle.testzip() is None
+        texts = []
+        for name in ("试卷正文.pdf", "参考答案与解析.pdf"):
+            with pymupdf.open(stream=bundle.read(name), filetype="pdf") as document:
+                assert len(document) >= 1
+                text = "".join(page.get_text() for page in document)
+            text = re.sub(r"\s+", "", unicodedata.normalize("NFKC", text))
+            assert "原生组卷测试题" in text and "x+1" in text
+            texts.append(text)
+        assert "原生参考解析" not in texts[0]
+        assert "原生参考解析" in texts[1] and "x+2" in texts[1]
 
 
 def test_ai_paper_selection_uses_shared_provider_and_clean_effort(
