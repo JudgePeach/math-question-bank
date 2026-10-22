@@ -15,6 +15,8 @@ import urllib.request
 import uuid
 from pathlib import Path
 
+from mathbank.storage_access import StorageAccessError, check_startup_storage
+
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 PORT = 8000
 BASE_URL = f"http://127.0.0.1:{PORT}"
@@ -242,6 +244,7 @@ def run_launcher(root: Path = PROJECT_ROOT) -> None:
         print("题库已经在运行，正在打开网页。如刚更新了程序，请先在网页关闭服务再启动。")
         open_browser()
         return
+    _check_startup_storage(root)
     with launcher_lock(root / ".system_generated"):
         if existing_service_ready():
             open_browser()
@@ -258,12 +261,23 @@ def run_launcher(root: Path = PROJECT_ROOT) -> None:
                 print(f"旧 Python 环境备份保留在：{backup}")
 
 
-def main() -> int:
+def _check_startup_storage(root: Path) -> None:
+    try:
+        check_startup_storage(root)
+    except StorageAccessError as exc:
+        raise LauncherError(exc.safe_message) from exc
+
+
+def main(argv: list[str] | None = None) -> int:
     for stream in (sys.stdout, sys.stderr):
         if callable(getattr(stream, "reconfigure", None)):
             stream.reconfigure(encoding="utf-8", errors="replace")
     print("本地数学题库（MathBank）启动器")
     try:
+        arguments = sys.argv[1:] if argv is None else argv
+        if arguments == ["--check-write-access"]:
+            _check_startup_storage(PROJECT_ROOT)
+            return 0
         run_launcher()
         return 0
     except (LauncherError, OSError) as exc:

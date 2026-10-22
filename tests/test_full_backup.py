@@ -4,6 +4,8 @@ import os
 import sqlite3
 import stat
 import sys
+import threading
+import time
 import types
 import zipfile
 from contextlib import closing, contextmanager
@@ -793,6 +795,197 @@ def test_online_backup_includes_committed_wal_rows(tmp_path):
             name for name in backup_zip.namelist() if name.startswith("database/")
         ]
     assert database_members == ["database/math_question_bank.db"]
+
+
+def test_locked_backup_times_out_without_mutating_database_or_publishing_archive(tmp_path, monkeypatch):
+    database = tmp_path / "math_question_bank.db"
+    snapshots = tmp_path / "snapshots"
+    uploads = tmp_path / "uploads"
+    uploads.mkdir()
+    _create_database(database)
+    original = database.read_bytes()
+    monkeypatch.setattr(backup_module, "BACKUP_BUSY_TIMEOUT_SECONDS", 0.08)
+    monkeypatch.setattr(backup_module, "BACKUP_BUSY_RETRY_SECONDS", 0.01)
+    with closing(sqlite3.connect(database)) as writer:
+        writer.execute("BEGIN EXCLUSIVE")
+        writer.execute("UPDATE questions SET content='uncommitted' WHERE id=1")
+        started = time.monotonic()
+        try:
+            with pytest.raises(backup_module.BackupBusyError, match="持续被其他写入操作占用") as failure:
+                create_full_backup(output_dir=snapshots, database_path=database, uploads_dir=uploads,
+                                   metadata_path=tmp_path / "missing.json", retention=None)
+            assert failure.value.backup_busy is True
+            assert 0.08 <= time.monotonic() - started < 2
+        finally:
+            writer.rollback()
+    assert database.read_bytes() == original
+    assert list(snapshots.iterdir()) == []
+    with _sqlite_connection(database) as connection:
+        assert connection.execute("PRAGMA integrity_check").fetchone()[0] == "ok"
+        assert connection.execute("SELECT content FROM questions").fetchone()[0] == "question-1"
+
+
+def test_locked_restore_probe_supports_python310_without_named_error_constants(tmp_path, monkeypatch):
+    database = tmp_path / "math_question_bank.db"
+    _create_database(database)
+    monkeypatch.delattr(sqlite3, "SQLITE_BUSY", raising=False)
+    monkeypatch.delattr(sqlite3, "SQLITE_LOCKED", raising=False)
+    with closing(sqlite3.connect(database)) as writer:
+        writer.execute("BEGIN EXCLUSIVE")
+        try:
+            with pytest.raises(RuntimeError, match="数据库当前正被占用"):
+                backup_module._check_database_can_be_replaced(database)
+        finally:
+            writer.rollback()
+
+
+def test_backup_finishes_when_exclusive_lock_is_released_before_budget(tmp_path, monkeypatch):
+    database = tmp_path / "math_question_bank.db"
+    uploads = tmp_path / "uploads"
+    uploads.mkdir()
+    _create_database(database)
+    observed_busy = threading.Event()
+    connect = sqlite3.connect
+
+    class ObservedConnection(sqlite3.Connection):
+        def backup(self, target, *, pages, progress, sleep):
+            def observed(status, remaining, total):
+                if status in backup_module._SQLITE_BUSY_CODES:
+                    observed_busy.set()
+                progress(status, remaining, total)
+            return super().backup(target, pages=pages, progress=observed, sleep=sleep)
+
+    def observed_connect(path, *args, **kwargs):
+        if Path(path) == database:
+            kwargs["factory"] = ObservedConnection
+        return connect(path, *args, **kwargs)
+
+    monkeypatch.setattr(backup_module.sqlite3, "connect", observed_connect)
+    monkeypatch.setattr(backup_module, "BACKUP_BUSY_TIMEOUT_SECONDS", 2)
+    monkeypatch.setattr(backup_module, "BACKUP_BUSY_RETRY_SECONDS", 0.01)
+    result = {}
+
+    def run_backup():
+        try:
+            result["archive"] = create_full_backup(
+                output_dir=tmp_path / "snapshots", database_path=database, uploads_dir=uploads,
+                metadata_path=tmp_path / "missing.json", retention=None)
+        except BaseException as exc:
+            result["error"] = exc
+
+    with closing(connect(database)) as writer:
+        writer.execute("BEGIN EXCLUSIVE")
+        writer.execute("UPDATE questions SET content='uncommitted' WHERE id=1")
+        worker = threading.Thread(target=run_backup)
+        worker.start()
+        try:
+            assert observed_busy.wait(timeout=2), "backup did not observe the real SQLite lock"
+        finally:
+            writer.rollback()
+            worker.join(timeout=5)
+    assert not worker.is_alive()
+    assert "error" not in result
+    assert verify_full_backup(result["archive"])["database"]["row_counts"]["questions"] == 1
+    with _sqlite_connection(database) as connection:
+        assert connection.execute("SELECT content FROM questions").fetchone()[0] == "question-1"
+
+
+def test_progressing_page_copy_has_no_total_duration_limit(tmp_path, monkeypatch):
+    database = tmp_path / "math_question_bank.db"
+    _create_database(database, content="x" * 200_000)
+    connect = sqlite3.connect
+    copied_pages = []
+
+    class SlowCopyConnection(sqlite3.Connection):
+        def backup(self, target, *, pages, progress, sleep):
+            assert pages == 1
+            def slow_progress(status, remaining, total):
+                if status == sqlite3.SQLITE_OK:
+                    copied_pages.append(remaining)
+                    time.sleep(0.001)
+                progress(status, remaining, total)
+            return super().backup(target, pages=pages, progress=slow_progress, sleep=sleep)
+
+    def slow_connect(path, *args, **kwargs):
+        if Path(path) == database:
+            kwargs["factory"] = SlowCopyConnection
+        return connect(path, *args, **kwargs)
+
+    monkeypatch.setattr(backup_module.sqlite3, "connect", slow_connect)
+    monkeypatch.setattr(backup_module, "BACKUP_PAGES_PER_STEP", 1)
+    monkeypatch.setattr(backup_module, "BACKUP_BUSY_TIMEOUT_SECONDS", 0.01)
+    started = time.monotonic()
+    result = backup_module._snapshot_database(database, tmp_path / "snapshot.db")
+    assert len(copied_pages) > 20
+    assert time.monotonic() - started > backup_module.BACKUP_BUSY_TIMEOUT_SECONDS
+    assert result["row_counts"]["questions"] == 1
+    with _sqlite_connection(tmp_path / "snapshot.db") as snapshot:
+        assert snapshot.execute("SELECT length(content) FROM questions").fetchone()[0] == 200_000
+
+
+def test_backup_and_restore_fsync_reopened_files_with_write_access(tmp_path, monkeypatch):
+    database = tmp_path / "math_question_bank.db"
+    uploads = tmp_path / "uploads"
+    uploads.mkdir()
+    _create_database(database)
+    open_path = Path.open
+    reopened = []
+
+    def windows_sync_open(path, mode="r", *args, **kwargs):
+        stream = open_path(path, mode, *args, **kwargs)
+        if mode in {"rb", "r+b"}:
+            class SyncCheckedStream:
+                def __enter__(self):
+                    stream.__enter__()
+                    return self
+                def __exit__(self, *exc):
+                    return stream.__exit__(*exc)
+                def __getattr__(self, name):
+                    return getattr(stream, name)
+                def fileno(self):
+                    # Windows FlushFileBuffers requires GENERIC_WRITE.
+                    if mode == "rb":
+                        raise OSError(9, "read-only descriptor cannot be synced on Windows")
+                    reopened.append(Path(path).name)
+                    return stream.fileno()
+            return SyncCheckedStream()
+        return stream
+
+    monkeypatch.setattr(Path, "open", windows_sync_open)
+    archive = create_full_backup(output_dir=tmp_path / "snapshots", database_path=database,
+                               uploads_dir=uploads, metadata_path=tmp_path / "missing.json", retention=None)
+    with _sqlite_connection(database) as connection:
+        connection.execute("INSERT INTO questions(id, content) VALUES(2, 'later')")
+    restore_full_backup(archive, database_path=database, uploads_dir=uploads,
+                        metadata_path=tmp_path / "missing.json", safety_backup_dir=tmp_path / "safety",
+                        runtime_lock_path=tmp_path / "runtime.lock")
+    assert any(name.endswith(".zip.tmp") for name in reopened)
+    assert "content_sources.json" in reopened and "CONTENT_SOURCES.txt" in reopened
+    with _sqlite_connection(database) as connection:
+        assert connection.execute("SELECT COUNT(*) FROM questions").fetchone()[0] == 1
+
+
+def test_zip_cleanup_failure_does_not_replace_original_sync_error(tmp_path, monkeypatch):
+    payload = tmp_path / "payload"
+    payload.mkdir()
+    (payload / "data.txt").write_text("preserve")
+    output = tmp_path / "backup.zip"
+    sentinel = OSError("original sync failure")
+    unlink = Path.unlink
+
+    def fail_sync(_path):
+        raise sentinel
+    def fail_temporary_cleanup(path, *args, **kwargs):
+        if path == output.with_suffix(".zip.tmp"):
+            raise PermissionError("scanner still holds temporary file")
+        return unlink(path, *args, **kwargs)
+
+    monkeypatch.setattr(backup_module, "fsync_writable_file", fail_sync)
+    monkeypatch.setattr(Path, "unlink", fail_temporary_cleanup)
+    with pytest.raises(OSError) as failure:
+        backup_module._write_zip_atomic(payload, "manifest.json", {}, output)
+    assert failure.value is sentinel
+    assert not output.exists()
 
 
 def test_backup_fails_if_database_references_a_missing_upload(tmp_path):

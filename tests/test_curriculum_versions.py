@@ -1,8 +1,10 @@
 """Explicit preset identity and conservative routing for six curricula."""
 from copy import deepcopy
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import contextmanager
 import json
 from pathlib import Path
+from types import SimpleNamespace
 import subprocess
 import threading
 import time
@@ -532,18 +534,21 @@ def test_zip_import_preparation_can_overlap_switch_but_backup_and_commit_bind_on
     monkeypatch.setattr(main, "DATA_BACKUP_DIR", tmp_path / "backups")
     monkeypatch.setattr(main, "DATABASE_PATH", str(tmp_path / "isolated.db"))
     monkeypatch.setattr(main, "UPLOAD_DIR", str(tmp_path / "uploads"))
-    def inspect(_archive):
+    prepared_package = SimpleNamespace(summary={"image_count": 0})
+    @contextmanager
+    def prepare(_archive, *, workspace_dir=None):
         if pause_stage == "inspect":
             entered.set()
             assert release.wait(5)
-        return {}
+        yield prepared_package
     def backup(**kwargs):
         captures.append(("backup", main.get_active_version_code()))
         if pause_stage == "backup":
             entered.set()
             assert release.wait(5)
         return tmp_path / "isolated-backup.zip"
-    def importer(db, _archive, *, uploads_dir, active_version):
+    def importer(db, _archive, *, uploads_dir, active_version, prepared):
+        assert prepared is prepared_package
         captures.append(("import", active_version))
         assert active_version == main.get_active_version_code()
         question = Question(content="隔离导入题文", category_compulsory=active_version + "册", category_chapter="原章", category_knowledge="原节")
@@ -551,7 +556,7 @@ def test_zip_import_preparation_can_overlap_switch_but_backup_and_commit_bind_on
         db.add(question)
         db.commit()
         return {"imported_count": 1, "image_count": 0}
-    monkeypatch.setattr(main, "inspect_library_zip", inspect)
+    monkeypatch.setattr(main, "prepare_library_import", prepare)
     monkeypatch.setattr(main, "create_full_backup", backup)
     monkeypatch.setattr(main, "import_library_zip", importer)
     headers = {"X-Local-Token": main.LOCAL_TOKEN}

@@ -14,6 +14,7 @@ import datetime as dt
 from collections import Counter
 from dataclasses import dataclass
 from functools import lru_cache
+from itertools import islice
 from pathlib import Path
 from typing import Iterable, Mapping, Sequence
 
@@ -295,6 +296,55 @@ def upsert_question_fingerprint(
         set_=update_values,
     )
     db.execute(statement)
+
+
+def upsert_question_fingerprints(
+    db: Session,
+    fingerprints: Iterable[tuple[Question, QuestionFingerprint]],
+    *,
+    batch_size: int = 128,
+) -> None:
+    """Store complete fingerprints in bounded batches in the caller's transaction.
+
+    Each question must occur once.  Other algorithm versions are retired just
+    as in the single-row writer; no commit or partial-success fallback occurs.
+    DBAPI executemany keeps the SQLite parameter count independent of batch
+    size, including older SQLite builds shipped on Windows.
+    """
+
+    if not isinstance(batch_size, int) or isinstance(batch_size, bool) or not 1 <= batch_size <= 500:
+        raise ValueError("fingerprint batch_size must be between 1 and 500")
+    iterator = iter(fingerprints)
+    seen_question_ids: set[int] = set()
+    table = StoredFingerprint.__table__
+    statement = sqlite_insert(table)
+    statement = statement.on_conflict_do_update(
+        index_elements=["question_id", "fingerprint_version"],
+        set_={
+            column.name: statement.excluded[column.name]
+            for column in table.columns
+            if column.name not in {"id", "question_id", "fingerprint_version"}
+        },
+    )
+    while batch := list(islice(iterator, batch_size)):
+        retired_ids: dict[int, list[int]] = {}
+        rows = []
+        for question, fingerprint in batch:
+            if question.id is None or question.id in seen_question_ids:
+                raise ValueError("fingerprint batch requires distinct persisted questions")
+            seen_question_ids.add(question.id)
+            retired_ids.setdefault(fingerprint.fingerprint_version, []).append(question.id)
+            rows.append({
+                "question_id": question.id,
+                "fingerprint_version": fingerprint.fingerprint_version,
+                **_stored_values(fingerprint),
+            })
+        for version, question_ids in retired_ids.items():
+            db.query(StoredFingerprint).filter(
+                StoredFingerprint.question_id.in_(question_ids),
+                StoredFingerprint.fingerprint_version != version,
+            ).delete(synchronize_session=False)
+        db.execute(statement, rows)
 
 
 def fingerprint_for_question(

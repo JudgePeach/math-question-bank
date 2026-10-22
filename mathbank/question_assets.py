@@ -310,13 +310,15 @@ def rewrite_structured_asset_paths(value, replacements: dict[str, str]):
     }) for asset in assets]
 
 
-def rewrite_image_layout_paths(value, replacements: dict[str, str]):
+def rewrite_image_layout_paths(value, replacements: dict[str, str], *, image_keys=None):
     if value is None:
         return None
     layouts = json.loads(value) if isinstance(value, str) else value
     if not isinstance(layouts, dict):
         raise ValueError("插图独立排版必须是对象")
+    if not layouts:
+        return {}
     from mathbank.image_layout import image_key
 
-    keys = {image_key(old): image_key(new) for old, new in replacements.items()}
+    keys = image_keys if image_keys is not None else {image_key(old): image_key(new) for old, new in replacements.items()}
     return {keys.get(image_key(key), key): settings for key, settings in layouts.items()}

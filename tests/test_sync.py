@@ -7,6 +7,20 @@ from mathbank.database import Question
 from mathbank.sync_helper import clean_latex_to_markdown_for_ai, export_database_to_files
 from main import clean_orphaned_images
 
+
+def test_sync_completed_file_flush_preserves_windows_write_access(tmp_path, monkeypatch):
+    from mathbank import sync_helper
+    target = tmp_path / "中文 同步文稿.md"
+    target.write_bytes(b"unchanged markdown")
+    real_fsync, synced = os.fsync, []
+    def require_write_access(descriptor):
+        os.write(descriptor, b"")
+        synced.append(descriptor)
+        real_fsync(descriptor)
+    monkeypatch.setattr("mathbank.asset_security.os.fsync", require_write_access)
+    sync_helper._fsync_file(target)
+    assert target.read_bytes() == b"unchanged markdown" and len(synced) == 1
+
 def test_clean_latex_to_markdown_for_ai():
     # Test itemize list cleaning
     latex_text = "\\begin{itemize}\n\\item 第一项\n\\item[A.] 选项 A\n\\end{itemize}"

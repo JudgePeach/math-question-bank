@@ -25,6 +25,16 @@ if hasattr(sys.stdout, "reconfigure"):
     except Exception:
         pass
 import secrets
+from mathbank.storage_access import (
+    check_startup_storage, check_directory_access, check_database_write_access,
+)
+
+# Catch protected/readonly portable installs before locks, SQLite initialization
+# or other domain modules create persistent runtime files. Heartbeats stay light.
+IS_TESTING = "pytest" in sys.modules or any("pytest" in arg for arg in sys.argv)
+if not IS_TESTING:
+    check_startup_storage()
+
 from typing import List, Optional
 from PIL import Image
 from fastapi import FastAPI, Depends, HTTPException, UploadFile, File, Form, BackgroundTasks, Request, Response, Header, Query
@@ -104,12 +114,19 @@ from mathbank.background_export import DatabaseExportQueue
 from mathbank.backup import acquire_runtime_lock, create_full_backup, create_full_backup_if_due
 from mathbank.library_transfer import (
     MAX_ARCHIVE_BYTES as MAX_LIBRARY_ARCHIVE_BYTES,
+    MAX_QUESTIONS as MAX_LIBRARY_QUESTIONS,
     export_library_zip,
     import_library_zip,
-    inspect_library_zip,
+    prepare_library_import,
     preview_library_questions,
     select_library_question_ids,
 )
+from mathbank.library_transfer_tasks import (
+    LibraryTransferTasks, TransferTaskConflict, TransferTaskError,
+    TransferTaskQueueFull, log_transfer_error, normalize_transfer_task_id,
+    transfer_error,
+)
+from mathbank.library_transfer_upload import create_library_transfer_upload_router
 from mathbank.health import readiness_report
 from mathbank.task_manager import (
     iter_completed_futures,
@@ -257,6 +274,7 @@ from mathbank.asset_security import (
     write_private_text_atomic,
 )
 from mathbank.asset_lifecycle import (
+    ASSET_LIFECYCLE_LOCK,
     AssetLifecycleError,
     RetainedUploadStaticFiles,
     quarantine_asset,
@@ -294,7 +312,6 @@ _METADATA_SAVE_LOCK = threading.Lock()
 # CLI takes the same lock, so a manually started uvicorn process is protected
 # even when no launcher PID file exists.  Unit tests use isolated databases and
 # exercise the lock helper directly instead of holding the production lock.
-IS_TESTING = "pytest" in sys.modules or any("pytest" in arg for arg in sys.argv)
 _RUNTIME_LOCK = None if IS_TESTING else acquire_runtime_lock()
 if _RUNTIME_LOCK is not None:
     atexit.register(_RUNTIME_LOCK.close)
@@ -507,6 +524,10 @@ async def app_lifespan(_app: FastAPI):
         yield
         return
 
+    if (SYSTEM_GENERATED_DIR / "library_transfer_tasks").is_dir():
+        # Recover durable receipts before accepting requests, without replaying
+        # any previously queued or potentially committed import.
+        _library_transfer_tasks()
     DOCUMENT_TASKS.start_maintenance(interval_seconds=60.0)
     project_service = _document_project_service()
     if project_service:
@@ -522,6 +543,12 @@ async def app_lifespan(_app: FastAPI):
         yield
     finally:
         _DOCUMENT_PROJECT_STOP.set()
+        if _LIBRARY_TRANSFER_TASKS is not None:
+            import asyncio
+
+            # Accepted append operations drain before the service exits. A
+            # forceful external interruption is recovered without replay.
+            await asyncio.to_thread(_LIBRARY_TRANSFER_TASKS.close)
         if DATABASE_EXPORT_QUEUE.started:
             import asyncio
 
@@ -2531,8 +2558,207 @@ def export_library_transfer(payload: dict, db: Session = Depends(get_db)):
         raise HTTPException(status_code=500, detail="题库分享包生成失败，请检查图片文件和本地存储空间。") from exc
 
 
-@app.post("/api/library-transfer/import")
-@serialize_asset_lifecycle
+_LIBRARY_TRANSFER_TASKS = None
+_LIBRARY_TRANSFER_TASKS_LOCK = threading.Lock()
+_LIBRARY_TRANSFER_UPLOAD_ROUTER = create_library_transfer_upload_router(
+    lambda: SYSTEM_GENERATED_DIR / "library_transfer_uploads",
+)
+
+
+def _sharing_backup():
+    try:
+        return create_full_backup(
+            database_path=Path(DATABASE_PATH), uploads_dir=Path(UPLOAD_DIR),
+            metadata_path=DATA_BACKUP_DIR / "custom_metadata.json",
+            output_dir=DATA_BACKUP_DIR / "snapshots", retention=None,
+        )
+    except Exception as exc:
+        raise TransferTaskError("backup", "导入前自动备份失败，尚未导入题目。请检查备份目录、存储空间和现有图片。") from exc
+
+
+def _sharing_post_commit_export():
+    try:
+        if IS_TESTING:
+            export_database_to_files()
+        else:
+            DATABASE_EXPORT_QUEUE.request(operation="library_transfer")
+    except Exception as exc:
+        # A derived export failure must never invite a second append.
+        log_transfer_error("post-commit", "import", "database_export", exc)
+
+
+def _check_library_import_storage(prepared):
+    # Do this before the full backup and any destination image/SQL writes.
+    # A readonly input image directory is sufficient for export/text-only ZIPs.
+    check_database_write_access(Path(DATABASE_PATH))
+    if prepared.summary["image_count"]:
+        check_directory_access(Path(UPLOAD_DIR), label="题目图片目录（static/uploads）")
+
+
+def _run_library_import_task(directory, progress):
+    from mathbank.database import SessionLocal
+
+    archive = directory / "input.zip"
+    with prepare_library_import(archive, workspace_dir=directory / "prepared", progress=progress) as prepared:
+        # Image and textbook mutation locks cover backup and the one atomic
+        # transaction; upload and validation hold neither lock.
+        progress("waiting")
+        with ASSET_LIFECYCLE_LOCK, _METADATA_SAVE_LOCK:
+            _check_library_import_storage(prepared)
+            import_version = get_active_version_code()
+            progress("backup")
+            backup_path = _sharing_backup()
+            progress("backup", current=1, total=1, result={
+                "backup_path": str(backup_path), "active_version_code": import_version,
+            })
+            with SessionLocal() as db:
+                result = import_library_zip(
+                    db, archive, uploads_dir=Path(UPLOAD_DIR), active_version=import_version,
+                    prepared=prepared, progress=progress,
+                )
+    _sharing_post_commit_export()
+    return {"imported_count": result["imported_count"], "image_count": result["image_count"],
+            "backup_path": str(backup_path), "active_version_code": import_version}
+
+
+def _run_library_export_task(directory, payload, progress):
+    from mathbank.database import SessionLocal
+
+    progress("waiting")
+    with ASSET_LIFECYCLE_LOCK, _METADATA_SAVE_LOCK, SessionLocal() as db:
+        result = export_library_zip(
+            db, directory / "library.zip", uploads_dir=Path(UPLOAD_DIR),
+            source_keywords=payload.get("source_keywords", []), question_ids=payload.get("question_ids"),
+            active_version=get_active_version_code(), progress=progress,
+        )
+    return {"question_count": result["question_count"], "image_count": result["image_count"],
+            "download_url": f"/api/library-transfer/tasks/{directory.name}/download"}
+
+
+def _library_transfer_tasks():
+    global _LIBRARY_TRANSFER_TASKS
+    root = SYSTEM_GENERATED_DIR / "library_transfer_tasks"
+    with _LIBRARY_TRANSFER_TASKS_LOCK:
+        if _LIBRARY_TRANSFER_TASKS is not None and _LIBRARY_TRANSFER_TASKS.root != root:
+            # Isolated API tests replace the root without sharing sessions.
+            _LIBRARY_TRANSFER_TASKS.close()
+            _LIBRARY_TRANSFER_TASKS = None
+        if _LIBRARY_TRANSFER_TASKS is None:
+            _LIBRARY_TRANSFER_TASKS = LibraryTransferTasks(
+                root, run_import=_run_library_import_task, run_export=_run_library_export_task,
+            )
+        return _LIBRARY_TRANSFER_TASKS
+
+
+def _receive_library_archive(file, archive):
+    if Path(file.filename or "").suffix.lower() != ".zip":
+        raise HTTPException(status_code=400, detail="请选择本题库导出功能生成的 ZIP 分享包。")
+    digest, size = hashlib.sha256(), 0
+    with archive.open("xb") as output:
+        harden_private_path(archive)
+        while chunk := file.file.read(1024 * 1024):
+            size += len(chunk)
+            if size > MAX_LIBRARY_ARCHIVE_BYTES:
+                raise HTTPException(status_code=413, detail="题库分享包不能超过 512 MiB，请按来源分批导出。")
+            digest.update(chunk)
+            output.write(chunk)
+        output.flush()
+        os.fsync(output.fileno())
+    return digest.hexdigest()
+
+
+def _transfer_task_http_error(exc):
+    if isinstance(exc, TransferTaskConflict):
+        return HTTPException(status_code=409, detail=str(exc))
+    if isinstance(exc, TransferTaskQueueFull):
+        return HTTPException(status_code=503, detail=str(exc), headers={"Retry-After": "2"})
+    if isinstance(exc, ValueError):
+        return HTTPException(status_code=400, detail=str(exc))
+    log_transfer_error("request", "sharing", "submission", exc)
+    error = transfer_error(exc)
+    return HTTPException(status_code=500, detail=error["message"])
+
+
+@_LIBRARY_TRANSFER_UPLOAD_ROUTER.post("/api/library-transfer/tasks/import")
+def start_library_import_task(file: UploadFile = File(...), client_request_id: str = Form(...)):
+    try:
+        task_id = normalize_transfer_task_id(client_request_id)
+        tasks = _library_transfer_tasks()
+        with tasks.upload_workspace() as workspace:
+            archive = workspace / "upload.zip"
+            digest = _receive_library_archive(file, archive)
+            result, created = tasks.submit_import(task_id, archive, digest)
+        return JSONResponse(result, status_code=202 if created else 200, headers={"Cache-Control": "no-store"})
+    except HTTPException:
+        raise
+    except TransferTaskConflict as exc:
+        if exc.active_task_id:
+            return JSONResponse(
+                {"detail": str(exc), "active_task_id": exc.active_task_id, "code": "active_import"},
+                status_code=409, headers={"Cache-Control": "no-store"},
+            )
+        raise _transfer_task_http_error(exc) from exc
+    except Exception as exc:
+        raise _transfer_task_http_error(exc) from exc
+    finally:
+        try:
+            file.file.close()
+        except OSError:
+            pass
+
+
+@app.post("/api/library-transfer/tasks/export")
+def start_library_export_task(payload: dict):
+    try:
+        if set(payload) - {"client_request_id", "source_keywords", "question_ids"}:
+            raise ValueError("题库分享导出参数无效")
+        task_id = normalize_transfer_task_id(payload.get("client_request_id"))
+        options = {key: value for key, value in payload.items() if key != "client_request_id"}
+        if "question_ids" in options:
+            ids = options["question_ids"]
+            if (not isinstance(ids, list) or not 0 < len(ids) <= MAX_LIBRARY_QUESTIONS
+                    or any(type(value) is not int or not 1 <= value <= 2**63 - 1 for value in ids)
+                    or len(set(ids)) != len(ids)):
+                raise ValueError("勾选题目须为不重复的正整数 ID 列表")
+        keywords = options.get("source_keywords", [])
+        if (not isinstance(keywords, list) or len(keywords) > 50
+                or any(not isinstance(value, str) or not value.strip() or len(value) > 200 for value in keywords)):
+            raise ValueError("来源筛选最多支持 50 个非空关键词")
+        result, created = _library_transfer_tasks().submit_export(task_id, options)
+        return JSONResponse(result, status_code=202 if created else 200, headers={"Cache-Control": "no-store"})
+    except Exception as exc:
+        raise _transfer_task_http_error(exc) from exc
+
+
+@app.get("/api/library-transfer/tasks/{task_id}")
+def get_library_transfer_task(task_id: str):
+    try:
+        result = _library_transfer_tasks().get(task_id)
+    except Exception as exc:
+        raise _transfer_task_http_error(exc) from exc
+    if result is None:
+        raise HTTPException(status_code=404, detail="未找到题库分享任务")
+    return JSONResponse(result, headers={"Cache-Control": "no-store"})
+
+
+@app.get("/api/library-transfer/tasks/{task_id}/download")
+def download_library_transfer_task(task_id: str):
+    try:
+        archive, summary = _library_transfer_tasks().download(task_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="未找到题库分享任务") from exc
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=410, detail="导出文件已不存在，请重新导出") from exc
+    except Exception as exc:
+        raise _transfer_task_http_error(exc) from exc
+    return FileResponse(
+        archive, media_type="application/zip",
+        filename=f"MathBank-{summary.get('question_count', 0)}questions-{task_id}.zip",
+        headers={"Cache-Control": "no-store"},
+    )
+
+
+@_LIBRARY_TRANSFER_UPLOAD_ROUTER.post("/api/library-transfer/import")
 def import_library_transfer(
     background_tasks: BackgroundTasks,
     file: UploadFile = File(...),
@@ -2541,37 +2767,21 @@ def import_library_transfer(
     """Validate, back up and append; importing the same archive appends again."""
     workspace = None
     try:
-        if Path(file.filename or "").suffix.lower() != ".zip":
-            raise HTTPException(status_code=400, detail="请选择本题库导出功能生成的 ZIP 分享包。")
         transfer_root = SYSTEM_GENERATED_DIR / "library_transfer"
         transfer_root.mkdir(parents=True, exist_ok=True)
         workspace = Path(tempfile.mkdtemp(prefix="import-", dir=transfer_root))
         archive = workspace / "library.zip"
-        with archive.open("xb") as output:
-            size = 0
-            while chunk := file.file.read(1024 * 1024):
-                size += len(chunk)
-                if size > MAX_LIBRARY_ARCHIVE_BYTES:
-                    raise HTTPException(status_code=413, detail="题库分享包不能超过 512 MiB，请按来源分批导出。")
-                output.write(chunk)
+        _receive_library_archive(file, archive)
         # Invalid packages must fail before any backup or destination write.
-        inspect_library_zip(archive)
-        # Upload/inspection above need no textbook lock.  The verified backup
-        # and the synchronous importer (including its commit) must see one
-        # identity; a concurrent switch runs either before or after them.
-        with _METADATA_SAVE_LOCK:
-            import_version = get_active_version_code()
-            try:
-                backup_path = create_full_backup(
-                    database_path=Path(DATABASE_PATH), uploads_dir=Path(UPLOAD_DIR),
-                    metadata_path=DATA_BACKUP_DIR / "custom_metadata.json",
-                    output_dir=DATA_BACKUP_DIR / "snapshots", retention=None,
+        with prepare_library_import(archive, workspace_dir=workspace) as prepared:
+            with ASSET_LIFECYCLE_LOCK, _METADATA_SAVE_LOCK:
+                _check_library_import_storage(prepared)
+                import_version = get_active_version_code()
+                backup_path = _sharing_backup()
+                result = import_library_zip(
+                    db, archive, uploads_dir=Path(UPLOAD_DIR), active_version=import_version,
+                    prepared=prepared,
                 )
-            except Exception as exc:
-                raise HTTPException(status_code=500, detail="导入前的自动备份失败，尚未导入题目。请检查本地存储空间和现有图片。") from exc
-            result = import_library_zip(
-                db, archive, uploads_dir=Path(UPLOAD_DIR), active_version=import_version,
-            )
         # The module has committed. Follow-up exports cannot turn a successful
         # append into an error that invites an accidental second import.
         schedule_database_export(background_tasks, operation="library_transfer")
@@ -2585,7 +2795,9 @@ def import_library_transfer(
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except Exception as exc:
-        raise HTTPException(status_code=500, detail="题库导入失败，本次新增内容已回滚。请检查本地存储空间。") from exc
+        log_transfer_error("synchronous", "import", "importing", exc)
+        error = transfer_error(exc)
+        raise HTTPException(status_code=500, detail=error["message"]) from exc
     finally:
         if workspace is not None:
             shutil.rmtree(workspace, ignore_errors=True)
@@ -2593,6 +2805,9 @@ def import_library_transfer(
             file.file.close()
         except OSError:
             pass
+
+
+app.include_router(_LIBRARY_TRANSFER_UPLOAD_ROUTER)
 
 
 @app.get("/api/questions")

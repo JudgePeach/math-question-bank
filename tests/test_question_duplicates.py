@@ -1,4 +1,7 @@
 from dataclasses import replace
+from collections import Counter
+import hashlib
+import random
 import re
 
 import pytest
@@ -13,6 +16,7 @@ from mathbank.question_duplicates import (
     build_question_fingerprint,
     compare_question_fingerprints,
     compare_questions,
+    compute_simhash_128,
     compute_text_fragment_bands,
     extract_choices,
     extract_critical_math_tokens,
@@ -320,6 +324,45 @@ def test_fingerprint_is_deterministic_serializable_and_has_eight_bands():
             tikz_signatures=("tikz:def",),
         )
     ) == original
+
+
+def _reference_simhash(features):
+    """Original signed per-bit votes, independent of packed-counter code."""
+    if isinstance(features, dict):
+        weighted = [(str(item), int(weight)) for item, weight in features.items() if int(weight) > 0]
+    else:
+        weighted = Counter(str(item) for item in features).items()
+    votes = [0] * 128
+    for feature, weight in weighted:
+        digest = int.from_bytes(hashlib.sha256(feature.encode("utf-8")).digest()[:16], "big")
+        for bit in range(128):
+            votes[bit] += weight if digest & (1 << bit) else -weight
+    return sum(1 << bit for bit, vote in enumerate(votes) if vote > 0)
+
+
+@pytest.mark.parametrize("features", (
+    {}, {"ignored": 0, "negative": -3}, {"one": 1},
+    {"left": 1, "right": 1}, {"left": 32767, "right": 32768},
+    {"left": 32768, "right": 32768},
+    {"left": 65536, "right": 65536, "ignored": -1},
+    {"very-heavy": 1 << 80, "tiny": 1},
+    {"数学 α\\frac{1}{2}": 4, "变量 xy": 2, "x y": 3},
+    [], ["同一token", "同一token", "token:1", "token:10"],
+))
+def test_packed_simhash_matches_original_votes_at_boundaries(features):
+    assert compute_simhash_128(features) == _reference_simhash(features)
+
+
+def test_packed_simhash_matches_original_votes_for_random_weights_and_iterators():
+    random_source = random.Random(31386)
+    for _ in range(40):
+        features = {
+            f"feature:{random_source.randrange(1000)}": random_source.randrange(-2, 1000)
+            for _ in range(random_source.randrange(1, 150))
+        }
+        assert compute_simhash_128(features) == _reference_simhash(features)
+    tokens = [str(random_source.randrange(100)) for _ in range(150)]
+    assert compute_simhash_128(iter(tokens)) == _reference_simhash(tokens)
 
 
 def test_text_fragment_bands_are_stable_and_validated():

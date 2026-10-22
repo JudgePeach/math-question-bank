@@ -44,6 +44,61 @@ jobs:
             node --check "$script"
           done
 
+  sharing-windows:
+    name: Native sharing round trip / Windows Python 3.10
+    runs-on: windows-2022
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+          cache: pip
+          cache-dependency-path: |
+            requirements.txt
+            requirements-dev.txt
+      - name: Install locked application and test dependencies
+        run: python -m pip install --disable-pip-version-check -r requirements-dev.txt
+      - name: Create a source-only checkout in a Chinese and space path
+        shell: python {0}
+        run: |
+          import os
+          from pathlib import Path
+          import shutil
+          import subprocess
+          import uuid
+
+          root = Path.cwd()
+          target = Path(os.environ["RUNNER_TEMP"]) / ("MathBank 中文 空格 分享-" + uuid.uuid4().hex)
+          target.mkdir()
+          tracked = subprocess.check_output(["git", "ls-files", "-z"], cwd=root).decode("utf-8").split("\0")
+          for name in filter(None, tracked):
+              relative = Path(name)
+              source = root / relative
+              if not source.is_file():
+                  continue
+              if any(part in {".git", ".system_generated", "uploads", "data_backup", "venv", "static_副本"} for part in relative.parts):
+                  continue
+              if source.name.startswith(".env") and name != ".env.example":
+                  continue
+              destination = target / relative
+              destination.parent.mkdir(parents=True, exist_ok=True)
+              shutil.copy2(source, destination)
+          with open(os.environ["GITHUB_ENV"], "a", encoding="utf-8") as output:
+              output.write("MATHBANK_SHARING_QA_ROOT=" + str(target) + "\n")
+      - name: Exercise native backup, sharing, rollback and task receipts
+        shell: pwsh
+        run: |
+          Set-Location -LiteralPath $env:MATHBANK_SHARING_QA_ROOT
+          python -B -m pytest tests/test_gitignore_privacy.py tests/test_storage_access.py tests/test_windows_launcher.py tests/test_library_transfer_storage_api.py tests/test_library_transfer_windows.py tests/test_library_transfer.py tests/test_library_transfer_api.py tests/test_library_transfer_tasks.py tests/test_library_transfer_tasks_api.py tests/test_library_transfer_upload.py tests/test_library_transfer_record_memory.py tests/test_library_transfer_batch_import.py tests/test_library_transfer_batch_export.py tests/test_raster_validation.py tests/test_question_fingerprint_batches.py tests/test_question_duplicates.py tests/test_sync_exchange_catalog_memory.py tests/test_sync_batch_export.py tests/test_question_reference_batches.py tests/test_asset_security.py tests/test_full_backup.py -q --junitxml=sharing-windows.xml
+      - name: Preserve native regression diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: sharing-windows-results
+          path: ${{ env.MATHBANK_SHARING_QA_ROOT }}/sharing-windows.xml
+          if-no-files-found: ignore
+
   pandoc-native:
     name: Native Pandoc installation / ${{ matrix.os }}
     runs-on: ${{ matrix.os }}

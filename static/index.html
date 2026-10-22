@@ -1676,12 +1676,20 @@
                                 <input id="libraryImportFile" type="file" accept=".zip,application/zip" onchange="updateLibraryTransferControls()" aria-describedby="libraryImportHelp libraryImportRepeatNote" class="block min-h-[44px] w-full min-w-0 text-xs text-slate-600 dark:text-slate-300">
                             </div>
                             <p id="libraryImportRepeatNote" class="mb-transfer-import-note"><i class="fa-solid fa-circle-info" aria-hidden="true"></i><span>每次导入都会新增全部题目，不查重。导入前自动备份。</span></p>
+                            <label id="libraryImportRepeatLabel" class="hidden mb-transfer-repeat"><input id="libraryImportRepeatConfirm" type="checkbox" onchange="updateLibraryTransferControls()"><span>我确认再次新增此包中的全部题目</span></label>
                             <button type="button" id="libraryImportBtn" onclick="importLibraryTransfer()" disabled class="glass-btn-primary min-h-[44px] px-4 py-2 rounded-xl text-xs font-medium disabled:opacity-50 disabled:cursor-wait"><i class="fa-solid fa-upload mr-1.5" aria-hidden="true"></i><span>批量导入</span></button>
                         </section>
                     </fieldset>
                     <div id="libraryTransferStatus" role="status" aria-live="polite" aria-atomic="true" class="hidden rounded-xl border border-slate-200/80 dark:border-slate-700 p-3 text-xs text-slate-700 dark:text-slate-200 space-y-2 break-words">
                         <p class="leading-relaxed"><i id="libraryTransferSpinner" class="hidden fa-solid fa-circle-notch fa-spin mr-1.5" aria-hidden="true"></i><span id="libraryTransferMessage"></span></p>
+                        <progress id="libraryTransferProgress" class="hidden mb-transfer-progress" aria-label="当前阶段进度"></progress>
+                        <p id="libraryTransferTaskInfo" class="hidden text-[11px] text-slate-500 dark:text-slate-400"></p>
                         <p id="libraryTransferBackup" class="hidden text-[11px] text-slate-500 dark:text-slate-400"></p>
+                        <div class="mb-transfer-task-actions">
+                            <button type="button" id="libraryTransferReconnect" class="hidden glass-btn" onclick="reconnectLibraryTransfer()">重新连接，查询原任务</button>
+                            <a id="libraryTransferDownload" class="hidden glass-btn" download>下载 ZIP 分享包</a>
+                            <button type="button" id="libraryTransferResolve" class="hidden glass-btn" onclick="resolveLibraryTransferTask()">已核实题库，结束任务记录</button>
+                        </div>
                     </div>
                 </div>
 

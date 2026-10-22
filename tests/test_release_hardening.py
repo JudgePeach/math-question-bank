@@ -684,6 +684,7 @@ def test_release_copy_excludes_internal_tools_and_preserves_runtime_imports(
         *(("mathbank.sub_knowledge",) if (PROJECT_ROOT / "mathbank/sub_knowledge.py").is_file() else ()),
         "mathbank.question_assets",
         "mathbank.curriculums",
+        "mathbank.storage_access",
         "scripts.local_launcher",
         "scripts.windows_launcher",
         "scripts.release_overlay",

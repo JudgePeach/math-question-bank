@@ -1,4 +1,5 @@
 import io
+import errno
 import json
 import os
 import uuid
@@ -12,11 +13,13 @@ from PIL import Image
 from main import LOCAL_TOKEN, compile_tikz_to_png
 from mathbank.asset_security import (
     AssetSecurityError,
+    fsync_writable_file,
     normalize_answer_tikz_assets,
     normalize_content_tikz_assets,
     normalize_optional_upload_asset_reference,
     normalize_upload_asset_reference,
     resolve_upload_asset,
+    replace_file_atomic,
     write_private_text_atomic,
 )
 from mathbank.database import Question
@@ -37,6 +40,86 @@ def test_private_atomic_write_works_without_unix_fchmod(tmp_path, monkeypatch):
 
     assert target.read_text(encoding="utf-8") == "persistent-value"
     assert not list(tmp_path.glob(".private-token.*"))
+
+
+def test_completed_file_fsync_retains_write_access_and_original_bytes(tmp_path, monkeypatch):
+    target = tmp_path / "中文 含空格.zip"
+    target.write_bytes(b"completed archive")
+    real_fsync, descriptors = os.fsync, []
+    def require_write_access(descriptor):
+        # A zero-byte write fails for an rb descriptor on both host platforms.
+        os.write(descriptor, b"")
+        descriptors.append(descriptor)
+        real_fsync(descriptor)
+    monkeypatch.setattr("mathbank.asset_security.os.fsync", require_write_access)
+    fsync_writable_file(target)
+    assert target.read_bytes() == b"completed archive" and len(descriptors) == 1
+    with pytest.raises(OSError):
+        os.fstat(descriptors[0])
+
+
+def _replace_platform(monkeypatch, platform, replacement):
+    from mathbank import asset_security
+    monkeypatch.setattr(asset_security, "os", SimpleNamespace(**{
+        **vars(os), "name": platform, "replace": replacement,
+    }))
+    delays = []
+    monkeypatch.setattr(asset_security.time, "sleep", delays.append)
+    return delays
+
+
+def test_private_atomic_write_retries_only_transient_windows_occupancy(tmp_path, monkeypatch):
+    target = tmp_path / "private-token"
+    target.write_text("old", encoding="utf-8")
+    original_replace, attempts = os.replace, []
+    def transient(source, destination):
+        attempts.append((source, destination))
+        if len(attempts) <= 2:
+            failure = PermissionError(errno.EACCES, "private filename")
+            failure.winerror = 32
+            raise failure
+        return original_replace(source, destination)
+    delays = _replace_platform(monkeypatch, "nt", transient)
+    write_private_text_atomic(target, "新回执")
+    assert target.read_text(encoding="utf-8") == "新回执"
+    assert delays == [0.05, 0.1] and len(attempts) == 3
+    assert not list(tmp_path.glob(".private-token.*"))
+
+
+@pytest.mark.parametrize("platform,winerror", [("nt", 5), ("nt", 112), ("posix", 32)])
+def test_atomic_replace_does_not_retry_permanent_or_non_windows_errors(tmp_path, monkeypatch, platform, winerror):
+    source, target = tmp_path / "new", tmp_path / "old"
+    source.write_bytes(b"new")
+    target.write_bytes(b"old")
+    failure = PermissionError(errno.EACCES, "private filename")
+    failure.winerror = winerror
+    attempts = []
+    def fail(*args):
+        attempts.append(args)
+        raise failure
+    delays = _replace_platform(monkeypatch, platform, fail)
+    with pytest.raises(PermissionError) as raised:
+        replace_file_atomic(source, target)
+    assert raised.value is failure and len(attempts) == 1 and not delays
+    assert source.read_bytes() == b"new" and target.read_bytes() == b"old"
+
+
+@pytest.mark.parametrize("winerror", [32, 33])
+def test_atomic_replace_transient_retry_is_bounded_and_preserves_files(tmp_path, monkeypatch, winerror):
+    source, target = tmp_path / "new", tmp_path / "old"
+    source.write_bytes(b"new")
+    target.write_bytes(b"old")
+    failure = PermissionError(errno.EACCES, "private filename")
+    failure.winerror = winerror
+    attempts = []
+    def fail(*args):
+        attempts.append(args)
+        raise failure
+    delays = _replace_platform(monkeypatch, "nt", fail)
+    with pytest.raises(PermissionError) as raised:
+        replace_file_atomic(source, target)
+    assert raised.value is failure and len(attempts) == 5 and sum(delays) <= 1
+    assert source.read_bytes() == b"new" and target.read_bytes() == b"old"
 
 
 def test_upload_asset_resolver_accepts_only_contained_regular_files(tmp_path):

@@ -1,7 +1,9 @@
 """Shared local-launcher behavior; runs without importing the application or data."""
 import hashlib
+import errno
 import json
 import os
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -27,6 +29,7 @@ def test_existing_service_opens_without_environment_or_state_checks(tmp_path, mo
     monkeypatch.setattr(launcher, "existing_service_ready", lambda: True)
     monkeypatch.setattr(launcher, "open_browser", lambda: opened.append(True))
     monkeypatch.setattr(launcher, "prepare_python", lambda *_: pytest.fail("environment touched"))
+    monkeypatch.setattr(launcher, "check_startup_storage", lambda *_: pytest.fail("write probe ran"))
     launcher.run_launcher(tmp_path)
     assert opened == [True]
     assert (state / "server-state.json").read_text() == old_state
@@ -55,6 +58,79 @@ def test_foreign_port_reports_conflict_without_starting_or_stopping(tmp_path, mo
     monkeypatch.setattr(launcher, "start_server", lambda *_: pytest.fail("started"))
     with pytest.raises(launcher.LauncherError, match="8000"):
         launcher.run_launcher(tmp_path)
+
+
+def test_preflight_mode_only_checks_fixed_project_root(tmp_path, monkeypatch):
+    root, elsewhere = tmp_path / "题库", tmp_path / "other"
+    root.mkdir()
+    elsewhere.mkdir()
+    monkeypatch.chdir(elsewhere)
+    monkeypatch.setattr(launcher, "PROJECT_ROOT", root)
+    checked = []
+    monkeypatch.setattr(launcher, "check_startup_storage", lambda path: checked.append(path))
+    monkeypatch.setattr(launcher, "run_launcher", lambda *_: pytest.fail("started application"))
+    monkeypatch.setattr(launcher, "existing_service_ready", lambda: pytest.fail("contacted service"))
+    assert launcher.main(["--check-write-access"]) == 0
+    assert checked == [root]
+    assert not (root / "math_question_bank.db").exists()
+    assert not (root / "venv").exists()
+
+
+def test_permission_failure_precedes_lock_environment_and_service(tmp_path, monkeypatch, capsys):
+    root = tmp_path / "只读题库"
+    root.mkdir()
+    failure = launcher.StorageAccessError(root, label="程序目录", stage="create", cause=PermissionError(errno.EACCES, "raw private error"))
+    checked = []
+    def fail_check(path):
+        checked.append(path)
+        raise failure
+    monkeypatch.setattr(launcher, "existing_service_ready", lambda: False)
+    monkeypatch.setattr(launcher, "check_startup_storage", fail_check)
+    monkeypatch.setattr(launcher, "launcher_lock", lambda *_: pytest.fail("lock opened"))
+    monkeypatch.setattr(launcher, "prepare_python", lambda *_: pytest.fail("environment touched"))
+    monkeypatch.setattr(launcher, "ensure_dependencies", lambda *_: pytest.fail("dependencies touched"))
+    monkeypatch.setattr(launcher, "start_server", lambda *_: pytest.fail("started service"))
+    with pytest.raises(launcher.LauncherError) as caught:
+        launcher.run_launcher(root)
+    assert str(caught.value) == failure.safe_message
+    assert caught.value.__cause__ is failure
+    monkeypatch.setattr(launcher, "PROJECT_ROOT", root)
+    assert launcher.main(["--check-write-access"]) == 1
+    output = capsys.readouterr()
+    assert failure.safe_message in output.err
+    assert "raw private error" not in output.err
+    assert checked == [root, root]
+    assert not list(root.iterdir())
+
+
+def test_bootstrap_preflight_runs_without_application_or_database_imports(tmp_path):
+    root = tmp_path / "中文题库"
+    root.mkdir()
+    source_root = Path(launcher.__file__).resolve().parents[1]
+    for relative in (
+        "scripts/local_launcher.py", "scripts/windows_launcher.py",
+        "mathbank/__init__.py", "mathbank/paths.py", "mathbank/storage_access.py",
+    ):
+        target = root / relative
+        target.parent.mkdir(exist_ok=True)
+        shutil.copy2(source_root / relative, target)
+    for relative in ("main.py", "mathbank/database.py"):
+        (root / relative).write_text("raise AssertionError('application imported during write preflight')\n", encoding="utf-8")
+    result = subprocess.run(
+        [sys.executable, "-B", "-m", "scripts.windows_launcher", "--check-write-access"],
+        cwd=root, capture_output=True, text=True, encoding="utf-8", timeout=10,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert not (root / "math_question_bank.db").exists()
+    assert not (root / "venv").exists()
+    assert not (root / ".system_generated" / "launcher.lock").exists()
+    assert not (root / ".system_generated" / "server.log").exists()
+    batch = (source_root / "启动题库系统.bat").read_bytes()
+    assert batch.isascii()
+    assert b"\n" not in batch.replace(b"\r\n", b"")
+    preflight = batch.index(b"%BOOTSTRAP_CMD% -B -m scripts.windows_launcher --check-write-access")
+    assert preflight < batch.index(b'%BOOTSTRAP_CMD% -m venv')
+    assert batch[preflight:].split(b"\r\n", 2)[1] == b"if errorlevel 1 goto bootstrap_error"
 
 
 @pytest.mark.parametrize("ready,repo,expected", [

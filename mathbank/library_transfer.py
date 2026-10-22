@@ -5,6 +5,9 @@ commit/rollback and never resolves references against pre-existing questions.
 """
 from __future__ import annotations
 
+from contextlib import contextmanager
+import codecs
+from dataclasses import dataclass
 from datetime import datetime, timezone
 import hashlib
 import json
@@ -14,6 +17,7 @@ import re
 import sqlite3
 import stat
 import tempfile
+import threading
 import uuid
 import zipfile
 import zlib
@@ -27,15 +31,16 @@ from mathbank.content_sources import (
     content_source_export_files, validate_content_sources,
 )
 from mathbank.asset_security import (
-    MAX_NORMALIZED_IMAGE_BYTES, SAFE_IMAGE_EXTENSIONS, _reference_parts, normalize_raster_image,
-    resolve_upload_asset,
+    MAX_NORMALIZED_IMAGE_BYTES, SAFE_IMAGE_EXTENSIONS, _reference_parts, validate_raster_image,
+    fsync_writable_file, replace_file_atomic, resolve_upload_asset,
 )
 from mathbank.database import (
     KnowledgePoint, KnowledgePointCurriculum, Question, QuestionCurriculum,
     QuestionKnowledgePoint, QuestionReference, QuestionSourceLabel,
 )
 from mathbank.curriculums import CURRICULUM_NAMES
-from mathbank.image_layout import normalize_image_layouts
+from mathbank.storage_access import check_directory_access
+from mathbank.image_layout import image_key, normalize_image_layouts
 from mathbank.knowledge_points import METADATA_FIELDS, apply_knowledge_point_filters, is_zxxk_catalog_code
 from mathbank.question_assets import (
     embedded_question_assets, image_reference_spans, rewrite_image_layout_paths,
@@ -43,6 +48,7 @@ from mathbank.question_assets import (
     structured_question_assets,
 )
 from mathbank.question_references import normalize_book_key, normalize_label_key, text_sha256
+from mathbank.paths import SYSTEM_GENERATED_DIR
 from mathbank.sub_knowledge import normalize_sub_knowledge
 from mathbank.sync_helper import serialize_exchange_questions
 
@@ -76,35 +82,162 @@ _REFERENCE_FIELDS = ("field", "start", "end", "text", "label_key", "book_key",
                      "field_sha256", "prefix", "suffix", "resolution_state", "reason")
 
 
+def _progress(callback, stage, current=0, total=0):
+    if callback is not None:
+        callback(stage, current=current, total=total)
+
+
+class LibraryImportCommitUncertain(RuntimeError):
+    """A commit was attempted, so installed images must survive until verified."""
+
+    commit_outcome_unknown = True
+
+
+def _sqlite_import_database(raw):
+    if isinstance(raw, sqlite3.Connection):
+        for _sequence, name, filename in raw.execute("PRAGMA database_list"):
+            if name == "main" and filename:
+                return Path(filename)
+    return None
+
+
+def _import_rows_absent(database_path, question_ids):
+    """Prove rollback using a separate read-only SQLite connection/snapshot.
+
+    A failed check is deliberately inconclusive. The importing Session can be
+    unusable after a commit hook raises and cannot certify its own rollback.
+    """
+    if database_path is None or not question_ids:
+        return False
+    verification = None
+    try:
+        verification = sqlite3.connect(
+            Path(database_path).as_uri() + "?mode=ro", uri=True, timeout=1.0,
+        )
+        verification.execute("PRAGMA query_only=ON")
+        verification.execute("BEGIN")
+        ids = tuple(question_ids)
+        for offset in range(0, len(ids), 500):
+            batch = ids[offset:offset + 500]
+            placeholders = ",".join("?" for _ in batch)
+            if verification.execute(
+                f"SELECT 1 FROM questions WHERE id IN ({placeholders}) LIMIT 1", batch,
+            ).fetchone() is not None:
+                return False
+        return True
+    except (OSError, ValueError, sqlite3.Error):
+        return False
+    finally:
+        if verification is not None:
+            verification.close()
+
+
+@dataclass
+class _PreparedImportState:
+    archive_path: Path
+    archive_sha256: str
+    package: dict
+    consumed: bool = False
+
+
+_PREPARED_IMPORT_LOCK = threading.Lock()
+_PREPARED_IMPORTS = {}
+
+
+class PreparedLibraryImport:
+    """Opaque, one-use capability valid only inside prepare_library_import."""
+
+    __slots__ = ()
+
+    def __init__(self):
+        raise TypeError("请通过 prepare_library_import 准备分享包")
+
+    @property
+    def summary(self):
+        with _PREPARED_IMPORT_LOCK:
+            state = _PREPARED_IMPORTS.get(self)
+            if state is None:
+                raise ValueError("分享包预检已失效，请重新准备")
+            return {key: state.package[key] for key in ("question_count", "image_count", "format_version")}
+
+
+def _archive_sha256(path):
+    digest = hashlib.sha256()
+    size = 0
+    with Path(path).open("rb") as stream:
+        while chunk := stream.read(1024 * 1024):
+            size += len(chunk)
+            if size > MAX_ARCHIVE_BYTES:
+                raise ValueError("分享包 ZIP 超过 512MB 上限")
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+@contextmanager
+def prepare_library_import(archive_path: Path, *, workspace_dir=None, progress=None):
+    """Fully validate once into private staging before the caller takes a backup.
+
+    The yielded capability binds the archive bytes and each staged image. It
+    can be consumed once, and is invalidated and cleaned on context exit.
+    """
+    archive_path = Path(archive_path).resolve()
+    workspace = Path(workspace_dir) if workspace_dir is not None else SYSTEM_GENERATED_DIR / "library_transfer"
+    check_directory_access(workspace, label="分享包预检暂存目录（.system_generated/library_transfer）", require_subdirectory=True)
+    staging = tempfile.TemporaryDirectory(prefix=".mathbank-share-import-", dir=workspace)
+    prepared = None
+    try:
+        _progress(progress, "validating")
+        before = _archive_sha256(archive_path)
+        package = _read_package(archive_path, stage_dir=Path(staging.name), progress=progress)
+        if _archive_sha256(archive_path) != before:
+            raise ValueError("分享包在预检期间发生变化，请重新选择文件")
+        prepared = object.__new__(PreparedLibraryImport)
+        with _PREPARED_IMPORT_LOCK:
+            _PREPARED_IMPORTS[prepared] = _PreparedImportState(archive_path, before, package)
+        yield prepared
+    finally:
+        if prepared is not None:
+            with _PREPARED_IMPORT_LOCK:
+                _PREPARED_IMPORTS.pop(prepared, None)
+        try:
+            staging.cleanup()
+        except Exception:
+            # Cleanup must never turn an already committed import into failure.
+            pass
+
+
+def _consume_prepared_import(prepared, archive_path):
+    with _PREPARED_IMPORT_LOCK:
+        state = _PREPARED_IMPORTS.get(prepared) if type(prepared) is PreparedLibraryImport else None
+        if state is None or state.consumed:
+            raise ValueError("分享包预检无效或已使用，请重新准备")
+        state.consumed = True
+    if Path(archive_path).resolve() != state.archive_path or _archive_sha256(archive_path) != state.archive_sha256:
+        raise ValueError("分享包在预检后发生变化，请重新准备")
+    return state.package
+
+
 def _json(value):
     return json.dumps(value, ensure_ascii=False, allow_nan=False, separators=(",", ":")).encode("utf-8")
 
 
 def _write_questions_json(records, path):
-    """Encode in bounded chunks instead of materializing the whole JSON twice."""
+    """Use the native JSON encoder one record at a time, preserving v1 bytes."""
     digest, size = hashlib.sha256(), 0
-    encoder = json.JSONEncoder(ensure_ascii=False, allow_nan=False, separators=(",", ":"))
     with Path(path).open("wb") as output:
-        chunks, characters = [], 0
-        for chunk in encoder.iterencode(records):
-            chunks.append(chunk)
-            characters += len(chunk)
-            if characters < 64 * 1024:
-                continue
-            data = "".join(chunks).encode("utf-8")
+        def write(data):
+            nonlocal size
             size += len(data)
             if size > MAX_JSON_BYTES:
                 raise ValueError("导出题目数据超过 512MB 上限，请按来源分批导出")
             output.write(data)
             digest.update(data)
-            chunks, characters = [], 0
-        if chunks:
-            data = "".join(chunks).encode("utf-8")
-            size += len(data)
-            if size > MAX_JSON_BYTES:
-                raise ValueError("导出题目数据超过 512MB 上限，请按来源分批导出")
-            output.write(data)
-            digest.update(data)
+        write(b"[")
+        for index, record in enumerate(records):
+            if index:
+                write(b",")
+            write(_json(record))
+        write(b"]")
         output.flush()
         os.fsync(output.fileno())
     return {"name": "questions.json", "size": size, "sha256": digest.hexdigest()}
@@ -203,11 +336,16 @@ def _point_definition(point):
             for key in ("name", "original_name", "source", "aliases", "curriculum_paths")}
 
 
-def _validate_records(records):
-    if not isinstance(records, list) or not records or len(records) > MAX_QUESTIONS:
-        raise ValueError("分享包没有题目，或题目数量超过上限")
-    ids, assets, definitions = set(), set(), {}
-    for record in records:
+class _RecordValidator:
+    """Validate and share repeated catalog definitions within one package."""
+
+    def __init__(self):
+        self.ids, self.assets, self.definitions = set(), set(), {}
+
+    def validate(self, record):
+        ids, assets, definitions = self.ids, self.assets, self.definitions
+        if len(ids) >= MAX_QUESTIONS:
+            raise ValueError("分享包题目数量超过上限")
         if not isinstance(record, dict) or type(record.get("id")) is not int or record["id"] < 1 or record["id"] in ids:
             raise ValueError("分享包题目 ID 无效或重复")
         if set(record) - _RECORD_FIELDS:
@@ -247,7 +385,9 @@ def _validate_records(records):
                         _text(item[key], key, 2_000_000)
         for path in _asset_references(record):
             assets.add(_canonical_path(path))
-        normalize_image_layouts(record.get("image_layouts", {}), record["content"])
+        layouts = record.get("image_layouts", {})
+        if not isinstance(layouts, dict) or layouts:
+            normalize_image_layouts(layouts, record["content"])
         mappings = record.get("curriculum_mappings", [])
         if not isinstance(mappings, list) or len(mappings) > 32:
             raise ValueError("分享包教材映射无效")
@@ -272,7 +412,14 @@ def _validate_records(records):
             if code in codes or (code in definitions and definition != definitions[code]):
                 raise ValueError("分享包知识点重复或定义冲突")
             codes.add(code)
-            definitions[code] = definition
+            if code not in definitions:
+                definitions[code] = definition
+            else:
+                # Only the verified catalog definition is shared. Relation
+                # metadata belongs to each question and remains independent.
+                for field, value in definitions[code].items():
+                    if field in point:
+                        point[field] = value
         labels = record.get("source_labels", [])
         if not isinstance(labels, list) or len(labels) > 512:
             raise ValueError("分享包来源标签无效")
@@ -316,7 +463,15 @@ def _validate_records(records):
             if key in seen:
                 raise ValueError("分享包交叉引用重复")
             seen.add(key)
-    return assets, definitions
+
+
+def _validate_records(records):
+    if not isinstance(records, list) or not records or len(records) > MAX_QUESTIONS:
+        raise ValueError("分享包没有题目，或题目数量超过上限")
+    validator = _RecordValidator()
+    for record in records:
+        validator.validate(record)
+    return validator.assets, validator.definitions
 
 
 def _parse_created_at(value):
@@ -353,13 +508,101 @@ def _read_member(archive, name, maximum):
         return data
 
 
-def _read_package(archive_path, *, stage_dir=None):
+def _read_question_records(archive, expected_sha256, *, validate_record=None):
+    """Decode the top-level array while buffering one undecoded JSON item.
+
+    Standard JSONDecoder still owns all syntax, duplicate-key and number
+    validation. Each incomplete record is retried at geometrically increasing
+    buffer sizes, avoiding quadratic rescans of a large mathematical question.
+    The package validator runs before accumulation so repeated catalog trees
+    can be shared while only one newly decoded record is still unverified.
+    """
+    info = archive.getinfo("questions.json")
+    if info.file_size > MAX_JSON_BYTES:
+        raise ValueError("分享包成员超过安全大小")
+    decoder = json.JSONDecoder(object_pairs_hook=_pairs,
+        parse_constant=lambda value: (_ for _ in ()).throw(ValueError("JSON 数值无效")))
+    utf8 = codecs.getincrementaldecoder("utf-8")()
+    digest, size, buffer, ended = hashlib.sha256(), 0, "", False
+    records = []
+    with archive.open(info) as stream:
+        def read_more():
+            nonlocal size, buffer, ended
+            data = stream.read(64 * 1024)
+            size += len(data)
+            if size > MAX_JSON_BYTES or size > info.file_size:
+                raise ValueError("分享包成员实际大小无效")
+            digest.update(data)
+            try:
+                buffer += utf8.decode(data, final=not data)
+            except UnicodeError as exc:
+                raise ValueError("分享包 JSON 数据无效") from exc
+            ended = not data
+
+        def skip_space():
+            nonlocal buffer
+            while True:
+                buffer = buffer.lstrip(" \t\r\n")
+                if buffer or ended:
+                    return
+                read_more()
+
+        skip_space()
+        if not buffer.startswith("["):
+            raise ValueError("分享包题目数据必须为 JSON 数组")
+        buffer = buffer[1:]
+        first = True
+        while True:
+            skip_space()
+            if first and buffer.startswith("]"):
+                buffer = buffer[1:]
+                break
+            if not buffer.startswith("{"):
+                raise ValueError("分享包 JSON 题目记录无效")
+            retry_at = len(buffer)
+            while True:
+                try:
+                    record, end = decoder.raw_decode(buffer)
+                    break
+                except json.JSONDecodeError as exc:
+                    if ended:
+                        raise ValueError("分享包 JSON 数据无效") from exc
+                    retry_at = max(64 * 1024, retry_at * 2)
+                    while not ended and len(buffer) < retry_at:
+                        read_more()
+            if validate_record is not None:
+                validate_record(record)
+            records.append(record)
+            if len(records) > MAX_QUESTIONS:
+                raise ValueError("分享包题目数量超过上限")
+            buffer = buffer[end:]
+            skip_space()
+            if buffer.startswith("]"):
+                buffer = buffer[1:]
+                break
+            if not buffer.startswith(","):
+                raise ValueError("分享包 JSON 数据无效")
+            buffer, first = buffer[1:], False
+        skip_space()
+        if buffer or not ended:
+            raise ValueError("分享包 JSON 含多余内容")
+    if size != info.file_size:
+        raise ValueError("分享包成员实际大小无效")
+    if digest.hexdigest() != expected_sha256:
+        raise ValueError("分享包题目数据校验失败")
+    return records
+
+
+def _read_package(archive_path, *, stage_dir=None, progress=None):
     if Path(archive_path).stat().st_size > MAX_ARCHIVE_BYTES:
         raise ValueError("分享包 ZIP 超过 512MB 上限")
     try:
         with zipfile.ZipFile(archive_path) as archive:
             infos = archive.infolist()
+            checked = 0
+            _progress(progress, "validating", checked, len(infos))
             names = [item.filename for item in infos]
+            name_set = set(names)
             if len(infos) > MAX_MEMBERS or len(set(name.casefold() for name in names)) != len(names):
                 raise ValueError("分享包成员重复或数量过多")
             for info in infos:
@@ -367,6 +610,8 @@ def _read_package(archive_path, *, stage_dir=None):
             if "manifest.json" not in names or sum(item.file_size for item in infos) > MAX_TOTAL_BYTES:
                 raise ValueError("分享包缺少清单或解压体积超过 1GB")
             manifest = _decode(_read_member(archive, "manifest.json", MAX_MANIFEST_BYTES))
+            checked += 1
+            _progress(progress, "validating", checked, len(infos))
             if (not isinstance(manifest, dict) or manifest.get("format") != FORMAT
                     or type(manifest.get("format_version")) is not int or manifest["format_version"] != FORMAT_VERSION):
                 raise ValueError("只支持本题库导出的 ZIP 分享包（格式版本 1）")
@@ -378,7 +623,7 @@ def _read_package(archive_path, *, stage_dir=None):
                 if not isinstance(item, dict) or not isinstance(item.get("name"), str):
                     raise ValueError("分享包清单文件无效")
                 name = item["name"]
-                if name in listed or name == "manifest.json" or name not in names:
+                if name in listed or name == "manifest.json" or name not in name_set:
                     raise ValueError("分享包清单重复或缺少文件")
                 if (type(item.get("size")) is not int or item["size"] != archive.getinfo(name).file_size
                         or not isinstance(item.get("sha256"), str) or not re.fullmatch(r"[0-9a-f]{64}", item["sha256"])):
@@ -418,14 +663,17 @@ def _read_package(archive_path, *, stage_dir=None):
                             raise ValueError("分享包资料来源说明为空")
                     except UnicodeError as exc:
                         raise ValueError("分享包资料来源说明编码无效") from exc
-            raw = _read_member(archive, "questions.json", MAX_JSON_BYTES)
-            if hashlib.sha256(raw).hexdigest() != listed["questions.json"]["sha256"]:
-                raise ValueError("分享包题目数据校验失败")
+                checked += 1
+                _progress(progress, "validating", checked, len(infos))
+            validator = _RecordValidator()
+            records = _read_question_records(archive, listed["questions.json"]["sha256"],
+                                            validate_record=validator.validate)
+            if not records:
+                raise ValueError("分享包没有题目，或题目数量超过上限")
             source_version = _text(manifest.get("active_version_code"), "active_version_code", 50, empty=False)
             if source_version not in CURRICULUM_NAMES:
                 raise ValueError("分享包教材版本无效")
-            records = _decode(raw)
-            referenced, definitions = _validate_records(records)
+            referenced, definitions = validator.assets, validator.definitions
             if any(record.get("active_version_code") != source_version for record in records):
                 raise ValueError("分享包题目教材版本与清单不一致")
             if referenced != asset_paths:
@@ -433,6 +681,8 @@ def _read_package(archive_path, *, stage_dir=None):
             if (type(manifest.get("question_count")) is not int or manifest["question_count"] != len(records)
                     or type(manifest.get("image_count")) is not int or manifest["image_count"] != len(asset_paths)):
                 raise ValueError("分享包清单数量不一致")
+            checked += 1
+            _progress(progress, "validating", checked, len(infos))
             assets = []
             for index, (name, item) in enumerate(listed.items()):
                 if name == "questions.json" or name in _CONTENT_SOURCE_MEMBERS:
@@ -440,7 +690,7 @@ def _read_package(archive_path, *, stage_dir=None):
                 raw = _read_member(archive, name, MAX_NORMALIZED_IMAGE_BYTES)
                 if hashlib.sha256(raw).hexdigest() != item["sha256"]:
                     raise ValueError("分享包图片校验失败")
-                normalize_raster_image(raw)
+                validate_raster_image(raw)
                 extension = PurePosixPath(name).suffix.lower()
                 asset = dict(item, extension=extension)
                 if stage_dir is not None:
@@ -448,6 +698,9 @@ def _read_package(archive_path, *, stage_dir=None):
                     staged.write_bytes(raw)
                     asset["staged"] = staged
                 assets.append(asset)
+                del raw
+                checked += 1
+                _progress(progress, "validating", checked, len(infos))
             return {"records": records, "assets": assets, "definitions": definitions,
                     "question_count": len(records), "image_count": len(assets), "format_version": FORMAT_VERSION, "active_version_code": source_version}
     except (zipfile.BadZipFile, zipfile.LargeZipFile, EOFError, KeyError, RuntimeError, NotImplementedError, RecursionError, zlib.error) as exc:
@@ -581,7 +834,7 @@ def preview_library_questions(db, *, filters=None, question_ids=None, page=1,
 
 def export_library_zip(db, output_path: Path, *, uploads_dir: Path,
                        source_keywords: list[str] | None = None, question_ids: list[int] | None = None,
-                       active_version: str = "A") -> dict:
+                       active_version: str = "A", progress=None) -> dict:
     """Write one atomic, self-contained sharing ZIP from a real SQLite snapshot."""
     if source_keywords is not None:
         source_keywords = _source_keywords(source_keywords)
@@ -589,65 +842,90 @@ def export_library_zip(db, output_path: Path, *, uploads_dir: Path,
         _question_ids(question_ids)
         if source_keywords:
             raise ValueError("勾选题目不能同时使用来源筛选")
+    output_path = Path(output_path)
+    check_directory_access(output_path.parent, label="分享包导出目录")
+    _progress(progress, "reading")
     _library_read_snapshot(db, active_version)
-    query = db.query(Question).options(selectinload(Question.knowledge_points)).populate_existing()
     if question_ids is not None:
         existing = _existing_question_ids(db, question_ids)
         missing = [qid for qid in question_ids if qid not in existing]
         if missing:
             raise ValueError(f"勾选的题目已不存在（ID：{'、'.join(str(qid) for qid in missing[:20])}），请刷新后重新选择")
-        questions_by_id = {}
-        for start in range(0, len(question_ids), 500):
-            questions_by_id.update((question.id, question) for question in query.filter(
-                Question.id.in_(question_ids[start:start + 500])).all())
-        questions = [questions_by_id[qid] for qid in question_ids]
+        export_ids = list(question_ids)
     else:
+        query = db.query(Question.id)
         if source_keywords:
             query = query.filter(or_(*(Question.source.contains(value, autoescape=True) for value in source_keywords)))
-        questions = query.order_by(Question.id).all()
-    records, _ = serialize_exchange_questions(db, questions, active_version)
-    for question, record in zip(questions, records):
-        # to_dict deliberately hides AI references and review-only images in UI.
-        record["image_paths"] = list(question.image_paths)
-    asset_paths, _ = _validate_records(records)
-    output_path = Path(output_path)
-    output_path.parent.mkdir(parents=True, exist_ok=True)
+        export_ids = [qid for qid, in query.order_by(Question.id).limit(MAX_QUESTIONS + 1)]
+    if not export_ids or len(export_ids) > MAX_QUESTIONS:
+        raise ValueError("分享包没有题目，或题目数量超过上限")
+    validator = _RecordValidator()
+    _progress(progress, "reading", 0, len(export_ids))
+
+    def records():
+        # Keep one snapshot but only retain one batch of ORM rows and their
+        # exchange payloads. The validator alone retains shared definitions.
+        query = db.query(Question).options(selectinload(Question.knowledge_points)).populate_existing()
+        for start in range(0, len(export_ids), 128):
+            batch_ids = export_ids[start:start + 128]
+            questions_by_id = {question.id: question for question in query.filter(Question.id.in_(batch_ids)).all()}
+            missing = [qid for qid in batch_ids if qid not in questions_by_id]
+            if missing:
+                raise ValueError(f"勾选的题目已不存在（ID：{'、'.join(str(qid) for qid in missing[:20])}），请刷新后重新选择")
+            questions = [questions_by_id[qid] for qid in batch_ids]
+            batch_records, batch_mappings = serialize_exchange_questions(db, questions, active_version)
+            for question, record in zip(questions, batch_records):
+                # UI serialization hides AI references and review-only images.
+                record["image_paths"] = list(question.image_paths)
+                validator.validate(record)
+                yield record
+            _progress(progress, "reading", start + len(batch_ids), len(export_ids))
+            del question, record, batch_records, batch_mappings, questions, questions_by_id
     fd, temp_name = tempfile.mkstemp(prefix=".mathbank-share-", suffix=".zip", dir=output_path.parent)
     os.close(fd)
     json_name = None
     try:
         json_fd, json_name = tempfile.mkstemp(prefix=".mathbank-share-", suffix=".json", dir=output_path.parent)
         os.close(json_fd)
-        json_entry = _write_questions_json(records, json_name)
+        json_entry = _write_questions_json(records(), json_name)
+        asset_paths = validator.assets
         files = [json_entry]
         total = json_entry["size"]
         source_files = content_source_export_files()
         if set(source_files) != _CONTENT_SOURCE_MEMBERS:
             raise ValueError("资料来源声明文件不完整")
+        packaged, package_total = 0, len(asset_paths) + len(source_files) + 1
+        _progress(progress, "packaging", packaged, package_total)
         with zipfile.ZipFile(temp_name, "w", compression=zipfile.ZIP_DEFLATED, compresslevel=6) as archive:
             archive.write(json_name, "questions.json")
+            packaged += 1
+            _progress(progress, "packaging", packaged, package_total)
             for name, data in source_files.items():
                 if not isinstance(data, bytes) or len(data) > MAX_CONTENT_SOURCE_BYTES:
                     raise ValueError("资料来源声明文件大小无效")
                 total += len(data)
                 archive.writestr(name, data)
                 files.append({"name": name, "size": len(data), "sha256": hashlib.sha256(data).hexdigest()})
+                packaged += 1
+                _progress(progress, "packaging", packaged, package_total)
             for index, reference in enumerate(sorted(asset_paths), 1):
                 path = resolve_upload_asset(reference, uploads_dir=uploads_dir, url_prefix=UPLOAD_PREFIX, require_file=False)
                 if not path.is_file() or path.stat().st_size > MAX_NORMALIZED_IMAGE_BYTES:
                     raise ValueError(f"导出图片不存在或超过安全大小：{reference}")
                 data = path.read_bytes()
-                normalize_raster_image(data)
+                validate_raster_image(data)
                 name = f"assets/{index:06d}{path.suffix.lower()}"
                 total += len(data)
                 if total > MAX_TOTAL_BYTES:
                     raise ValueError("导出图片总大小超过 1GB，请按来源分批导出")
                 archive.writestr(name, data)
                 files.append({"name": name, "path": reference, "size": len(data), "sha256": hashlib.sha256(data).hexdigest()})
+                packaged += 1
+                _progress(progress, "packaging", packaged, package_total)
             manifest = {"format": FORMAT, "format_version": FORMAT_VERSION,
                         "exported_by": __version__, "active_version_code": active_version,
                         "content_sources_included": True,
-                        "question_count": len(records), "image_count": len(asset_paths), "files": files}
+                        "question_count": len(export_ids), "image_count": len(asset_paths), "files": files}
             manifest_raw = _json(manifest)
             if len(manifest_raw) > MAX_MANIFEST_BYTES or len(files) + 1 > MAX_MEMBERS:
                 raise ValueError("分享包图片数量超过上限，请按来源分批导出")
@@ -657,6 +935,7 @@ def export_library_zip(db, output_path: Path, *, uploads_dir: Path,
         # streaming; a second full json.loads would double the large library.
         if Path(temp_name).stat().st_size > MAX_ARCHIVE_BYTES:
             raise ValueError("分享包 ZIP 超过 512MB 上限，请按来源分批导出")
+        _progress(progress, "verifying", 0, 1)
         with zipfile.ZipFile(temp_name) as completed:
             infos = completed.infolist()
             for info in infos:
@@ -665,10 +944,10 @@ def export_library_zip(db, output_path: Path, *, uploads_dir: Path,
                 raise ValueError("分享包解压体积超过 1GB，请按来源分批导出")
             if completed.testzip() is not None:
                 raise ValueError("导出 ZIP 完整性校验失败")
-        with open(temp_name, "rb") as stream:
-            os.fsync(stream.fileno())
-        os.replace(temp_name, output_path)
-        return {"question_count": len(records), "image_count": len(asset_paths)}
+        _progress(progress, "verifying", 1, 1)
+        fsync_writable_file(temp_name)
+        replace_file_atomic(temp_name, output_path)
+        return {"question_count": len(export_ids), "image_count": len(asset_paths)}
     finally:
         for temporary in (temp_name, json_name):
             if temporary is not None:
@@ -721,11 +1000,13 @@ def _import_points(db, definitions):
     return mapping
 
 
-def import_library_zip(db, archive_path: Path, *, uploads_dir: Path, active_version: str = "A") -> dict:
+def import_library_zip(db, archive_path: Path, *, uploads_dir: Path, active_version: str = "A",
+                       prepared=None, progress=None) -> dict:
     """Append every question, allocating independent IDs/groups/files atomically.
 
-    The supplied Session must have no pending changes. All newly installed files
-    are removed on transaction failure; existing files are never overwritten.
+    The supplied Session must have no pending changes. Newly installed files
+    are removed after proven rollback. Uncertain commits retain their images;
+    existing files are never overwritten.
     """
     if active_version not in CURRICULUM_NAMES:
         raise ValueError("导入使用的教材版本无效")
@@ -735,36 +1016,68 @@ def import_library_zip(db, archive_path: Path, *, uploads_dir: Path, active_vers
     if uploads_dir.is_symlink():
         raise ValueError("上传目录不能是符号链接")
     uploads_dir.mkdir(parents=True, exist_ok=True)
-    installed, staging, committed = [], None, False
+    if prepared is None:
+        with prepare_library_import(archive_path, progress=progress) as prepared:
+            return import_library_zip(db, archive_path, uploads_dir=uploads_dir,
+                                      active_version=active_version, prepared=prepared, progress=progress)
+    package = _consume_prepared_import(prepared, archive_path)
+    installed, committed, commit_attempted = [], False, False
+    import_database, id_map = None, {}
     try:
-        staging = tempfile.TemporaryDirectory(prefix=".mathbank-share-import-", dir=uploads_dir)
-        stage = staging.name
-        package = _read_package(archive_path, stage_dir=Path(stage))
         replacements = {}
-        for asset in package["assets"]:
+        _progress(progress, "installing", 0, len(package["assets"]))
+        for index, asset in enumerate(package["assets"], 1):
             # Every import uses independent names, including repeated imports
             # of exactly the same package. Exclusive creation closes races.
             destination = uploads_dir / ("shared_" + uuid.uuid4().hex + asset["extension"])
             with destination.open("xb") as target:
                 installed.append(destination)
+                digest, copied = hashlib.sha256(), 0
                 with asset["staged"].open("rb") as source:
                     while chunk := source.read(1024 * 1024):
+                        copied += len(chunk)
+                        if copied > asset["size"]:
+                            raise ValueError("预检图片在导入前发生变化，请重新准备分享包")
+                        digest.update(chunk)
                         target.write(chunk)
+                if copied != asset["size"] or digest.hexdigest() != asset["sha256"]:
+                    raise ValueError("预检图片在导入前发生变化，请重新准备分享包")
                 target.flush()
                 os.fsync(target.fileno())
             rewritten = UPLOAD_PREFIX + "/" + destination.name
             replacements[asset["path"]] = rewritten
             replacements[asset["path"].lstrip("/")] = rewritten
+            _progress(progress, "installing", index, len(package["assets"]))
         for record in package["records"]:
             for reference in _asset_references(record):
                 replacements[reference] = replacements[_canonical_path(reference)]
+        image_keys = {image_key(old): image_key(new) for old, new in replacements.items()}
         connection = db.connection()
         raw = connection.connection.dbapi_connection
+        import_database = _sqlite_import_database(raw)
         if isinstance(raw, sqlite3.Connection) and not raw.in_transaction:
             connection.exec_driver_sql("BEGIN IMMEDIATE")
         points = _import_points(db, package["definitions"])
-        groups, id_map, imported = {}, {}, []
-        for record in package["records"]:
+        from mathbank.question_duplicate_service import fingerprint_for_question, upsert_question_fingerprints
+        groups, id_map, batch = {}, {}, []
+        def flush_batch():
+            if not batch:
+                return
+            db.flush()
+            for question, source_record in batch:
+                id_map[source_record["id"]] = question.id
+            upsert_question_fingerprints(db, (
+                (question, fingerprint_for_question(question, uploads_dir=uploads_dir, url_prefix=UPLOAD_PREFIX))
+                for question, _ in batch
+            ), batch_size=128)
+            # These new rows are already flushed in the still-open
+            # transaction. References use stable IDs below, so retaining all
+            # ORM annotation graphs until commit would only raise RAM usage.
+            for question, _ in batch:
+                db.expunge(question)
+            batch.clear()
+        _progress(progress, "writing", 0, len(package["records"]))
+        for index, record in enumerate(package["records"], 1):
             values = {field: record.get(field, "") for field in _TEXT_FIELDS}
             for field in ("content", "answer_markdown", "review"):
                 values[field] = rewrite_question_asset_paths(values[field], replacements)
@@ -778,7 +1091,8 @@ def import_library_zip(db, archive_path: Path, *, uploads_dir: Path, active_vers
             question.tikz_reference_image_path = replacements.get(record.get("tikz_reference_image_path", ""), "")
             question.content_tikz_assets = rewrite_structured_asset_paths(record.get("content_tikz_assets", []), replacements)
             question.answer_tikz_assets = rewrite_structured_asset_paths(record.get("answer_tikz_assets", []), replacements)
-            question.image_layouts = rewrite_image_layout_paths(record.get("image_layouts", {}), replacements)
+            question.image_layouts = rewrite_image_layout_paths(record.get("image_layouts", {}), replacements,
+                                                               image_keys=image_keys)
             question.figure_align = record.get("figure_align", "right")
             question.figure_size = record.get("figure_size", "auto")
             question.figure_align_custom = record.get("figure_align_custom", False)
@@ -810,35 +1124,57 @@ def import_library_zip(db, archive_path: Path, *, uploads_dir: Path, active_vers
                 for field in METADATA_FIELDS:
                     setattr(row, field, json.dumps(item.get(field), ensure_ascii=False, allow_nan=False))
                 question.knowledge_points.append(row)
+            # The capability is single-use. Metadata now lives in the ORM's
+            # complete JSON values; later reference remapping only needs the
+            # record's authored text. Drop this private duplicate tree, while
+            # retaining the original archive and the separate point catalog.
+            record.pop("knowledge_points", None)
             db.add(question)
-            db.flush()
-            id_map[record["id"]] = question.id
-            imported.append((question, record))
-        for question, record in imported:
+            batch.append((question, record))
+            # All rows still belong to one transaction. Flush bounded groups
+            # so ORM relationship bookkeeping is not repeated for every row.
+            if index % 128 == 0:
+                flush_batch()
+            _progress(progress, "writing", index, len(package["records"]))
+        flush_batch()
+        for record in package["records"]:
+            question_id = id_map[record["id"]]
             for label in record.get("source_labels", []):
-                db.add(QuestionSourceLabel(question_id=question.id, **label))
+                db.add(QuestionSourceLabel(question_id=question_id, **label))
             for reference in record.get("question_references", []):
-                db.add(QuestionReference(source_question_id=question.id, **_reference_row(record, reference, replacements, id_map)))
-        # Maintaining the search index does not perform duplicate screening.
-        from mathbank.question_duplicate_service import fingerprint_for_question, upsert_question_fingerprint
-        for question, _ in imported:
-            fingerprint = fingerprint_for_question(question, uploads_dir=uploads_dir, url_prefix=UPLOAD_PREFIX)
-            upsert_question_fingerprint(db, question, fingerprint)
-        result = {"imported_count": len(imported), "image_count": len(package["assets"]), "id_map": id_map}
+                db.add(QuestionReference(source_question_id=question_id, **_reference_row(record, reference, replacements, id_map)))
+        # Each batch already computed and stored the same complete index. This
+        # final progress checkpoint confirms all indexes before the one commit.
+        _progress(progress, "fingerprinting", len(id_map), len(package["records"]))
+        result = {"imported_count": len(id_map), "image_count": len(package["assets"]), "id_map": id_map}
+        _progress(progress, "committing", 0, 1)
+        commit_attempted = True
         db.commit()
         committed = True
         return result
-    except BaseException:
+    except BaseException as exc:
         if not committed:
-            db.rollback()
-            for path in installed:
-                path.unlink(missing_ok=True)
-        raise
-    finally:
-        if staging is not None:
+            rolled_back = False
             try:
-                staging.cleanup()
+                db.rollback()
+                rolled_back = True
             except Exception:
-                # Temporary cleanup cannot reverse a committed database write.
-                # A leftover private staging directory is safe to remove later.
+                # A Session can already be committed when an after_commit
+                # hook raises. Its rollback error must not erase source images
+                # or obscure the original commit exception.
                 pass
+            proven_rollback = rolled_back and (
+                not commit_attempted or _import_rows_absent(import_database, id_map.values())
+            )
+            if proven_rollback:
+                for path in installed:
+                    try:
+                        path.unlink(missing_ok=True)
+                    except OSError:
+                        # Cleanup can be retried; retain the original failure.
+                        pass
+            elif commit_attempted:
+                raise LibraryImportCommitUncertain(
+                    "题库提交结果暂未确认，已保留本次图片；请先核实题库和备份，勿直接再次导入。"
+                ) from exc
+        raise

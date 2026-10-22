@@ -4,7 +4,9 @@ from datetime import datetime
 import hashlib
 import io
 import json
+import os
 from pathlib import Path
+import sqlite3
 import stat
 import zipfile
 
@@ -454,6 +456,14 @@ def test_failed_commit_rolls_back_rows_catalog_and_installed_files(share, tmp_pa
     uploads.mkdir()
     sentinel = uploads / "existing.png"
     sentinel.write_bytes(image_bytes("green"))
+    verified = []
+    original_readback = transfer._import_rows_absent
+    def readback(path, ids):
+        ids = tuple(ids)
+        absent = original_readback(path, ids)
+        verified.append((path, len(ids), absent))
+        return absent
+    monkeypatch.setattr(transfer, "_import_rows_absent", readback)
     with isolated_db(tmp_path / "receiving.db") as db:
         original = Question(id=20, content="已有题", source="已有来源")
         db.add(original)
@@ -465,6 +475,91 @@ def test_failed_commit_rolls_back_rows_catalog_and_installed_files(share, tmp_pa
             transfer.import_library_zip(db, package, uploads_dir=uploads)
         assert [(q.id, q.content, q.source) for q in db.query(Question)] == [(20, "已有题", "已有来源")]
         assert db.query(KnowledgePoint).count() == db.query(QuestionReference).count() == db.query(QuestionSourceLabel).count() == db.query(QuestionFingerprint).count() == 0
+        assert list(uploads.iterdir()) == [sentinel]
+        assert verified == [(tmp_path / "receiving.db", 2, True)]
+
+
+@pytest.mark.parametrize("failure_mode", ["commit_wrapper", "after_commit_hook"])
+def test_exception_after_real_commit_preserves_all_rows_relations_and_images(share, tmp_path, monkeypatch, failure_mode):
+    package, source_uploads = share
+    uploads = tmp_path / "committed_uploads"
+    uploads.mkdir()
+    sentinel = uploads / "existing.png"
+    sentinel.write_bytes(image_bytes("green"))
+    database_path = tmp_path / "committed.db"
+    with isolated_db(database_path) as db:
+        db.add(Question(id=20, content="原有题"))
+        db.commit()
+        if failure_mode == "commit_wrapper":
+            real_commit = db.commit
+            def commit_then_raise():
+                real_commit()
+                raise OSError("controlled exception after real commit")
+            monkeypatch.setattr(db, "commit", commit_then_raise)
+        else:
+            def after_commit(_session):
+                raise OSError("controlled after_commit callback failure")
+            event.listen(db, "after_commit", after_commit)
+        with pytest.raises(transfer.LibraryImportCommitUncertain, match="核实") as failure:
+            transfer.import_library_zip(db, package, uploads_dir=uploads)
+        assert failure.value.commit_outcome_unknown is True
+        assert isinstance(failure.value.__cause__, OSError)
+        # Read the on-disk commit independently: the importing Session may
+        # still be in SQLAlchemy's committed state after its hook raised.
+        with sqlite3.connect(database_path) as readback:
+            assert readback.execute("SELECT COUNT(*) FROM questions").fetchone()[0] == 3
+            assert readback.execute("SELECT COUNT(*) FROM question_fingerprints").fetchone()[0] == 2
+            assert readback.execute("SELECT COUNT(*) FROM question_curriculums").fetchone()[0] == 3
+            assert readback.execute("SELECT COUNT(*) FROM question_knowledge_points").fetchone()[0] == 2
+            assert readback.execute("PRAGMA integrity_check").fetchone()[0] == "ok"
+            assert readback.execute("PRAGMA foreign_key_check").fetchall() == []
+            references = [path for row in readback.execute("SELECT image_paths FROM questions WHERE id > 20")
+                          for path in json.loads(row[0])]
+        assert len(list(uploads.glob("shared_*"))) == 3
+        assert all((uploads / Path(reference).name).is_file() for reference in references)
+        expected_images = {hashlib.sha256(path.read_bytes()).hexdigest() for path in source_uploads.iterdir()}
+        assert {hashlib.sha256(path.read_bytes()).hexdigest() for path in uploads.glob("shared_*")} == expected_images
+        assert sentinel.read_bytes() == image_bytes("green")
+
+
+def test_commit_failure_with_unavailable_independent_readback_keeps_images(share, tmp_path, monkeypatch):
+    package, _ = share
+    uploads, database_path = tmp_path / "unknown_uploads", tmp_path / "unknown.db"
+    real_connect = sqlite3.connect
+    attempted = []
+    def unavailable_readback(*args, **kwargs):
+        if kwargs.get("uri"):
+            attempted.append(args[0])
+            raise sqlite3.OperationalError("controlled readback unavailable")
+        return real_connect(*args, **kwargs)
+    with isolated_db(database_path) as db:
+        def fail_commit():
+            raise OSError("controlled error before SQLite commit")
+        monkeypatch.setattr(db, "commit", fail_commit)
+        monkeypatch.setattr(transfer.sqlite3, "connect", unavailable_readback)
+        with pytest.raises(transfer.LibraryImportCommitUncertain):
+            transfer.import_library_zip(db, package, uploads_dir=uploads)
+        assert attempted == [database_path.as_uri() + "?mode=ro"]
+        assert db.query(Question).count() == 0
+        # Unreferenced retained files are safer than deleting images when a
+        # separately committed result cannot be disproved.
+        assert len(list(uploads.glob("shared_*"))) == 3
+
+
+@pytest.mark.parametrize("stage", ["writing", "committing"])
+def test_error_before_commit_call_rolls_back_and_removes_only_new_images(share, tmp_path, stage):
+    package, _ = share
+    uploads = tmp_path / "before_commit_uploads"
+    uploads.mkdir()
+    sentinel = uploads / "existing.png"
+    sentinel.write_bytes(image_bytes("green"))
+    def fail_before_commit(current_stage, **_progress):
+        if current_stage == stage:
+            raise OSError("controlled error before commit call")
+    with isolated_db(tmp_path / "before_commit.db") as db:
+        with pytest.raises(OSError, match="before commit call"):
+            transfer.import_library_zip(db, package, uploads_dir=uploads, progress=fail_before_commit)
+        assert db.query(Question).count() == db.query(KnowledgePoint).count() == 0
         assert list(uploads.iterdir()) == [sentinel]
 
 
@@ -808,3 +903,162 @@ def test_streaming_json_limit_failure_preserves_previous_export(share, tmp_path,
             transfer.export_library_zip(db, output, uploads_dir=uploads)
         assert output.read_bytes() == previous
         assert not list(tmp_path.glob(".mathbank-share-*"))
+
+
+def test_export_fsync_uses_writable_handles_for_windows(tmp_path, monkeypatch):
+    real_fsync, synced = os.fsync, []
+    def windows_flush(descriptor):
+        os.write(descriptor, b"")
+        synced.append(descriptor)
+        real_fsync(descriptor)
+    monkeypatch.setattr("mathbank.asset_security.os.fsync", windows_flush)
+    output = tmp_path / "中文 空格分享.zip"
+    with isolated_db(tmp_path / "source.db") as db:
+        db.add(Question(content="隔离题目 $x^2$"))
+        db.commit()
+        transfer.export_library_zip(db, output, uploads_dir=tmp_path)
+    assert len(synced) >= 2
+    assert transfer.inspect_library_zip(output)["question_count"] == 1
+
+
+def test_prepared_import_validates_images_once_and_preserves_original_bytes(share, tmp_path, monkeypatch):
+    package, source_uploads = share
+    real_validate = transfer.validate_raster_image
+    validated, progress = [], []
+    def validate(data):
+        validated.append(hashlib.sha256(data).hexdigest())
+        return real_validate(data)
+    monkeypatch.setattr(transfer, "validate_raster_image", validate)
+    workspace, uploads = tmp_path / "private", tmp_path / "destination"
+    def report(stage, **state):
+        progress.append((stage, state))
+    with transfer.prepare_library_import(package, workspace_dir=workspace, progress=report) as prepared:
+        summary = prepared.summary
+        summary["question_count"] = 999
+        assert prepared.summary == {"question_count": 2, "image_count": 3, "format_version": 1}
+        with isolated_db(tmp_path / "prepared.db") as db:
+            result = transfer.import_library_zip(db, package, uploads_dir=uploads, prepared=prepared, progress=report)
+            assert result["imported_count"] == db.query(Question).count() == 2
+            assert db.query(QuestionFingerprint).count() == 2
+    assert len(validated) == 3
+    assert sorted(path.read_bytes() for path in uploads.iterdir()) == sorted(path.read_bytes() for path in source_uploads.iterdir())
+    assert list(workspace.iterdir()) == []
+    assert list(dict.fromkeys(stage for stage, _ in progress)) == [
+        "validating", "installing", "writing", "fingerprinting", "committing"]
+    assert all(0 <= state["current"] <= state["total"] for _, state in progress)
+
+
+def test_prepared_import_rejects_forgery_reuse_and_expired_context(share, tmp_path):
+    package, _ = share
+    with pytest.raises(TypeError):
+        transfer.PreparedLibraryImport()
+    with isolated_db(tmp_path / "capability.db") as db:
+        uploads = tmp_path / "destination"
+        for invalid in ({"records": []}, object.__new__(transfer.PreparedLibraryImport)):
+            with pytest.raises(ValueError, match="预检"):
+                transfer.import_library_zip(db, package, uploads_dir=uploads, prepared=invalid)
+        with transfer.prepare_library_import(package, workspace_dir=tmp_path / "private") as prepared:
+            transfer.import_library_zip(db, package, uploads_dir=uploads, prepared=prepared)
+            with pytest.raises(ValueError, match="已使用"):
+                transfer.import_library_zip(db, package, uploads_dir=uploads, prepared=prepared)
+        with pytest.raises(ValueError, match="预检"):
+            transfer.import_library_zip(db, package, uploads_dir=uploads, prepared=prepared)
+        with pytest.raises(ValueError, match="失效"):
+            _ = prepared.summary
+        assert db.query(Question).count() == 2
+
+
+@pytest.mark.parametrize("changed", ["archive", "image", "different_path"])
+def test_prepared_import_binds_archive_and_staged_image_bytes(share, tmp_path, changed):
+    package, _ = share
+    workspace, uploads = tmp_path / "private", tmp_path / "destination"
+    with transfer.prepare_library_import(package, workspace_dir=workspace) as prepared:
+        target = package
+        if changed == "archive":
+            package.write_bytes(package.read_bytes() + b"changed")
+        elif changed == "image":
+            image = next(next(workspace.iterdir()).iterdir())
+            image.write_bytes(image_bytes("black"))
+        else:
+            target = tmp_path / "same-bytes.zip"
+            target.write_bytes(package.read_bytes())
+        with isolated_db(tmp_path / "changed.db") as db:
+            with pytest.raises(ValueError, match="变化"):
+                transfer.import_library_zip(db, target, uploads_dir=uploads, prepared=prepared)
+            assert db.query(Question).count() == db.query(QuestionFingerprint).count() == 0
+            assert not uploads.exists() or not list(uploads.iterdir())
+    assert not list(workspace.iterdir())
+
+
+def test_progress_failure_before_commit_rolls_back_rows_and_files(share, tmp_path):
+    package, _ = share
+    uploads = tmp_path / "destination"
+    def fail(stage, **_):
+        if stage == "committing":
+            raise RuntimeError("progress cancelled the operation")
+    with isolated_db(tmp_path / "cancelled.db") as db:
+        with pytest.raises(RuntimeError, match="cancelled"):
+            transfer.import_library_zip(db, package, uploads_dir=uploads, progress=fail)
+        assert db.query(Question).count() == db.query(KnowledgePoint).count() == db.query(QuestionFingerprint).count() == 0
+        assert list(uploads.iterdir()) == []
+
+
+def test_export_progress_and_selected_mirrors_are_bounded(selectable_library, tmp_path):
+    statements, phases = [], []
+    def collect(_connection, _cursor, statement, parameters, _context, _many):
+        if "from question_curriculums" in statement.lower():
+            statements.append((statement, parameters))
+    event.listen(selectable_library.bind, "before_cursor_execute", collect)
+    try:
+        transfer.export_library_zip(selectable_library, tmp_path / "selected.zip", uploads_dir=tmp_path,
+            question_ids=[2], progress=lambda stage, **_: phases.append(stage))
+    finally:
+        event.remove(selectable_library.bind, "before_cursor_execute", collect)
+    assert statements and all("question_curriculums.question_id IN" in statement for statement, _ in statements)
+    assert all(set(parameters) == {2} for _, parameters in statements)
+    assert list(dict.fromkeys(phases)) == ["reading", "packaging", "verifying"]
+
+
+def test_question_array_is_decoded_incrementally_with_utf8_and_exact_syntax(tmp_path, monkeypatch):
+    records = [{"id": 1, "content": "证" * 50000 + '\\"数组[]对象{}'}, {"id": 2, "content": "尾题"}]
+    raw = json.dumps(records, ensure_ascii=False).encode("utf-8")
+    archive_path = tmp_path / "large-json.zip"
+    with zipfile.ZipFile(archive_path, "w") as archive:
+        archive.writestr("questions.json", raw)
+    with zipfile.ZipFile(archive_path) as archive:
+        real_open = archive.open
+        def bounded_open(*args, **kwargs):
+            stream = real_open(*args, **kwargs)
+            real_read = stream.read
+            def bounded_read(size=-1):
+                assert 0 < size <= 64 * 1024
+                return real_read(size)
+            stream.read = bounded_read
+            return stream
+        monkeypatch.setattr(archive, "open", bounded_open)
+        assert transfer._read_question_records(archive, hashlib.sha256(raw).hexdigest()) == records
+
+
+@pytest.mark.parametrize("raw", [
+    b'[{"id":1,"id":2}]', b'[{"id":1,"nested":{"a":1,"a":2}}]',
+    b'[{"id":NaN}]', b'[{"id":Infinity}]', b'[{"id":1},]', b'[{"id":1}',
+    b'[{"id":1}] trailing', b'{"id":1}', b'[1]', b'[{"content":"\xff"}]',
+])
+def test_incremental_question_json_rejects_ambiguous_or_malformed_data(tmp_path, raw):
+    archive_path = tmp_path / "bad-json.zip"
+    with zipfile.ZipFile(archive_path, "w") as archive:
+        archive.writestr("questions.json", raw)
+    with zipfile.ZipFile(archive_path) as archive:
+        with pytest.raises(ValueError):
+            transfer._read_question_records(archive, hashlib.sha256(raw).hexdigest())
+
+
+def test_image_layout_rewrites_reuse_package_mapping_and_skip_empty_layouts():
+    from mathbank.question_assets import rewrite_image_layout_paths
+    class NoRepeatedMapping(dict):
+        def items(self):
+            raise AssertionError("do not rebuild the package mapping per question")
+    replacements = NoRepeatedMapping({"/static/uploads/figure.png": "/static/uploads/shared.png"})
+    assert rewrite_image_layout_paths({}, replacements) == {}
+    assert rewrite_image_layout_paths({"figure.png": {"align": "left", "size": "small"}}, replacements,
+        image_keys={"figure.png": "shared.png"}) == {"shared.png": {"align": "left", "size": "small"}}

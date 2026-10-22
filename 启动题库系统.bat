@@ -54,6 +54,8 @@ if errorlevel 1 goto missing_source_python
 set "BOOTSTRAP_CMD=py -3"
 
 :create_source_venv
+%BOOTSTRAP_CMD% -B -m scripts.windows_launcher --check-write-access
+if errorlevel 1 goto bootstrap_error
 echo [setup] Creating the project Python environment...
 %BOOTSTRAP_CMD% -m venv "%CD%\venv"
 if errorlevel 1 goto source_venv_failed

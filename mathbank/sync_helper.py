@@ -5,6 +5,7 @@ import datetime
 import threading
 import tempfile
 import sqlite3
+from pathlib import Path
 from sqlalchemy.orm import Session, selectinload
 from sqlalchemy import inspect
 from mathbank.database import Question, QuestionCurriculum, SessionLocal
@@ -14,6 +15,8 @@ from mathbank.content_sources import (
     CONTENT_SOURCES_JSON_NAME, CONTENT_SOURCES_NOTICE_NAME,
     content_source_export_files, content_sources_notice,
 )
+from mathbank.asset_security import fsync_writable_file, replace_file_atomic
+from mathbank.storage_access import check_directory_access
 
 BACKUP_DIR = str(DATA_BACKUP_DIR)
 JSON_BACKUP_PATH = os.path.join(BACKUP_DIR, "questions_backup.json")
@@ -32,8 +35,7 @@ def _temporary_output_path(final_path: str) -> str:
 
 
 def _fsync_file(path: str) -> None:
-    with open(path, "rb") as handle:
-        os.fsync(handle.fileno())
+    fsync_writable_file(path)
 
 
 def serialize_exchange_questions(db, questions, active_version):
@@ -50,27 +52,34 @@ def serialize_exchange_questions(db, questions, active_version):
         from mathbank.question_references import serialize_question_reference_data
         references_by_question = serialize_question_reference_data(db, [question.id for question in questions])
     mappings_by_question = {}
-    for mapping in db.query(QuestionCurriculum).options(
-        selectinload(QuestionCurriculum.sub_knowledge_rows)
-    ).order_by(
-        QuestionCurriculum.question_id, QuestionCurriculum.version_code
-    ).all():
-        mappings_by_question.setdefault(mapping.question_id, []).append({
-            "version_code": mapping.version_code, "compulsory": mapping.compulsory,
-            "chapter": mapping.chapter, "knowledge": mapping.knowledge,
-            "sub_knowledge": mapping.sub_knowledge,
-        })
+    question_ids = list(dict.fromkeys(question.id for question in questions))
+    for start in range(0, len(question_ids), 500):
+        for mapping in db.query(QuestionCurriculum).options(
+            selectinload(QuestionCurriculum.sub_knowledge_rows)
+        ).filter(QuestionCurriculum.question_id.in_(question_ids[start:start + 500])).order_by(
+            QuestionCurriculum.question_id, QuestionCurriculum.version_code
+        ):
+            mappings_by_question.setdefault(mapping.question_id, []).append({
+                "version_code": mapping.version_code, "compulsory": mapping.compulsory,
+                "chapter": mapping.chapter, "knowledge": mapping.knowledge,
+                "sub_knowledge": mapping.sub_knowledge,
+            })
     questions_list = []
+    # These definitions all belong to the caller's one read snapshot. Reuse
+    # their catalog trees within this export; relation evidence stays per row.
+    point_definitions = {}
     for question in questions:
         # to_dict also reads the active mirror.  Reuse the bulk snapshot rather
         # than issuing one relationship query for every question.
         mappings = mappings_by_question.get(question.id, [])
         active = next((mapping for mapping in mappings if mapping["version_code"] == active_version), None)
         payload = question.to_dict(version_code=active_version, sub_knowledge=active["sub_knowledge"] if active else [])
-        payload["knowledge_points"] = [
-            {**row.point.to_dict(), **row.to_dict(), "position": row.position}
-            for row in question.knowledge_points
-        ]
+        point_payloads = []
+        for row in question.knowledge_points:
+            if row.point_code not in point_definitions:
+                point_definitions[row.point_code] = row.point.to_dict()
+            point_payloads.append({**point_definitions[row.point_code], **row.to_dict(), "position": row.position})
+        payload["knowledge_points"] = point_payloads
         payload["active_version_code"] = active_version
         payload["curriculum_mappings"] = mappings
         if active and any(payload["category_" + field] != active[field] for field in ("compulsory", "chapter", "knowledge")):
@@ -94,6 +103,9 @@ def export_database_to_files(db: Session = None, *, quiet: bool = False):
         markdown_temp = None
         source_temps = {}
         try:
+            # Check only outputs. A readonly source DB/images can still export.
+            for directory in dict.fromkeys((Path(JSON_BACKUP_PATH).parent, Path(MD_BACKUP_PATH).parent)):
+                check_directory_access(directory, label="题库同步导出目录（data_backup）")
             if db is None:
                 db = SessionLocal()
                 local_session = db
@@ -107,14 +119,11 @@ def export_database_to_files(db: Session = None, *, quiet: bool = False):
             # 确保备份目录存在
             os.makedirs(BACKUP_DIR, exist_ok=True)
             
-            # 查询所有题目，按 ID 升序排列
-            questions = db.query(Question).order_by(Question.id.asc()).all()
-            
-            # Keep the historical top-level array and question fields.  The
-            # additional mappings preserve every textbook version independently;
-            # they never enter the AI-readable question body.
+            # Freeze only IDs in this read snapshot.  Large relation evidence
+            # must not remain in both all ORM rows and the complete JSON tree
+            # while the independently formatted Markdown is being generated.
+            question_ids = [row[0] for row in db.query(Question.id).order_by(Question.id.asc())]
             active_version = resolve_active_version()
-            questions_list, mappings_by_question = serialize_exchange_questions(db, questions, active_version)
             source_files = content_source_export_files()
             source_paths = {
                 filename: os.path.join(os.path.dirname(JSON_BACKUP_PATH), filename)
@@ -122,16 +131,59 @@ def export_database_to_files(db: Session = None, *, quiet: bool = False):
             }
             json_temp = _temporary_output_path(JSON_BACKUP_PATH)
             markdown_temp = _temporary_output_path(MD_BACKUP_PATH)
+
+            # The Markdown helper needs display data, never full classification
+            # evidence, answers or ORM relationships.  Keep its public interface
+            # and grouping/order rules while retaining only these light views.
+            from types import SimpleNamespace
+            markdown_questions = []
+            markdown_mappings = {}
+            markdown_points = {}
+
+            def write_batch(handle, batch_ids, first_record):
+                questions = db.query(Question).filter(Question.id.in_(batch_ids)).order_by(Question.id.asc()).all()
+                payloads, mappings = serialize_exchange_questions(db, questions, active_version)
+                for payload in payloads:
+                    # Prefixing each record's two-space pretty JSON reproduces
+                    # json.dump(the_whole_array, ensure_ascii=False, indent=2)
+                    # byte for byte without building that complete array.
+                    handle.write("[\n  " if first_record else ",\n  ")
+                    handle.write(json.dumps(payload, ensure_ascii=False, indent=2).replace("\n", "\n  "))
+                    first_record = False
+                    question_id = payload["id"]
+                    markdown_questions.append(SimpleNamespace(**{
+                        field: payload[field] for field in (
+                            "id", "content", "question_type", "category_compulsory",
+                            "category_chapter", "category_knowledge", "difficulty", "source",
+                            "association_group_id", "tags", "tikz_code", "content_tikz_assets",
+                        )
+                    }, display_image_paths=payload["image_paths"]))
+                    markdown_mappings[question_id] = [
+                        {"version_code": active_version, "sub_knowledge": mapping["sub_knowledge"]}
+                        for mapping in mappings.get(question_id, [])
+                        if mapping["version_code"] == active_version
+                    ]
+                    markdown_points[question_id] = [
+                        {field: point[field] for field in ("name", "code", "role")}
+                        for point in payload["knowledge_points"]
+                    ]
+                # Returning only a bool releases this batch's large JSON trees
+                # and ORM rows; it never expunges caller-owned session objects.
+                return first_record
+
             with open(json_temp, "w", encoding="utf-8") as f:
-                json.dump(questions_list, f, ensure_ascii=False, indent=2)
+                first_record = True
+                for start in range(0, len(question_ids), 128):
+                    first_record = write_batch(f, question_ids[start:start + 128], first_record)
+                f.write("[]" if first_record else "\n]")
                 f.flush()
                 os.fsync(f.fileno())
 
             # Generate both temporary files before replacing either good export.
             generate_markdown_library(
-                questions, markdown_temp, curriculum_mappings=mappings_by_question,
+                markdown_questions, markdown_temp, curriculum_mappings=markdown_mappings,
                 active_version_code=active_version,
-                knowledge_points={item["id"]: item["knowledge_points"] for item in questions_list},
+                knowledge_points=markdown_points,
                 source_notice=source_files[CONTENT_SOURCES_NOTICE_NAME].decode("utf-8"),
             )
             _fsync_file(markdown_temp)
@@ -142,19 +194,19 @@ def export_database_to_files(db: Session = None, *, quiet: bool = False):
                     handle.write(data)
                     handle.flush()
                     os.fsync(handle.fileno())
-            os.replace(json_temp, JSON_BACKUP_PATH)
+            replace_file_atomic(json_temp, JSON_BACKUP_PATH)
             json_temp = None
-            os.replace(markdown_temp, MD_BACKUP_PATH)
+            replace_file_atomic(markdown_temp, MD_BACKUP_PATH)
             markdown_temp = None
             for filename, temp_path in list(source_temps.items()):
-                os.replace(temp_path, source_paths[filename])
+                replace_file_atomic(temp_path, source_paths[filename])
                 del source_temps[filename]
             
             if not quiet:
-                print(f"[Sync] 成功导出 {len(questions)} 道题目到 {JSON_BACKUP_PATH} 和 {MD_BACKUP_PATH}")
+                print(f"[Sync] 成功导出 {len(question_ids)} 道题目到 {JSON_BACKUP_PATH} 和 {MD_BACKUP_PATH}")
             return {
                 "status": "success",
-                "question_count": len(questions),
+                "question_count": len(question_ids),
                 "json_path": JSON_BACKUP_PATH,
                 "markdown_path": MD_BACKUP_PATH,
                 "content_sources_path": source_paths[CONTENT_SOURCES_JSON_NAME],

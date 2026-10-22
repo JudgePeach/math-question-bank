@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from collections import defaultdict, deque
 import hashlib
+from itertools import islice
 import re
 import sqlite3
 import unicodedata
@@ -35,6 +36,14 @@ _EXPLICIT_BOOK = re.compile(r"《(?P<book>[^《》\n]{1,200})》\s*(?:(?:书)?�
 _ANCHOR_CONTEXT = 24
 _MAX_TEXT = 500_000
 _MAX_REFERENCES = 512
+_SQLITE_ID_BATCH_SIZE = 500
+
+
+def _id_batches(values):
+    """Keep every IN query below older SQLite's 999-parameter limit."""
+    iterator = iter(values)
+    while batch := tuple(islice(iterator, _SQLITE_ID_BATCH_SIZE)):
+        yield batch
 
 
 def _get(value, key, default=""):
@@ -335,8 +344,10 @@ def reference_payloads(db, questions, seq_mapping=None):
     result = {qid: [] for qid in question_map if qid is not None}
     if not result or not _has_tables(db):
         return result
-    rows = db.query(QuestionReference).filter(QuestionReference.source_question_id.in_(result)).populate_existing().order_by(
-        QuestionReference.source_question_id, QuestionReference.field, QuestionReference.start).all()
+    rows = []
+    for source_ids in _id_batches(result):
+        rows.extend(db.query(QuestionReference).filter(QuestionReference.source_question_id.in_(source_ids)).populate_existing().order_by(
+            QuestionReference.source_question_id, QuestionReference.field, QuestionReference.start).all())
     target_ids = {row.target_question_id for row in rows if row.target_question_id is not None}
     # A caller's display cache may have been read before this snapshot began.
     # Compute the target numbers here rather than trust that external cache.
@@ -344,7 +355,8 @@ def reference_payloads(db, questions, seq_mapping=None):
     missing = target_ids
     if missing:
         ranked = db.query(Question.id.label("qid"), func.row_number().over(order_by=Question.id).label("seq")).subquery()
-        sequences.update({qid: int(seq) for qid, seq in db.query(ranked.c.qid, ranked.c.seq).filter(ranked.c.qid.in_(missing))})
+        for batch in _id_batches(missing):
+            sequences.update({qid: int(seq) for qid, seq in db.query(ranked.c.qid, ranked.c.seq).filter(ranked.c.qid.in_(batch))})
     parser_cache = {}
     for row in rows:
         source = str(_get(question_map[row.source_question_id], row.field) or "")
@@ -375,13 +387,16 @@ def serialize_question_reference_data(db, question_ids):
     ids = set(question_ids)
     if not ids or not _has_tables(db):
         return {}
-    questions = db.query(Question).filter(Question.id.in_(ids)).all()
-    payloads = reference_payloads(db, questions)
+    payloads = {}
+    for batch in _id_batches(sorted(ids)):
+        questions = db.query(Question).filter(Question.id.in_(batch)).all()
+        payloads.update(reference_payloads(db, questions))
     result = {qid: {"source_labels": [], "question_references": [
         {key: value for key, value in item.items() if key != "seq_num"}
         for item in payloads.get(qid, [])]} for qid in ids}
-    for row in db.query(QuestionSourceLabel).filter(QuestionSourceLabel.question_id.in_(ids)).order_by(QuestionSourceLabel.id):
-        result[row.question_id]["source_labels"].append({key: getattr(row, key) for key in ("book_key", "label_key", "original_label")})
+    for batch in _id_batches(ids):
+        for row in db.query(QuestionSourceLabel).filter(QuestionSourceLabel.question_id.in_(batch)).order_by(QuestionSourceLabel.id):
+            result[row.question_id]["source_labels"].append({key: getattr(row, key) for key in ("book_key", "label_key", "original_label")})
     return result
 
 

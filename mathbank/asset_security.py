@@ -15,6 +15,7 @@ import os
 from pathlib import Path, PurePosixPath
 import re
 import tempfile
+import time
 from typing import Iterable
 
 from PIL import Image, ImageOps, UnidentifiedImageError
@@ -42,6 +43,10 @@ class UploadTooLargeError(ValueError):
 
 class InvalidImageError(ValueError):
     """Raised when uploaded bytes are not a safe supported raster image."""
+
+
+class _ImageOutputTooLargeError(InvalidImageError):
+    """Distinguish a valid image whose safety encoding exceeds the cap."""
 
 
 @dataclass(frozen=True)
@@ -344,6 +349,57 @@ def normalize_raster_image(
 ) -> NormalizedImage:
     """Fully decode and re-encode an uploaded raster into passive image bytes."""
 
+    return _normalize_raster_image(
+        raw,
+        max_pixels=max_pixels,
+        max_output_bytes=max_output_bytes,
+        optimize_output=True,
+    )
+
+
+def validate_raster_image(
+    raw: bytes,
+    *,
+    max_pixels: int = MAX_IMAGE_PIXELS,
+    max_output_bytes: int = MAX_NORMALIZED_IMAGE_BYTES,
+) -> None:
+    """Validate retained image bytes without expensive compression searches.
+
+    This performs the same supported-format, pixel-limit, complete first-frame
+    decoding, EXIF orientation and safe color conversion as uploads.  A fast
+    safety encoding must fit the same output cap; if it does not, the original
+    optimized encoding gets one chance to fit.  Neither encoding is returned
+    or persisted.  Callers retaining the original bytes must separately limit
+    their input size, as the sharing package reader does.
+
+    This preserves the safety limits, rather than promising that Pillow's two
+    compression settings have mathematically identical acceptance sets.
+    Upload/OCR normalization always retains its original optimized encoding.
+    """
+
+    try:
+        _normalize_raster_image(
+            raw,
+            max_pixels=max_pixels,
+            max_output_bytes=max_output_bytes,
+            optimize_output=False,
+        )
+    except _ImageOutputTooLargeError:
+        _normalize_raster_image(
+            raw,
+            max_pixels=max_pixels,
+            max_output_bytes=max_output_bytes,
+            optimize_output=True,
+        )
+
+
+def _normalize_raster_image(
+    raw: bytes,
+    *,
+    max_pixels: int,
+    max_output_bytes: int,
+    optimize_output: bool,
+) -> NormalizedImage:
     if not raw:
         raise InvalidImageError("图片内容为空。")
     try:
@@ -366,11 +422,11 @@ def normalize_raster_image(
 
             output = io.BytesIO()
             if (source.format or "").upper() == "JPEG" and not has_alpha:
-                safe_image.save(output, format="JPEG", quality=95, optimize=True)
+                safe_image.save(output, format="JPEG", quality=95, optimize=optimize_output)
                 extension = ".jpg"
                 media_type = "image/jpeg"
             else:
-                safe_image.save(output, format="PNG", optimize=True)
+                safe_image.save(output, format="PNG", optimize=optimize_output)
                 extension = ".png"
                 media_type = "image/png"
             normalized = output.getvalue()
@@ -380,7 +436,7 @@ def normalize_raster_image(
         raise InvalidImageError("文件内容不是有效且安全的栅格图片。") from exc
 
     if len(normalized) > max_output_bytes:
-        raise InvalidImageError("图片安全转码后的体积超过上限。")
+        raise _ImageOutputTooLargeError("图片安全转码后的体积超过上限。")
     return NormalizedImage(
         data=normalized,
         extension=extension,
@@ -398,6 +454,35 @@ def harden_private_path(path: str | os.PathLike, *, directory: bool = False) -> 
     except OSError:
         # Windows and some packaged filesystems do not implement POSIX modes.
         pass
+
+
+def fsync_writable_file(path: str | os.PathLike) -> None:
+    """Flush a completed file using a handle Windows permits flushing.
+
+    Windows ``_commit`` requires write access even when the original writer
+    has already closed.  Reopening with ``r+b`` preserves the existing bytes.
+    """
+
+    with Path(path).open("r+b") as handle:
+        os.fsync(handle.fileno())
+
+
+def replace_file_atomic(source: str | os.PathLike, target: str | os.PathLike) -> None:
+    """Replace a file, briefly tolerating Windows sharing/lock violations.
+
+    Only transient Windows errors 32/33 are retried.  Permission, disk and all
+    other failures retain their original exception; total backoff is 0.75s.
+    """
+
+    delays = (0.05, 0.1, 0.2, 0.4)
+    for attempt in range(len(delays) + 1):
+        try:
+            os.replace(source, target)
+            return
+        except OSError as exc:
+            if os.name != "nt" or getattr(exc, "winerror", None) not in {32, 33} or attempt == len(delays):
+                raise
+            time.sleep(delays[attempt])
 
 
 def write_private_text_atomic(path: str | os.PathLike, text: str) -> None:
@@ -419,7 +504,7 @@ def write_private_text_atomic(path: str | os.PathLike, text: str) -> None:
             handle.write(text)
             handle.flush()
             os.fsync(handle.fileno())
-        os.replace(temp_name, target)
+        replace_file_atomic(temp_name, target)
         harden_private_path(target)
     finally:
         if fd >= 0:

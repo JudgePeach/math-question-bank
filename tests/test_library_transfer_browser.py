@@ -99,26 +99,40 @@ def _reset_export_selection(browser):
 def _download_export_from_ui(browser):
     _open_export(browser)
     browser.evaluate("""(() => {
-        window.__sharingExport={originalFetch:window.fetch,body:null,base64:null};
+        window.__sharingExport={originalFetch:window.fetch,originalClick:HTMLAnchorElement.prototype.click,body:null,base64:null};
         window.fetch=async function(url,init){
             const response=await __sharingExport.originalFetch.call(this,url,init);
-            if(String(url)==='/api/library-transfer/export'&&response.ok){
+            if(String(url)==='/api/library-transfer/tasks/export'&&response.ok){
                 __sharingExport.body=JSON.parse(init.body);
-                const bytes=new Uint8Array(await response.clone().arrayBuffer());
-                let binary='';for(const byte of bytes)binary+=String.fromCharCode(byte);
-                __sharingExport.base64=btoa(binary);
+                __sharingExport.taskId=__sharingExport.body.client_request_id;
+                delete __sharingExport.body.client_request_id;
             }
             return response;
+        };
+        HTMLAnchorElement.prototype.click=function(){
+            if(this.id==='libraryTransferDownload'){
+                __sharingExport.downloadHref=this.getAttribute('href');
+                __sharingExport.originalFetch.call(window,this.href).then(response=>response.arrayBuffer()).then(buffer=>{
+                    const bytes=new Uint8Array(buffer);let binary='';
+                    for(const byte of bytes)binary+=String.fromCharCode(byte);
+                    __sharingExport.base64=btoa(binary);
+                }).catch(error=>{__sharingExport.error=String(error);});
+            }
+            return __sharingExport.originalClick.call(this);
         };return true;
     })()""")
     try:
         browser.command("scrollintoview", "#libraryExportBtn")
         browser.settle()
         browser.command("click", "#libraryExportBtn")
-        browser.command("wait", "--fn", "document.getElementById('libraryTransferStatus').dataset.state==='success' && !!window.__sharingExport.base64")
-        return browser.evaluate("({body:__sharingExport.body,base64:__sharingExport.base64})")
+        browser.command("wait", "--fn", "document.getElementById('libraryTransferStatus').dataset.state==='success' && (!!window.__sharingExport.base64 || !!window.__sharingExport.error)")
+        payload = browser.evaluate("({body:__sharingExport.body,base64:__sharingExport.base64,taskId:__sharingExport.taskId,href:__sharingExport.downloadHref,error:__sharingExport.error})")
+        assert not payload.get("error"), payload
+        assert str(uuid.UUID(payload["taskId"])) == payload["taskId"]
+        assert payload["href"] == f"/api/library-transfer/tasks/{payload['taskId']}/download"
+        return payload
     finally:
-        browser.evaluate("window.fetch=__sharingExport.originalFetch; true")
+        browser.evaluate("window.fetch=__sharingExport.originalFetch;HTMLAnchorElement.prototype.click=__sharingExport.originalClick;true")
 
 
 def _source_questions(browser, source):
@@ -249,10 +263,18 @@ def test_real_export_import_appends_twice_and_preserves_editor(browser, sharing_
     _open_sharing(browser)
     _open_import(browser)
     ids = {original_id}
+    task_ids = set()
     for expected_count in (2, 3):
         browser.command("upload", "#libraryImportFile", str(sharing_package["path"]))
+        if expected_count == 3:
+            assert browser.evaluate("document.getElementById('libraryImportBtn').disabled")
+            _check(browser, "#libraryImportRepeatConfirm")
         _click_import(browser)
-        browser.command("wait", "--fn", "document.getElementById('libraryTransferStatus').dataset.state==='success' && !document.getElementById('libraryImportFile').files.length")
+        browser.command("wait", "--fn", "document.getElementById('libraryTransferStatus').dataset.state==='success' && !document.getElementById('libraryImportFile').disabled")
+        assert browser.evaluate("document.getElementById('libraryImportFile').files.length") == 1
+        task_id = browser.evaluate("JSON.parse(localStorage.getItem('mathbank.libraryTransferTask.v1')).task_id")
+        assert task_id not in task_ids
+        task_ids.add(task_id)
         questions = _source_questions(browser, sharing_package["source"])
         assert len(questions) == expected_count
         new_ids = {q["id"] for q in questions}
@@ -308,10 +330,11 @@ def test_import_busy_guard_survives_close_and_reopen(browser, sharing_package):
     _open_sharing(browser)
     _open_import(browser)
     browser.command("upload", "#libraryImportFile", str(sharing_package["path"]))
+    browser.evaluate("document.getElementById('libraryImportRepeatConfirm').checked=true;updateLibraryTransferControls();true")
     browser.evaluate("""(() => {
         window.__sharingBusy={originalFetch:window.fetch,requests:0,release:null};
         window.fetch=function(url,init){
-            if(String(url)!=='/api/library-transfer/import')return __sharingBusy.originalFetch.call(this,url,init);
+            if(String(url)!=='/api/library-transfer/tasks/import')return __sharingBusy.originalFetch.call(this,url,init);
             __sharingBusy.requests++;
             return new Promise(resolve=>{__sharingBusy.release=()=>resolve(__sharingBusy.originalFetch.call(this,url,init));});
         };return true;
@@ -521,7 +544,7 @@ def test_deleted_selected_question_blocks_export_until_removed(browser, selectio
     browser.evaluate("""(() => {
         window.__sharingDeleted={originalFetch:window.fetch,exports:0};
         window.fetch=function(url,init){
-            if(String(url)==='/api/library-transfer/export')__sharingDeleted.exports++;
+            if(String(url)==='/api/library-transfer/tasks/export')__sharingDeleted.exports++;
             return __sharingDeleted.originalFetch.call(this,url,init);
         };return true;
     })()""")
@@ -671,4 +694,394 @@ def test_transfer_tabs_remain_visible_and_preserve_export_selection(browser, sel
     assert browser.evaluate("document.getElementById('libraryExportSource').value") == selection_questions["source"]
     assert browser.evaluate("document.getElementById('libraryExportPageLabel').textContent") == "2 / 2"
     assert browser.evaluate("document.getElementById('libraryExportSelectedViewBtn').textContent") == "已选 (1)"
+    _close_settings(browser)
+
+
+@pytest.mark.parametrize("viewport", [(1440, 1000), (375, 812)])
+def test_task_disconnect_reconnect_only_queries_original_task(browser, sharing_package, viewport):
+    """Lose the POST response after a real commit, then query its durable receipt."""
+    browser.command("set", "viewport", str(viewport[0]), str(viewport[1]))
+    _open_sharing(browser)
+    _open_import(browser)
+    before = len(_source_questions(browser, sharing_package["source"]))
+    browser.command("upload", "#libraryImportFile", str(sharing_package["path"]))
+    browser.evaluate("""(() => {
+        document.getElementById('libraryImportRepeatConfirm').checked=true;updateLibraryTransferControls();
+        window.__transferDisconnect={fetch:window.fetch,posts:0,gets:0,offline:true,taskId:null};
+        window.fetch=async function(url,init){
+            if(String(url)==='/api/library-transfer/tasks/import'){
+                __transferDisconnect.posts++;__transferDisconnect.taskId=init.body.get('client_request_id');
+                const response=await __transferDisconnect.fetch.call(this,url,init);
+                if(!response.ok)throw new Error('Fixture POST did not reach the task service');
+                throw new TypeError('Simulated lost POST response');
+            }
+            if(String(url).startsWith('/api/library-transfer/tasks/')){
+                __transferDisconnect.gets++;
+                if(__transferDisconnect.offline)throw new TypeError('Simulated offline');
+            }
+            return __transferDisconnect.fetch.call(this,url,init);
+        };return true;
+    })()""")
+    try:
+        _click_import(browser)
+        browser.command("wait", "--fn", "__transferDisconnect.gets>=3 && !libraryTransferPollPending")
+        receipt = browser.evaluate("JSON.parse(localStorage.getItem('mathbank.libraryTransferTask.v1'))")
+        assert receipt["task_id"] == browser.evaluate("__transferDisconnect.taskId")
+        assert set(receipt) == {"task_id", "operation", "status", "filename", "size", "last_modified"}
+        assert browser.evaluate("document.getElementById('libraryImportBtn').disabled")
+        browser.evaluate("importLibraryTransfer();exportLibraryTransfer();true")
+        assert browser.evaluate("__transferDisconnect.posts") == 1
+        _close_settings(browser)
+        browser.evaluate("openSettingsModal();true")
+        browser.command("wait", "--fn", "!document.getElementById('settingsModal').classList.contains('opacity-0')")
+        assert browser.evaluate("document.getElementById('libraryImportFile').files.length") == 1
+        assert browser.evaluate("!document.getElementById('libraryTransferReconnect').classList.contains('hidden')")
+        browser.command("screenshot", str(browser.root / f"transfer-disconnected-{viewport[0]}.png"))
+        browser.evaluate("__transferDisconnect.offline=false;true")
+        _click(browser, "#libraryTransferReconnect")
+        browser.command("wait", "--fn", "document.getElementById('libraryTransferStatus').dataset.state==='success'")
+        assert browser.evaluate("__transferDisconnect.posts") == 1
+        assert len(_source_questions(browser, sharing_package["source"])) == before + 1
+        assert browser.evaluate("JSON.parse(localStorage.getItem('mathbank.libraryTransferTask.v1')).task_id") == receipt["task_id"]
+        assert browser.evaluate("document.getElementById('libraryImportBtn').disabled")
+    finally:
+        browser.evaluate("window.fetch=__transferDisconnect.fetch;true")
+    _close_settings(browser)
+
+
+def test_refresh_recovers_pending_task_without_post(browser, sharing_package):
+    """A full page reload only fetches the same task and never uploads again."""
+    _open_sharing(browser)
+    _open_import(browser)
+    before = len(_source_questions(browser, sharing_package["source"]))
+    browser.command("upload", "#libraryImportFile", str(sharing_package["path"]))
+    browser.evaluate("""(() => {
+        document.getElementById('libraryImportRepeatConfirm').checked=true;updateLibraryTransferControls();
+        window.__transferRefresh={fetch:window.fetch,posts:0,gets:0};
+        window.fetch=async function(url,init){
+            if(String(url)==='/api/library-transfer/tasks/import'){
+                __transferRefresh.posts++;
+                const response=await __transferRefresh.fetch.call(this,url,init);
+                if(!response.ok)throw new Error('Fixture POST failed');
+                throw new TypeError('Simulated lost POST response');
+            }
+            if(String(url).startsWith('/api/library-transfer/tasks/')){
+                __transferRefresh.gets++;throw new TypeError('Simulated offline');
+            }
+            return __transferRefresh.fetch.call(this,url,init);
+        };return true;
+    })()""")
+    _click_import(browser)
+    browser.command("wait", "--fn", "__transferRefresh.gets>=1")
+    task_id = browser.evaluate("JSON.parse(localStorage.getItem('mathbank.libraryTransferTask.v1')).task_id")
+    assert browser.evaluate("__transferRefresh.posts") == 1
+    assert len(_source_questions(browser, sharing_package["source"])) == before + 1
+    browser.command("open", browser.evaluate("location.origin"))
+    browser.command("wait", "--fn", "typeof window.renderPaperCanvas==='function' && document.getElementById('libraryTransferStatus').dataset.state==='success'")
+    _open_sharing(browser)
+    _open_import(browser)
+    assert browser.evaluate("JSON.parse(localStorage.getItem('mathbank.libraryTransferTask.v1')).task_id") == task_id
+    assert len(_source_questions(browser, sharing_package["source"])) == before + 1
+    assert "新增 1 道题目" in browser.evaluate("document.getElementById('libraryTransferMessage').textContent")
+    _close_settings(browser)
+
+
+def test_oversize_file_is_rejected_before_post_and_preserves_edit_and_task(browser):
+    _open_sharing(browser)
+    _open_import(browser)
+    outcome = browser.evaluate("""(async () => {
+        const originalFetch=window.fetch,originalTask=libraryTransferTask,originalBusy=libraryTransferBusy;
+        const input=document.getElementById('editContent'),originalText=input.value;
+        const fileInput=document.getElementById('libraryImportFile'),originalFiles=fileInput.files;
+        const oldReceipt=localStorage.getItem(libraryTransferStorageKey);
+        const taskId=crypto.randomUUID();let posts=0;
+        const task={task_id:taskId,operation:'import',status:'completed',filename:'previous.zip',size:1,last_modified:1};
+        const file=new File(['tiny fixture payload'],'oversize.zip',{type:'application/zip'});
+        Object.defineProperty(file,'size',{value:512*1024*1024+1});
+        const selected=new DataTransfer();selected.items.add(file);
+        window.fetch=function(url,init){
+            if(String(url).startsWith('/api/library-transfer/')&&init&&init.method==='POST')posts++;
+            return originalFetch.call(this,url,init);
+        };
+        try {
+            stopLibraryTransferPolling();libraryTransferGeneration++;
+            libraryTransferTask=task;libraryTransferBusy='';saveLibraryTransferTask();
+            input.value='超过分享包大小限制时保留的未保存题干';fileInput.files=selected.files;updateLibraryTransferControls();
+            const receipt=localStorage.getItem(libraryTransferStorageKey);
+            await importLibraryTransfer();
+            return {posts,taskId:libraryTransferTask.task_id,expectedId:taskId,
+                receiptUnchanged:localStorage.getItem(libraryTransferStorageKey)===receipt,
+                fileUnchanged:fileInput.files[0]===file,
+                editUnchanged:input.value==='超过分享包大小限制时保留的未保存题干',
+                message:document.getElementById('libraryTransferMessage').textContent};
+        } finally {
+            window.fetch=originalFetch;input.value=originalText;fileInput.files=originalFiles;
+            libraryTransferTask=originalTask;libraryTransferBusy=originalBusy;
+            if(oldReceipt===null)localStorage.removeItem(libraryTransferStorageKey);else localStorage.setItem(libraryTransferStorageKey,oldReceipt);
+            updateLibraryTransferControls();
+        }
+    })()""")
+    assert outcome["posts"] == 0
+    assert outcome["taskId"] == outcome["expectedId"] and outcome["receiptUnchanged"]
+    assert outcome["fileUnchanged"] and outcome["editUnchanged"]
+    assert "512 MiB" in outcome["message"]
+    _close_settings(browser)
+
+
+def test_rejected_upload_storage_error_ends_intent_without_unknown_poll_or_retry(browser):
+    _open_sharing(browser)
+    _open_import(browser)
+    outcome = browser.evaluate("""(async () => {
+        const originalFetch=window.fetch,originalTask=libraryTransferTask,originalBusy=libraryTransferBusy;
+        const input=document.getElementById('libraryImportFile'),originalFiles=input.files;
+        const oldReceipt=localStorage.getItem(libraryTransferStorageKey);let posts=0,gets=0;
+        const file=new File(['small fixture payload'],'upload-disk-failure.zip',{type:'application/zip'});
+        const selected=new DataTransfer();selected.items.add(file);
+        window.fetch=function(url,init){
+            if(String(url)==='/api/library-transfer/tasks/import'){
+                posts++;return Promise.resolve(new Response(JSON.stringify({
+                    detail:'分享包上传暂存失败，请检查程序所在磁盘的可用空间和读写状态后重试。',code:'upload_rejected'
+                }),{status:507,headers:{'Content-Type':'application/json'}}));
+            }
+            if(String(url).startsWith('/api/library-transfer/tasks/'))gets++;
+            return originalFetch.call(this,url,init);
+        };
+        try {
+            stopLibraryTransferPolling();libraryTransferGeneration++;libraryTransferTask=null;libraryTransferBusy='';
+            localStorage.removeItem(libraryTransferStorageKey);input.files=selected.files;updateLibraryTransferControls();
+            await importLibraryTransfer();
+            const rejectedId=libraryTransferTask.task_id;
+            libraryTransferTask=null;restoreLibraryTransferTask();
+            return {posts,gets,status:libraryTransferTask.status,
+                rejectionRestored:libraryTransferTask.task_id===rejectedId && libraryTransferTask.submission_rejected,
+                fileUnchanged:input.files[0]===file,
+                resolveHidden:document.getElementById('libraryTransferResolve').classList.contains('hidden'),
+                message:document.getElementById('libraryTransferMessage').textContent};
+        } finally {
+            stopLibraryTransferPolling();libraryTransferGeneration++;window.fetch=originalFetch;input.files=originalFiles;
+            libraryTransferTask=originalTask;libraryTransferBusy=originalBusy;
+            if(oldReceipt===null)localStorage.removeItem(libraryTransferStorageKey);else localStorage.setItem(libraryTransferStorageKey,oldReceipt);
+            updateLibraryTransferControls();
+        }
+    })()""")
+    assert outcome["posts"] == 1 and outcome["gets"] == 0
+    assert outcome["status"] == "failed" and outcome["rejectionRestored"] and outcome["resolveHidden"] and outcome["fileUnchanged"]
+    assert "可用空间" in outcome["message"] and "核实" not in outcome["message"]
+    _close_settings(browser)
+
+
+def test_task_progress_timeout_and_late_receipt_keep_current_task(browser):
+    """Bounded GETs and generation checks protect the current task on reconnect."""
+    _open_sharing(browser)
+    _open_import(browser)
+    outcome = browser.evaluate("""(async () => {
+        const originalFetch=window.fetch,originalTimeout=window.setTimeout;
+        const first=crypto.randomUUID(),second=crypto.randomUUID();
+        let release,requestedTimeout=0,aborts=0,gets=0,posts=0;
+        window.fetch=function(url,init){
+            if(!String(url).startsWith('/api/library-transfer/tasks/'))return originalFetch.call(this,url,init);
+            if(init&&init.method==='POST')posts++;else gets++;
+            if(String(url).includes(first))return new Promise(resolve=>{release=()=>resolve(new Response(JSON.stringify({
+                task_id:first,operation:'import',status:'completed',stage:'completed',result:{imported_count:999,image_count:0}
+            }),{status:200,headers:{'Content-Type':'application/json'}}));});
+            return Promise.resolve(new Response(JSON.stringify({task_id:second,operation:'import',
+                status:'running',stage:'writing',current:3,total:8}),{status:200,headers:{'Content-Type':'application/json'}}));
+        };
+        try {
+            restoreLibraryTransferTask({task_id:first,operation:'import',status:'queued'});
+            while(!release)await new Promise(resolve=>originalTimeout(resolve,0));
+            restoreLibraryTransferTask({task_id:second,operation:'import',status:'queued'});
+            await new Promise(resolve=>originalTimeout(resolve,20));
+            release();await new Promise(resolve=>originalTimeout(resolve,20));
+            const current=libraryTransferTask.task_id,progress=document.getElementById('libraryTransferProgress');
+            const stage={current,value:progress.value,max:progress.max,message:document.getElementById('libraryTransferMessage').textContent};
+            stopLibraryTransferPolling();libraryTransferGeneration++;
+            window.setTimeout=function(callback,milliseconds,...args){
+                if(milliseconds===15000){requestedTimeout=milliseconds;return originalTimeout(callback,0,...args);}
+                return originalTimeout(callback,milliseconds,...args);
+            };
+            window.fetch=function(url,init){
+                if(!String(url).startsWith('/api/library-transfer/tasks/'))return originalFetch.call(this,url,init);
+                return new Promise((resolve,reject)=>{init.signal.addEventListener('abort',()=>{aborts++;reject(new DOMException('aborted','AbortError'));},{once:true});});
+            };
+            await pollLibraryTransferTask();
+            return {stage,second,requestedTimeout,aborts,gets,posts,
+                disconnected:libraryTransferTask.disconnected,
+                retryVisible:!document.getElementById('libraryTransferReconnect').classList.contains('hidden'),
+                importDisabled:document.getElementById('libraryImportBtn').disabled};
+        } finally {
+            stopLibraryTransferPolling();libraryTransferGeneration++;
+            window.fetch=originalFetch;window.setTimeout=originalTimeout;
+            libraryTransferTask=null;libraryTransferBusy='';
+            localStorage.removeItem('mathbank.libraryTransferTask.v1');
+            updateLibraryTransferControls();
+        }
+    })()""")
+    assert outcome["stage"]["current"] == outcome["second"], outcome
+    assert (outcome["stage"]["value"], outcome["stage"]["max"]) == (3, 8)
+    assert "3 / 8" in outcome["stage"]["message"] and "999" not in outcome["stage"]["message"]
+    assert outcome["requestedTimeout"] == 15000 and outcome["aborts"] == 1
+    assert outcome["posts"] == 0 and outcome["gets"] == 2
+    assert outcome["disconnected"] and outcome["retryVisible"] and outcome["importDisabled"]
+    _close_settings(browser)
+
+
+def test_task_id_must_persist_before_any_upload(browser):
+    _open_sharing(browser)
+    _open_import(browser)
+    outcome = browser.evaluate("""(async () => {
+        const originalFetch=window.fetch,originalSet=Storage.prototype.setItem;
+        let posts=0;
+        window.fetch=function(url,init){
+            if(String(url).startsWith('/api/library-transfer/tasks/')&&init&&init.method==='POST')posts++;
+            return originalFetch.call(this,url,init);
+        };
+        Storage.prototype.setItem=function(key,value){
+            if(key==='mathbank.libraryTransferTask.v1')throw new DOMException('full','QuotaExceededError');
+            return originalSet.call(this,key,value);
+        };
+        try {
+            await submitLibraryTransferTask('import',null,new File(['not uploaded'],'retained.zip',{type:'application/zip'}));
+            return {posts,status:libraryTransferTask.status,busy:libraryTransferBusy,
+                message:document.getElementById('libraryTransferMessage').textContent};
+        } finally {
+            stopLibraryTransferPolling();libraryTransferGeneration++;
+            window.fetch=originalFetch;Storage.prototype.setItem=originalSet;
+            libraryTransferTask=null;libraryTransferBusy='';updateLibraryTransferControls();
+        }
+    })()""")
+    assert outcome["posts"] == 0 and outcome["status"] == "failed" and not outcome["busy"]
+    assert "尚未上传" in outcome["message"]
+    _close_settings(browser)
+
+
+def test_resolved_unknown_task_stays_ended_after_storage_event_and_reload(browser):
+    _open_sharing(browser)
+    _open_import(browser)
+    resolved = browser.evaluate("""(async () => {
+        const taskId=crypto.randomUUID(),originalFetch=window.fetch,originalConfirm=window.confirm;
+        let gets=0;
+        window.fetch=function(url,init){
+            if(String(url)==='/api/library-transfer/tasks/'+taskId){
+                gets++;return Promise.resolve(new Response(JSON.stringify({task_id:taskId,operation:'import',
+                    status:'unknown',stage:'committing',error:{code:'unknown_after_commit',message:'需要核实'}}),
+                    {status:200,headers:{'Content-Type':'application/json'}}));
+            }
+            return originalFetch.call(this,url,init);
+        };
+        window.confirm=()=>true;
+        try {
+            const task={task_id:taskId,operation:'import',status:'unknown',filename:'verified.zip'};
+            localStorage.setItem('mathbank.libraryTransferTask.v1',JSON.stringify(task));
+            restoreLibraryTransferTask(task);
+            while(libraryTransferPollPending)await new Promise(resolve=>setTimeout(resolve,0));
+            resolveLibraryTransferTask();
+            const receipt=readLibraryTransferTask(),before=gets;
+            reconnectLibraryTransfer();
+            // A different tab can still hold the old unknown descriptor. Its
+            // storage event must not overwrite the monotonic resolution marker.
+            localStorage.setItem('mathbank.libraryTransferTask.v1',JSON.stringify(task));
+            window.dispatchEvent(new StorageEvent('storage',{key:'mathbank.libraryTransferTask.v1'}));
+            applyLibraryTransferSnapshot({task_id:taskId,operation:'import',status:'unknown'},taskId,libraryTransferGeneration);
+            await new Promise(resolve=>setTimeout(resolve,20));
+            return {taskId,resolvedAt:receipt.resolved_at,gets,before,status:libraryTransferTask.status,
+                busy:libraryTransferBusy,resolveHidden:document.getElementById('libraryTransferResolve').classList.contains('hidden')};
+        } finally {window.fetch=originalFetch;window.confirm=originalConfirm;}
+    })()""")
+    assert resolved["resolvedAt"] > 0 and resolved["gets"] == resolved["before"] == 1
+    assert resolved["status"] == "failed" and not resolved["busy"] and resolved["resolveHidden"]
+    browser.command("open", browser.evaluate("location.origin"))
+    browser.command("wait", "--fn", "typeof window.renderPaperCanvas==='function' && !!libraryTransferTask && !!libraryTransferTask.resolved_at")
+    _open_sharing(browser)
+    _open_import(browser)
+    assert browser.evaluate("libraryTransferTask.task_id") == resolved["taskId"]
+    assert browser.evaluate("libraryTransferTask.status") == "failed"
+    assert not browser.evaluate("libraryTransferBusy")
+    assert "已核实并结束" in browser.evaluate("document.getElementById('libraryTransferMessage').textContent")
+    assert browser.evaluate("document.getElementById('libraryTransferResolve').classList.contains('hidden')")
+    _close_settings(browser)
+
+
+@pytest.mark.parametrize("suspended_phase", ["fetch", "body"])
+def test_export_preview_timeout_releases_busy_state_and_web_lock(browser, suspended_phase):
+    _open_sharing(browser)
+    _open_export(browser)
+    result = browser.evaluate("""(async () => {
+        const phase=%s,originalFetch=window.fetch,originalTimeout=window.setTimeout;
+        const originalIds=libraryExportSelection.ids,originalMissing=libraryExportSelection.missing;
+        let timeout=0,aborts=0,taskPosts=0;
+        libraryExportSelection.ids=new Set([987654]);libraryExportSelection.missing=new Set();updateLibraryTransferControls();
+        window.setTimeout=function(callback,milliseconds,...args){
+            if(milliseconds===15000){timeout=milliseconds;return originalTimeout(callback,0,...args);}
+            return originalTimeout(callback,milliseconds,...args);
+        };
+        window.fetch=function(url,init){
+            if(String(url).startsWith('/api/library-transfer/tasks/'))taskPosts++;
+            if(String(url)!=='/api/library-transfer/preview')return originalFetch.call(this,url,init);
+            const stalled=()=>new Promise((resolve,reject)=>init.signal.addEventListener('abort',()=>{
+                aborts++;reject(new DOMException('aborted','AbortError'));
+            },{once:true}));
+            return phase==='fetch' ? stalled() : Promise.resolve({ok:true,json:stalled});
+        };
+        try {
+            await exportLibraryTransfer();
+            let lockAvailable=true;
+            if(navigator.locks)lockAvailable=await navigator.locks.request('mathbank-library-transfer-start',
+                {ifAvailable:true},lock=>Boolean(lock));
+            return {timeout,aborts,taskPosts,lockAvailable,busy:libraryTransferBusy,
+                fileDisabled:document.getElementById('libraryImportFile').disabled,
+                message:document.getElementById('libraryTransferMessage').textContent};
+        } finally {
+            window.fetch=originalFetch;window.setTimeout=originalTimeout;
+            libraryExportSelection.ids=originalIds;libraryExportSelection.missing=originalMissing;updateLibraryTransferControls();
+        }
+    })()""" % json.dumps(suspended_phase))
+    assert result["timeout"] == 15000 and result["aborts"] == 1, result
+    assert result["taskPosts"] == 0 and result["lockAvailable"] and not result["busy"] and not result["fileDisabled"]
+    assert "核验超时" in result["message"] and "尚未创建导出任务" in result["message"]
+    _close_settings(browser)
+
+
+def test_browser_without_web_locks_adopts_active_import_conflict_with_get(browser):
+    _open_sharing(browser)
+    _open_import(browser)
+    result = browser.evaluate("""(async () => {
+        const originalFetch=window.fetch,locksDescriptor=Object.getOwnPropertyDescriptor(navigator,'locks');
+        const active=crypto.randomUUID();let posts=0,gets=0,rejected='';
+        Object.defineProperty(navigator,'locks',{configurable:true,value:undefined});
+        const files=new DataTransfer();files.items.add(new File(['fixture'],'active-share.zip',{type:'application/zip'}));
+        document.getElementById('libraryImportFile').files=files.files;updateLibraryTransferControls();
+        window.fetch=function(url,init){
+            if(String(url)==='/api/library-transfer/tasks/import'){
+                posts++;rejected=init.body.get('client_request_id');
+                return Promise.resolve(new Response(JSON.stringify({detail:'同一分享包正在导入',code:'active_import',active_task_id:active}),
+                    {status:409,headers:{'Content-Type':'application/json'}}));
+            }
+            if(String(url)==='/api/library-transfer/tasks/'+active){
+                gets++;
+                const snapshot={task_id:active,operation:'import',status:gets===1?'running':'completed',stage:'writing',current:1,total:2};
+                if(gets>1)snapshot.result={imported_count:2,image_count:0};
+                return Promise.resolve(new Response(JSON.stringify(snapshot),{status:200,headers:{'Content-Type':'application/json'}}));
+            }
+            return originalFetch.call(this,url,init);
+        };
+        try {
+            await Promise.all([importLibraryTransfer(),importLibraryTransfer()]);
+            while(libraryTransferPollPending)await new Promise(resolve=>setTimeout(resolve,0));
+            const adopted={id:libraryTransferTask.task_id,filename:libraryTransferTask.filename,busy:libraryTransferBusy};
+            clearTimeout(libraryTransferPollTimer);await pollLibraryTransferTask();
+            const receipts=JSON.parse(localStorage.getItem('mathbank.libraryTransferReceipts.v1'));
+            return {posts,gets,rejected,active,adopted,done:libraryTransferTask.status,
+                archived:receipts.some(item=>item.task_id===rejected&&item.status==='failed'),
+                persisted:readLibraryTransferTask().task_id};
+        } finally {
+            stopLibraryTransferPolling();libraryTransferGeneration++;window.fetch=originalFetch;
+            if(locksDescriptor)Object.defineProperty(navigator,'locks',locksDescriptor);else delete navigator.locks;
+            libraryTransferTask=null;libraryTransferBusy='';localStorage.removeItem('mathbank.libraryTransferTask.v1');
+            document.getElementById('libraryImportFile').value='';updateLibraryTransferControls();
+        }
+    })()""")
+    assert result["posts"] == 1 and result["gets"] == 2 and result["rejected"] != result["active"], result
+    assert result["adopted"] == {"id": result["active"], "filename": "active-share.zip", "busy": "import"}
+    assert result["done"] == "completed" and result["archived"] and result["persisted"] == result["active"]
     _close_settings(browser)
