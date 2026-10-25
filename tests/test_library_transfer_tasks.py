@@ -55,7 +55,7 @@ def test_concurrent_same_intent_runs_once_and_new_intent_still_appends(tmp_path)
         entered.set()
         assert release.wait(5)
         progress("committing", current=0, total=1)
-        state = json.loads((directory / "state.json").read_text())
+        state = json.loads((directory / "state.json").read_text(encoding="utf-8"))
         assert state["status"] == "committing"
         return {"imported_count": 1, "image_count": 0}
 
@@ -160,7 +160,7 @@ def _saved_task(root, status, *, operation="import", changed_at=None):
     record = {"task_id": task_id, "operation": operation, "intent": operation + ":" + "a" * 64,
               "status": status, "stage": status, "current": 0, "total": 1,
               "stage_timings": {}, "created_at": 1, "updated_at": changed_at or time.time()}
-    (directory / "state.json").write_text(json.dumps(record))
+    (directory / "state.json").write_text(json.dumps(record), encoding="utf-8")
     return task_id
 
 
@@ -174,7 +174,7 @@ def test_restart_never_replays_pending_or_uncertain_append(tmp_path, previous, e
         result, created = tasks.submit_import(task_id, archive, "a" * 64)
         assert not created and result["status"] == expected
         assert result["error"]["code"] == ("unknown_after_commit" if expected == "unknown" else "interrupted")
-        persisted = json.loads((root / task_id / "state.json").read_text())
+        persisted = json.loads((root / task_id / "state.json").read_text(encoding="utf-8"))
         assert persisted["status"] == expected
         assert archive.exists()
     finally:
@@ -274,9 +274,9 @@ def test_download_is_repeatable_and_startup_expiry_keeps_intent_receipt(tmp_path
     finally:
         tasks.close()
     state_path = tasks.root / task_id / "state.json"
-    state = json.loads(state_path.read_text())
+    state = json.loads(state_path.read_text(encoding="utf-8"))
     state["updated_at"] = time.time() - EXPORT_RETENTION_SECONDS - 1
-    state_path.write_text(json.dumps(state))
+    state_path.write_text(json.dumps(state), encoding="utf-8")
     restarted = LibraryTransferTasks(tasks.root, run_import=lambda *_: None, run_export=_export)
     try:
         assert state_path.is_file()
@@ -454,7 +454,7 @@ def test_recovery_receipt_write_failure_keeps_uuid_bound_and_server_available(tm
         archive, _ = _archive(tmp_path)
         same, created = tasks.submit_import(failed, archive, "a" * 64)
         assert not created and same["status"] == "unknown" and archive.exists()
-        assert json.loads((root / failed / "state.json").read_text())["status"] == "running"
+        assert json.loads((root / failed / "state.json").read_text(encoding="utf-8"))["status"] == "running"
         assert '"winerror": 32' in caplog.text and "private path" not in caplog.text
     finally:
         tasks.close()
