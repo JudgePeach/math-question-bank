@@ -28,6 +28,8 @@ With just basic LaTeX math formula syntax, MathBank empowers frontline math teac
 
 ## 🤖 AI Agent / Harness Workflows
 
+Source builds include a **Question Bank Assistant** for natural-language searches, question details, difficulty counts, and reviewed proposals to update tags, difficulty, explanations, or teaching reviews (up to 10 questions per proposal). It also proposes papers of up to 40 questions and deletions of up to 10 questions. Deletion proposals show affected papers and question references; questions containing images or TikZ assets are excluded. Replies render Markdown and math while streaming; explanation and teaching-review proposals include formatted previews and expandable source text. Chat can follow new output, pauses while you scroll back, and has a one-click scroll-to-bottom control. The conversation streams model and lookup progress, supports reading up to 10 questions together, and retains bounded query summaries for follow-up requests such as “organize those questions.” It uses the configured solving model and API key by default; question text included in a request is sent to that model. The assistant does not read images or change stems or curriculum classifications. Every proposal must be reviewed and explicitly confirmed; a verified full backup is created before a single-transaction write, and the whole proposal is rejected if any target question changed. Confirmed paper proposals create a saved paper that can be loaded into the paper workspace for further layout. Conversations stay in memory and are not restored after a refresh. This describes the current source build and does not imply that an existing official download package includes the feature.
+
 MathBank features multiple highly automated, fault-tolerant, and self-healing AI Agent / Harness workflows to ensure high reliability across exam parsing, geometry redrawing, and concurrent solving:
 
 ### 1. PDF Parsing Harness
@@ -123,6 +125,8 @@ Both launchers check Python and required packages, and open an already-running M
    * **Mac Users**: Double-click **`启动题库系统.command`**
    * **Windows Users**: Double-click **`启动题库系统.bat`**
    * **CLI Start**: Run `python -m uvicorn main:app --reload`, open browser at `http://127.0.0.1:8000`
+
+   If another local application uses port 8000, save `{"port":8001}` in the project's `.system_generated/launcher-settings.json` and double-click the launcher. MathBank will use and open `http://127.0.0.1:8001`. The process environment variable `MATHBANK_PORT` overrides this setting. When running uvicorn directly, pass `--port 8001`. Give parallel applications separate fixed ports so polling and WebSocket reconnections from old pages reach the correct application.
 
 > [!TIP]
 > **PDF & Word Smart Parsing Recommendations**:

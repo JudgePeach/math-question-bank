@@ -16,7 +16,7 @@
     <script>
         // Prevent theme and workspace flash
         (function() {
-            const savedTheme = localStorage.getItem('theme-color') || 'violet';
+            const savedTheme = localStorage.getItem('theme-color') || 'graphite';
             const savedDarkMode = localStorage.getItem('dark-mode') === 'true';
             document.documentElement.classList.add(`theme-${savedTheme}`);
             if (savedDarkMode) {
@@ -102,6 +102,10 @@
                 <span>智能组卷</span>
                 <span class="paper-cart-badge app-nav-badge hidden" aria-label="已选题目数">0</span>
             </button>
+            <button type="button" id="appNavAgent" class="app-nav-item" data-app-nav-target="agent" onclick="selectWorkspace('agent', '题库助手')">
+                <i class="fa-solid fa-comment-dots" aria-hidden="true"></i>
+                <span>助手</span>
+            </button>
             <button type="button" id="appNavRecords" class="app-nav-item" data-app-nav-target="records" onclick="openSavedPapersModal()">
                 <i class="fa-solid fa-clock-rotate-left" aria-hidden="true"></i>
                 <span>试卷记录</span>
@@ -167,6 +171,7 @@
                         <span>组卷排版工作台</span>
                         <i class="fa-solid fa-check text-[10px] text-brand-600 dark:text-brand-500 hidden" id="ws-check-paper"></i>
                     </button>
+                    <button type="button" onclick="selectWorkspace('agent', '题库助手')" class="glass-dropdown-item w-full px-3.5 py-2.5 text-xs text-left rounded-xl">题库助手</button>
                     <!-- QA_START -->
                     <button type="button" onclick="selectWorkspace('qa', 'QA · 常见问题')" class="glass-dropdown-item w-full px-3.5 py-2.5 text-xs text-left flex items-center justify-between rounded-xl" id="ws-btn-qa">
                         <span>QA · 常见问题</span>
@@ -190,12 +195,17 @@
                 <!-- Dropdown Trigger -->
                 <div class="relative" id="themeDropdownContainer">
                     <button onclick="toggleThemeDropdown(event)" id="themeDropdownBtn" aria-label="切换主题配色" aria-haspopup="menu" aria-expanded="false" class="flex items-center space-x-1.5 px-2.5 py-1 rounded-lg text-xs font-semibold text-slate-600 hover:bg-white/60 active:scale-95 transition-all focus:outline-none dark:text-slate-200 dark:hover:bg-slate-700/40" title="切换主题配色">
-                        <span id="currentThemeDot" class="w-3.5 h-3.5 rounded-full bg-[#8b5cf6] border border-white"></span>
-                        <span id="currentThemeName">罗兰紫</span>
+                        <span id="currentThemeDot" class="w-3.5 h-3.5 rounded-full bg-[#526981] border border-white"></span>
+                        <span id="currentThemeName">石墨蓝</span>
                         <i class="fa-solid fa-chevron-down text-[9px] text-slate-400 transition-transform duration-200" id="themeDropdownArrow"></i>
                     </button>
                     <!-- Dropdown Menu -->
                     <div id="themeDropdownMenu" role="menu" class="glass-dropdown absolute left-0 mt-2.5 w-36 py-1.5 rounded-2xl border border-slate-200/70 bg-white/95 backdrop-blur-xl shadow-xl transition-all duration-200 scale-90 opacity-0 pointer-events-none origin-top-left z-50">
+                        <button onclick="selectTheme('graphite')" class="glass-dropdown-item w-full px-3.5 py-2 text-xs text-left flex items-center space-x-2 rounded-xl">
+                            <span class="w-2.5 h-2.5 rounded-full bg-[#526981] shrink-0"></span>
+                            <span>石墨蓝</span>
+                            <i class="fa-solid fa-check text-[9px] text-brand-600 dark:text-brand-500 ml-auto hidden" id="check-graphite"></i>
+                        </button>
                         <button onclick="selectTheme('obsidian')" class="glass-dropdown-item w-full px-3.5 py-2 text-xs text-left flex items-center space-x-2 rounded-xl">
                             <span class="w-2.5 h-2.5 rounded-full bg-[#0f172a] shrink-0 border border-slate-400/40"></span>
                             <span>曜石黑</span>
@@ -262,6 +272,44 @@
 
     <!-- Main Content Container -->
     <main class="flex-1 flex overflow-hidden h-[calc(100vh-4rem)]">
+        <section id="agentWorkspaceSection" class="agent-workspace hidden" aria-labelledby="agentTitle">
+            <div class="agent-shell">
+                <header class="agent-heading">
+                    <div><h1 id="agentTitle">题库助手</h1><p id="agentModel">正在读取模型配置…</p></div>
+                    <button id="agentNewChat" type="button" class="glass-btn">新对话</button>
+                </header>
+                <div id="agentMessages" class="agent-messages" role="log" aria-label="助手对话" tabindex="0">
+                    <div id="agentWelcome" class="agent-welcome">
+                        <h2>用一句话，处理题库里的事。</h2>
+                        <p>查找题目、统计题量、组卷，或修改解析、整理标签与删除题目。操作会先列出方案，由你核对确认后执行。</p>
+                        <div class="agent-examples">
+                            <button type="button" data-agent-example="统计当前题库各难度的题目数量">统计各难度题量</button>
+                            <button type="button" data-agent-example="查找有关导数的题目，列出稳定 ID 和来源">查找导数题目</button>
+                            <button type="button" data-agent-example="读取题库第 1 题，检查已有解析；若需要补充，请给出修改方案">检查一道题的解析</button>
+                            <button type="button" data-agent-example="从题库中选择5道导数题，组成一份每题10分的日常小练，先给出题序和选题依据">组一份导数小练</button>
+                            <button type="button" data-agent-example="读取题库第 1 题，列出题文和删除影响，先生成删除方案">生成逐题删除方案</button>
+                        </div>
+                    </div>
+                </div>
+                <div class="agent-scroll-toolbar">
+                    <p id="agentStatus" class="agent-status" role="status" aria-live="polite"></p>
+                    <div class="agent-scroll-controls" role="group" aria-label="对话滚动">
+                        <button id="agentFollowOutput" type="button" class="agent-scroll-button" aria-pressed="true" aria-controls="agentMessages" aria-label="跟随输出" title="开启后自动跟随最新输出；向上滚动会暂停">
+                            <i class="fa-solid fa-arrows-down-to-line" aria-hidden="true"></i><span id="agentFollowLabel">跟随输出：开启</span>
+                        </button>
+                        <button id="agentScrollBottom" type="button" class="agent-scroll-button" aria-controls="agentMessages" title="滚动到底部并恢复跟随输出">
+                            <i class="fa-solid fa-arrow-down" aria-hidden="true"></i><span>回到底部</span>
+                        </button>
+                    </div>
+                </div>
+                <form id="agentForm" class="agent-composer">
+                    <label for="agentInput">告诉助手你想做什么</label>
+                    <div class="agent-input-row"><textarea id="agentInput" class="glass-input" maxlength="4000" rows="3" placeholder="例如：查找来源含“高考”的导数题，先列出结果" required></textarea>
+                    <button id="agentSend" type="submit" class="glass-btn-primary">发送</button></div>
+                    <p>沿用系统设置的解题模型。请求涉及的题文会发送给所选模型；对话仅在本次服务中保留，刷新后不恢复。Enter 换行，Ctrl / Cmd + Enter 发送。</p>
+                </form>
+            </div>
+        </section>
 
         <!-- Workspace 0: Teaching preparation dashboard -->
         <section id="dashboardWorkspaceSection" class="dashboard-workspace w-full h-full overflow-hidden" aria-labelledby="dashboardTitle">
@@ -2385,6 +2433,7 @@
     <script src="/static/js/document-import-session.js"></script>
     <script src="/static/js/paper.js"></script>
     <script src="/static/js/dashboard.js"></script>
+    <script src="/static/js/agent.js"></script>
     <!-- QA_START -->
     <script src="/static/js/qa-data.js"></script>
     <script src="/static/js/qa.js"></script>

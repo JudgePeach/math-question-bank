@@ -15,9 +15,9 @@ import urllib.request
 import uuid
 from pathlib import Path
 
+from mathbank.paths import PROJECT_ROOT
 from mathbank.storage_access import StorageAccessError, check_startup_storage
 
-PROJECT_ROOT = Path(__file__).resolve().parents[1]
 PORT = 8000
 BASE_URL = f"http://127.0.0.1:{PORT}"
 REPOSITORY = "JudgePeach/math-question-bank"
@@ -30,6 +30,30 @@ IMPORT_CHECK = (
 
 class LauncherError(RuntimeError):
     pass
+
+
+def configured_port(root: Path) -> int:
+    """Read explicit launcher preferences without importing third-party packages."""
+    value = os.environ.get("MATHBANK_PORT")
+    if value is not None:
+        if not value.isascii() or not value.isdecimal():
+            raise LauncherError("MATHBANK_PORT 必须是 1 至 65535 的整数。")
+        # Bound conversion before int(), including unusually long env values.
+        value = int(value) if len(value) <= 5 else 0
+    else:
+        config = root / ".system_generated" / "launcher-settings.json"
+        try:
+            settings = json.loads(config.read_text(encoding="utf-8-sig"))
+        except FileNotFoundError:
+            settings = {}
+        except (OSError, ValueError) as exc:
+            raise LauncherError("无法读取 .system_generated/launcher-settings.json，请检查文件权限及 JSON 格式。") from exc
+        if not isinstance(settings, dict):
+            raise LauncherError(".system_generated/launcher-settings.json 必须是 JSON 对象。")
+        value = settings.get("port", 8000)
+    if type(value) is not int or not 1 <= value <= 65535:
+        raise LauncherError("启动端口 port 必须是 1 至 65535 的整数。")
+    return value
 
 
 def read_json(route: str):
@@ -240,8 +264,11 @@ def start_server(root: Path, python: Path) -> None:
 
 
 def run_launcher(root: Path = PROJECT_ROOT) -> None:
+    global PORT, BASE_URL
+    PORT = configured_port(root)
+    BASE_URL = f"http://127.0.0.1:{PORT}"
     if existing_service_ready():
-        print("题库已经在运行，正在打开网页。如刚更新了程序，请先在网页关闭服务再启动。")
+        print(f"题库已经在运行：{BASE_URL}，正在打开网页。如刚更新了程序，请先在网页关闭服务再启动。")
         open_browser()
         return
     _check_startup_storage(root)
@@ -250,7 +277,10 @@ def run_launcher(root: Path = PROJECT_ROOT) -> None:
             open_browser()
             return
         if port_in_use():
-            raise LauncherError("端口 8000 已被占用，或题库尚未就绪；请稍后重试，或关闭占用该端口的程序。")
+            raise LauncherError(
+                f"端口 {PORT} 已被占用，或题库尚未就绪；请稍后重试，"
+                "或在 .system_generated/launcher-settings.json 中将 port 改为其他可用端口后重新启动。"
+            )
         python, backup = prepare_python(root)
         ensure_dependencies(root, python)
         start_server(root, python)

@@ -54,6 +54,25 @@ def test_mobile_viewport_and_five_level_script_order_are_preserved():
     assert positions == sorted(positions)
 
 
+def test_agent_exposes_accessible_follow_and_scroll_bottom_controls():
+    index_source = _read(INDEX_PATH)
+    agent_source = _read(STATIC_JS_DIR / "agent.js")
+    css_source = _read(CSS_PATH)
+    elements = _index_elements()
+
+    assert elements["agentFollowOutput"]["aria-pressed"] == "true"
+    assert elements["agentFollowOutput"]["aria-controls"] == "agentMessages"
+    assert elements["agentScrollBottom"]["aria-controls"] == "agentMessages"
+    assert "跟随输出：开启" in index_source
+    assert "回到底部" in index_source
+    assert "messages.addEventListener('scroll'" in agent_source
+    assert "messages.addEventListener('wheel'" in agent_source
+    assert "ResizeObserver" in agent_source
+    assert "MutationObserver(scheduleOutputScroll)" in agent_source
+    assert ".agent-scroll-toolbar" in css_source
+    assert "overflow-anchor: none" in css_source
+
+
 def test_editor_preview_converts_exam_zh_paren_after_protecting_math_blocks():
     editor_source = _read(STATIC_JS_DIR / "editor.js")
     css_source = _read(CSS_PATH)
@@ -82,7 +101,8 @@ if (similarlyNamed !== String.raw`\parent`) {
 }
 """
     result = subprocess.run(
-        [node, "-e", script],
+        [node, "-"],
+        input=script,
         cwd=PROJECT_ROOT,
         text=True,
         capture_output=True,

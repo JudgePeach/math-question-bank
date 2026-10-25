@@ -626,7 +626,8 @@ const document = {{ getElementById(id) {{ return id.startsWith('parsed-card-') ?
 """
 
     result = subprocess.run(
-        [node, "-e", script],
+        [node, "-"],
+        input=script,
         cwd=PROJECT_ROOT,
         text=True,
         capture_output=True,
@@ -1268,7 +1269,8 @@ const document = {{ getElementById(id) {{ return id.startsWith('parsed-card-') ?
 }})().catch(error => {{ console.error(error); process.exitCode = 1; }});
 """
     result = subprocess.run(
-        [node, "-e", script],
+        [node, "-"],
+        input=script,
         cwd=PROJECT_ROOT,
         text=True,
         capture_output=True,

@@ -14,6 +14,126 @@ import pytest
 from scripts import local_launcher as launcher
 
 
+@pytest.fixture(autouse=True)
+def isolate_launcher_address(monkeypatch):
+    monkeypatch.delenv("MATHBANK_PORT", raising=False)
+    monkeypatch.setattr(launcher, "PORT", 8000)
+    monkeypatch.setattr(launcher, "BASE_URL", "http://127.0.0.1:8000")
+
+
+def test_default_port_does_not_create_settings(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path.parent)
+    assert launcher.configured_port(tmp_path) == 8000
+    assert not list(tmp_path.iterdir())
+
+
+def test_local_port_is_anchored_to_project_and_environment_can_override(tmp_path, monkeypatch):
+    state = tmp_path / ".system_generated"
+    state.mkdir()
+    settings = state / "launcher-settings.json"
+    settings.write_text('\ufeff{"port": 8001}', encoding="utf-8")
+    monkeypatch.chdir(tmp_path.parent)
+    assert launcher.configured_port(tmp_path) == 8001
+    monkeypatch.setenv("MATHBANK_PORT", "9001")
+    assert launcher.configured_port(tmp_path) == 9001
+    assert settings.read_text(encoding="utf-8-sig") == '{"port": 8001}'
+
+
+@pytest.mark.parametrize("value", [True, 0, -1, 65536, 8001.0, "8001", None])
+def test_invalid_saved_port_is_reported_before_contact_or_start(tmp_path, monkeypatch, value):
+    state = tmp_path / ".system_generated"
+    state.mkdir()
+    (state / "launcher-settings.json").write_text(json.dumps({"port": value}))
+    monkeypatch.setattr(launcher, "existing_service_ready", lambda: pytest.fail("contacted service"))
+    monkeypatch.setattr(launcher, "start_server", lambda *_: pytest.fail("started"))
+    with pytest.raises(launcher.LauncherError, match="port"):
+        launcher.run_launcher(tmp_path)
+
+
+@pytest.mark.parametrize("value", ["", "0", "-1", "65536", "8001.0", "localhost:8001", "８００１", "1" * 5000])
+def test_invalid_port_environment_is_actionable(tmp_path, monkeypatch, value):
+    monkeypatch.setenv("MATHBANK_PORT", value)
+    with pytest.raises(launcher.LauncherError, match="整数"):
+        launcher.configured_port(tmp_path)
+
+
+@pytest.mark.parametrize("content", ["broken JSON", "[]"])
+def test_bad_explicit_settings_report_file_without_private_content(tmp_path, content):
+    state = tmp_path / ".system_generated"
+    state.mkdir()
+    (state / "launcher-settings.json").write_text(content)
+    with pytest.raises(launcher.LauncherError, match="launcher-settings.json") as caught:
+        launcher.configured_port(tmp_path)
+    assert content not in str(caught.value)
+
+
+def test_configured_port_does_not_probe_neighbor_and_reuses_ready_service(tmp_path, monkeypatch):
+    import threading
+    from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+    requests = []
+    class Handler(BaseHTTPRequestHandler):
+        def do_GET(self):
+            requests.append((self.server.server_port, self.path))
+            body = json.dumps({"repo": launcher.REPOSITORY} if self.path == "/api/version" else {"ready": True}).encode()
+            self.send_response(200)
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        def log_message(self, *_args):
+            pass
+
+    with ThreadingHTTPServer(("127.0.0.1", 0), Handler) as own, ThreadingHTTPServer(("127.0.0.1", 0), Handler) as neighbor:
+        threads = [threading.Thread(target=server.serve_forever, daemon=True) for server in (own, neighbor)]
+        for thread in threads:
+            thread.start()
+        try:
+            state = tmp_path / ".system_generated"
+            state.mkdir()
+            (state / "launcher-settings.json").write_text(json.dumps({"port": own.server_port}))
+            # Simulate a previous address belonging to another application.
+            monkeypatch.setattr(launcher, "PORT", neighbor.server_port)
+            monkeypatch.setattr(launcher, "BASE_URL", f"http://127.0.0.1:{neighbor.server_port}")
+            monkeypatch.setattr(launcher, "check_startup_storage", lambda *_: pytest.fail("write probe ran"))
+            monkeypatch.setattr(launcher, "prepare_python", lambda *_: pytest.fail("environment touched"))
+            opened = []
+            monkeypatch.setattr(launcher, "open_browser", lambda: opened.append(launcher.BASE_URL))
+            launcher.run_launcher(tmp_path)
+            launcher.run_launcher(tmp_path)
+            assert opened == [f"http://127.0.0.1:{own.server_port}"] * 2
+            assert requests == [(own.server_port, route) for _ in range(2) for route in ("/api/version", "/healthz")]
+        finally:
+            for server in (own, neighbor):
+                server.shutdown()
+            for thread in threads:
+                thread.join(timeout=5)
+
+
+def test_new_service_uses_configured_port_in_process_probe_and_browser(tmp_path, monkeypatch):
+    state = tmp_path / ".system_generated"
+    state.mkdir()
+    (state / "launcher-settings.json").write_text('{"port": 8001}')
+    monkeypatch.setattr(launcher, "existing_service_ready", lambda: False)
+    checked = []
+    monkeypatch.setattr(launcher, "port_in_use", lambda: checked.append(launcher.PORT) or False)
+    monkeypatch.setattr(launcher, "prepare_python", lambda _: (Path(sys.executable), None))
+    monkeypatch.setattr(launcher, "ensure_dependencies", lambda *_: None)
+    commands = []
+    def spawn(command, **kwargs):
+        commands.append(command)
+        return SimpleNamespace(pid=123)
+    monkeypatch.setattr(launcher.subprocess, "Popen", spawn)
+    probes = []
+    monkeypatch.setattr(launcher, "wait_until_ready", lambda *_: (probes.append(launcher.BASE_URL) or True, "ready"))
+    opened = []
+    monkeypatch.setattr(launcher, "open_browser", lambda: opened.append(launcher.BASE_URL))
+    launcher.run_launcher(tmp_path)
+    assert checked == [8001]
+    assert commands[0][-2:] == ["--port", "8001"]
+    assert probes == opened == ["http://127.0.0.1:8001"]
+
+
 def test_windows_entry_uses_shared_launcher():
     from scripts import windows_launcher
     assert windows_launcher.main is launcher.main

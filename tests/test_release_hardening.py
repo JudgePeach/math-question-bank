@@ -1216,7 +1216,7 @@ def test_launchers_use_shared_environment_and_startup_flow():
     assert "find_supported_python" in mac
     assert "MATHBANK_NO_PAUSE" in windows
     assert "MATHBANK_NO_PAUSE" in mac
-    assert "Path(__file__).resolve().parents[1]" in shared
+    assert "from mathbank.paths import PROJECT_ROOT" in shared
     assert "ProxyHandler({})" in shared
     assert "MATHBANK_LAUNCH_ID" in shared
     for source in (mac, windows, shared):

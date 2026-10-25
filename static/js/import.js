@@ -772,6 +772,12 @@
 
         // Jump to select another question by ID
         // The normal selector owns the single detail GET and the unsaved-edit guard.
+        window.startNewQuestionAfterAgentDelete = function () {
+            if (typeof startNewQuestionWithoutPrompt === 'function') startNewQuestionWithoutPrompt();
+            if (typeof loadQuestions === 'function') loadQuestions();
+            if (typeof loadCategories === 'function') loadCategories();
+        };
+
         function selectQuestionById(id) {
             checkAndSwitch(() => selectQuestion({id}));
         }
@@ -3243,7 +3249,7 @@
                 const workspaceName = returnNavTarget === 'paper'
                     ? '智能组卷'
                     : (returnNavTarget === 'dashboard' ? '工作台'
-                        : (returnNavTarget === 'qa' ? 'QA · 常见问题' : '题库管理'));
+                        : (returnNavTarget === 'agent' ? '题库助手' : (returnNavTarget === 'qa' ? 'QA · 常见问题' : '题库管理')));
                 window.selectWorkspace(returnNavTarget, workspaceName);
             }
             refreshDocumentResultRetention();

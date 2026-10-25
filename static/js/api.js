@@ -91,7 +91,20 @@
             }
 
             function sanitizeRichHtml(value) {
-                const purified = purify(value, RICH_HTML_CONFIG);
+                return sanitizePreviewHtml(value, RICH_HTML_CONFIG);
+            }
+
+            function sanitizeMarkdownHtml(value) {
+                return sanitizePreviewHtml(value, {
+                    ...RICH_HTML_CONFIG,
+                    ALLOWED_TAGS: [...RICH_HTML_CONFIG.ALLOWED_TAGS,
+                        'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'blockquote', 'del', 'a'],
+                    ALLOWED_ATTR: [...RICH_HTML_CONFIG.ALLOWED_ATTR, 'href']
+                });
+            }
+
+            function sanitizePreviewHtml(value, config) {
+                const purified = purify(value, config);
                 if (typeof document === 'undefined' || !document.createElement) {
                     return purified;
                 }
@@ -108,6 +121,17 @@
                     img.setAttribute('loading', 'lazy');
                     img.setAttribute('decoding', 'async');
                 });
+                template.content.querySelectorAll('a').forEach((link) => {
+                    const raw = link.getAttribute('href') || '';
+                    try {
+                        const url = new URL(raw, window.location.href);
+                        if (!raw.trim() || /[\u0000-\u0020\u007F\\]/.test(raw)
+                                || !['http:', 'https:'].includes(url.protocol)) throw new Error('Unsafe link');
+                        link.setAttribute('href', url.href);
+                        link.setAttribute('target', '_blank');
+                        link.setAttribute('rel', 'noopener noreferrer');
+                    } catch (_) { link.replaceWith(...link.childNodes); }
+                });
                 return template.innerHTML;
             }
 
@@ -116,6 +140,7 @@
                 escapeAttribute,
                 sanitizePlainText,
                 sanitizeRichHtml,
+                sanitizeMarkdownHtml,
                 safeImageUrl,
                 safeClassList
             });
@@ -3195,7 +3220,7 @@
 
         // Global Theme Color and Dark Mode Management
         window.changeTheme = function(themeName, save = true) {
-            const themes = ['theme-obsidian', 'theme-violet', 'theme-emerald', 'theme-ocean', 'theme-amber', 'theme-crimson'];
+            const themes = ['theme-graphite', 'theme-obsidian', 'theme-violet', 'theme-emerald', 'theme-ocean', 'theme-amber', 'theme-crimson'];
             
             // Remove all themes from document root and body
             themes.forEach(t => {
@@ -3213,6 +3238,7 @@
             const nameSpan = document.getElementById('currentThemeName');
             if (dot && nameSpan) {
                 const colorMap = {
+                    'graphite': '#526981',
                     'obsidian': '#0f172a',
                     'violet': '#8b5cf6',
                     'ocean': '#0ea5e9',
@@ -3225,7 +3251,7 @@
             }
             
             // Update check marks
-            const themesOnly = ['obsidian', 'violet', 'ocean', 'emerald', 'amber', 'crimson'];
+            const themesOnly = ['graphite', 'obsidian', 'violet', 'ocean', 'emerald', 'amber', 'crimson'];
             themesOnly.forEach(t => {
                 const check = document.getElementById(`check-${t}`);
                 if (check) {
@@ -3404,6 +3430,7 @@
 
         function getThemeChineseName(themeName) {
             const names = {
+                'graphite': '石墨蓝',
                 'obsidian': '曜石黑',
                 'violet': '罗兰紫',
                 'emerald': '翡翠绿',
@@ -3425,7 +3452,7 @@
         }
 
         function initTheme() {
-            const savedTheme = localStorage.getItem('theme-color') || 'violet';
+            const savedTheme = localStorage.getItem('theme-color') || 'graphite';
             const savedDarkMode = localStorage.getItem('dark-mode') === 'true';
             
             // Apply saved theme color without triggering toast
