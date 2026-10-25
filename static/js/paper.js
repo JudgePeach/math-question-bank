@@ -494,6 +494,7 @@
         const recordsSec = document.getElementById('recordsWorkspaceSection');
         const dashboardSec = document.getElementById('dashboardWorkspaceSection');
         const qaSec = document.getElementById('qaWorkspaceSection');
+        const agentSec = document.getElementById('agentWorkspaceSection');
         if (workspaceId === 'import' && previousWorkspace !== 'import' && importSec) {
             importSec.dataset.returnNavTarget = previousWorkspace;
         }
@@ -516,6 +517,7 @@
         if (importSec) importSec.classList.add('hidden');
         if (recordsSec) recordsSec.classList.add('hidden');
         if (qaSec) qaSec.classList.add('hidden');
+        if (agentSec) agentSec.classList.add('hidden');
 
         if (workspaceId === 'dashboard') {
             if (dashboardSec) {
@@ -535,6 +537,9 @@
             if (recordsSec) recordsSec.classList.remove('hidden');
         } else if (workspaceId === 'qa') {
             if (qaSec) qaSec.classList.remove('hidden');
+        } else if (workspaceId === 'agent') {
+            if (agentSec) agentSec.classList.remove('hidden');
+            if (typeof window.loadAgentConfig === 'function') window.loadAgentConfig();
         } else {
             if (typeof window.closeBankDetail === 'function') window.closeBankDetail();
             if (bankSec) bankSec.classList.remove('hidden');
@@ -4122,7 +4127,7 @@
                         window.PaperStore.questionsMap[qObj.id] = qObj;
                         window.PaperStore.cart.push({
                             id: qObj.id,
-                            score: item.score || 5
+                            score: item.score ?? 5
                         });
                     });
                 }

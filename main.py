@@ -887,7 +887,7 @@ def read_index():
         html_content = render_qa_visibility(html_content, enabled=qa_enabled)
         
         # Inject dynamic cache-busting version parameter based on file mtime
-        js_files = ["api.js", "editor.js", "ocr.js", "import.js", "document-import-session.js", "paper.js", "dashboard.js", "qa-data.js", "qa.js"]
+        js_files = ["api.js", "editor.js", "ocr.js", "import.js", "document-import-session.js", "paper.js", "dashboard.js", "qa-data.js", "qa.js", "agent.js"]
         for js in js_files:
             js_path = str(STATIC_JS_DIR / js)
             mtime = int(os.path.getmtime(js_path)) if os.path.exists(js_path) else 0
@@ -4263,73 +4263,8 @@ def remove_association(
 
 @app.delete("/api/questions/{question_id}")
 @serialize_asset_lifecycle
-def delete_question(
-    question_id: int,
-    background_tasks: BackgroundTasks,
-    db: Session = Depends(get_db)
-):
-    db_question = db.query(Question).filter(Question.id == question_id).first()
-    if not db_question:
-        raise HTTPException(status_code=404, detail="未找到对应的题目")
-        
-    image_paths_to_check = list(db_question.image_paths)
-    try:
-        from sqlalchemy import func
-        from mathbank.database import QuestionSourceLabel
-
-        affected_reference_labels = {
-            (row.book_key, row.label_key)
-            for row in db.query(QuestionSourceLabel).filter_by(question_id=question_id)
-        }
-
-        affected_paper_ids = [
-            paper_id
-            for (paper_id,) in db.query(PaperQuestion.paper_id)
-            .filter(PaperQuestion.question_id == question_id)
-            .distinct()
-            .all()
-        ]
-        if affected_paper_ids:
-            remaining_scores = dict(
-                db.query(
-                    PaperQuestion.paper_id,
-                    func.coalesce(func.sum(PaperQuestion.score), 0),
-                )
-                .filter(
-                    PaperQuestion.paper_id.in_(affected_paper_ids),
-                    PaperQuestion.question_id != question_id,
-                )
-                .group_by(PaperQuestion.paper_id)
-                .all()
-            )
-            for paper in db.query(Paper).filter(
-                Paper.id.in_(affected_paper_ids)
-            ):
-                paper.total_score = int(remaining_scores.get(paper.id, 0))
-        db.delete(db_question)
-        db.flush()
-        refresh_reference_targets_for_labels(db, affected_reference_labels)
-        db.commit()
-    except Exception as e:
-        db.rollback()
-        raise HTTPException(status_code=400, detail=f"删除题目失败: {str(e)}")
-
-    # The database delete is complete.  Image cleanup is intentionally
-    # best-effort so a locked/missing file cannot make the client believe the
-    # question still exists and submit a duplicate delete.
-    try:
-        delete_unreferenced_question_assets(db, image_paths_to_check)
-    except Exception as cleanup_exc:
-        print(
-            "[Storage Cleanup] Post-commit delete cleanup failed "
-            f"(type={type(cleanup_exc).__name__}); it will be retried by "
-            "the startup orphan cleanup."
-        )
-
-    # Auto export database to files for Git synchronization and AI referencing (Async Background Task)
-    schedule_database_export(background_tasks, operation="delete_question")
-
-    return {"status": "success", "message": "题目删除成功"}
+def delete_question(question_id: int, background_tasks: BackgroundTasks, db: Session = Depends(get_db)):
+    return _run_question_delete(db, [question_id], background_tasks)
 
 # ----------------- Category Hierarchy Autocomplete API -----------------
 
@@ -5295,6 +5230,79 @@ def get_sources(db: Session = Depends(get_db)):
     # Sort alphabetically (case-insensitive)
     sources.sort(key=str.lower)
     return sources
+
+def _prepare_agent_question_write(db, question_id, patch):
+    """Build image-derived fingerprint data before SQLite's write transaction."""
+    from sqlalchemy.orm import lazyload
+
+    if not {"answer_markdown", "review"}.intersection(patch):
+        return
+    question = db.query(Question).options(lazyload("*")).filter(Question.id == question_id).one()
+    fingerprint = build_prepared_question_fingerprint(
+        content=question.content, answer_markdown=patch.get("answer_markdown", question.answer_markdown),
+        question_type=question.question_type, image_paths=question.image_paths,
+        content_tikz_assets=question.content_tikz_assets, answer_tikz_assets=question.answer_tikz_assets,
+        tikz_code=question.tikz_code, tikz_reference_image_path=question.tikz_reference_image_path,
+        review=patch.get("review", question.review),
+    )
+    return fingerprint
+
+
+def _commit_agent_question_write(db, question_id, patch, fingerprint):
+    """Maintain question-derived database records in the Agent's transaction."""
+    if not {"answer_markdown", "review"}.intersection(patch):
+        return
+    from sqlalchemy.orm import lazyload
+
+    question = db.query(Question).options(lazyload("*")).filter(Question.id == question_id).one()
+    upsert_question_fingerprint(db, question, fingerprint)
+    sync_question_references(db, question)
+
+
+from mathbank.agent import LibraryAgent, create_agent_router
+from mathbank.asset_lifecycle import ASSET_LIFECYCLE_LOCK
+from mathbank.question_delete import delete_questions as _delete_questions_transaction
+
+
+def _run_question_delete(db, question_ids, background_tasks):
+    with ASSET_LIFECYCLE_LOCK:
+        questions = db.query(Question).filter(Question.id.in_(question_ids)).all()
+        if {question.id for question in questions} != set(question_ids):
+            raise HTTPException(status_code=404, detail="待删除题目已不存在，请重新读取题库。")
+        try:
+            db.rollback()
+            db.connection().exec_driver_sql("BEGIN IMMEDIATE")
+            locked_questions = db.query(Question).filter(Question.id.in_(question_ids)).all()
+            if {question.id for question in locked_questions} != set(question_ids):
+                raise HTTPException(status_code=409, detail="待删除题目已变化，未删除任何题目。")
+            image_paths = _delete_questions_transaction(db, question_ids)
+            db.commit()
+        except HTTPException:
+            db.rollback()
+            raise
+        except Exception as exc:
+            db.rollback()
+            raise HTTPException(status_code=400, detail=f"删除题目失败，数据库事务已回滚：{type(exc).__name__}") from exc
+        try:
+            delete_unreferenced_question_assets(db, image_paths)
+        except Exception as cleanup_exc:
+            print("[Storage Cleanup] Post-commit delete cleanup failed "
+                  f"(type={type(cleanup_exc).__name__}); startup orphan cleanup will retry.")
+        schedule_database_export(background_tasks, operation="delete_question")
+        return {"status": "success", "message": "题目删除成功"}
+
+LIBRARY_AGENT = LibraryAgent(
+    backup=_sharing_backup, prepare_write=_prepare_agent_question_write,
+    commit_write=_commit_agent_question_write,
+    after_commit=lambda tasks: schedule_database_export(tasks, operation="agent"),
+    check_storage=lambda: check_database_write_access(Path(DATABASE_PATH)),
+    write_lock=ASSET_LIFECYCLE_LOCK,
+    cleanup_deleted=lambda db, assets: delete_unreferenced_question_assets(db, assets),
+)
+
+
+app.include_router(create_agent_router(LIBRARY_AGENT))
+
 
 @app.post("/api/shutdown")
 def shutdown_server(

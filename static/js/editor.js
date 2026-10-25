@@ -4558,6 +4558,65 @@ window.visualViewport?.addEventListener('scroll', repositionKnowledgePointPicker
         }
         window.renderQuestionPreviewContent = renderQuestionPreviewContent;
 
+        // Chat Markdown preserves math and literal spans before Marked sees
+        // underscores, backslashes or table pipes. Existing question previews
+        // keep their original parsing contract.
+        function renderMarkdownPreviewContent(container, text) {
+            if (!container) return;
+            const original = String(text || '');
+            if (!window.marked || !window.MathBankSafe?.sanitizeMarkdownHtml) {
+                container.textContent = original;
+                return;
+            }
+            const maths = [];
+            const prefix = previewGuardPrefix(original, 'Chat');
+            const guard = value => {
+                // An environment may contain an already protected formula.
+                // Expand it in the saved source before rendering that shell.
+                maths.slice().reverse().forEach(entry => {
+                    value = value.split(entry.marker).join(entry.value);
+                });
+                const marker = prefix + maths.length + '\uE003';
+                maths.push({marker, value});
+                return marker;
+            };
+            // These scanners already skip code, URLs and image paths. Marked
+            // handles those literal spans itself, including unfinished fences.
+            let source = replaceDelimitedMathForPreview(original, guard);
+            // choices is a text/layout environment, so the math-only scanner
+            // omits it. Protect full TeX blocks before Marked can consume
+            // their backslashes or split their items into separate paragraphs.
+            source = replaceLatexEnvironmentsForPreview(source, guard, true);
+            const renderer = new window.marked.Renderer();
+            renderer.html = value => window.MathBankSafe.escapeText(value);
+            renderer.image = (href, title, alt) => {
+                const path = window.MathBankSafe.safeImageUrl(href);
+                return path ? '<img src="' + window.MathBankSafe.escapeAttribute(path)
+                    + '" alt="' + window.MathBankSafe.escapeAttribute(alt || '') + '">'
+                    : window.MathBankSafe.escapeText(alt || '');
+            };
+            let html = window.marked.parse(source, {
+                renderer, gfm: true, breaks: true, headerIds: false, mangle: false
+            });
+            maths.slice().reverse().forEach(({marker, value}) => {
+                html = html.split(marker).join(parseMarkdownWithMath(value));
+            });
+            container.innerHTML = window.MathBankSafe.sanitizeMarkdownHtml(html);
+            try {
+                renderMathInElement(container, {
+                    delimiters: [
+                        {left: '$$', right: '$$', display: true},
+                        {left: '$', right: '$', display: false},
+                        {left: '\\(', right: '\\)', display: false},
+                        {left: '\\[', right: '\\]', display: true}
+                    ],
+                    throwOnError: false
+                });
+            } catch (_) { /* Incomplete streamed math stays visible as text. */ }
+            adaptChoicesGridLayout(container);
+        }
+        window.renderMarkdownPreviewContent = renderMarkdownPreviewContent;
+
         // Format raw OCR questions by detecting choice options and introducing nice line breaks
         function formatQuestionContent(text) {
             if (!text) return "";
