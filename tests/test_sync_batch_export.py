@@ -82,7 +82,12 @@ def test_batch_exports_exact_legacy_json_and_markdown_without_full_evidence_view
     with Session(engine) as db:
         questions = db.query(Question).order_by(Question.id).all()
         payloads, mappings = sync_helper.serialize_exchange_questions(db, questions, "A")
-        expected_json = json.dumps(payloads, ensure_ascii=False, indent=2).encode("utf-8")
+        # Match the legacy text writer's platform newline convention as well as
+        # its JSON bytes; Windows text output uses CRLF.
+        expected_json_path = directory / "legacy.json"
+        with open(expected_json_path, "w", encoding="utf-8") as handle:
+            json.dump(payloads, handle, ensure_ascii=False, indent=2)
+        expected_json = expected_json_path.read_bytes()
         expected_markdown = directory / "legacy.md"
         sync_helper.generate_markdown_library(
             questions, expected_markdown, curriculum_mappings=mappings, active_version_code="A",
@@ -116,7 +121,10 @@ def test_batch_exports_exact_legacy_json_and_markdown_without_full_evidence_view
     assert report["question_count"] == 257
     assert [len(batch) for batch in batches] == [128, 128, 1]
     assert max(identities) <= 129
-    assert (directory / "questions.json").read_bytes() == expected_json
+    # Avoid pytest building a multi-megabyte byte diff if this strict comparison
+    # fails; repetitive evidence strings make that diagnostic very expensive.
+    if (directory / "questions.json").read_bytes() != expected_json:
+        pytest.fail("Batch JSON export differs from the legacy JSON file.", pytrace=False)
     assert (directory / "questions.md").read_bytes() == expected_markdown.read_bytes()
     first = json.loads(expected_json)[0]
     assert first["question_references"][0]["target_question_id"] == 257
