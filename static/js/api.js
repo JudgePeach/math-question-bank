@@ -3195,7 +3195,7 @@
 
         // Global Theme Color and Dark Mode Management
         window.changeTheme = function(themeName, save = true) {
-            const themes = ['theme-obsidian', 'theme-violet', 'theme-emerald', 'theme-ocean', 'theme-amber', 'theme-crimson'];
+            const themes = ['theme-graphite', 'theme-obsidian', 'theme-violet', 'theme-emerald', 'theme-ocean', 'theme-amber', 'theme-crimson'];
             
             // Remove all themes from document root and body
             themes.forEach(t => {
@@ -3213,6 +3213,7 @@
             const nameSpan = document.getElementById('currentThemeName');
             if (dot && nameSpan) {
                 const colorMap = {
+                    'graphite': '#526981',
                     'obsidian': '#0f172a',
                     'violet': '#8b5cf6',
                     'ocean': '#0ea5e9',
@@ -3225,7 +3226,7 @@
             }
             
             // Update check marks
-            const themesOnly = ['obsidian', 'violet', 'ocean', 'emerald', 'amber', 'crimson'];
+            const themesOnly = ['graphite', 'obsidian', 'violet', 'ocean', 'emerald', 'amber', 'crimson'];
             themesOnly.forEach(t => {
                 const check = document.getElementById(`check-${t}`);
                 if (check) {
@@ -3404,6 +3405,7 @@
 
         function getThemeChineseName(themeName) {
             const names = {
+                'graphite': '石墨蓝',
                 'obsidian': '曜石黑',
                 'violet': '罗兰紫',
                 'emerald': '翡翠绿',
@@ -3425,7 +3427,7 @@
         }
 
         function initTheme() {
-            const savedTheme = localStorage.getItem('theme-color') || 'violet';
+            const savedTheme = localStorage.getItem('theme-color') || 'graphite';
             const savedDarkMode = localStorage.getItem('dark-mode') === 'true';
             
             // Apply saved theme color without triggering toast
