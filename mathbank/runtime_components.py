@@ -22,6 +22,9 @@ from pathlib import Path, PurePosixPath
 from typing import Any, Callable
 
 from mathbank.paths import SYSTEM_GENERATED_DIR
+from mathbank.processing_timeouts import (
+    RUNTIME_DOWNLOAD_TIMEOUT_SECONDS, RUNTIME_PROBE_TIMEOUT_SECONDS, WORD_CONVERSION_TIMEOUT_SECONDS,
+)
 
 
 PANDOC_VERSION = "3.10.2"
@@ -159,7 +162,7 @@ def _probe_pandoc(path: Path, *, strict: bool = False) -> str | None:
             [os.fspath(path), "--version"],
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
-            timeout=8,
+            timeout=RUNTIME_PROBE_TIMEOUT_SECONDS,
             check=False,
         )
     except (OSError, subprocess.TimeoutExpired) as exc:
@@ -270,7 +273,7 @@ def _download(
             headers["Range"] = f"bytes={received}-"
         request = urllib.request.Request(url, headers=headers)
         try:
-            with urllib.request.urlopen(request, timeout=25) as response:
+            with urllib.request.urlopen(request, timeout=RUNTIME_DOWNLOAD_TIMEOUT_SECONDS) as response:
                 status = int(getattr(response, "status", response.getcode()))
                 if received and status != 206:
                     # This server ignored Range. Restart this connection safely
@@ -365,7 +368,7 @@ def _smoke_pandoc(
                 ],
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
-                timeout=30,
+                timeout=WORD_CONVERSION_TIMEOUT_SECONDS,
                 check=False,
             )
         except (OSError, subprocess.TimeoutExpired) as exc:

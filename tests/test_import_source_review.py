@@ -8,6 +8,8 @@ import subprocess
 
 import pytest
 
+from frontend_timeout_helpers import FRONTEND_TIMEOUTS
+
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -23,6 +25,7 @@ def review_script():
         return source[begin:source.index(end, begin)]
 
     shipped = "\n".join([
+        FRONTEND_TIMEOUTS,
         api_source[api_source.index("const KnowledgePointState ="):api_source.index("// Global variables")],
         editor_source[editor_source.index("function knowledgePointNode"):editor_source.index("function currentKnowledgePointLocation")],
         api_source[api_source.index("function safeImageUrl(value)"):api_source.index("function sanitizeRichHtml(value)")],

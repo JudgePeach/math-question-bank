@@ -388,7 +388,7 @@ class LibraryTransferTasks:
                 # Only the trusted runner supplies this small pre-commit
                 # recovery hint; no imported records or input paths are kept.
                 record["result"] = {key: value for key, value in result.items()
-                                    if key in {"backup_path", "active_version_code"}}
+                                    if key in {"backup_path", "active_version_code", "backup_warnings"}}
             if stage == "committing" and record["operation"] == "import":
                 record["status"] = "committing"
             if changed or result is not None or now - self._last_saved.get(task_id, 0) >= 0.5:

@@ -30,8 +30,10 @@ def test_installed_catalog_includes_custom_identity_and_updated_name(db_session)
     db_session.flush()
     catalog = load_ai_knowledge_catalog(db_session)
     assert {"code": row.code, "name": row.name, "original_name": "来源原名", "aliases": ["旧名称"]} in catalog
-    prompt = build_ai_knowledge_prompt(catalog)
-    assert row.code in prompt and row.name in prompt and "来源原名" in prompt
+    prompt = build_ai_knowledge_prompt(catalog, profile="target_first")
+    assert row.code in prompt and row.name in prompt
+    # Search aliases remain in the catalogue but cannot broaden the AI task name.
+    assert "来源原名" not in prompt and "旧名称" not in prompt
     assert "不能因解析偶然用导数" in prompt
 
 

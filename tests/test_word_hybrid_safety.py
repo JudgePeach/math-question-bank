@@ -134,7 +134,7 @@ def test_one_post_reorders_all_groups_and_preserves_safe_source_original_answer_
 
 
 @pytest.mark.parametrize('mutation', ['unknown_metadata', 'duplicate_metadata', 'unknown_group', 'duplicate_group', 'outer_field'])
-def test_global_contract_failure_has_one_whole_fallback_and_no_scoped_repeats(tmp_path, mutation):
+def test_global_source_identity_failure_has_no_paid_full_or_scoped_repeat(tmp_path, mutation):
     plan = native_plan(tmp_path)
     calls, fallbacks = [], []
     original = [{'content': 'Old-path whole result', **FIELDS, 'answer_markdown': ''}]
@@ -147,13 +147,14 @@ def test_global_contract_failure_has_one_whole_fallback_and_no_scoped_repeats(tm
         else: parsed['page_complete'] = True
         return Response(parsed)
     def fallback(): fallbacks.append(True); return original
-    result, diagnostics = call(plan, post, fallback=fallback)
-    assert len(calls) == 1 and len(fallbacks) == 1
-    assert diagnostics['word_hybrid']['calls'] == 2
-    assert result.questions == original and not result.preserved_indices and not result.partial
+    from mathbank.source_metadata import SourceMetadataNoFallbackError
+    with pytest.raises(SourceMetadataNoFallbackError):
+        call(plan, post, fallback=fallback)
+    assert len(calls) == 1 and fallbacks == []
 
 
-@pytest.mark.parametrize('mutation', ['missing_metadata', 'changed_content', 'bad_category', 'wrong_type', 'missing_split'])
+@pytest.mark.parametrize('mutation', ['missing_metadata', 'changed_content', 'bad_category', 'wrong_type',
+    'bad_difficulty', 'harmless_extra', 'missing_split'])
 def test_only_failed_group_is_sent_once_more_without_repeating_accepted_ids(tmp_path, mutation):
     plan = native_plan(tmp_path, two_bad=True)
     calls = []
@@ -165,15 +166,31 @@ def test_only_failed_group_is_sent_once_more_without_repeating_accepted_ids(tmp_
             elif mutation == 'changed_content': parsed['metadata']['items'][0]['content'] = 'Rewrite forbidden'
             elif mutation == 'bad_category': parsed['metadata']['items'][0]['category_chapter'] = 'Unknown chapter'
             elif mutation == 'wrong_type': parsed['metadata']['items'][0]['question_type'] = 'single_choice'
+            elif mutation == 'bad_difficulty': parsed['metadata']['items'][0]['difficulty'] = {'bad': 'type'}
+            elif mutation == 'harmless_extra': parsed['metadata']['items'][0]['notes'] = 'ignored diagnostic prose'
             else: parsed['splits'].pop(0)
         return Response(parsed)
+    if mutation in {'missing_metadata', 'changed_content'}:
+        from mathbank.source_metadata import SourceMetadataNoFallbackError
+        with pytest.raises(SourceMetadataNoFallbackError):
+            call(plan, post)
+        assert len(calls) == 1
+        return
     result, diagnostics = call(plan, post)
-    if mutation == 'bad_category':
+    if mutation in {'bad_category', 'wrong_type', 'bad_difficulty', 'harmless_extra'}:
         # Classification uncertainty preserves the native question and is
         # reviewed separately; it must not repeat a paid text request.
         assert len(calls) == 1 and diagnostics['word_hybrid']['calls'] == 1
         assert not result.partial and len(result.questions) == 5
-        assert any(q.get('classification_review', {}).get('required') for q in result.questions)
+        assert any(q.get('classification_review') for q in result.questions)
+        if mutation in {'bad_category', 'bad_difficulty'}:
+            assert any(q.get('classification_review', {}).get('required') for q in result.questions)
+        elif mutation == 'wrong_type':
+            reviews = [q['classification_review'] for q in result.questions if
+                'source_question_type_preserved' in q.get('classification_review', {}).get('reason_codes', [])]
+            assert reviews and all(review['required'] is False for review in reviews)
+        for index in result.preserved_indices:
+            assert result.questions[index]['content'] == plan['_inspection']['questions'][index]['content']
         return
     assert len(calls) == 2 and diagnostics['word_hybrid']['calls'] == 2 and not result.partial
     first_meta = {q['id'] for q in calls[0]['metadata_items']}
@@ -244,14 +261,10 @@ def test_risky_source_identity_and_answer_binding_cannot_be_certified_by_self_re
         elif mutation == 'swapped_content': rows[0]['content'], rows[1]['content'] = rows[1]['content'], rows[0]['content']
         else: rows[0]['answer_markdown'], rows[1]['answer_markdown'] = rows[1]['answer_markdown'], rows[0]['answer_markdown']
         return Response(parsed)
-    result, diagnostics = call(plan, post, fallback=lambda: fallbacks.append(True) or [{'content': 'Old fallback', **FIELDS}])
-    if mutation in {'unknown', 'duplicate'}:
-        assert len(calls) == 1 and len(fallbacks) == 1
-        assert diagnostics['word_hybrid']['status'] == 'full_source_fallback'
-    else:
-        assert len(calls) == 2 and result.partial and not fallbacks
-        assert len(result.questions) == 1
-        assert result.preserved_indices == frozenset({0})
+    from mathbank.source_metadata import SourceMetadataNoFallbackError
+    with pytest.raises(SourceMetadataNoFallbackError):
+        call(plan, post, fallback=lambda: fallbacks.append(True) or [{'content': 'Old fallback', **FIELDS}])
+    assert len(calls) == 1 and fallbacks == []
 
 
 def test_shared_risky_question_replies_can_reorder_only_with_matching_original_ids(tmp_path):
@@ -337,13 +350,13 @@ def test_safe_complete_body_original_answer_and_formula_occurrences_are_all_in_m
     assert result.questions[0]['referenced_images']
 
 
-def test_no_adoptable_groups_uses_one_original_fallback_instead_of_repeating_full_mixed_payload(tmp_path):
+def test_uncovered_metadata_ids_stop_without_guessing_or_repeating_full_mixed_payload(tmp_path):
     plan = native_plan(tmp_path)
     posts, fallbacks = [], []
     def post(_provider, payload, **options):
         posts.append(deepcopy(payload)); return Response({'metadata': {'items': []}, 'splits': []})
     original = [{'content': 'Original fallback result', **FIELDS}]
-    result, diagnostics = call(plan, post, fallback=lambda: fallbacks.append(True) or original)
-    assert len(posts) == 1 and len(fallbacks) == 1
-    assert diagnostics['word_hybrid']['calls'] == 2
-    assert result.questions == original and not result.preserved_indices and not result.partial
+    from mathbank.source_metadata import SourceMetadataNoFallbackError
+    with pytest.raises(SourceMetadataNoFallbackError):
+        call(plan, post, fallback=lambda: fallbacks.append(True) or original)
+    assert len(posts) == 1 and fallbacks == []

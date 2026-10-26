@@ -531,6 +531,7 @@ sys.modules["mathbank.paths"] = paths
 
 diagnostics = types.ModuleType("mathbank.latex_diagnostics")
 diagnostics.build_local_latex_diagnostic = lambda *_args, **_kwargs: {}
+diagnostics.extract_missing_glyphs = lambda *_args, **_kwargs: []
 sys.modules["mathbank.latex_diagnostics"] = diagnostics
 
 security = types.ModuleType("mathbank.asset_security")

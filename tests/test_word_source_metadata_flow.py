@@ -76,7 +76,7 @@ def test_verified_source_has_one_metadata_post_and_no_source_echo(monkeypatch, t
     assert task["data"][0]["answer_markdown"] == ""
 
 
-def test_unknown_metadata_id_falls_back_once_without_transport_retries(monkeypatch, tmp_path):
+def test_unknown_metadata_id_stops_without_guessing_or_full_source_rewrite(monkeypatch, tmp_path):
     fields = setup_word(monkeypatch, tmp_path)
     calls = []
 
@@ -90,10 +90,42 @@ def test_unknown_metadata_id_falls_back_once_without_transport_retries(monkeypat
 
     monkeypatch.setattr(main, "post_chat_completion", post)
     task = run_task()
-    assert task["status"] == "completed"
-    assert len(calls) == 2
-    assert task["diagnostics"]["word_source_metadata"]["status"] == "fallback"
-    assert "$x+1$" in task["data"][0]["content"]
+    assert task["status"] == "error"
+    assert len(calls) == 1
+    assert task["diagnostics"]["word_source_metadata"]["status"] == "metadata_rejected"
+    assert task["diagnostics"]["word_source_metadata"]["no_fallback"] is True
+
+
+@pytest.mark.parametrize("mistake", ["type", "difficulty", "extra", "explicit_type"])
+def test_optional_metadata_error_keeps_word_source_and_only_one_post(monkeypatch, tmp_path, mistake):
+    fields = setup_word(monkeypatch, tmp_path)
+    if mistake == "explicit_type":
+        native = docx_helper._new_diagnostics()
+        monkeypatch.setattr(main, "extract_docx_markdown", lambda *_a, **_k: {
+            "success": True, "markdown": "三、解答题\n" + SOURCE, "image_paths": [],
+            "image_count": 0, "diagnostics": deepcopy(native)})
+    calls = []
+    def post(_provider, payload, **kwargs):
+        calls.append(deepcopy(payload))
+        items = json.loads(payload["messages"][1]["content"])["items"]
+        rows = [{"id": item["id"], **fields} for item in items]
+        if mistake == "type": rows[0]["question_type"] = ["bad-type"]
+        elif mistake == "difficulty": rows[0]["difficulty"] = "not-supported"
+        elif mistake == "explicit_type": rows[0]["question_type"] = "single_choice"
+        else: rows[0]["reason"] = "untrusted optional diagnostic"
+        return Response({"items": rows})
+    monkeypatch.setattr(main, "post_chat_completion", post)
+    task = run_task()
+    assert task["status"] == "completed", task
+    assert len(calls) == 1 and task["diagnostics"]["word_source_metadata"]["status"] == "used"
+    question = task["data"][0]
+    assert "$x=1$" in question["content"] and "$x+1$" in question["content"]
+    assert question["answer_markdown"] == "" and question["classification_review"]
+    if mistake == "type": assert question["question_type"] == ""
+    elif mistake == "difficulty": assert question["difficulty"] is None
+    elif mistake == "explicit_type":
+        assert question["question_type"] == "detailed_answer"
+        assert question["classification_review"]["required"] is False
 
 
 def test_plan_preparation_failure_preserves_the_original_split_path(monkeypatch, tmp_path):

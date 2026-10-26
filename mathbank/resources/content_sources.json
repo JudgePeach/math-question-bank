@@ -6,7 +6,10 @@
     {
       "id": "gaokao-math-problems-compilation",
       "name": "高考数学题库",
-      "authors": ["DxAThing", "贡献者"],
+      "authors": [
+        "DxAThing",
+        "贡献者"
+      ],
       "url": "https://github.com/DxAThing/Gaokao-Math-Problems-Compilation",
       "revision": "f1ae169b58a75b3db6e35c670b3f0d5c78718188",
       "scope": "从该仓库导入的2000—2026年高考数学资料。源仓许可只覆盖其作者有权许可的原创整理、编排、解析、索引、排版、重绘插图等贡献；高考原题及其他第三方内容的权利和来源声明继续保留。",
@@ -25,6 +28,57 @@
         }
       ],
       "changes": "已将源 TeX 宏、填空及分式格式和图片锚点适配为本地题库格式；部分题目依据保留的原卷证据校订。原源码、图像、来源核对与修改记录及哈希保存在导入与维护审计包。知识点和难度为后续题库标注，不属于原仓库提供的标注。"
+    },
+    {
+      "id": "switwu-chsmc",
+      "name": "全国高中数学联赛一试题集锦",
+      "authors": [
+        "SwitWu",
+        "贡献者"
+      ],
+      "url": "https://github.com/SwitWu/chsmc",
+      "revision": "f1f5b3f8e586f1aa96685266980214386be2ec97",
+      "scope": "从该仓库导入的2010—2025年全国高中数学联赛一试A、B卷资料。仓库中的缺题、缺图及原题疑点按实际来源保留；经核实补充的原卷图形另在本机导入审计中记录出处。题目、解析及第三方图形的原权利不因本地导入而改变。",
+      "license": {
+        "name": "冻结源仓未声明独立许可；保留作者及原题权利",
+        "url": "https://github.com/SwitWu/chsmc"
+      },
+      "upstream": [],
+      "changes": "按源码确定性拆题，适配源模板明确定义的虚数单位和填空宏；原源码与原答案保存在本机审计，部分题干和答案按原评分标准图片及独立逻辑核验纠错，保留原题号空缺及核实后的编号映射。优先检索并对照原参考评分稿；仅有第三方镜像或评分版式时，官方作者身份另记为未独立确证。区分原页图片、模型视觉转录、参考改写与独立补充；独立补充另行复查，不能把模型文字整理冒充原文直接提取。知识点由AI生成并经本次批量授权采用，新增可复用竞赛知识点独立保存；难度按用户要求统一标为强基题。原稿、逐字段转换记录、模型响应、复核记录及来源哈希保存在本机导入审计包，不把AI标注视为原仓提供或教师逐题复核。"
+    },
+    {
+      "id": "chsmc-2026-a-public-reference",
+      "name": "2026年全国高中数学联赛一试A卷试题与参考评分稿",
+      "authors": [
+        "rain（LaTeX工作室公开发布者）",
+        "试题及参考评分稿原作者身份未独立确证"
+      ],
+      "url": "https://www.latexstudio.net/index.php/index/details/index/mid/5107.html",
+      "revision": "2026-10-23冻结；参考PDF SHA256 863546526b06e460bc661b1eaacd0097b574bcc66bd8d89cfd3ba0670fad2e59",
+      "scope": "本次从公开原页整理的2026年全国高中数学联赛一试A卷11题及所附参考解答；不含加试，不因同页标题推定B卷已取得。公开镜像和评分格式不单独构成主办方作者身份认证，题目、参考稿及图像的原有权利继续保留。",
+      "license": {
+        "name": "未见所收录试题及参考稿的独立开放许可；保留原作者及第三方权利",
+        "url": "https://www.latexstudio.net/index.php/index/details/index/mid/5107.html"
+      },
+      "upstream": [
+        {
+          "name": "点学网公开参考PDF",
+          "url": "https://dimhok.com/upload/wenku/6aaa552dcf181.pdf",
+          "license": {
+            "name": "未见独立开放许可；保留原作者权利",
+            "url": "https://www.dimhok.com/home/wenku/file/id/90e146df5137f39a6fbc78aa3e9be238f"
+          }
+        },
+        {
+          "name": "夜雨聆风同题参考图像镜像",
+          "url": "https://www.yeyulingfeng.com/a/1096180.html",
+          "license": {
+            "name": "公开转载页；不据此推定原稿许可",
+            "url": "https://www.yeyulingfeng.com/a/1096180.html"
+          }
+        }
+      ],
+      "changes": "原试题逐题视觉比对，参考页由gpt-6.1-sol辅助转写，题文另经独立盲解及Astra high新上下文核验。主解限定高中范围；补足第1、4、7、8、10、11题中的常规推导或定义说明。第10题未采用原参考附注中方向错误的比值不等号，保留原稿及独立核算证据。所附示意图为参考PDF原像素裁片，已再次视觉核验。知识点及强基题难度是本地后加标注，批量采用不表示原作者提供或教师逐题复核；全部原页、模型响应、修改和哈希留在本机审计目录。"
     }
   ]
 }

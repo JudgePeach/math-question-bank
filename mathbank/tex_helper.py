@@ -7,7 +7,9 @@ import re
 from typing import Optional
 
 
-MAX_TEX_BYTES = 5 * 1024 * 1024
+from .processing_limits import LIMITS
+
+MAX_TEX_BYTES = LIMITS.text_source_bytes
 _VERBATIM_ENVS = {"verbatim", "Verbatim", "lstlisting", "minted"}
 _QUESTION_ENVS = {"problem", "exercise", "question", "example", "ti"}
 _TABLE_ENVS = ("tabular", "tabularx", "longtable", "array")
@@ -79,7 +81,7 @@ def decode_tex_bytes(file_bytes: bytes) -> tuple[str, dict]:
     if not file_bytes:
         raise ValueError("TeX 文件为空。")
     if len(file_bytes) > MAX_TEX_BYTES:
-        raise ValueError("TeX 文件过大，请上传 5MB 以内的单文件试卷源码。")
+        raise ValueError(f"TeX 文件过大，请上传 {MAX_TEX_BYTES // (1024 * 1024)}MB 以内的单文件试卷源码。")
 
     diagnostics = {"encoding": "", "encoding_fallback": False}
     attempts: list[tuple[str, str]] = []
@@ -368,7 +370,7 @@ def prepare_tex_source(source: str) -> dict:
     if not isinstance(source, str) or not source.strip():
         raise ValueError("TeX 源码为空。")
     if len(source.encode("utf-8", errors="ignore")) > MAX_TEX_BYTES:
-        raise ValueError("TeX 源码过大，请控制在 5MB 以内。")
+        raise ValueError(f"TeX 源码过大，请控制在 {MAX_TEX_BYTES // (1024 * 1024)}MB 以内。")
 
     normalized = source.lstrip("\ufeff").replace("\x00", "").replace("\r\n", "\n").replace("\r", "\n")
     title = extract_tex_title(normalized)

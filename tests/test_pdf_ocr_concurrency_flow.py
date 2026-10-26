@@ -45,6 +45,7 @@ def _base():
 
 
 SCENARIO = r'''
+from mathbank.ai_timeouts import DOCUMENT_AI_TIMEOUT_SECONDS
 import base64
 from mathbank import pdf_page_vision, pdf_native_regions
 from mathbank.ai_providers import resolve_ocr_provider
@@ -110,7 +111,7 @@ def offline_http(config,payload,**kwargs):
         metadata_calls.append(deepcopy(payload))
         return post(config,payload,**kwargs)
     assert payload["enable_thinking"] is False
-    assert kwargs["timeout"]==600 and kwargs["retry_connection"] is False
+    assert kwargs["timeout"]==DOCUMENT_AI_TIMEOUT_SECONDS and kwargs["retry_connection"] is False
     images=[item["image_url"]["url"] for item in content if item.get("type")=="image_url"]
     png=base64.b64decode(images[0].split(",",1)[1],validate=True)
     with lock:

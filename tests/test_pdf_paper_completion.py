@@ -1,5 +1,7 @@
 """PDF text splitting retries have a separate budget from page recognition."""
 
+from mathbank.ai_timeouts import DOCUMENT_AI_TIMEOUT_SECONDS
+
 from copy import deepcopy
 import json
 import threading
@@ -44,13 +46,13 @@ def test_timeout_then_success_reuses_identical_input_and_preserves_page_diagnost
     result = split(post, diagnostics=diagnostics, report_attempt=events.append)
     assert result[0]["content"] == "完整题干 $x=1$。"
     assert len(calls) == 2 and calls[0][0] is calls[1][0] and calls[0][1] == calls[1][1]
-    assert all(kw == {"timeout": 600, "check_status": False, "retry_connection": False,
+    assert all(kw == {"timeout": DOCUMENT_AI_TIMEOUT_SECONDS, "check_status": False, "retry_connection": False,
                       "allow_redirects": False} for _provider, _payload, kw in calls)
     assert diagnostics["pdf_vision"] == {"calls": 7, "retries": 0}
     assert diagnostics["pdf_joint_usage"] == {"total_tokens": 300}
     report = diagnostics["pdf_splitting"]
     assert report["calls"] == 2 and report["retries"] == 1 and report["usage_complete"] is False
-    assert report["timeout_seconds"] == 600
+    assert report["timeout_seconds"] == DOCUMENT_AI_TIMEOUT_SECONDS
     assert report["usage"] == diagnostics["usage"] == {"prompt_tokens": 100, "completion_tokens": 50, "total_tokens": 155}
     assert "private" not in str(report) and all(event["stage"] == "paper_split" for event in events)
     assert diagnostics["finish_reason"] == "stop"

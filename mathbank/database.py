@@ -23,6 +23,7 @@ from sqlalchemy.orm import declarative_base, relationship, sessionmaker
 from mathbank.paths import DATABASE_FILE, sqlite_url
 from mathbank.question_types import normalize_section_order
 from mathbank.question_assets import without_review_only_assets
+from mathbank.question_search import register_search_functions
 from mathbank.sub_knowledge import normalize_sub_knowledge, resolve_active_version
 
 
@@ -54,6 +55,7 @@ def _configure_sqlite_connection(dbapi_connection, _connection_record):
 
     if not isinstance(dbapi_connection, sqlite3.Connection):
         return
+    register_search_functions(dbapi_connection)
     cursor = dbapi_connection.cursor()
     try:
         cursor.execute("PRAGMA foreign_keys=ON")
@@ -132,9 +134,15 @@ class DocumentImportReceipt(Base):
 
 class Question(Base):
     __tablename__ = "questions"
-    __table_args__ = (Index("idx_questions_created_at_id", "created_at", "id"),)
+    __table_args__ = (
+        Index("idx_questions_created_at_id", "created_at", "id"),
+        Index("idx_questions_display_order", "display_order"),
+        CheckConstraint("display_order IS NULL OR display_order > 0",
+                        name="ck_questions_display_order_positive"),
+    )
 
     id = Column(Integer, primary_key=True, index=True)
+    display_order = Column(Integer, nullable=True)
     content = Column(Text, nullable=False)  # 题干 (LaTeX + markdown)
     question_type = Column(String(50), default="single_choice", index=True)  # single_choice, multi_choice, fill_in_blank, detailed_answer
     category_compulsory = Column(String(100), default="", index=True)  # 必修/选修/选择性必修
@@ -314,6 +322,12 @@ class Question(Base):
             "usage_count": self.usage_count or 0,
             "created_at": (self.created_at.isoformat() + "Z") if self.created_at else None
         }
+
+@event.listens_for(Question, "before_insert")
+def _append_question_to_display_order(_mapper, connection, question):
+    from mathbank.question_ordering import assign_append_order
+    assign_append_order(connection, question)
+
 
 class QuestionCurriculum(Base):
     __tablename__ = "question_curriculums"

@@ -159,7 +159,7 @@ def test_source_page_layout_identity_and_assets_change_after_post_are_hard_stops
 
 
 @pytest.mark.parametrize('change',['unknown_meta','duplicate_meta','unknown_group','unknown_question','duplicate_question'])
-def test_unknown_or_duplicate_reply_identity_rejects_contract_with_one_old_source_fallback(tmp_path,change):
+def test_unknown_or_duplicate_reply_identity_stops_without_paid_fallback(tmp_path,change):
     plan,_,_=prepared(tmp_path,risk=False,shared=True);posts=[];fallbacks=[]
     def post(_provider,payload,**options):
         posts.append(True);reply=response_for(plan,payload)
@@ -170,21 +170,22 @@ def test_unknown_or_duplicate_reply_identity_rejects_contract_with_one_old_sourc
         else:reply['splits'][0]['questions'][1]['source_id']=reply['splits'][0]['questions'][0]['source_id']
         return Response(reply)
     old=[{'content':'Original source fallback',**FIELDS}]
-    result,diag=run(plan,post,fallback=lambda:fallbacks.append(True) or old)
-    assert len(posts)==1 and len(fallbacks)==1 and diag['pdf_hybrid']['calls']==2
-    assert result.questions==old and not result.preserved_indices
+    from mathbank.source_metadata import SourceMetadataNoFallbackError
+    with pytest.raises(SourceMetadataNoFallbackError):
+        run(plan,post,fallback=lambda:fallbacks.append(True) or old)
+    assert len(posts)==1 and not fallbacks
 
 
-def test_original_answer_exchange_in_noncontiguous_closed_risk_group_keeps_other_source_without_third_post(tmp_path):
+def test_original_answer_exchange_in_closed_risk_group_is_a_hard_source_boundary(tmp_path):
     plan,_,_=prepared(tmp_path,risk=False,shared=True);posts=[]
     def post(_provider,payload,**options):
         posts.append(payload);reply=response_for(plan,payload);rows=reply['splits'][0]['questions']
         rows[0]['answer_markdown'],rows[1]['answer_markdown']=rows[1]['answer_markdown'],rows[0]['answer_markdown']
         return Response(reply)
-    result,diag=run(plan,post)
-    assert len(posts)==2 and result.partial and len(result.questions)==1
-    assert '乙题' in result.questions[0]['content'] and result.preserved_indices==frozenset({0})
-    assert diag['pdf_hybrid']['status']=='partial'
+    from mathbank.source_metadata import SourceMetadataNoFallbackError
+    with pytest.raises(SourceMetadataNoFallbackError):
+        run(plan,post)
+    assert len(posts)==1
 
 
 def test_noncontiguous_source_reply_reordering_is_local_and_never_promotes_snapshot_to_native(tmp_path):
@@ -261,10 +262,13 @@ def test_pdf_task_completion_executed_tail_preserves_partial_flag_and_notice(par
     tree=ast.parse((Path(__file__).resolve().parents[1]/'main.py').read_text())
     function=next(n for n in tree.body if isinstance(n,ast.FunctionDef) and n.name=='run_pdf_parsing_task')
     assigns={target.id:node for node in ast.walk(function) if isinstance(node,ast.Assign)
-             for target in node.targets if isinstance(target,ast.Name) and target.id in {'partial','completion_log'}}
+             for target in node.targets if isinstance(target,ast.Name) and
+             (target.id=='completion_log' or target.id=='partial' and isinstance(node.value,ast.Call))}
     completion=next(node for node in ast.walk(function) if isinstance(node,ast.Call)
         and isinstance(node.func,ast.Attribute) and node.func.attr=='complete'
-        and isinstance(node.func.value,ast.Name) and node.func.value.id=='DOCUMENT_TASKS')
+        and isinstance(node.func.value,ast.Name) and node.func.value.id=='DOCUMENT_TASKS'
+        and any(keyword.arg=='data' and isinstance(keyword.value,ast.Name) and keyword.value.id=='final_questions'
+                for keyword in node.keywords))
     actual_ast=ast.Module(body=[assigns['partial'],assigns['completion_log'],ast.Expr(value=completion)],type_ignores=[])
     ast.fix_missing_locations(actual_ast)
     captured=[]

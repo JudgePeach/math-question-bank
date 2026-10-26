@@ -44,10 +44,11 @@ def find_association_candidates(
 ):
     """Find at most 20 labels, never loading question/point ORM graphs.
 
-    Explicit sequence lookup uses ascending stable IDs over the entire library
+    Explicit sequence lookup uses the library display order over the entire library
     before applying exclusion or keyword filters. It therefore respects holes
     left by deletes and never mistakes a physical ID for its displayed number.
     """
+    from mathbank.question_ordering import sequence_order, library_list_order
     page_size = max(1, min(int(page_size), 20))
     query = db.query(
         Question.id,
@@ -56,7 +57,7 @@ def find_association_candidates(
     )
     if seq_num is not None:
         target = (
-            db.query(Question.id).order_by(Question.id.asc())
+            db.query(Question.id).order_by(*sequence_order())
             .offset(int(seq_num) - 1).limit(1).first()
         )
         query = query.filter(Question.id == (target[0] if target else -1))
@@ -74,7 +75,7 @@ def find_association_candidates(
     total_pages = max(1, (total + page_size - 1) // page_size)
     page = max(1, min(int(page), total_pages))
     rows = (
-        query.order_by(Question.created_at.desc(), Question.id.desc())
+        query.order_by(*library_list_order(db))
         .offset((page - 1) * page_size).limit(page_size).all()
     )
     items = []

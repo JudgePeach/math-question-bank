@@ -7,10 +7,13 @@ from pathlib import Path
 import threading
 import time
 import uuid
+import zipfile
 
 import pytest
 
 from test_library_transfer_api import transfer_api, _export, _seed, _question_count  # noqa: F401
+from mathbank.backup import verify_full_backup
+from mathbank.database import Question
 
 
 @pytest.fixture
@@ -131,6 +134,48 @@ def test_bad_archive_fails_before_backup_and_remains_queryable(tasks_api):
     assert not list(api.backups.rglob("*.zip"))
     assert not list(api.uploads.glob("shared_*"))
     assert _start_import(api, b"invalid archive", task_id).status_code == 200
+
+
+@pytest.mark.parametrize("background", [True, False])
+def test_missing_old_images_are_recorded_in_backup_and_do_not_block_append(tasks_api, background):
+    api = tasks_api
+    original_id = _seed(api)
+    archive = _export(api)
+    with api.sessions() as session:
+        original = session.get(Question, original_id)
+        before = {column.name: getattr(original, column.name) for column in Question.__table__.columns}
+    (api.uploads / "figure.png").unlink()
+
+    if background:
+        response = _start_import(api, archive)
+        assert response.status_code == 202, response.text
+        finished = _wait(api, response.json()["task_id"])
+        assert finished["status"] == "completed", finished
+        result = finished["result"]
+        assert api.client.get(f"/api/library-transfer/tasks/{finished['task_id']}").json()["result"] == result
+    else:
+        response = api.client.post(
+            "/api/library-transfer/import", headers=api.headers,
+            files={"file": ("MathBank.zip", archive, "application/zip")},
+        )
+        assert response.status_code == 200, response.text
+        result = response.json()
+    assert result["imported_count"] == result["image_count"] == 1
+    assert _question_count(api) == 2
+    warnings = result["backup_warnings"]
+    assert len(warnings) == 1 and warnings[0]["code"] == "missing_existing_images"
+    assert warnings[0]["missing_count"] == 1 and "缺失" in warnings[0]["message"]
+    assert str(api.uploads) not in json.dumps(warnings)
+    manifest = verify_full_backup(Path(result["backup_path"]))
+    assert manifest["database"]["row_counts"]["questions"] == 1
+    with zipfile.ZipFile(result["backup_path"]) as backup:
+        assert "uploads/figure.png" not in backup.namelist()
+    with api.sessions() as session:
+        original = session.get(Question, original_id)
+        assert {column.name: getattr(original, column.name) for column in Question.__table__.columns} == before
+        imported = session.query(Question).filter(Question.id != original_id).one()
+        assert imported.image_paths and (api.uploads / Path(imported.image_paths[0]).name).is_file()
+    assert not (api.uploads / "figure.png").exists(), "append must not silently repair old references"
 
 
 def test_import_authentication_precedes_private_multipart_parsing(tasks_api, monkeypatch):

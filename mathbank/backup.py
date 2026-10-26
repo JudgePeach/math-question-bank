@@ -42,7 +42,8 @@ from mathbank.paths import (
 
 
 BACKUP_FORMAT_VERSION = 2
-SUPPORTED_BACKUP_FORMAT_VERSIONS = frozenset({1, BACKUP_FORMAT_VERSION})
+MISSING_UPLOAD_BACKUP_FORMAT_VERSION = 3
+SUPPORTED_BACKUP_FORMAT_VERSIONS = frozenset({1, BACKUP_FORMAT_VERSION, MISSING_UPLOAD_BACKUP_FORMAT_VERSION})
 DEFAULT_RETENTION = 10
 MAX_BACKUP_UNCOMPRESSED_BYTES = 10 * 1024 * 1024 * 1024
 MAX_BACKUP_MEMBERS = 100_000
@@ -381,12 +382,13 @@ def _copy_all_files(source_dir: Path, target_dir: Path) -> int:
 
 
 def _copy_referenced_uploads(
-    source_dir: Path, target_dir: Path, references: set[str]
-) -> int:
+    source_dir: Path, target_dir: Path, references: set[str], *, allow_missing_uploads: bool = False,
+) -> tuple[int, list[str]]:
     """Copy only the safe production raster files named by the database."""
 
     source_root = source_dir.resolve()
     target_dir.mkdir(parents=True, exist_ok=True)
+    missing = []
     for member_name in sorted(references):
         relative = PurePosixPath(member_name).relative_to("uploads")
         source = source_root.joinpath(*relative.parts)
@@ -399,12 +401,36 @@ def _copy_referenced_uploads(
             source.resolve(strict=False).relative_to(source_root)
         except ValueError as exc:
             raise RuntimeError(f"插图路径越出上传目录: {source}") from exc
-        if not source.is_file():
-            raise RuntimeError(f"备份缺少数据库引用的上传图片: {member_name}")
+        try:
+            source_stat = source.stat()
+        except FileNotFoundError:
+            if allow_missing_uploads:
+                missing.append(member_name)
+                continue
+            raise RuntimeError(f"备份缺少数据库引用的上传图片: {member_name}") from None
+        if not stat.S_ISREG(source_stat.st_mode):
+            raise RuntimeError(f"备份引用的上传图片不是普通文件: {member_name}")
         target = target_dir.joinpath(*relative.parts)
         target.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(source, target)
-    return len(references)
+        try:
+            shutil.copy2(source, target)
+        except FileNotFoundError:
+            # Only an actually absent input can be recorded as missing. A
+            # deleted output directory or another copy failure still fails.
+            current = source_root
+            for part in relative.parts:
+                current = current / part
+                if current.is_symlink():
+                    raise RuntimeError(f"插图路径不能经过符号链接: {source}")
+            try:
+                source.stat()
+            except FileNotFoundError:
+                if allow_missing_uploads:
+                    target.unlink(missing_ok=True)
+                    missing.append(member_name)
+                    continue
+            raise
+    return len(references) - len(missing), missing
 
 
 def _manifest_files(payload_dir: Path) -> dict[str, dict[str, Any]]:
@@ -473,9 +499,12 @@ def create_full_backup(
     uploads_dir: Path | None = None,
     metadata_path: Path | None = None,
     retention: int | None = DEFAULT_RETENTION,
+    allow_missing_uploads: bool = False,
 ) -> Path:
     """Create an atomic, verified archive without including API secrets."""
 
+    if type(allow_missing_uploads) is not bool:
+        raise TypeError("allow_missing_uploads 必须为布尔值")
     output_dir = (output_dir or FULL_BACKUP_DIR).resolve()
     database_path = (database_path or DATABASE_FILE).resolve()
     uploads_dir = (uploads_dir or UPLOADS_DIR).resolve()
@@ -500,9 +529,12 @@ def create_full_backup(
             payload_dir / "database" / DATABASE_FILE.name,
         )
         referenced_uploads = set(database_info["referenced_uploads"])
-        upload_count = _copy_referenced_uploads(
-            uploads_dir, payload_dir / "uploads", referenced_uploads
+        upload_count, missing_uploads = _copy_referenced_uploads(
+            uploads_dir, payload_dir / "uploads", referenced_uploads,
+            allow_missing_uploads=allow_missing_uploads,
         )
+        if missing_uploads:
+            database_info["missing_uploads"] = missing_uploads
         metadata_included = metadata_path.is_file()
         if metadata_included:
             metadata_target = payload_dir / "metadata" / metadata_path.name
@@ -530,6 +562,11 @@ def create_full_backup(
             "secrets_included": False,
             "files": _manifest_files(payload_dir),
         }
+        if missing_uploads:
+            # Complete archives retain v2 compatibility. Only an explicit
+            # record of pre-existing missing assets requires the v3 reader.
+            manifest["format_version"] = MISSING_UPLOAD_BACKUP_FORMAT_VERSION
+            manifest["assets_complete"] = False
         _write_zip_atomic(payload_dir, "manifest.json", manifest, output_path)
 
     try:
@@ -771,7 +808,57 @@ def _validated_manifest(
         raise RuntimeError("备份元数据声明与文件不一致")
     if metadata_names and metadata_names != ["metadata/custom_metadata.json"]:
         raise RuntimeError("备份包含非法元数据文件")
+    _validated_missing_uploads(manifest)
     return manifest, file_infos
+
+
+def _validated_missing_uploads(manifest: dict[str, Any]) -> set[str]:
+    """Validate v3's explicit missing-asset declaration without weakening v1/v2."""
+    database = manifest.get("database")
+    if not isinstance(database, dict):
+        raise RuntimeError("备份数据库清单无效")
+    missing = database.get("missing_uploads")
+    if manifest["format_version"] < MISSING_UPLOAD_BACKUP_FORMAT_VERSION:
+        if "missing_uploads" in database or "assets_complete" in manifest:
+            raise RuntimeError("旧版备份不支持缺失图片声明")
+        return set()
+    if (manifest.get("assets_complete") is not False
+            or database.get("structured_upload_references") is not True
+            or not isinstance(database.get("referenced_uploads"), list)
+            or not isinstance(missing, list) or not 0 < len(missing) < MAX_BACKUP_MEMBERS
+            or any(not isinstance(name, str) for name in missing)
+            or missing != sorted(set(missing))):
+        raise RuntimeError("备份缺失图片声明无效")
+    for name in missing:
+        if (not name.startswith("uploads/")
+                or _upload_archive_name("/static/" + name, url_prefix="/static/uploads") != name):
+            raise RuntimeError("备份缺失图片路径无效")
+    if any(name in manifest["files"] for name in missing):
+        raise RuntimeError("备份图片不能同时声明为已归档和缺失")
+    return set(missing)
+
+
+def _asset_warnings_from_manifest(manifest: dict[str, Any]) -> list[dict[str, Any]]:
+    missing = _validated_missing_uploads(manifest)
+    if not missing:
+        return []
+    count = len(missing)
+    return [{
+        "code": "missing_existing_images", "missing_count": count,
+        "message": f"原有题库有 {count} 张图片缺失，备份已记录缺失清单；题目原文与图片引用均已保留。",
+    }]
+
+
+def backup_asset_warnings(archive_path: Path) -> list[dict[str, Any]]:
+    """Read asset warnings from an already verified local backup.
+
+    This checks the manifest structure and archive inventory, not every hash or
+    the embedded database again. Untrusted archives must first be passed to
+    verify_full_backup; this helper is for summaries after successful creation.
+    """
+    with zipfile.ZipFile(archive_path, "r") as archive:
+        manifest, _ = _validated_manifest(archive)
+    return _asset_warnings_from_manifest(manifest)
 
 
 def verify_full_backup(archive_path: Path) -> dict[str, Any]:
@@ -904,8 +991,9 @@ def verify_full_backup(archive_path: Path) -> dict[str, Any]:
                     connection, include_structured=database_manifest.get("structured_upload_references") is True
                 )
                 missing_uploads = referenced_uploads - set(file_infos)
-                if missing_uploads:
-                    preview = ", ".join(sorted(missing_uploads)[:5])
+                declared_missing = _validated_missing_uploads(manifest)
+                if missing_uploads != declared_missing:
+                    preview = ", ".join(sorted(missing_uploads - declared_missing)[:5])
                     raise RuntimeError(f"备份缺少数据库引用的上传图片: {preview}")
                 expected_reference_count = database_manifest.get(
                     "referenced_upload_count", len(referenced_uploads)
@@ -931,7 +1019,7 @@ def verify_full_backup(archive_path: Path) -> dict[str, Any]:
                     archived_uploads = {
                         name for name in file_infos if name.startswith("uploads/")
                     }
-                    if archived_uploads != referenced_uploads:
+                    if archived_uploads != referenced_uploads - declared_missing:
                         raise RuntimeError("备份包含未被数据库引用的上传资源")
                 manifest["_verified_referenced_uploads"] = sorted(referenced_uploads)
     return manifest
@@ -1162,6 +1250,9 @@ def _restore_full_backup_unlocked(
                 f"(type={type(cleanup_error).__name__}): {raw_candidate}"
             )
         raise
+    for warning in _asset_warnings_from_manifest(manifest):
+        print(f"[Restore Warning] 恢复包原有 {warning['missing_count']} 张图片缺失；"
+              "将保留题目原文及图片引用，缺失图片仍需补回。")
     try:
         if database_path.exists():
             _check_database_can_be_replaced(database_path)

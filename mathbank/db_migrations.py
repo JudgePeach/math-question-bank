@@ -20,7 +20,7 @@ from mathbank.paths import SCHEMA_SNAPSHOT_DIR
 from mathbank.sub_knowledge import normalize_sub_knowledge
 
 
-LATEST_SCHEMA_VERSION = 14
+LATEST_SCHEMA_VERSION = 15
 LEGACY_REQUIRED_TABLES = {
     "questions",
     "question_curriculums",
@@ -166,6 +166,42 @@ QUESTION_FINGERPRINT_INDEXES = {
         "token_count",
     ),
 }
+
+
+def _validate_question_order_schema(connection):
+    columns = {row[1]: row for row in connection.exec_driver_sql('PRAGMA table_info("questions")')}
+    column = columns.get("display_order")
+    if column is None or str(column[2]).upper() != "INTEGER" or int(column[3]):
+        raise RuntimeError("题目独立排序字段缺失或结构不正确")
+    bad = connection.exec_driver_sql(
+        "SELECT id FROM questions WHERE display_order IS NOT NULL AND "
+        "(typeof(display_order) != 'integer' OR display_order <= 0) LIMIT 1"
+    ).first()
+    if bad:
+        raise RuntimeError("题目独立排序值必须为正整数")
+    indexes = {row[1] for row in connection.exec_driver_sql('PRAGMA index_list("questions")')}
+    if "idx_questions_display_order" not in indexes:
+        raise RuntimeError("题目独立排序索引缺失")
+    keys = [row[2] for row in connection.exec_driver_sql(
+        'PRAGMA index_info("idx_questions_display_order")')]
+    if keys != ["display_order"]:
+        raise RuntimeError("题目独立排序索引结构不正确")
+
+
+def _ensure_question_order_schema(connection):
+    columns = {row[1] for row in connection.exec_driver_sql('PRAGMA table_info("questions")')}
+    added = 0
+    if "display_order" not in columns:
+        connection.exec_driver_sql(
+            "ALTER TABLE questions ADD COLUMN display_order INTEGER "
+            "CHECK(display_order IS NULL OR display_order > 0)"
+        )
+        added = 1
+    connection.exec_driver_sql(
+        "CREATE INDEX IF NOT EXISTS idx_questions_display_order ON questions(display_order)"
+    )
+    _validate_question_order_schema(connection)
+    return {"added_question_display_order_columns": added}
 
 
 def _database_path(engine: Engine) -> Path | None:
@@ -939,6 +975,7 @@ def _rebuild_relationship_tables(engine: Engine) -> dict[str, int]:
             sub_knowledge_stats = _ensure_sub_knowledge_columns(connection)
             knowledge_point_stats = _ensure_knowledge_point_tables(connection)
             question_reference_stats = _ensure_question_reference_tables(connection)
+            question_order_stats = _ensure_question_order_schema(connection)
             added_question_fingerprints = _ensure_question_fingerprint_table(connection)
             _validate_figure_layout_schema(connection)
 
@@ -958,6 +995,7 @@ def _rebuild_relationship_tables(engine: Engine) -> dict[str, int]:
                 **sub_knowledge_stats,
                 **knowledge_point_stats,
                 **question_reference_stats,
+                **question_order_stats,
             }
         except Exception:
             if transaction_started:
@@ -984,6 +1022,7 @@ def _upgrade_derived_schema(engine: Engine) -> dict[str, int]:
             stats.update(_ensure_sub_knowledge_columns(connection))
             stats.update(_ensure_knowledge_point_tables(connection))
             stats.update(_ensure_question_reference_tables(connection))
+            stats.update(_ensure_question_order_schema(connection))
             stats["added_question_fingerprints"] = (
                 _ensure_question_fingerprint_table(connection)
             )
@@ -1059,6 +1098,7 @@ def _upgrade_v6_or_v7_fingerprint_schema(
             sub_knowledge_stats = _ensure_sub_knowledge_columns(connection)
             knowledge_point_stats = _ensure_knowledge_point_tables(connection)
             question_reference_stats = _ensure_question_reference_tables(connection)
+            question_order_stats = _ensure_question_order_schema(connection)
             _validate_figure_layout_schema(connection)
             connection.exec_driver_sql(f"PRAGMA user_version={LATEST_SCHEMA_VERSION}")
             connection.exec_driver_sql("COMMIT")
@@ -1071,6 +1111,7 @@ def _upgrade_v6_or_v7_fingerprint_schema(
                 **sub_knowledge_stats,
                 **knowledge_point_stats,
                 **question_reference_stats,
+                **question_order_stats,
             }
         except Exception:
             if transaction_started:
@@ -1102,6 +1143,7 @@ def migrate_database(
             _validate_knowledge_point_schema(connection)
             _validate_question_reference_schema(connection)
             _validate_document_import_receipts(connection)
+            _validate_question_order_schema(connection)
         return {"from_version": current, "to_version": current, "backup": None}
 
     if not table_names:

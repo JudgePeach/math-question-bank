@@ -29,13 +29,15 @@ from sqlalchemy.orm import Session
 from mathbank.database import Question, Paper, PaperQuestion, QuestionCurriculum
 from mathbank.paths import TEMPLATES_DIR
 from mathbank.question_types import PAPER_TYPE_ORDER, custom_type_labels, is_written_question_type, paper_type_order
-from mathbank.latex_diagnostics import build_local_latex_diagnostic
+from mathbank.latex_diagnostics import build_local_latex_diagnostic, extract_missing_glyphs
 from mathbank.asset_security import AssetSecurityError, resolve_upload_asset
+from mathbank.processing_timeouts import LATEX_EXPORT_TIMEOUT_SECONDS
 
 # In-memory LRU cache for compiled PDF bytes
 _PDF_CACHE_LOCK = threading.Lock()
 _PDF_CACHE = OrderedDict()  # key -> (pdf_bytes, log_or_err)
 _MAX_PDF_CACHE_SIZE = 20
+_PDF_VALIDATION_POLICY = "glyph-check-v1"
 
 _CONTENT_SOURCE_TEX_BEGIN = f"% MathBank content sources: {CONTENT_SOURCES_JSON_NAME}\n"
 _CONTENT_SOURCE_TEX_END = "% End MathBank content sources\n\n"
@@ -897,6 +899,7 @@ def build_latex_document(
     
     lines = []
     lines.append(r"\let\stop\empty")
+    lines.append(r"\tracinglostchars=3")
     # Fandol ships with TeX Live and avoids platform-specific ctex font names
     # such as STHeiti, which XeLaTeX may fail to resolve on macOS.
     lines.append(r"\documentclass[fontset=fandol]{exam-zh}")
@@ -953,8 +956,24 @@ def build_latex_document(
     # without adding another TeX package to the portable runtime contract.
     lines.append(
         r"\newcommand{\mathbankneedspace}[1]{\par\begingroup\dimen0=#1\relax"
-        r"\ifdim\pagegoal<\maxdimen\ifdim\dimexpr\pagegoal-\pagetotal\relax<\dimen0"
-        r"\newpage\fi\fi\endgroup}"
+        r"\ifinner\else\ifdim\pagegoal<\maxdimen\ifdim\dimexpr\pagegoal-\pagetotal\relax<\dimen0"
+        r"\newpage\fi\fi\fi\endgroup}"
+    )
+    # Typeset a graphic question once, preserving its counters, labels and TikZ
+    # side effects. A body that fits a complete page is emitted as its original
+    # box; an oversize body is unboxed so TeX retains its normal break points.
+    # These streaming commands deliberately do not collect a macro argument:
+    # native errors must retain the line of the offending question/figure.
+    lines.append(r"\newbox\mathbankquestionbox")
+    lines.append(
+        r"\newcommand{\mathbankbeginquestionbody}{\par\begingroup"
+        r"\setbox\mathbankquestionbox=\vbox\bgroup\hsize=\linewidth}"
+    )
+    lines.append(
+        r"\newcommand{\mathbankendquestionbody}{\par\egroup"
+        r"\dimen0=\dimexpr\ht\mathbankquestionbox+\dp\mathbankquestionbox\relax"
+        r"\ifdim\dimen0>\textheight\unvbox\mathbankquestionbox"
+        r"\else\mathbankneedspace{\dimen0}\nointerlineskip\box\mathbankquestionbox\fi\endgroup}"
     )
     # Small, non-discardable empty boxes preserve the requested physical space
     # across page breaks. A single vspace or tall minipage cannot do that.
@@ -1051,6 +1070,7 @@ def build_latex_document(
         grouped[q_type].append(item)
         
     labels = custom_type_labels(question_types)
+    question_number = 1
     for q_type in paper_type_order(grouped, paper_type, question_types, section_order):
         if q_type not in grouped or not grouped[q_type]:
             continue
@@ -1067,6 +1087,10 @@ def build_latex_document(
         # 填空: 12
         # 解答: 15
         if paper_type == "exam_19":
+            question_number = {
+                "single_choice": 1, "multi_choice": 9,
+                "fill_in_blank": 12, "detailed_answer": 15,
+            }.get(q_type, question_number)
             if q_type == "single_choice":
                 lines.append(r"\ExplSyntaxOn \int_gset:Nn \g__examzh_question_index_int {1} \ExplSyntaxOff")
             elif q_type == "multi_choice":
@@ -1215,6 +1239,24 @@ def build_latex_document(
             question_id = q.get("id")
             if question_id is not None:
                 lines.append(f"% MathBank-Question-ID: {question_id}")
+            lines.append(f"% MathBank-Question-Number: {question_number}")
+            lines.append("% MathBank-Field: content")
+            if question_id is not None:
+                lines.append(rf"\typeout{{MathBank-Question-Start: {question_id} {question_number} content}}")
+            # Page-aware content needs the outer page builder while it is read.
+            # Keep its existing flow rather than hiding floats, long tables,
+            # footnotes or explicit page changes inside the measuring box.
+            page_aware_body = re.search(
+                r"\\begin\s*\{(?:longtable|longtblr|figure\*?|table\*?|wrapfigure\*?|"
+                r"wraptable\*?|multicols\*?|landscape|sidewaysfigure|sidewaystable)\}"
+                r"|\\(?:footnote(?:text|mark)?|marginpar|newpage|clearpage|cleardoublepage|"
+                r"pagebreak|enlargethispage|afterpage|include)(?![A-Za-z])"
+                r"|remember\s+picture",
+                cleaned_content + "\n" + fig_body,
+            )
+            measure_question_body = bool(fig_body or preserve_inline_images) and not page_aware_body
+            if measure_question_body:
+                lines.append(r"\mathbankbeginquestionbody")
             lines.append(f"\\begin{{{env_name}}}{points_arg}")
             if fig_body:
                 choices_part = ""
@@ -1249,6 +1291,7 @@ def build_latex_document(
                         len(fig_elements) > 1 and figure_size in {"medium", "large"}
                     )
                     if split_large_figures:
+                        lines.append("% MathBank-Field: figure")
                         lines.append(
                             rf"\mathbankneedspace{{{figure_height_reserve_cm + 0.5:.1f}cm}}"
                         )
@@ -1257,12 +1300,14 @@ def build_latex_document(
                             lines.append(f"  {figure_element}")
                             lines.append(rf"\end{{{lower_environment}}}")
                     else:
+                        lines.append("% MathBank-Field: figure")
                         lines.append(rf"\begin{{{lower_environment}}}")
                         lines.append(r"  \vspace*{-0.4em}")
                         lines.append(f"  {fig_body}")
                         lines.append(rf"\end{{{lower_environment}}}")
                     if figure_in_solution_box:
                         lines.append(r"\end{minipage}")
+                    lines.append("% MathBank-Field: content")
                 else:  # default "right"
                     figure_in_solution_box = False
                     lines.append(r"\noindent\begin{minipage}[t]{\dimexpr\linewidth-5.8cm\relax}")
@@ -1275,17 +1320,25 @@ def build_latex_document(
                     lines.append(f"  \\noindent {stem_text}")
                     lines.append(r"\end{minipage}%")
                     lines.append(r"\hfill")
+                    lines.append("% MathBank-Field: figure")
                     lines.append(r"\begin{minipage}[t]{5.2cm}")
                     lines.append(r"  \vspace{-2.0em}")
                     lines.append(r"  \raggedleft")
                     lines.append(f"  \\adjustbox{{valign=t}}{{{fig_body}}}")
                     lines.append(r"\end{minipage}")
+                    lines.append("% MathBank-Field: content")
 
                 if choices_part:
                     lines.append(choices_part)
             else:
                 lines.append(cleaned_content)
             
+            # The measured box ends before the splittable answer space. Keeping
+            # a thirty-centimetre answer area in it would defeat normal paging.
+            if measure_question_body:
+                lines.append(f"\\end{{{env_name}}}")
+                lines.append(r"\mathbankendquestionbody")
+
             # Inject solution space for detailed_answer questions on papers
             if written_type and not include_answers:
                 space_val = item_solution_space_cm(item, q)
@@ -1295,14 +1348,22 @@ def build_latex_document(
                     if remaining_space > 0:
                         lines.append(f"\\mathbanksolutionspace{{{remaining_space:.1f}cm}}")
 
-            lines.append(f"\\end{{{env_name}}}")
+            if not measure_question_body:
+                lines.append(f"\\end{{{env_name}}}")
 
             if include_answers:
                 ans_text = q.get("answer_markdown", "").strip()
                 if ans_text:
+                    lines.append("% MathBank-Field: answer_markdown")
+                    if question_id is not None:
+                        lines.append(rf"\typeout{{MathBank-Question-Start: {question_id} {question_number} answer_markdown}}")
                     lines.append(r"\begin{solution}")
                     lines.append(clean_content_for_latex(ans_text))
                     lines.append(r"\end{solution}")
+            if question_id is not None:
+                lines.append(rf"\typeout{{MathBank-Question-Finish: {question_id}}}")
+            lines.append("% MathBank-Question-End")
+            question_number += 1
             lines.append("")
 
     lines.append(r"\end{document}")
@@ -1348,8 +1409,8 @@ def collect_referenced_images(
     return image_paths
 
 
-def _latex_failure_message(processes: list, temp_dir: str) -> str:
-    """Collect the first actionable TeX error plus the final log summary."""
+def _latex_compile_log(processes: list, temp_dir: str) -> str:
+    """Read evidence before truncating it or allowing another pass to overwrite it."""
     log_parts = []
     for proc in processes:
         if proc is None:
@@ -1359,7 +1420,19 @@ def _latex_failure_message(processes: list, temp_dir: str) -> str:
     if os.path.exists(log_path):
         with open(log_path, "r", encoding="utf-8", errors="ignore") as log_file:
             log_parts.append(log_file.read())
-    log_txt = "\n".join(part for part in log_parts if part)
+    return "\n".join(part for part in log_parts if part)
+
+
+def _latex_failure_message(processes: list, temp_dir: str) -> str:
+    """Collect actionable errors, including missing glyphs in a successful run."""
+    log_txt = _latex_compile_log(processes, temp_dir)
+    # Missing-character diagnostics can occur anywhere in a long log. Keep
+    # their complete lines and adjacent source evidence ahead of the summary.
+    glyph_blocks = []
+    log_lines = log_txt.splitlines()
+    for index, line in enumerate(log_lines):
+        if "Missing character:" in line:
+            glyph_blocks.append("\n".join(log_lines[max(0, index - 1):index + 7]))
     first_error = log_txt.find("\n!")
     if len(log_txt) <= 8000:
         diagnostic = log_txt
@@ -1367,6 +1440,16 @@ def _latex_failure_message(processes: list, temp_dir: str) -> str:
         diagnostic = f"{log_txt[max(0, first_error - 1000):first_error + 3000]}\n...\n{log_txt[-4000:]}"
     else:
         diagnostic = f"{log_txt[:2000]}\n...\n{log_txt[-6000:]}"
+    glyph_evidence = "\n".join(dict.fromkeys(glyph_blocks))[:12000]
+    if glyph_evidence:
+        diagnostic = glyph_evidence + "\n" + diagnostic
+    # Scanning an unclosed question body may reach EOF without a source line.
+    # Preserve the bounded runtime scopes after the (possibly truncated) log;
+    # only the dedicated runaway-environment diagnostic consumes these events.
+    runtime_events = [line for line in log_lines if re.fullmatch(
+        r"MathBank-Question-(?:Start: \d+ \d+ (?:content|answer_markdown)|Finish: \d+)", line.strip())]
+    if runtime_events:
+        diagnostic += "\nMathBank compilation scope events:\n" + "\n".join(runtime_events[-128:])
     return f"编译失败，无法生成完整 PDF:\n{diagnostic}"
 
 
@@ -1420,7 +1503,7 @@ def compile_tex_to_pdf(tex_content: str, image_paths: list = None) -> tuple:
             img_signatures.append(f"{img_p}:{os.path.getmtime(img_p)}")
     
     source_notice = content_sources_notice()
-    cache_raw_str = f"{tex_content}||{'|'.join(img_signatures)}||{source_notice}"
+    cache_raw_str = f"{_PDF_VALIDATION_POLICY}||{tex_content}||{'|'.join(img_signatures)}||{source_notice}"
     cache_key = hashlib.md5(cache_raw_str.encode("utf-8")).hexdigest()
 
     # 2. Check LRU Cache
@@ -1453,7 +1536,10 @@ def compile_tex_to_pdf(tex_content: str, image_paths: list = None) -> tuple:
                 "-file-line-error",
                 "paper.tex",
             ]
-            current_tex = tex_content
+            # Same-line injection preserves generated source line numbers.
+            # Strict reporting supplies an actionable line on current XeTeX;
+            # full-log scanning also handles older warning-only output.
+            current_tex = r"\tracinglostchars=3\relax " + tex_content
             auto_loaded_packages = []
             failure_message = ""
 
@@ -1468,9 +1554,11 @@ def compile_tex_to_pdf(tex_content: str, image_paths: list = None) -> tuple:
                     cwd=temp_dir,
                     capture_output=True,
                     text=True,
-                    timeout=30,
+                    timeout=LATEX_EXPORT_TIMEOUT_SECONDS,
                     env=build_restricted_tex_environment(temp_dir),
                 )
+                if extract_missing_glyphs(_latex_compile_log([first_proc], temp_dir)):
+                    return None, _latex_failure_message([first_proc], temp_dir)
                 if first_proc.returncode != 0:
                     failure_message = _latex_failure_message([first_proc], temp_dir)
                     local = build_local_latex_diagnostic(failure_message, current_tex)
@@ -1493,9 +1581,11 @@ def compile_tex_to_pdf(tex_content: str, image_paths: list = None) -> tuple:
                     cwd=temp_dir,
                     capture_output=True,
                     text=True,
-                    timeout=30,
+                    timeout=LATEX_EXPORT_TIMEOUT_SECONDS,
                     env=build_restricted_tex_environment(temp_dir),
                 )
+                if extract_missing_glyphs(_latex_compile_log([proc], temp_dir)):
+                    return None, _latex_failure_message([proc], temp_dir)
                 pdf_path = os.path.join(temp_dir, "paper.pdf")
                 if proc.returncode == 0 and os.path.exists(pdf_path) and os.path.getsize(pdf_path) > 0:
                     with open(pdf_path, "rb") as pf:
@@ -1531,7 +1621,7 @@ def compile_tex_to_pdf(tex_content: str, image_paths: list = None) -> tuple:
         except FileNotFoundError:
             return (None, "系统未检测到 xelatex 编译器，请确保已安装 TeX Live / MiKTeX / MacTeX 并加入 PATH。")
         except subprocess.TimeoutExpired:
-            return (None, "LaTeX 编译超时（超过 30 秒）。")
+            return (None, f"LaTeX 编译超时（单次编译超过 {LATEX_EXPORT_TIMEOUT_SECONDS} 秒）。")
         except Exception as e:
             return (None, f"编译过程异常: {str(e)}")
 
@@ -1841,9 +1931,16 @@ def build_answer_sheet_latex(title: str, subtitle: str, questions_data: list) ->
         else:
             replacement = new_line
 
+        if q.get("id") is not None:
+            replacement = (
+                f"% MathBank-Question-ID: {q['id']}\n"
+                f"% MathBank-Question-Number: {q_num}\n"
+                "% MathBank-Field: figure\n"
+                + replacement + "\n% MathBank-Question-End\n"
+            )
         tex_str = tex_str.replace(default_line, replacement)
 
-    return tex_str
+    return r"\tracinglostchars=3\relax " + tex_str
 
 def create_tex_zip_package(title: str, tex_content: str, ans_tex_content: str, image_paths: list, answer_sheet_tex: str = None, preflight_report: dict = None) -> bytes:
     """

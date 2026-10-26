@@ -24,7 +24,7 @@ def base_script(pdf_script):
     return pdf_script.rsplit('pdfScenarios[process.argv[1]]', 1)[0]
 
 
-@pytest.mark.parametrize('scenario', ['cancel_creation', 'cancel_failure', 'cancel_completed_legacy', 'serial_poll_and_404', 'poll_timeout', 'poll_backoff'])
+@pytest.mark.parametrize('scenario', ['cancel_creation', 'cancel_failure', 'cancel_completed_legacy', 'serial_poll_and_404', 'serial_poll_and_410', 'poll_timeout', 'poll_backoff', 'poll_authorization'])
 def test_document_request_faults(pdf_script, scenario):
     script = base_script(pdf_script) + r"""
 const resilience = {
@@ -59,14 +59,23 @@ const resilience = {
     assert.ok(!toasts.some(text=>text.includes('已确认取消')));
     stopCurrentDocumentPoll();
   },
-  async serial_poll_and_404() {
+  async serial_poll_and_404(status=404) {
     const generation=beginDocumentImportTask();pollPdfTaskStatus('task',generation);
     const tick=[...intervals.values()][0];tick();tick();tick();
     assert.equal(requests.length,1,'slow status requests cannot overlap');
-    requests[0].resolve({ok:false,status:404,json:async()=>({detail:'找不到任务'})});await flush();
+    requests[0].resolve({ok:false,status,json:async()=>({detail:'找不到任务'})});await flush();
     assert.equal(activeDocumentPoll,null);assert.equal(intervals.size,0);
-    assert.ok(toasts.at(-1).includes('重新连接'));
+    assert.ok(toasts.at(-1).includes('任务不存在'));
     assert.equal(document.getElementById('runParseBtn').disabled,false);
+  },
+  async serial_poll_and_410() {return this.serial_poll_and_404(410);},
+  async poll_authorization() {
+    const generation=beginDocumentImportTask();pollPdfTaskStatus('task',generation);
+    [...intervals.values()][0]();requests[0].resolve({ok:false,status:403,json:async()=>({detail:'授权已失效'})});await flush();
+    assert.notEqual(activeDocumentPoll,null);
+    assert.ok(document.getElementById('importLoadingText').textContent.includes('授权待恢复'));
+    assert.ok(logs.at(-1).includes('授权校验未通过'));
+    stopCurrentDocumentPoll();
   },
   async poll_timeout() {
     const work=fetchDocumentImportJson('/api/tasks/task/status',{},1);
@@ -77,13 +86,26 @@ const resilience = {
   },
   async poll_backoff() {
     let now=10000;Date.now=()=>now;
+    document.getElementById('runParseBtn').disabled=true;
     const generation=beginDocumentImportTask();pollPdfTaskStatus('task',generation);
     const tick=[...intervals.values()][0];tick();
     requests[0].resolve({ok:false,status:503,json:async()=>({detail:'掉线'})});await flush();
     tick();assert.equal(requests.length,1,'backoff prevents immediate repeated failures');
     now+=3001;tick();requests[1].resolve({ok:false,status:503,json:async()=>({})});await flush();
     now+=6001;tick();requests[2].resolve({ok:false,status:503,json:async()=>({})});await flush();
-    assert.equal(activeDocumentPoll,null);assert.equal(intervals.size,0);
+    assert.notEqual(activeDocumentPoll,null);assert.equal(intervals.size,1);
+    assert.equal(document.getElementById('runParseBtn').disabled,true);
+    for(let attempt=3;attempt<8;attempt++){
+      now+=15001;tick();
+      requests[attempt].resolve({ok:false,status:503,json:async()=>({detail:'仍在断线'})});await flush();
+    }
+    assert.equal(requests.length,8,'more than three failures continue reading the same task');
+    assert.ok(requests.every(request=>request.url==='/api/tasks/task/status'&&!request.options.method));
+    now+=15001;tick();requests[8].resolve({ok:true,json:async()=>({status:'ocr_extraction',progress:12,log:'继续原任务'})});await flush();
+    assert.equal(activeDocumentPoll.failures,0);
+    assert.equal(document.getElementById('importLoadingText').textContent,'继续原任务');
+    assert.ok(logs.some(log=>log.includes('已重新连接原任务')));
+    stopCurrentDocumentPoll();
   }
 };
 resilience[SCENARIO]().catch(error=>{console.error(error);process.exitCode=1});

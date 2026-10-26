@@ -45,6 +45,14 @@ from starlette.background import BackgroundTask
 from sqlalchemy.orm import Session, selectinload
 from sqlalchemy import and_
 from dotenv import load_dotenv
+from mathbank.paths import ENV_FILE
+
+# Freeze shared request policies only after the saved local environment is read.
+load_dotenv(ENV_FILE)
+from mathbank.ai_timeouts import AI_REQUEST_TIMEOUT_SECONDS
+from mathbank.processing_timeouts import TIKZ_COMPILE_TIMEOUT_SECONDS
+from mathbank.processing_limits import LIMITS, public_processing_limits
+from mathbank.classification_policy import resolve_classification_policy, public_classification_policy
 
 from mathbank.database import (
     FIGURE_ALIGN_VALUES,
@@ -65,6 +73,8 @@ from mathbank.database import (
 )
 from mathbank.sub_knowledge import detect_curriculum_version, normalize_sub_knowledge
 from mathbank.question_reads import find_association_candidates, question_summary_load_options
+from mathbank.question_queries import QuestionReadSnapshot, page_questions
+from mathbank.agent_api import create_agent_router
 from mathbank.knowledge_points import (
     apply_knowledge_point_filters,
     create_local_point,
@@ -73,7 +83,10 @@ from mathbank.knowledge_points import (
     replace_question_points,
 )
 from mathbank.ai_knowledge_points import (
-    annotate_ai_knowledge_points, load_ai_knowledge_catalog,
+    annotate_ai_knowledge_points, load_ai_knowledge_catalog, bind_ai_knowledge_catalog,
+)
+from mathbank.ai_classification import (
+    CLASSIFICATION_TIMEOUT_SECONDS, build_classification_user_message, parse_classification_response,
 )
 from mathbank.question_references import (
     export_reference_text,
@@ -111,7 +124,9 @@ from mathbank.runtime_components import (
 )
 from mathbank.sync_helper import export_database_to_files
 from mathbank.background_export import DatabaseExportQueue
-from mathbank.backup import acquire_runtime_lock, create_full_backup, create_full_backup_if_due
+from mathbank.backup import (
+    acquire_runtime_lock, backup_asset_warnings, create_full_backup, create_full_backup_if_due,
+)
 from mathbank.library_transfer import (
     MAX_ARCHIVE_BYTES as MAX_LIBRARY_ARCHIVE_BYTES,
     MAX_QUESTIONS as MAX_LIBRARY_QUESTIONS,
@@ -137,7 +152,7 @@ from mathbank.task_manager import (
 from mathbank.docx_helper import extract_docx_markdown
 from mathbank.content_locks import lock_visible_math, reconcile_visible_math
 from mathbank.source_metadata import prepare_word_source_metadata, source_metadata_diagnostics, normalize_source_fillin
-from mathbank.source_metadata_request import request_word_source_metadata, SourceMetadataPermanentHTTPError
+from mathbank.source_metadata_request import request_word_source_metadata, SourceMetadataNoFallbackError
 from mathbank.document_task_store import DocumentTaskStore, DurableDocumentTasks
 from mathbank.formula_notices import separate_formula_notices
 from mathbank.paper_parse import (
@@ -291,8 +306,7 @@ from mathbank.question_assets import (
     structured_question_assets,
 )
 
-# Load environment variables
-load_dotenv(ENV_FILE)
+# Local environment was loaded before importing business request policies.
 harden_private_path(ENV_FILE)
 
 # The Windows launcher injects an unguessable UUID hex value and binds its
@@ -768,8 +782,8 @@ DOCUMENT_TASKS = DurableDocumentTasks(
     store=DOCUMENT_TASK_STORE,
     on_snapshot=_sync_document_project,
     transient_document_types={"pdf"} if PDF_CLOUD_ONLY else (),
-    max_workers=2,
-    max_queue=4,
+    max_workers=LIMITS.document_workers,
+    max_queue=LIMITS.document_queue,
     terminal_ttl_seconds=3600,
     temp_asset_cleanup=lambda paths: _delete_task_temp_assets(paths),
     record_cleanup=lambda task_id: DOCUMENT_TASK_INPUTS.pop(task_id, None),
@@ -833,7 +847,10 @@ def _document_status(task_id, task):
     result["source_available"] = bool(task.get("document_input")) and (
         DOCUMENT_TASK_STORE.has_source(task_id) if DOCUMENT_TASK_STORE and not (
             PDF_CLOUD_ONLY and task.get("document_type") == "pdf") else task_id in DOCUMENT_TASK_INPUTS)
-    result["can_resume"] = task.get("status") in {"error", "interrupted"} and result["source_available"] and not (PDF_CLOUD_ONLY and task.get("document_type") == "pdf")
+    pdf_partial_resume = _can_resume_cloud_pdf_partial(task_id, task)
+    result["can_resume"] = result["source_available"] and (
+        pdf_partial_resume or (task.get("status") in {"error", "interrupted"}
+        and not (PDF_CLOUD_ONLY and task.get("document_type") == "pdf")))
     if result["can_resume"]:
         result["recovery_message"] = "已保留文档及成功阶段，可继续处理；不会重新识别已完成页面。"
     return result
@@ -841,29 +858,12 @@ from mathbank.pdf_ocr_capacity import PdfOcrCapacity, configured_pdf_ocr_concurr
 PDF_OCR_CAPACITY = PdfOcrCapacity(configured_pdf_ocr_concurrency())
 # Auxiliary OCR/verification retains its four-request lane, sharing the same
 # process total with the wider first-pass PDF page lane.
-PDF_OCR_SEMAPHORE = threading.BoundedSemaphore(4)
-MAX_PDF_TASK_PAGES = 80
+PDF_OCR_SEMAPHORE = PDF_OCR_CAPACITY.auxiliary
+MAX_PDF_TASK_PAGES = LIMITS.pdf_pages
 
 def get_seq_mapping(db: Session, question_ids=None):
-    """Map physical ID order to the user-facing contiguous sequence number."""
-
-    if question_ids is None:
-        all_q = db.query(Question.id).order_by(Question.id.asc()).all()
-        return {q_id: idx + 1 for idx, (q_id,) in enumerate(all_q)}
-
-    normalized_ids = {int(question_id) for question_id in question_ids}
-    if not normalized_ids:
-        return {}
-    from sqlalchemy import func
-
-    ranked = db.query(
-        Question.id.label("question_id"),
-        func.row_number().over(order_by=Question.id.asc()).label("seq_num"),
-    ).subquery()
-    rows = db.query(ranked.c.question_id, ranked.c.seq_num).filter(
-        ranked.c.question_id.in_(normalized_ids)
-    ).all()
-    return {question_id: int(seq_num) for question_id, seq_num in rows}
+    from mathbank.question_ordering import sequence_mapping
+    return sequence_mapping(db, question_ids)
 
 # ----------------- Static Files & Index -----------------
 
@@ -906,7 +906,7 @@ def read_index():
         html_content = html_content.replace('/static/favicon.png', f'/static/favicon.png?v={fav_mtime}')
             
         # Inject the token and server_instance_id directly into index.html to bypass any cookie blocking policies
-        token_script = f'<script>window.__localToken = "{LOCAL_TOKEN}"; window.__serverInstanceId = "{SERVER_INSTANCE_ID}"; window.__qaEnabled = {json.dumps(qa_enabled)}; window.__pdfCloudOnly = {json.dumps(PDF_CLOUD_ONLY)};</script>'
+        token_script = f'<script>window.__localToken = "{LOCAL_TOKEN}"; window.__serverInstanceId = "{SERVER_INSTANCE_ID}"; window.__qaEnabled = {json.dumps(qa_enabled)}; window.__pdfCloudOnly = {json.dumps(PDF_CLOUD_ONLY)}; window.__processingLimits = {json.dumps(public_processing_limits())};</script>'
         html_content = html_content.replace('<head>', f'<head>\n    {token_script}')
             
         res = HTMLResponse(content=html_content)
@@ -1009,7 +1009,7 @@ def upload_image(file: UploadFile = File(...)):
         }
     except UploadTooLargeError:
         return JSONResponse(
-            content={"status": "error", "message": "图片过大，请上传 10MB 以内的文件。"},
+            content={"status": "error", "message": f"图片过大，请上传 {MAX_SINGLE_IMAGE_BYTES // (1024 * 1024)}MB 以内的文件。"},
             status_code=413,
         )
     except InvalidImageError as e:
@@ -1139,7 +1139,7 @@ def ocr_via_provider(
         )
         return result["markdown"]
 
-    timeout = 240
+    timeout = AI_REQUEST_TIMEOUT_SECONDS
     # Chat-completion POSTs are not idempotent: a read timeout can happen after
     # the provider has accepted (and billed) the request.  Do not automatically
     # send the same image two or three times.  The shared transport still
@@ -1199,7 +1199,7 @@ def extract_tikz_source(ai_message: str) -> str:
     raise RuntimeError("绘图模型未返回完整的 tikzpicture 源码。")
 
 
-def request_tikz_completion(provider, content_payload, *, timeout: int = 120) -> str:
+def request_tikz_completion(provider, content_payload, *, timeout: int = AI_REQUEST_TIMEOUT_SECONDS) -> str:
     """Send one TikZ model request with the shared reasoning and parser policy."""
 
     payload = {
@@ -1305,7 +1305,7 @@ def draw_tikz_via_high_model(
         return request_tikz_completion(
             provider,
             content_payload,
-            timeout=120,
+            timeout=AI_REQUEST_TIMEOUT_SECONDS,
         )
     except Exception as e:
         print(f"[High Model Draw Error] 大模型请求发生异常: {str(e)}")
@@ -1431,7 +1431,7 @@ def ocr_formula(
         }
     except UploadTooLargeError:
         return JSONResponse(
-            content={"status": "error", "message": "公式识图失败: 图片不能超过 10MB。"},
+            content={"status": "error", "message": f"公式识图失败: 图片不能超过 {MAX_OCR_IMAGE_BYTES // (1024 * 1024)}MB。"},
             status_code=413,
         )
     except InvalidImageError as e:
@@ -1515,7 +1515,7 @@ def ai_solve(
                     response = post_chat_completion(
                         provider,
                         data,
-                        timeout=300,
+                        timeout=AI_REQUEST_TIMEOUT_SECONDS,
                         stream=True,
                         check_status=False,
                     )
@@ -1569,7 +1569,7 @@ def ai_solve(
                     yield f"data: {json.dumps({'status': 'done'}, ensure_ascii=False)}\n\n"
                 except requests.exceptions.Timeout:
                     friendly_msg = (
-                        f"AI 解析生成超时（限制为 300 秒）。这通常是因为 {provider_name} "
+                        f"AI 解析生成超时（限制为 {AI_REQUEST_TIMEOUT_SECONDS} 秒）。这通常是因为 {provider_name} "
                         f"服务端当前排队拥堵或推理速度过慢。建议您稍后再试，或在设置中切换为「DeepSeek 官方」或「阿里百炼」等更稳定的接口平台。"
                     )
                     yield f"data: {json.dumps({'status': 'error', 'message': friendly_msg}, ensure_ascii=False)}\n\n"
@@ -1578,11 +1578,11 @@ def ai_solve(
             
             return StreamingResponse(event_generator(), media_type="text/event-stream")
 
-        # Generous 300 seconds timeout (5 minutes) for high-school math reasoning and network proxies
+        # The same bounded wait applies to streamed and ordinary reasoning.
         response = post_chat_completion(
             provider,
             data,
-            timeout=300,
+            timeout=AI_REQUEST_TIMEOUT_SECONDS,
             provider_name=provider_name,
         )
             
@@ -1609,7 +1609,7 @@ def ai_solve(
         }
     except requests.exceptions.Timeout:
         friendly_msg = (
-            f"AI 解析生成超时（限制为 300 秒）。这通常是因为 {provider_name} "
+            f"AI 解析生成超时（限制为 {AI_REQUEST_TIMEOUT_SECONDS} 秒）。这通常是因为 {provider_name} "
             f"服务端当前排队拥堵或推理速度过慢。建议您稍后再试，或在设置中切换为「DeepSeek 官方」或「阿里百炼」等更稳定的接口平台。"
         )
         return JSONResponse(
@@ -1685,7 +1685,13 @@ def get_settings():
         "prefer_solve_model": prefer_solve_model,
         "prefer_parse_model": prefer_parse_model,
         "prefer_classify_model": prefer_classify_model,
-        "prefer_draw_model": prefer_draw_model
+        "prefer_draw_model": prefer_draw_model,
+        "request_timeouts": {
+            "ai_seconds": AI_REQUEST_TIMEOUT_SECONDS,
+            "document_seconds": DOCUMENT_AI_TIMEOUT_SECONDS,
+        },
+        "processing_limits": public_processing_limits(),
+        "classification_policy": public_classification_policy(),
     }
 
 @app.post("/api/settings/save")
@@ -1706,8 +1712,14 @@ def save_settings(
     prefer_solve_model: str = Form("deepseek-v4-pro"),
     prefer_parse_model: str = Form("deepseek-flash"),
     prefer_classify_model: str = Form("deepseek-flash"),
-    prefer_draw_model: str = Form("Qwen/Qwen3-VL-32B-Instruct")
+    prefer_draw_model: str = Form("Qwen/Qwen3-VL-32B-Instruct"),
+    classify_quality: Optional[str] = Form(None)
 ):
+    try:
+        selected_quality = resolve_classification_policy(
+            mode=classify_quality if isinstance(classify_quality, str) else None).mode
+    except ValueError as exc:
+        return JSONResponse(content={"status": "error", "message": str(exc)}, status_code=400)
     try:
         # Older clients and other OCR providers may omit this new field.
         deepseek_model = deepseek_model or os.getenv("DEEPSEEK_OCR_MODEL") or "deepseek-flash"
@@ -1729,6 +1741,7 @@ def save_settings(
             "prefer_parse_model": prefer_parse_model,
             "prefer_classify_model": prefer_classify_model,
             "prefer_draw_model": prefer_draw_model,
+            "classify_quality": selected_quality,
         }
         if any("\r" in value or "\n" in value for value in settings_values.values()):
             raise ValueError("配置值不能包含换行符。")
@@ -1768,6 +1781,7 @@ def save_settings(
             "PREFER_SOLVE_MODEL": False,
             "PREFER_PARSE_MODEL": False,
             "PREFER_CLASSIFY_MODEL": False,
+            "MATHBANK_CLASSIFY_MODE": False,
             "PREFER_DRAW_MODEL": False
         }
         new_lines = []
@@ -1826,6 +1840,9 @@ def save_settings(
             elif line_strip.startswith("PREFER_CLASSIFY_MODEL=") or line_strip.startswith("DEEPSEEK_CLASSIFY_MODEL="):
                 new_lines.append(f"PREFER_CLASSIFY_MODEL={prefer_classify_model}\n")
                 keys_replaced["PREFER_CLASSIFY_MODEL"] = True
+            elif line_strip.startswith("MATHBANK_CLASSIFY_MODE="):
+                new_lines.append(f"MATHBANK_CLASSIFY_MODE={selected_quality}\n")
+                keys_replaced["MATHBANK_CLASSIFY_MODE"] = True
             elif line_strip.startswith("PREFER_DRAW_MODEL="):
                 new_lines.append(f"PREFER_DRAW_MODEL={prefer_draw_model}\n")
                 keys_replaced["PREFER_DRAW_MODEL"] = True
@@ -1865,6 +1882,8 @@ def save_settings(
             new_lines.append(f"PREFER_PARSE_MODEL={prefer_parse_model}\n")
         if not keys_replaced["PREFER_CLASSIFY_MODEL"]:
             new_lines.append(f"PREFER_CLASSIFY_MODEL={prefer_classify_model}\n")
+        if not keys_replaced["MATHBANK_CLASSIFY_MODE"]:
+            new_lines.append(f"MATHBANK_CLASSIFY_MODE={selected_quality}\n")
         if not keys_replaced["PREFER_DRAW_MODEL"]:
             new_lines.append(f"PREFER_DRAW_MODEL={prefer_draw_model}\n")
             
@@ -1891,6 +1910,7 @@ def save_settings(
         os.environ["PREFER_SOLVE_MODEL"] = prefer_solve_model
         os.environ["PREFER_PARSE_MODEL"] = prefer_parse_model
         os.environ["PREFER_CLASSIFY_MODEL"] = prefer_classify_model
+        os.environ["MATHBANK_CLASSIFY_MODE"] = selected_quality
         os.environ["PREFER_DRAW_MODEL"] = prefer_draw_model
         
         return {"status": "success", "message": "API 与首选大模型配置已成功保存并即时生效！"}
@@ -2073,7 +2093,7 @@ def compile_tikz_to_png(tikz_code: str) -> str:
             cwd=temp_dir,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
-            timeout=15,
+            timeout=TIKZ_COMPILE_TIMEOUT_SECONDS,
             env=build_restricted_tex_environment(temp_dir),
         )
 
@@ -2121,7 +2141,7 @@ def compile_tikz_to_png(tikz_code: str) -> str:
         return f"/{UPLOAD_DIR_REL}/{final_filename}"
 
     except subprocess.TimeoutExpired:
-        raise RuntimeError("编译超时 (15秒)，可能是您的 TikZ 绘图循环出现了死循环。")
+        raise RuntimeError(f"编译等待超过 {TIKZ_COMPILE_TIMEOUT_SECONDS} 秒，请检查绘图复杂度、循环或本地 LaTeX 状态。")
     except Exception as e:
         raise RuntimeError(str(e))
     finally:
@@ -2258,7 +2278,7 @@ def correct_tikz_endpoint(
         corrected_code = request_tikz_completion(
             draw_provider,
             content_payload,
-            timeout=90,
+            timeout=AI_REQUEST_TIMEOUT_SECONDS,
         )
         return {
             "status": "success",
@@ -2351,7 +2371,7 @@ def draw_tikz_workbench_endpoint(
             "reference_image_path": persisted_reference_url,
         }
     except UploadTooLargeError as exc:
-        raise HTTPException(status_code=413, detail="参考图不能超过 10MB。") from exc
+        raise HTTPException(status_code=413, detail=f"参考图不能超过 {MAX_SINGLE_IMAGE_BYTES // (1024 * 1024)}MB。") from exc
     except InvalidImageError as exc:
         raise HTTPException(status_code=400, detail=f"参考图无效: {str(exc)}") from exc
     except HTTPException:
@@ -2570,7 +2590,7 @@ def _sharing_backup():
         return create_full_backup(
             database_path=Path(DATABASE_PATH), uploads_dir=Path(UPLOAD_DIR),
             metadata_path=DATA_BACKUP_DIR / "custom_metadata.json",
-            output_dir=DATA_BACKUP_DIR / "snapshots", retention=None,
+            output_dir=DATA_BACKUP_DIR / "snapshots", retention=None, allow_missing_uploads=True,
         )
     except Exception as exc:
         raise TransferTaskError("backup", "导入前自动备份失败，尚未导入题目。请检查备份目录、存储空间和现有图片。") from exc
@@ -2608,8 +2628,10 @@ def _run_library_import_task(directory, progress):
             import_version = get_active_version_code()
             progress("backup")
             backup_path = _sharing_backup()
+            backup_warnings = backup_asset_warnings(backup_path)
             progress("backup", current=1, total=1, result={
                 "backup_path": str(backup_path), "active_version_code": import_version,
+                "backup_warnings": backup_warnings,
             })
             with SessionLocal() as db:
                 result = import_library_zip(
@@ -2618,7 +2640,8 @@ def _run_library_import_task(directory, progress):
                 )
     _sharing_post_commit_export()
     return {"imported_count": result["imported_count"], "image_count": result["image_count"],
-            "backup_path": str(backup_path), "active_version_code": import_version}
+            "backup_path": str(backup_path), "active_version_code": import_version,
+            "backup_warnings": backup_warnings}
 
 
 def _run_library_export_task(directory, payload, progress):
@@ -2778,6 +2801,7 @@ def import_library_transfer(
                 _check_library_import_storage(prepared)
                 import_version = get_active_version_code()
                 backup_path = _sharing_backup()
+                backup_warnings = backup_asset_warnings(backup_path)
                 result = import_library_zip(
                     db, archive, uploads_dir=Path(UPLOAD_DIR), active_version=import_version,
                     prepared=prepared,
@@ -2789,6 +2813,7 @@ def import_library_transfer(
             "status": "success", "imported_count": result["imported_count"],
             "image_count": result["image_count"], "backup_path": str(backup_path),
             "active_version_code": import_version,
+            "backup_warnings": backup_warnings,
         }
     except HTTPException:
         raise
@@ -2808,6 +2833,13 @@ def import_library_transfer(
 
 
 app.include_router(_LIBRARY_TRANSFER_UPLOAD_ROUTER)
+
+app.include_router(create_agent_router(
+    database_path=lambda: DATABASE_PATH,
+    uploads_dir=lambda: UPLOAD_DIR,
+    metadata_path=lambda: Path(METADATA_FILE),
+    active_version_code=lambda: get_active_version_code(),
+))
 
 
 @app.get("/api/questions")
@@ -2843,107 +2875,74 @@ def list_questions(
     know_val = knowledge or category_knowledge
     type_val = qtype or question_type
 
-    query = db.query(Question)
-    if page is not None:
-        query = query.options(*question_summary_load_options())
-    else:
-        # Legacy consumers of the unpaginated API retain their full evidence.
-        query = query.options(
-            selectinload(Question.curriculum_mappings).selectinload(QuestionCurriculum.sub_knowledge_rows),
-            selectinload(Question.knowledge_points),
-        )
-    
-    # Check if searching for a specific display sequence number
-    target_id_by_seq = None
-    if search_q:
-        clean_q = search_q.strip()
-        if clean_q.startswith("#"):
-            clean_q = clean_q[1:]
-        if clean_q.isdigit():
-            seq_val = int(clean_q)
-            if seq_val >= 1:
-                row = (
-                    db.query(Question.id)
-                    .order_by(Question.id.asc())
-                    .offset(seq_val - 1)
-                    .limit(1)
-                    .first()
-                )
-                if row:
-                    target_id_by_seq = row[0]
-
-    if search_q:
-        if target_id_by_seq is not None:
-            query = query.filter(
-                (Question.id == target_id_by_seq) |
-                (Question.content.like(f"%{search_q}%")) | 
-                (Question.source.like(f"%{search_q}%")) |
-                (Question.answer_markdown.like(f"%{search_q}%")) |
-                (Question.review.like(f"%{search_q}%")) |
-                (Question.tags.like(f"%{search_q}%"))
-            )
-        else:
-            query = query.filter(
-                (Question.content.like(f"%{search_q}%")) | 
-                (Question.source.like(f"%{search_q}%")) |
-                (Question.answer_markdown.like(f"%{search_q}%")) |
-                (Question.review.like(f"%{search_q}%")) |
-                (Question.tags.like(f"%{search_q}%"))
-            )
+    # Pin the DB and the effective textbook version together, then release the
+    # settings lock before the potentially longer text search.
+    with _METADATA_SAVE_LOCK:
+        read_snapshot = QuestionReadSnapshot(db)
+        active_version = get_active_version_code()
     try:
-        paths = [json.loads(path) for path in (sub_knowledge or [])]
-        query = apply_curriculum_filters(
-            query, comp_val, chap_val, know_val,
-            include_sub_knowledge=include_sub_knowledge,
-            sub_knowledge=paths, sub_knowledge_mode=sub_knowledge_mode,
-        )
-        query = apply_knowledge_point_filters(
-            query, knowledge_point_codes or [], match_mode=knowledge_point_mode,
-            role_scope=knowledge_point_role, status_scope=knowledge_point_status,
-            unlabeled=knowledge_point_unlabeled,
-        )
-    except (ValueError, TypeError) as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-    if type_val:
-        query = query.filter(Question.question_type == type_val)
-    if difficulty:
-        query = query.filter(Question.difficulty == difficulty)
-    if source:
-        query = query.filter(Question.source.like(f"%{source}%"))
-        
-    order_columns = (
-        (Question.created_at.asc(), Question.id.asc())
-        if str(sort).lower() == "asc"
-        else (Question.created_at.desc(), Question.id.desc())
-    )
-    if page is not None:
-        safe_page_size = max(1, min(int(page_size), 100))
-        total = query.count()
-        total_pages = max(1, (total + safe_page_size - 1) // safe_page_size)
-        safe_page = max(1, min(int(page), total_pages))
-        questions = (
-            query.order_by(*order_columns)
-            .offset((safe_page - 1) * safe_page_size)
-            .limit(safe_page_size)
-            .all()
-        )
-        seq_map = get_seq_mapping(db, [item.id for item in questions])
-        refs_by_id = reference_payloads(db, questions)
-        return {
-            "items": [
-                {**item.to_summary_dict(get_active_version_code(), compact_knowledge_points=True), "question_references": refs_by_id.get(item.id, []), "seq_num": seq_map.get(item.id), "version_code": get_active_version_code(), "active_version_code": get_active_version_code()}
-                for item in questions
-            ],
-            "total": total,
-            "page": safe_page,
-            "page_size": safe_page_size,
-            "total_pages": total_pages,
-        }
+        query = db.query(Question)
+        if page is not None:
+            query = query.options(*question_summary_load_options())
+        else:
+            # Legacy consumers of the unpaginated API retain full evidence.
+            query = query.options(
+                selectinload(Question.curriculum_mappings).selectinload(QuestionCurriculum.sub_knowledge_rows),
+                selectinload(Question.knowledge_points),
+            )
 
-    questions = query.order_by(*order_columns).all()
-    seq_map = get_seq_mapping(db, [item.id for item in questions])
-    refs_by_id = reference_payloads(db, questions)
-    return [{**item.to_summary_dict(get_active_version_code()), "question_references": refs_by_id.get(item.id, []), "seq_num": seq_map.get(item.id), "version_code": get_active_version_code(), "active_version_code": get_active_version_code()} for item in questions]
+        from mathbank.question_ordering import library_list_order
+        from mathbank.question_search import apply_question_search
+
+        query = apply_question_search(query, search_q, order_plan=read_snapshot.order_plan)
+        try:
+            paths = [json.loads(path) for path in (sub_knowledge or [])]
+            query = apply_curriculum_filters(
+                query, comp_val, chap_val, know_val,
+                include_sub_knowledge=include_sub_knowledge,
+                sub_knowledge=paths, sub_knowledge_mode=sub_knowledge_mode,
+            )
+            query = apply_knowledge_point_filters(
+                query, knowledge_point_codes or [], match_mode=knowledge_point_mode,
+                role_scope=knowledge_point_role, status_scope=knowledge_point_status,
+                unlabeled=knowledge_point_unlabeled,
+            )
+        except (ValueError, TypeError) as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        if type_val:
+            query = query.filter(Question.question_type == type_val)
+        if difficulty:
+            query = query.filter(Question.difficulty == difficulty)
+        if source:
+            query = query.filter(Question.source.like(f"%{source}%"))
+
+        descending = str(sort).lower() != "asc"
+        if page is not None:
+            result = page_questions(
+                query, read_snapshot, page=page, page_size=page_size,
+                descending=descending, single_scan=bool(str(search_q or "").strip()),
+            )
+            questions = result.items
+        else:
+            questions = query.order_by(*library_list_order(
+                db, descending=descending, order_plan=read_snapshot.order_plan)).all()
+        refs_by_id = reference_payloads(db, questions, read_snapshot=read_snapshot)
+        seq_map = read_snapshot.sequences([item.id for item in questions])
+        items = [
+            {**item.to_summary_dict(active_version, compact_knowledge_points=page is not None),
+             "question_references": refs_by_id.get(item.id, []),
+             "seq_num": seq_map.get(item.id), "version_code": active_version,
+             "active_version_code": active_version}
+            for item in questions
+        ]
+        if page is None:
+            return items
+        return {
+            "items": items, "total": result.total, "page": result.page,
+            "page_size": result.page_size, "total_pages": result.total_pages,
+        }
+    finally:
+        read_snapshot.close()
 
 def _duplicate_payload_list(value, *, field_name: str, max_items: int = 50):
     if value is None:
@@ -4730,7 +4729,11 @@ def list_categories(db: Session = Depends(get_db)):
 @app.post("/api/ai/classify")
 def ai_classify(content: str = Form(...), answer_markdown: str = Form(""),
                 review_markdown: str = Form(""), db: Session = Depends(get_db),
-                expected_version_code: Optional[str] = Form(None)):
+                expected_version_code: Optional[str] = Form(None), quality: Optional[str] = Form(None)):
+    try:
+        classify_policy = resolve_classification_policy(mode=quality if isinstance(quality, str) else None)
+    except ValueError as exc:
+        return JSONResponse(content={"status": "error", "message": str(exc)}, status_code=400)
     classify_model = (
         os.getenv("PREFER_CLASSIFY_MODEL") 
         or os.getenv("DEEPSEEK_CLASSIFY_MODEL") 
@@ -4758,51 +4761,49 @@ def ai_classify(content: str = Form(...), answer_markdown: str = Form(""),
         if isinstance(expected_version_code, str) and expected_version_code != version_code:
             return JSONResponse(content={"status": "error", "message": "当前教材版本已变化，请刷新后重新分类。"}, status_code=409)
         curriculum = copy.deepcopy(get_current_curriculum())
-        knowledge_catalog = load_ai_knowledge_catalog(db)
+        knowledge_catalog = copy.deepcopy(load_ai_knowledge_catalog(db))
         system_instructions = build_classification_system_prompt(curriculum, knowledge_catalog)
         question_input = {"content": content,
                           "answer_markdown": answer_markdown if isinstance(answer_markdown, str) else "",
                           "review_markdown": review_markdown if isinstance(review_markdown, str) else ""}
+        user_message, input_context, input_warnings = build_classification_user_message(
+            question_input, provider, uploads_dir=UPLOAD_DIR, url_prefix=UPLOAD_DIR_REL)
+        if input_context.get("image_manifest"):
+            from mathbank.prompts import build_classification_image_evidence_rule
+            system_instructions += build_classification_image_evidence_rule()
+        started = time.monotonic()
         data = {
             "model": model_name,
             "messages": [
                 {"role": "system", "content": system_instructions},
-                {"role": "user", "content": json.dumps(question_input, ensure_ascii=False)}
+                user_message
             ],
             "response_format": {
                 "type": "json_object"
             },
             "temperature": 0.2,
-            "max_tokens": 4096
+            "max_tokens": classify_policy.output_tokens
         }
         
         data = apply_model_thinking_policy(
             data,
             provider=provider,
             task="classify",
+            thinking_enabled=classify_policy.thinking_enabled,
         )
         
         response = post_chat_completion(
             provider,
             data,
-            timeout=30,
+            timeout=CLASSIFICATION_TIMEOUT_SECONDS,
             provider_name=provider_name,
         )
             
-        res_json = response.json()
-        ai_message = res_json.get("choices", [{}])[0].get("message", {}).get("content", "").strip()
-        
-        # Strip potential markdown formatting if returned
-        if ai_message.startswith("```"):
-            lines = ai_message.split("\n")
-            if lines[0].startswith("```"):
-                lines = lines[1:]
-            if lines[-1].strip() == "```":
-                lines = lines[:-1]
-            ai_message = "\n".join(lines).strip()
-            
-        result = json.loads(ai_message)
-        annotate_ai_knowledge_points(question_input, knowledge_catalog, raw=result.get("knowledge_points", []))
+        result, usage = parse_classification_response(response.json())
+        if "knowledge_points" in result:
+            question_input["knowledge_points"] = result["knowledge_points"]
+        annotate_ai_knowledge_points(question_input, knowledge_catalog,
+                                     image_sources=input_context.get("image_manifest"))
         placement = {"category_compulsory": result.get("compulsory", ""),
                      "category_chapter": result.get("chapter", ""),
                      "category_knowledge": result.get("knowledge", "")}
@@ -4820,10 +4821,10 @@ def ai_classify(content: str = Form(...), answer_markdown: str = Form(""),
         if get_active_version_code() != version_code:
             return JSONResponse(content={"status": "error", "message": "分类期间教材版本已变化，请保留当前编辑并重新分类。"}, status_code=409)
         curr = curriculum
-        if (compulsory in curr and chapter in curr[compulsory]
+        placement_valid = (compulsory in curr and chapter in curr[compulsory]
                 and isinstance(knowledge, str)
-                and (not knowledge or knowledge in curr[compulsory][chapter])):
-            return {
+                and (not knowledge or knowledge in curr[compulsory][chapter]))
+        return {
                 "status": "success",
                 "compulsory": compulsory,
                 "chapter": chapter,
@@ -4831,13 +4832,19 @@ def ai_classify(content: str = Form(...), answer_markdown: str = Form(""),
                 "question_form": question_form,
                 "question_form_source": question_form_source,
                 "knowledge_points": question_input["knowledge_points"],
-                "knowledge_point_warnings": question_input["knowledge_point_warnings"],
+                "knowledge_point_warnings": question_input["knowledge_point_warnings"] + input_warnings,
+                "knowledge_point_diagnostics": question_input["knowledge_point_diagnostics"],
+                "placement_valid": placement_valid,
+                "classification_diagnostics": {"elapsed_ms": round((time.monotonic() - started) * 1000),
+                    "usage": usage, "input_context": input_context,
+                    "policy": public_classification_policy(classify_policy),
+                    "effective_output_tokens": data.get("max_completion_tokens", data.get("max_tokens")),
+                    "effective_enable_thinking": data.get("enable_thinking"),
+                    "effective_reasoning_effort": data.get("reasoning_effort")},
                 "version_code": version_code,
                 **({"classification_review": placement["classification_review"]}
                    if "classification_review" in placement else {}),
             }
-        else:
-            raise ValueError("AI 返回的学段、章节或小节不在当前教材大纲中，请保留原分类并人工核对。")
             
     except Exception as e:
         return JSONResponse(
@@ -4867,7 +4874,7 @@ def upload_tex_source(file: UploadFile = File(...)):
         }
     except UploadTooLargeError:
         return JSONResponse(
-            content={"status": "error", "message": "TeX 文件过大，请上传 5MB 以内的单文件试卷源码！"},
+            content={"status": "error", "message": f"TeX 文件过大，请上传 {MAX_TEX_BYTES // (1024 * 1024)}MB 以内的单文件试卷源码！"},
             status_code=413,
         )
     except ValueError as exc:
@@ -4892,7 +4899,7 @@ def upload_markdown_source(file: UploadFile = File(...)):
         }
     except UploadTooLargeError:
         return JSONResponse(
-            content={"status": "error", "message": "Markdown 文件过大，请上传 5MB 以内的单文件试卷源码！"},
+            content={"status": "error", "message": f"Markdown 文件过大，请上传 {MAX_MARKDOWN_BYTES // (1024 * 1024)}MB 以内的单文件试卷源码！"},
             status_code=413,
         )
     except ValueError as exc:
@@ -4919,7 +4926,7 @@ def upload_batch_images(files: List[UploadFile] = File(...)):
             try:
                 raw = read_stream_limited(file.file, MAX_SINGLE_IMAGE_BYTES)
             except UploadTooLargeError as exc:
-                raise ValueError(f"图片 {original_name} 超过 10MB。") from exc
+                raise ValueError(f"图片 {original_name} 超过 {MAX_SINGLE_IMAGE_BYTES // (1024 * 1024)}MB。") from exc
             total_bytes += len(raw)
             if total_bytes > 50 * 1024 * 1024:
                 raise ValueError("配图总大小不能超过 50MB。")
@@ -4973,8 +4980,9 @@ def parse_paper_text_internal(
         raise ValueError(f"未配置对应的 API Key ({provider.credential_label})，无法智能拆解试卷！请在工作台右上角设置面板进行配置。")
 
     curriculum = copy.deepcopy(get_current_curriculum())
+    knowledge_catalog = copy.deepcopy(load_ai_knowledge_catalog())
     system_instructions = build_pdf_parse_system_prompt(
-        curriculum, generate_answers_bool, load_ai_knowledge_catalog()
+        curriculum, generate_answers_bool, knowledge_catalog
     )
 
     max_output_tokens = 65536
@@ -5021,6 +5029,8 @@ def parse_paper_text_internal(
             raw_markdown="" if preserve_source_answers else latex_content,
             diagnostics=diagnostics,
         )
+    for question in parsed_questions:
+        bind_ai_knowledge_catalog(question, knowledge_catalog)
     if preserve_source_answers:
         validate_import_knowledge(parsed_questions, curriculum, diagnostics=diagnostics)
         # Compare the original response before answer filtering or formula edits.
@@ -5776,248 +5786,292 @@ def find_source_page_by_overlap(q_text: str, ocr_results: list) -> int:
             
     return best_page
 
+@app.get("/api/paper/reference-exams")
+def paper_reference_exams(db: Session = Depends(get_db)):
+    """Read bounded metadata for the local reference selector; never call AI."""
+    from mathbank.paper_selection import list_reference_exams
+    return {"status": "success", "data": list_reference_exams(db)}
+
+
 @app.post("/api/paper/ai-select")
 def ai_select_paper(payload: dict, db: Session = Depends(get_db)):
-    """AI 智能选题：结合用户指定的 PREFER_SOLVE_MODEL 大模型与 math-teaching 教研引擎组卷"""
+    """Plan a filtered paper with one screen and at most one full-reading call."""
+    from mathbank.paper_selection import (
+        parse_selection_request, build_reference_context, collect_candidates,
+        select_local_candidates,
+    )
+    from mathbank.paper_selection_ai import (
+        candidate_prompt_items, parse_selection_response, checked_selection, selection_summary,
+        candidate_revision, review_shortlist, prepare_full_review, changed_review_image_ids,
+        MAX_REVIEW_CANDIDATES,
+    )
+    from mathbank.question_search import apply_question_search
+    from mathbank.paper_standards import build_paper_standard_context
+    from mathbank.paper_standard_alignment import validate_standard_alignment, standard_analysis_text
+
     require_expected_curriculum_version(payload.get("expected_version_code"))
     try:
+        request = parse_selection_request(payload)
         prompt = payload.get("prompt", "").strip()
-        question_type = payload.get("question_type", "")
-        difficulty = payload.get("difficulty", "")
-        compulsory = payload.get("compulsory", "")
-        chapter = payload.get("chapter", "")
-        knowledge = payload.get("knowledge", "")
-        raw_include_sub = payload.get("include_sub_knowledge", False)
-        include_sub = raw_include_sub is True or str(raw_include_sub).lower() in {"true", "1"}
-        try:
-            sub_paths = normalize_sub_knowledge(payload.get("sub_knowledge", []))
-        except (ValueError, TypeError) as exc:
-            raise HTTPException(status_code=400, detail=str(exc)) from exc
-        limit = max(1, min(int(payload.get("limit", 5)), 20))
-
-        # 0. 自然语言意图智能分析 (NL Intent Parser)
-        extracted_topics = []
-        is_review_intent = False
-        if prompt:
-            is_review_intent = any(k in prompt for k in ['做过', '考过', '已抽过', '已用过', '复习', '旧题', '重做', '错题', '以往', '历史'])
-            num_match = re.search(r'([一二三四五六七八九十1-9]+)\s*道', prompt)
-            cn_to_num = {'一':1, '两':2, '二':2, '三':3, '四':4, '五':5, '六':6, '七':7, '八':8, '九':9, '十':10}
-            if num_match:
-                val = num_match.group(1)
-                limit = cn_to_num.get(val, int(val) if val.isdigit() else limit)
-
-            if not question_type:
-                if '填空' in prompt: question_type = 'fill_in_blank'
-                elif '单选' in prompt: question_type = 'single_choice'
-                elif '多选' in prompt: question_type = 'multi_choice'
-                elif '解答' in prompt: question_type = 'detailed_answer'
-
-            known_topics = ['立体几何', '集合', '函数', '导数', '数列', '三角函数', '平面向量', '概率', '解析几何', '圆锥曲线', '复数', '不等式', '排列组合']
-            extracted_topics = [t for t in known_topics if t in prompt]
-
-        # 1. 结构化过滤基础题目池
+        # Mentions of a topic within a whole-paper blueprint ("其中3题导数")
+        # describe coverage, rather than restricting every candidate to it.
+        scope_topics = [] if re.search(r"整卷|全卷|高考卷|仿真卷|其中", prompt) else request["topics"]
+        for field in ("compulsory", "chapter", "knowledge", "difficulty", "keyword", "question_type"):
+            if not isinstance(payload.get(field, ""), str):
+                raise ValueError("组卷筛选条件须为文字。")
+        reference_mode = payload.get("reference_mode", "recent_gaokao")
+        if reference_mode not in {"recent_gaokao", "none"}:
+            raise ValueError("请选择近年高考参考或不使用参考。")
         query = db.query(Question).options(
             selectinload(Question.curriculum_mappings).selectinload(QuestionCurriculum.sub_knowledge_rows),
-            selectinload(Question.knowledge_points),
+            selectinload(Question.knowledge_points).selectinload(QuestionKnowledgePoint.point),
         )
-        if question_type:
-            query = query.filter(Question.question_type == question_type)
-        if difficulty:
-            query = query.filter(Question.difficulty == difficulty)
+        if request["question_type"]:
+            query = query.filter(Question.question_type == request["question_type"])
+        elif request["question_types"]:
+            query = query.filter(Question.question_type.in_(request["question_types"]))
+        if request.get("excluded_question_types"):
+            query = query.filter(~Question.question_type.in_(request["excluded_question_types"]))
+        if payload.get("difficulty"):
+            query = query.filter(Question.difficulty == payload["difficulty"])
+        raw_include_sub = payload.get("include_sub_knowledge", False)
+        include_sub = raw_include_sub is True or str(raw_include_sub).lower() in {"true", "1"}
+        sub_paths = normalize_sub_knowledge(payload.get("sub_knowledge", []))
         query = apply_curriculum_filters(
-            query, compulsory, chapter, knowledge, include_sub_knowledge=include_sub,
-            sub_knowledge=sub_paths, sub_knowledge_mode=payload.get("sub_knowledge_mode", "any"),
+            query, payload.get("compulsory", ""), payload.get("chapter", ""), payload.get("knowledge", ""),
+            include_sub_knowledge=include_sub, sub_knowledge=sub_paths,
+            sub_knowledge_mode=payload.get("sub_knowledge_mode", "any"),
         )
-        try:
-            query = apply_knowledge_point_filters(
-                query, payload.get("knowledge_point_codes") or [],
-                match_mode=payload.get("knowledge_point_mode", "any"),
-                role_scope=payload.get("knowledge_point_role", "main"),
-                status_scope=payload.get("knowledge_point_status", "all"),
-                unlabeled=payload.get("knowledge_point_unlabeled", False),
-            )
-        except (ValueError, TypeError) as exc:
-            raise HTTPException(status_code=400, detail=str(exc)) from exc
-            
-        if is_review_intent:
-            # 复习/旧题模式：优先提取已使用频次高的题目
-            review_query = query.filter(Question.usage_count > 0).order_by(Question.usage_count.desc(), Question.id.desc())
-            candidates = review_query.limit(35).all()
-            if not candidates:
-                candidates = query.order_by(Question.id.desc()).limit(35).all()
-        else:
-            # 默认鲜活模式：优先提取从未被使用过的冷门题目
-            candidates = query.order_by(Question.usage_count.asc(), Question.id.desc()).limit(35).all()
-            if not candidates and not any((
-                question_type, difficulty, compulsory, chapter, knowledge, sub_paths,
-                payload.get("knowledge_point_codes"),
-                payload.get("knowledge_point_unlabeled"),
-            )):
-                candidates = db.query(Question).order_by(Question.usage_count.asc(), Question.id.desc()).limit(35).all()
-
-        # 2. 解题、拆卷、分类和组卷共用同一供应商解析规则。
-        # 不会因为某家 Key 缺失而静默改用另一家。
-        target_model = (
-            os.getenv("PREFER_SOLVE_MODEL")
-            or os.getenv("PREFER_PARSE_MODEL")
-            or "deepseek-flash"
+        query = apply_knowledge_point_filters(
+            query, payload.get("knowledge_point_codes") or [],
+            match_mode=payload.get("knowledge_point_mode", "any"),
+            role_scope=payload.get("knowledge_point_role", "main"),
+            status_scope=payload.get("knowledge_point_status", "all"),
+            unlabeled=payload.get("knowledge_point_unlabeled", False),
         )
-        provider = resolve_text_provider(target_model)
-        api_key = provider.api_key
-        api_base = provider.api_base
-        model_name = provider.model_name
-        provider_name = provider.provider_label
-
-        api_error_detail = None
-        if prompt and candidates:
-            if not api_key or not api_base:
-                api_error_detail = (
-                    f"指定的 AI 解题模型 ({target_model}) 未配置有效的 "
-                    f"API Key 或 Base URL（{provider.credential_label}）。"
-                )
-            else:
-                candidate_items = []
-                for q in candidates:
-                    clean_stem = re.sub(r'[\r\n]+', ' ', q.content[:80])
-                    candidate_items.append({
-                        "id": q.id,
-                        "question_type": q.question_type,
-                        "difficulty": q.difficulty,
-                        "usage_count": q.usage_count or 0,
-                        "knowledge": q.category_knowledge or "整章定位（待细分）",
-                        "tags": q.tags or "",
-                        "knowledge_points": [
-                            {
-                                "code": row.point_code,
-                                "name": row.point.name,
-                                "role": row.role,
-                                "status": row.status,
-                            }
-                            for row in q.knowledge_points
-                            if row.status == "confirmed"
-                            or payload.get("knowledge_point_status", "all") == "all"
-                        ],
-                        "stem_excerpt": clean_stem
-                    })
-
-                system_prompt, user_content = build_paper_selection_prompts(
-                    teacher_prompt=prompt,
-                    limit=limit,
-                    candidates=candidate_items,
-                    is_review_intent=is_review_intent,
-                )
-
-                try:
-                    payload_data = {
-                        "model": model_name,
-                        "messages": [
-                            {"role": "system", "content": system_prompt},
-                            {"role": "user", "content": user_content}
-                        ],
-                        "temperature": 0.3
-                    }
-                    payload_data = apply_model_thinking_policy(
-                        payload_data,
-                        provider=provider,
-                        task="paper_selection",
-                    )
-                    response = post_chat_completion(
-                        provider,
-                        payload_data,
-                        timeout=20,
-                        provider_name=provider_name,
-                    )
-                    res_json = response.json()
-                    raw_content = res_json.get("choices", [{}])[0].get("message", {}).get("content", "").strip()
-                    if raw_content.startswith("```"):
-                        raw_content = re.sub(r"^```(?:json)?\s*", "", raw_content)
-                        raw_content = re.sub(r"\s*```$", "", raw_content)
-
-                    parsed = json.loads(raw_content)
-                    raw_selected_ids = parsed.get("selected_ids", [])
-                    ai_analysis = parsed.get("ai_analysis", "")
-
-                    if raw_selected_ids and isinstance(raw_selected_ids, list):
-                        # The model may only rank the candidate IDs that were
-                        # actually supplied after local filters.  This prevents
-                        # prompt output from bypassing chapter/type constraints
-                        # or selecting arbitrary records from the database.
-                        allowed_ids = {question.id for question in candidates}
-                        selected_ids = []
-                        seen_ids = set()
-                        for raw_id in raw_selected_ids:
-                            try:
-                                selected_id = int(raw_id)
-                            except (TypeError, ValueError):
-                                continue
-                            if (
-                                selected_id in allowed_ids
-                                and selected_id not in seen_ids
-                            ):
-                                selected_ids.append(selected_id)
-                                seen_ids.add(selected_id)
-                            if len(selected_ids) >= limit:
-                                break
-                        db_selected = db.query(Question).filter(Question.id.in_(selected_ids)).all()
-                        id_map = {q.id: q for q in db_selected}
-                        seq_map = get_seq_mapping(db, selected_ids)
-                        final_questions = [{**id_map[qid].to_dict(get_active_version_code()), "seq_num": seq_map.get(qid)} for qid in selected_ids if qid in id_map]
-
-                        if final_questions:
-                            return {
-                                "status": "success",
-                                "data": final_questions,
-                                "count": len(final_questions),
-                                "ai_analysis": ai_analysis,
-                                "model_used": f"{provider_name} ({model_name})",
-                                "fallback": False
-                            }
-                except Exception as llm_err:
-                    api_error_detail = f"{provider_name} API 请求失败: {str(llm_err)}"
-
-        # 3. 降级本地算法（带明确错误反馈）
-        fallback_questions = []
-        if extracted_topics:
-            for topic in extracted_topics:
-                sub_query = query
-                sub_query = sub_query.filter(
-                    (Question.content.like(f"%{topic}%")) |
-                    (Question.category_chapter.like(f"%{topic}%")) |
-                    (Question.category_knowledge.like(f"%{topic}%")) |
-                    (Question.tags.like(f"%{topic}%"))
-                )
-                order_clause = Question.usage_count.desc() if is_review_intent else Question.usage_count.asc()
-                for q in sub_query.order_by(order_clause, Question.id.desc()).all():
-                    if q not in fallback_questions:
-                        fallback_questions.append(q)
-
-        # 补足数量
-        if len(fallback_questions) < limit:
-            for q in candidates:
-                if q not in fallback_questions:
-                    fallback_questions.append(q)
-                if len(fallback_questions) >= limit:
-                    break
-
-        selected_fallback = fallback_questions[:limit]
-        seq_map = get_seq_mapping(db, [q.id for q in selected_fallback])
-        result = [{**q.to_dict(get_active_version_code()), "seq_num": seq_map.get(q.id)} for q in selected_fallback]
-        
-        topic_str = "、".join(extracted_topics) if extracted_topics else "通用知识点"
-        err_banner = f"⚠️ 【AI 解题模型调用未成功】: {api_error_detail}\n系统已为您自动启动本地教研算法，根据意图（{topic_str}）在本地题库中筛选并组合了 {len(result)} 道精选题目。" if api_error_detail else f"【本地智能筛选分析】已为您自动识别意图（{topic_str}），从题库中精准挑选并组合了鲜活试题。"
-        
-        return {
-            "status": "success",
-            "data": result,
-            "count": len(result),
-            "ai_analysis": err_banner,
-            "model_used": f"⚠️ 模型调用失败 ({target_model}) ➔ 退回本地算法" if api_error_detail else "本地算法",
-            "fallback": True
-        }
+        query = apply_question_search(query, payload.get("keyword", ""))
+        reference = build_reference_context(
+            db, "none" if reference_mode == "none" else payload.get("reference_key"))
+        warnings = list(reference["warnings"])
+        counts = request["type_counts"] or None
+        # A full-paper request may adopt an observed complete blueprint. A
+        # scoped exercise never inherits whole-paper proportions automatically.
+        if (not counts and not request["question_type"] and not request["question_types"]
+                and not scope_topics and re.search(r"整卷|全卷|高考卷|仿真卷", prompt)):
+            full = next((item for item in reference["references"]
+                         if item["complete"] and item["question_count"] == request["limit"]), None)
+            if full:
+                counts = full["type_counts"]
+        candidates = collect_candidates(
+            query, limit=request["limit"], excluded_ids=request["excluded_ids"],
+            topics=scope_topics, review=request["review"], type_counts=counts,
+        )
+        # Pure local matching. Freeze once and share with both existing model
+        # stages, including source IDs/pages and explicit teacher boundaries.
+        standard_context = build_paper_standard_context(prompt, filters=payload, candidates=candidates)
+        warnings.extend(standard_context.get("warnings", []))
     except HTTPException:
         raise
-    except Exception as e:
-        return JSONResponse(content={"status": "error", "message": f"AI 智能选题失败: {str(e)}"}, status_code=500)
+    except (ValueError, TypeError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    target_model = os.getenv("PREFER_SOLVE_MODEL") or os.getenv("PREFER_PARSE_MODEL") or "deepseek-flash"
+    provider = resolve_text_provider(target_model)
+    selected, ai_analysis, engine_name = [], "", "local"
+    model_label = "本地筛选"
+    revisions = {q.id: candidate_revision(q) for q in candidates}
+    model_attempted = False
+    reading = {"model_calls": 0, "stages": [], "review_required": False, "review": {}}
+    reviewed_ids, image_fingerprints = set(), []
+    ai_selected_ids = set()
+    raw_standard_alignment = None
+    status_scope = payload.get("knowledge_point_status", "all")
+    selection_plan = {"requested_count": request["limit"], "type_counts": counts or {},
+                      "filters": {key: value for key, value in payload.items()
+                                  if key not in {"prompt", "exclude_ids", "reference_key"}},
+                      "excluded_count": len(request["excluded_ids"])}
+
+    def refresh_candidates():
+        refreshed = query.filter(Question.id.in_(list(revisions))).populate_existing().all()
+        current = {q.id: q for q in refreshed if candidate_revision(q) == revisions[q.id]}
+        if len(current) != len(candidates):
+            warnings.append("等待期间部分候选已修改、删除或不再符合筛选，已从本次结果移除。")
+        return [current[qid] for qid in revisions if qid in current]
+
+    def ask_model(items, *, phase, requested_count, image_parts=None):
+        stage = {"phase": phase, "candidate_count": len(items), "status": "started"}
+        reading["stages"].append(stage)
+        system_prompt, user_content = build_paper_selection_prompts(
+            teacher_prompt=prompt, limit=requested_count, candidates=items,
+            is_review_intent=request["review"], reference_context=reference,
+            selection_plan={**selection_plan, "phase": phase, "shortlist_limit": requested_count},
+            standard_context=standard_context,
+        )
+        message_content = ([{"type": "text", "text": user_content}, *image_parts]
+                           if image_parts else user_content)
+        stage["payload_text_chars"] = len(system_prompt) + len(user_content) + sum(
+            len(part.get("text", "")) for part in (image_parts or []) if part.get("type") == "text")
+        model_payload = apply_model_thinking_policy({
+            "model": provider.model_name,
+            "messages": [{"role": "system", "content": system_prompt},
+                         {"role": "user", "content": message_content}],
+            "temperature": 0.3,
+        }, provider=provider, task="paper_selection")
+        model_payload = apply_structured_output_policy(model_payload, provider=provider)
+        try:
+            reading["model_calls"] += 1
+            response = post_chat_completion(provider, model_payload,
+                timeout=AI_REQUEST_TIMEOUT_SECONDS, provider_name=provider.provider_label)
+            result = parse_selection_response(response.json())
+            stage["status"] = "completed"
+            return result
+        except Exception:
+            stage["status"] = "failed"
+            raise
+
+    if candidates and prompt:
+        if not provider.api_key or not provider.api_base:
+            warnings.append("所选解题模型未配置可用凭据，本次使用本地筛选。")
+        else:
+            try:
+                model_attempted = True
+                screening = candidate_prompt_items(candidates, status_scope=status_scope)
+                shortlist_limit = min(MAX_REVIEW_CANDIDATES, max(request["limit"] + 4, request["limit"] * 2))
+                parsed = ask_model(screening, phase="shortlist", requested_count=shortlist_limit)
+                candidates = refresh_candidates()
+                local_order = select_local_candidates(candidates, len(candidates), topics=request["topics"],
+                    review=request["review"])
+                shortlist = review_shortlist(candidates, parsed["selected_ids"], limit=request["limit"],
+                    local_order=local_order, type_counts=counts)
+                shortlist_ids = {q.id for q in shortlist}
+                reading["review_required"] = any(item["id"] in shortlist_ids
+                    and (item["stem_truncated"] or item["has_image_reference"]) for item in screening)
+                if reading["review_required"]:
+                    full_items, image_parts, image_fingerprints, reading["review"] = prepare_full_review(
+                        shortlist, provider, status_scope=status_scope)
+                    eligible = {item["id"] for item in full_items if item["eligible_for_ai_final"]}
+                    if reading["review"]["withheld"]:
+                        warnings.append("部分入围题的完整题干超过复读预算，未截断冒充全文；只能作为未复核的本地备选。")
+                    if reading["review"]["image_unavailable_ids"]:
+                        warnings.append("部分入围题的必要图像像素未提供（型号未确认识图、缺图或安全预算限制）；不能采用其初筛AI结论，只能作本地未复核备选。")
+                    if not eligible:
+                        raise ValueError("入围题没有可完整复读的候选。")
+                    parsed = ask_model(full_items, phase="full_review", requested_count=request["limit"],
+                        image_parts=image_parts)
+                    reviewed_ids = eligible
+                    ai_candidates = [q for q in shortlist if q.id in eligible]
+                else:
+                    ai_candidates = candidates
+                    reviewed_ids = {item["id"] for item in screening if not item["stem_truncated"]
+                                    and not item["has_image_reference"]}
+                selected, rejected = checked_selection(ai_candidates, parsed["selected_ids"],
+                    limit=request["limit"], type_counts=counts)
+                if not selected:
+                    raise ValueError("模型未返回候选池中的可用题目。")
+                ai_analysis = "AI选题建议（供教师审阅）：\n" + parsed.get("ai_analysis", "")[:12000]
+                engine_name = "ai"
+                model_label = f"{provider.provider_label} ({provider.model_name})"
+                ai_selected_ids = {q.id for q in selected}
+                raw_standard_alignment = parsed.get("standards_alignment")
+                if rejected:
+                    warnings.append("已剔除模型返回的无效、重复或不符合题型配额的编号。")
+            except Exception:
+                # Do not expose provider exceptions/credentials or retry an
+                # unknown physical request. Local fallback requires no network.
+                selected, ai_selected_ids, reviewed_ids, ai_analysis = [], set(), set(), ""
+                raw_standard_alignment = None
+                warnings.append("AI调用失败、结果未通过校验或没有可完整复读的候选，本次使用本地筛选，未自动重发模型请求；未沿用未复读长题或缺图题的初筛结论。")
+    if model_attempted:
+        # Re-read only the supplied candidate IDs after the model wait. Deleted
+        # or edited questions must not silently inherit the model's old verdict.
+        selected_ids_before_refresh = [q.id for q in selected]
+        candidates = refresh_candidates()
+        changed_images = changed_review_image_ids(image_fingerprints)
+        if changed_images:
+            warnings.append("等待期间部分已提供的题图字节发生变化，已排除这些候选及其旧AI判断。")
+            candidates = [q for q in candidates if q.id not in changed_images]
+        current = {q.id: q for q in candidates}
+        selected = [current[qid] for qid in selected_ids_before_refresh if qid in current]
+        if not selected:
+            engine_name = "local"
+            model_label = "本地筛选"
+    local = select_local_candidates(candidates, len(candidates), topics=request["topics"],
+                                    review=request["review"], type_counts=counts)
+    if len(selected) < request["limit"]:
+        initial_count = len(selected)
+        selected, _ = checked_selection(candidates, [q.id for q in selected] + [q.id for q in local],
+                                        limit=request["limit"], type_counts=counts)
+        if engine_name == "ai" and len(selected) > initial_count:
+            engine_name = "ai_with_local_completion"
+            warnings.append(f"模型仅给出{initial_count}道有效题，已在同一候选池内用本地规则补入{len(selected)-initial_count}道，请核对组合。")
+    summary = selection_summary(selected, requested=request["limit"], candidate_count=len(candidates), type_counts=counts)
+    if summary["shortfall"]:
+        warnings.append(f"当前筛选与去重后仅选出{len(selected)}道，距目标缺{summary['shortfall']}道；未扩大筛选范围。")
+    if counts:
+        missing = {kind: count - summary["type_counts"].get(kind, 0)
+                   for kind, count in counts.items() if count > summary["type_counts"].get(kind, 0)}
+        summary["type_shortfalls"] = missing
+    if engine_name == "local":
+        ai_analysis = "本地筛选按已识别主题、主考点覆盖和使用记录排序；尚未评估全部自然语言要求、设问梯度或参考卷风格，请教师核对。"
+    review_items = {item["id"]: item for item in reading["review"].get("items", [])}
+    withheld_text = {item["id"]: item["reason"] for item in reading["review"].get("withheld", [])}
+    reading["selected"] = [{"id": q.id,
+        "basis": (("ai_full_review" if reading["review_required"] else "ai_screening_full_text")
+                  if q.id in ai_selected_ids and q.id in reviewed_ids else "local_unreviewed"),
+        "text_complete": q.id in reviewed_ids and q.id in ai_selected_ids,
+        "image_complete": q.id in reviewed_ids and q.id in ai_selected_ids,
+        "text_provided_complete": (review_items[q.id]["text_provided_complete"] if q.id in review_items
+                                   else model_attempted and not reading["review_required"] and not item["stem_truncated"]),
+        "image_provided_complete": (review_items[q.id]["image_provided_complete"] if q.id in review_items
+                                    else not item["has_image_reference"]),
+        "unavailable_images": review_items.get(q.id, {}).get("unavailable_images", []),
+        "text_unavailable_reason": withheld_text.get(q.id, ""),
+        "image_state": ("not_needed" if not item["has_image_reference"] else
+                        "provided_complete" if q.id in reviewed_ids and q.id in ai_selected_ids
+                        else "not_provided_or_not_reviewed"),
+        "needs_image": item["has_image_reference"]}
+        for q, item in zip(selected, candidate_prompt_items(selected, status_scope=status_scope))]
+    local_unreviewed = sum(item["basis"] == "local_unreviewed" for item in reading["selected"])
+    if local_unreviewed:
+        warnings.append(f"最终{local_unreviewed}道由本地规则补选，未获得本次AI完整阅读结论，请教师核对全部小问与图形。")
+    sequence = get_seq_mapping(db, [q.id for q in selected])
+    standards_alignment, standard_warnings = validate_standard_alignment(
+        raw_standard_alignment, selected=selected, ai_question_ids=ai_selected_ids & reviewed_ids,
+        context=standard_context,
+    )
+    warnings.extend(standard_warnings)
+    sources = "、".join(item["title"] for item in reference["references"])
+    if sources:
+        ai_analysis += "\n参考来源（库内标注）：" + sources
+    ai_analysis += f"\n实际选出{summary['selected']}/{summary['requested']}道，候选池{summary['candidate_count']}道。"
+    ai_analysis += "\n\n" + standard_analysis_text(standard_context, standards_alignment,
+                                                 local_unreviewed=local_unreviewed, question_numbers=sequence)
+    stage_names = {"shortlist": "初筛", "full_review": "整题复读"}
+    stage_status = {"completed": "完成", "failed": "失败（未自动重发）", "started": "结果未确认"}
+    stages_text = "；".join(stage_names[stage["phase"]] + stage_status[stage["status"]]
+                            for stage in reading["stages"]) or "未调用模型"
+    ai_analysis += f"\n实际模型请求{reading['model_calls']}次：{stages_text}。本地未复核补选{local_unreviewed}道。"
+    for item in reading["selected"]:
+        basis = {"ai_full_review": "AI整题复读后选定", "ai_screening_full_text": "初筛已提供完整短题", "local_unreviewed": "本地规则，未采信AI完整阅读结论"}[item["basis"]]
+        image_state = {"not_needed": "无必要题图", "provided_complete": "必要题图像素已完整提供", "not_provided_or_not_reviewed": "题图未提供或未获完整复读结论"}[item["image_state"]]
+        ai_analysis += f"\n题库ID {item['id']}：{basis}；{image_state}。"
+        missing_reasons = {"model_images_unsupported": "当前型号未确认识图", "image_count_budget": "图像数量预算不足",
+            "image_single_byte_budget": "单图文件超过复读体积预算", "image_pixels_format_or_encoding": "图像像素、格式或转码体积未通过安全校验",
+            "image_byte_budget": "图像体积预算不足", "unsafe_missing_or_invalid_image": "图片不安全、缺失或格式无效",
+            "tikz_pixels_unavailable": "TikZ只有源码，未提供渲染像素", "image_reference_missing": "题干提及图形但未找到可提供的题图",
+            "incomplete_figure_set": "同题部分图像不可用，整题图像未发送"}
+        reasons = list(dict.fromkeys(missing_reasons[image["reason"]] for image in item["unavailable_images"]))
+        if item["text_unavailable_reason"]:
+            reasons.append(item["text_unavailable_reason"])
+        if reasons:
+            ai_analysis += "未完整复读原因：" + "、".join(reasons) + "。"
+    return {"status": "success", "data": [{**q.to_dict(get_active_version_code()), "seq_num": sequence.get(q.id)} for q in selected],
+            "count": len(selected), "ai_analysis": ai_analysis, "model_used": model_label,
+            "fallback": engine_name == "local", "selection_engine": engine_name,
+            "warnings": list(dict.fromkeys(warnings)), "selection_summary": summary,
+            "selection_reading": reading,
+            "standard_context": standard_context, "standards_alignment": standards_alignment,
+            "reference_profile": reference}
 
 
 def post_process_pdf_parsed_questions(parsed_questions: list, paper_title: str, task_id: str = None, ocr_results: list = None, *, source_body_preserved: bool = False, preserved_indices=None) -> list:
@@ -6155,11 +6209,32 @@ def post_process_pdf_parsed_questions(parsed_questions: list, paper_title: str, 
     # Keep image markup in place. The preview already skips thumbnails for images
     # rendered in Markdown; stripping markup here empties image-only choices and
     # destroys the relationship between an option label and its graph.
-    knowledge_catalog = load_ai_knowledge_catalog()
+    knowledge_catalog = (load_ai_knowledge_catalog() if any(
+        not hasattr(question.get("knowledge_points"), "catalog") for question in parsed_questions) else [])
     for question in parsed_questions:
         if "knowledge_points" in question:
             annotate_ai_knowledge_points(question, knowledge_catalog)
     return parsed_questions
+
+
+def _can_resume_cloud_pdf_partial(task_id, task):
+    from mathbank.pdf_partial import resumable_checkpoint
+    return (PDF_CLOUD_ONLY and task.get("status") in {"completed", "error", "interrupted"}
+            and resumable_checkpoint({**task, "task_id": task_id}))
+
+
+def _restart_cloud_pdf_partial(task_id):
+    # The original manager only restarts error/interrupted jobs.  This narrow
+    # branch admits a completed partial page receipt, under the same task lock.
+    # A running/queued duplicate can never transition back to pending.
+    with DOCUMENT_TASKS._lock:
+        record = DOCUMENT_TASKS._records.get(task_id)
+        if (record is None or record.future is not None
+                or not _can_resume_cloud_pdf_partial(task_id, record.state)):
+            raise ValueError("该 PDF 补做任务已在处理或当前不能继续。")
+        if record.state.get("status") == "completed":
+            record.state["status"] = "interrupted"
+        DOCUMENT_TASKS.restart(task_id)
 
 
 def run_pdf_parsing_task(
@@ -6170,10 +6245,16 @@ def run_pdf_parsing_task(
     page_range: str = None,
     pdf_strategy: str = "native_preferred",
     pdf_verify_suspicions: bool = True,
+    resume_state=None,
 ):
     """PDF parsing with bounded OCR concurrency and cooperative cancellation."""
 
     import concurrent.futures
+    from mathbank.pdf_partial import (SCHEMA as PDF_PARTIAL_SCHEMA, source_binding,
+        checkpoint_summary, complete_boundary_drafts, merge_partial_drafts,
+        merge_recovered_questions)
+
+    recovery = copy.deepcopy(resume_state) if isinstance(resume_state, dict) else None
 
     temp_assets: list[str] = []
     tmp_pdf_path = Path(TMP_UPLOAD_DIR) / f"{task_id}.pdf"
@@ -6261,6 +6342,17 @@ def run_pdf_parsing_task(
 
     try:
         DOCUMENT_TASKS.check_cancelled(task_id)
+        if resume_state is not None:
+            original_input = (DOCUMENT_TASKS.snapshot(task_id) or {}).get("document_input") or {}
+            if (not recovery or recovery.get("schema") != PDF_PARTIAL_SCHEMA
+                    or recovery.get("task_id") != task_id
+                    or recovery.get("binding") != source_binding(original_input)
+                    or recovery.get("source_sha256") != hashlib.sha256(file_bytes).hexdigest()
+                    or recovery.get("phase") != "page_retry"):
+                raise ValueError("PDF 局部补做检查点与原文档不一致，请保留原文和已有题稿。")
+            diagnostics = copy.deepcopy(recovery.get("diagnostics") or {})
+            diagnostics["pdf_partial_checkpoint"] = checkpoint_summary(recovery)
+            temp_assets = list(recovery.get("temp_assets") or [])
         if pdf_strategy not in PDF_STRATEGIES:
             raise ValueError("不支持的 PDF 解析策略。")
         tmp_pdf_path.write_bytes(file_bytes)
@@ -6295,7 +6387,7 @@ def run_pdf_parsing_task(
                 estimated_pixels = int(
                     (page.rect.width / 72 * 150) * (page.rect.height / 72 * 150)
                 )
-                if estimated_pixels > 30_000_000:
+                if estimated_pixels > LIMITS.image_pixels:
                     raise ValueError(f"第 {page_num + 1} 页尺寸异常，已停止高清渲染。")
                 pixmap = page.get_pixmap(dpi=150)
                 image_filename = f"pdf_page_{task_id}_{page_num}.png"
@@ -6355,10 +6447,29 @@ def run_pdf_parsing_task(
             else:
                 pages_requiring_ocr.append(local_idx)
 
+        all_ocr_indices = set(pages_requiring_ocr)
+        if recovery is not None:
+            if recovery.get("page_indices") != target_page_indices:
+                raise ValueError("PDF 补做页码范围与原任务不一致。")
+            cached_texts = recovery["page_texts"]
+            if len(cached_texts) != total_target_pages:
+                raise ValueError("PDF 补做转录范围不完整。")
+            for index, cached in enumerate(cached_texts):
+                if cached is not None:
+                    if (not isinstance(cached, str)
+                            or hashlib.sha256(cached.encode("utf-8")).hexdigest() != recovery["page_text_hashes"][index]):
+                        raise ValueError("PDF 已成功页面的转录校验失败，未重新识别。")
+                    ocr_results[index] = cached
+            pages_requiring_ocr = [index for index in pages_requiring_ocr if cached_texts[index] is None]
+            joint_page_results.update(copy.deepcopy(recovery.get("joint_page_results") or {}))
+            all_ocr_indices.update(recovery.get("ocr_indices") or [])
+            diagnostics["pdf_partial_recovery"] = {"reused_pages": sum(text is not None for text in cached_texts),
+                "requested_pages": [target_page_indices[index] + 1 for index in pages_requiring_ocr]}
+
         # Work from physical PDF rows, never from a scrambled Markdown table.
         # Planning is local and conservative; only a validated plan changes the
         # paid request. A failed paid regional request is never retried as a page.
-        regional_plans: dict[int, dict] = {}
+        regional_plans: dict[int, dict] = copy.deepcopy((recovery or {}).get("regional_plans") or {})
         if pdf_strategy != "force_ocr" and pages_requiring_ocr:
             from mathbank.pdf_native_regions import plan_pdf_regions
             with fitz.open(stream=file_bytes, filetype="pdf") as document:
@@ -6430,7 +6541,9 @@ def run_pdf_parsing_task(
             plan = regional_plans.get(local_idx)
             extraction_pages.append({
                 "page_number": page_num + 1,
-                "mode": ("regional" if plan else "full_vision") if local_idx in pages_requiring_ocr else "native",
+                "mode": ("reused_transcription" if recovery is not None and local_idx in all_ocr_indices
+                         and local_idx not in pages_requiring_ocr else
+                         ("regional" if plan else "full_vision") if local_idx in pages_requiring_ocr else "native"),
                 "structure_repaired": inspector_pages.get(page_num, {}).get("native_repair", {}).get("status") == "repaired",
                 "native_characters": plan["native_characters"] if plan else 0,
                 "region_count": len(plan["regions"]) if plan else 0,
@@ -6501,10 +6614,14 @@ def run_pdf_parsing_task(
 
             def ocr_worker(local_idx, image_path):
                 acquired = False
+                permit = None
                 try:
-                    while not acquired:
-                        check_pdf_cancelled()
-                        acquired = PDF_OCR_SEMAPHORE.acquire(timeout=0.25)
+                    input_bytes = Path(image_path).stat().st_size + detail_results.get(local_idx, {}).get("total_png_bytes", 0)
+                    if local_idx in regional_plans:
+                        input_bytes = max(input_bytes, 24 * 1024 * 1024)
+                    permit = PDF_OCR_CAPACITY.page_slot(input_bytes, check_cancelled=check_pdf_cancelled)
+                    permit.__enter__()
+                    acquired = True
                     check_pdf_cancelled()
                     real_page_num = target_page_indices[local_idx] + 1
                     joint = None
@@ -6543,10 +6660,10 @@ def run_pdf_parsing_task(
                     return local_idx, "", str(ocr_error), None
                 finally:
                     if acquired:
-                        PDF_OCR_SEMAPHORE.release()
+                        permit.__exit__(None, None, None)
 
             executor = concurrent.futures.ThreadPoolExecutor(
-                max_workers=min(len(pages_requiring_ocr), 4),
+                max_workers=min(len(pages_requiring_ocr), PDF_OCR_CAPACITY.total),
                 thread_name_prefix="mathbank-pdf-ocr",
             )
             futures = []
@@ -6590,14 +6707,53 @@ def run_pdf_parsing_task(
                     )
                 if page_errors:
                     diagnostics["pdf_failed_pages"] = sorted(page_errors, key=lambda item: item["page_number"])
-                    raise RuntimeError("；".join(f"解析第 {item['page_number']} 页出错: {item['error']}"
-                                                 for item in diagnostics["pdf_failed_pages"]))
+                    check_pdf_cancelled()
+                    if not any(text is not None for text in ocr_results):
+                        raise ValueError(
+                            "全部选中页面识别未完成，未执行拆题: "
+                            + diagnostics["pdf_failed_pages"][0]["error"]
+                        )
+                    pages = [{"page_number": page_num + 1, "markdown": str(ocr_results[index] or ""),
+                              "status": "completed" if ocr_results[index] is not None else "failed"}
+                             for index, page_num in enumerate(target_page_indices)]
+                    original_input = (DOCUMENT_TASKS.snapshot(task_id) or {}).get("document_input") or {}
+                    title = str((original_input.get("options") or {}).get("paper_title") or os.path.splitext(filename)[0])
+                    drafts, isolated = complete_boundary_drafts(pages,
+                        source_sha256=hashlib.sha256(file_bytes).hexdigest(), paper_title=title)
+                    cards = merge_partial_drafts((recovery or {}).get("cards") or [], drafts)
+                    state = {"schema": PDF_PARTIAL_SCHEMA, "task_id": task_id,
+                        "binding": source_binding(original_input), "source_sha256": hashlib.sha256(file_bytes).hexdigest(),
+                        "phase": "page_retry", "failed_pages": [item["page_number"] for item in diagnostics["pdf_failed_pages"]],
+                        "page_indices": list(target_page_indices), "page_texts": list(ocr_results),
+                        "page_text_hashes": [hashlib.sha256(text.encode("utf-8")).hexdigest() if text is not None else None
+                                             for text in ocr_results],
+                        "joint_page_results": copy.deepcopy(joint_page_results),
+                        "regional_plans": {index: plan for index, plan in regional_plans.items() if ocr_results[index] is not None},
+                        "ocr_indices": sorted(all_ocr_indices), "cards": cards,
+                        "temp_assets": list(dict.fromkeys(temp_assets)), "quarantined_ranges": isolated}
+                    diagnostics["pdf_partial_checkpoint"] = checkpoint_summary(state)
+                    state["diagnostics"] = copy.deepcopy(diagnostics)
+                    DOCUMENT_TASKS.update(task_id, pdf_resume_state=state, pdf_source_pages=pages)
+                    completed_partial = DOCUMENT_TASKS.complete(task_id,
+                        log=f"已保留 {len(cards)} 道同页完整边界题稿，{len(page_errors)} 页识别未完成；可校对题稿并显式补做失败页。未确认片段已隔离。",
+                        partial=True, data=cards, generate_answers=generate_answers, document_type="pdf",
+                        page_images=list(page_urls), page_numbers=[number + 1 for number in target_page_indices],
+                        temp_assets=list(dict.fromkeys(temp_assets)), diagnostics=diagnostics)
+                    if not completed_partial:
+                        _delete_task_temp_assets(temp_assets)
+                    return
             finally:
                 cancelled = DOCUMENT_TASKS.is_cancelled(task_id) or not DOCUMENT_TASKS.exists(task_id)
                 if cancelled:
                     for future in futures:
                         future.cancel()
                 executor.shutdown(wait=not cancelled, cancel_futures=True)
+
+        if recovery is not None:
+            recovery.update(phase="split_started", failed_pages=[])
+            diagnostics.pop("pdf_failed_pages", None)
+            diagnostics["pdf_partial_checkpoint"] = checkpoint_summary(recovery)
+            DOCUMENT_TASKS.update(task_id, pdf_resume_state=recovery, diagnostics=diagnostics)
 
         regional_results = [joint_page_results[target_page_indices[index]] for index in regional_plans]
         if "pdf_detail_views" in diagnostics:
@@ -6642,7 +6798,7 @@ def run_pdf_parsing_task(
             # bound. Local validation/cropping never occupies an HTTP permit.
             layout_result = enrich_pdf_with_figures(
                 file_bytes, target_page_indices, page_images, page_urls,
-                ocr_results, {target_page_indices[index] for index in pages_requiring_ocr},
+                ocr_results, {target_page_indices[index] for index in all_ocr_indices},
                 output_dir=Path(TMP_UPLOAD_DIR), url_prefix=f"/{UPLOAD_DIR_REL}/tmp",
                 task_id=task_id, check_cancelled=check_layout_cancelled,
                 register_asset=register_figure_asset, report_progress=report_layout_progress,
@@ -6673,7 +6829,7 @@ def run_pdf_parsing_task(
                              if item["page_index"] == page_num), {})
                 origin = ("regional_vision" if local_idx in regional_plans else
                           "joint_vision" if page_num in joint_page_results else
-                          "ocr" if local_idx in pages_requiring_ocr else
+                          "ocr" if local_idx in all_ocr_indices else
                           "native_repaired" if inspector_pages.get(page_num, {}).get("native_repair", {}).get("status") == "repaired"
                           else "native")
                 source_pages.append({"page_number": page_num + 1, "origin": origin,
@@ -6816,7 +6972,16 @@ def run_pdf_parsing_task(
                 }
         make_source_review_advisory(final_questions, diagnostics)
         DOCUMENT_TASKS.check_cancelled(task_id)
+        if recovery is not None:
+            final_questions, uncertain = merge_recovered_questions(recovery.get("cards") or [], final_questions,
+                full_latex_content, source_sha256=hashlib.sha256(file_bytes).hexdigest())
+            recovery.update(cards=copy.deepcopy(final_questions), phase="complete", failed_pages=[],
+                            quarantined_ranges=uncertain)
+            diagnostics["pdf_partial_checkpoint"] = checkpoint_summary(recovery)
+            DOCUMENT_TASKS.update(task_id, pdf_resume_state=recovery)
         partial = bool(diagnostics.get("pdf_hybrid", {}).get("partial"))
+        if recovery is not None and recovery.get("quarantined_ranges"):
+            partial = True
         completion_log = (f"PDF 已保留 {len(final_questions)} 道完整题目；部分疑点题组仍需校对，未处理范围已保留，可展开原文与未匹配题段核对。"
                           if partial else "拆分完成，可选择题目导入；原文和配图说明可按需展开查看。")
         completed = DOCUMENT_TASKS.complete(
@@ -6987,7 +7152,7 @@ def upload_pdf_task(
             content = read_stream_limited(file.file, MAX_PDF_BYTES)
         except UploadTooLargeError:
             return JSONResponse(
-                content={"status": "error", "message": "PDF 文件过大，请上传 30MB 以内的试卷文件！"},
+                content={"status": "error", "message": f"PDF 文件过大，请上传 {MAX_PDF_BYTES // (1024 * 1024)}MB 以内的试卷文件！"},
                 status_code=413
             )
         if not content.lstrip().startswith(b"%PDF-"):
@@ -7194,7 +7359,7 @@ def run_docx_parsing_task(
                 )
             except TaskCancelled:
                 raise
-            except SourceMetadataPermanentHTTPError:
+            except SourceMetadataNoFallbackError:
                 raise
             except Exception as exc:
                 diagnostics["word_source_metadata"].update(
@@ -7376,7 +7541,7 @@ def upload_docx_task(
             content = read_stream_limited(file.file, MAX_PDF_BYTES)
         except UploadTooLargeError:
             return JSONResponse(
-                content={"status": "error", "message": "Word 文件过大，请上传 30MB 以内的试卷文件！"},
+                content={"status": "error", "message": f"Word 文件过大，请上传 {MAX_PDF_BYTES // (1024 * 1024)}MB 以内的试卷文件！"},
                 status_code=413
             )
         if len(content) < 4 or content[:4] != b"PK\x03\x04":
@@ -7433,9 +7598,10 @@ def resume_document_task(task_id: str):
     task = DOCUMENT_TASKS.snapshot(task_id)
     if not task or not task.get("document_input"):
         raise HTTPException(status_code=404, detail="没有可继续处理的原文档。")
-    if task.get("status") not in {"error", "interrupted"}:
+    pdf_partial_resume = _can_resume_cloud_pdf_partial(task_id, task)
+    if task.get("status") not in {"error", "interrupted"} and not pdf_partial_resume:
         raise HTTPException(status_code=409, detail="该任务当前不能继续处理。")
-    if PDF_CLOUD_ONLY and task.get("document_type") == "pdf":
+    if PDF_CLOUD_ONLY and task.get("document_type") == "pdf" and not pdf_partial_resume:
         raise HTTPException(status_code=409, detail="PDF 已恢复原版处理流程，请重新上传试卷。")
     source = task["document_input"]
     content = _read_document_source(task_id, task)
@@ -7461,7 +7627,10 @@ def resume_document_task(task_id: str):
     checkpoint = (task.get("pdf_resume_state") if source["document_type"] == "pdf"
                   else task.get("docx_resume_state") or task.get("docx_source_cache"))
     try:
-        DOCUMENT_TASKS.restart(task_id)
+        if pdf_partial_resume:
+            _restart_cloud_pdf_partial(task_id)
+        else:
+            DOCUMENT_TASKS.restart(task_id)
         DOCUMENT_TASKS.submit(task_id, function, task_id, content, source["filename"],
                               **options, resume_state=checkpoint)
     except TaskQueueFull as exc:
@@ -8075,16 +8244,22 @@ def export_paper_bundle(payload: dict, db: Session = Depends(get_db)):
             {"paper": tex_main, "answers": tex_ans, "answer_sheet": tex_answer_sheet},
             target="bundle", uploads_dir=UPLOAD_DIR, upload_url_prefix=UPLOAD_DIR_REL)
 
-        # Pre-compile PDFs
-        main_pdf_bytes, _ = compile_tex_to_pdf(tex_main, image_paths)
-        ans_pdf_bytes, _ = compile_tex_to_pdf(tex_ans, image_paths)
-        if paper_type == "exam_19" and tex_answer_sheet:
-            answer_sheet_pdf_bytes, _ = compile_tex_to_pdf(tex_answer_sheet, image_paths)
-        else:
-            answer_sheet_pdf_bytes = None
-
-        if not main_pdf_bytes or not ans_pdf_bytes or (tex_answer_sheet and not answer_sheet_pdf_bytes):
-            return JSONResponse(content={"status": "error", "message": "全套归档的 PDF 编译失败，未生成不完整归档。", "preflight": preflight}, status_code=400)
+        compiled = {}
+        for name, source in (("试卷正文", tex_main), ("参考答案与解析", tex_ans), ("答题卡", tex_answer_sheet)):
+            if not source:
+                continue
+            pdf_bytes, compile_log = compile_tex_to_pdf(source, image_paths)
+            if not pdf_bytes:
+                diagnostic = explain_latex_compile_error(compile_log, source)
+                diagnostic["document"] = name
+                return JSONResponse(content={
+                    "status": "error", "message": f"{name}：{diagnostic['summary']}。未生成不完整归档。",
+                    "diagnostic": diagnostic, "preflight": preflight,
+                }, status_code=400)
+            compiled[name] = pdf_bytes
+        main_pdf_bytes = compiled["试卷正文"]
+        ans_pdf_bytes = compiled["参考答案与解析"]
+        answer_sheet_pdf_bytes = compiled.get("答题卡")
 
         zip_bytes = create_full_bundle_zip_package(
             title, tex_main, tex_ans, image_paths,
@@ -8116,7 +8291,15 @@ def explain_latex_compile_error(log_text: str, tex_content: str) -> dict:
     parse_model = os.getenv("PREFER_PARSE_MODEL") or os.getenv(
         "DEEPSEEK_PARSE_MODEL", "deepseek-flash"
     )
-    provider = resolve_text_provider(parse_model)
+    # A missing or stale AI setting must never hide the local compiler evidence.
+    if diagnostic.get("kind") == "missing_glyph":
+        diagnostic["ai_note"] = "缺字及公式写法已由本地编译日志诊断。"
+        return diagnostic
+    try:
+        provider = resolve_text_provider(parse_model)
+    except (ValueError, TypeError, KeyError):
+        diagnostic["ai_note"] = "试卷拆解模型配置不可用，当前显示本地诊断结果。"
+        return diagnostic
     if not provider.api_key:
         diagnostic["ai_note"] = "试卷拆解模型未配置，当前显示本地诊断结果。"
         return diagnostic
@@ -8142,7 +8325,7 @@ def explain_latex_compile_error(log_text: str, tex_content: str) -> dict:
         response = post_chat_completion(
             provider,
             payload,
-            timeout=45,
+            timeout=AI_REQUEST_TIMEOUT_SECONDS,
             provider_name=provider.provider_label,
         )
         raw_text = response.json()["choices"][0]["message"]["content"].strip()
@@ -8185,6 +8368,7 @@ def export_paper_pdf(payload: dict, db: Session = Depends(get_db)):
             })
         else:
             diagnostic = explain_latex_compile_error(log_or_err, tex_content)
+            diagnostic["document"] = "答题卡" if target == "sheet" else ("参考答案与解析" if include_answers else "试卷正文")
             return JSONResponse(
                 content={
                     "status": "error",

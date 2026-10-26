@@ -326,6 +326,43 @@ def test_arbitrary_zip_is_rejected_without_appending(browser, tmp_path):
     _close_settings(browser)
 
 
+def test_missing_old_image_warning_survives_success_and_page_reload(browser, sharing_package, tmp_path):
+    """Real append with an absent pre-existing asset in the disposable app."""
+    image = browser.root / sharing_package["image_url"].lstrip("/")
+    image_bytes = image.read_bytes()
+    original_id = sharing_package["question"]["id"]
+    old_content = browser.evaluate(f"fetch('/api/questions/{original_id}').then(r=>r.json()).then(q=>q.content)")
+    browser.command("set", "viewport", "1440", "1100")
+    _open_sharing(browser)
+    _open_import(browser)
+    try:
+        image.unlink()
+        browser.command("upload", "#libraryImportFile", str(sharing_package["path"]))
+        if browser.evaluate("!document.getElementById('libraryImportRepeatLabel').classList.contains('hidden')"):
+            _check(browser, "#libraryImportRepeatConfirm")
+        _click_import(browser)
+        browser.command("wait", "--fn", "document.getElementById('libraryTransferStatus').dataset.state==='success'")
+        assert browser.evaluate("!document.getElementById('libraryTransferWarnings').classList.contains('hidden')")
+        warning = browser.evaluate("document.getElementById('libraryTransferWarnings').textContent")
+        assert "1" in warning and "缺失" in warning and "保留" in warning
+        task_id = browser.evaluate("JSON.parse(localStorage.getItem('mathbank.libraryTransferTask.v1')).task_id")
+        browser.command("open", browser.evaluate("location.href"))
+        browser.command("wait", "--fn", "typeof openSettingsModal==='function'")
+        _open_sharing(browser)
+        _open_import(browser)
+        browser.command("wait", "--fn", "document.getElementById('libraryTransferStatus').dataset.state==='success'")
+        assert browser.evaluate("document.getElementById('libraryTransferWarnings').textContent") == warning
+        assert browser.evaluate("JSON.parse(localStorage.getItem('mathbank.libraryTransferTask.v1')).task_id") == task_id
+        assert browser.evaluate(f"fetch('/api/questions/{original_id}').then(r=>r.json()).then(q=>q.content)") == old_content
+        browser.command("scrollintoview", "#libraryTransferWarnings")
+        browser.command("screenshot", str(tmp_path / "sharing-missing-image-warning.png"))
+        browser.evaluate("setLibraryTransferStatus('新任务等待中','busy');true")
+        assert browser.evaluate("document.getElementById('libraryTransferWarnings').classList.contains('hidden')")
+    finally:
+        image.write_bytes(image_bytes)
+        _close_settings(browser)
+
+
 def test_import_busy_guard_survives_close_and_reopen(browser, sharing_package):
     _open_sharing(browser)
     _open_import(browser)

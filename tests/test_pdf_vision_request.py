@@ -1,5 +1,7 @@
 """PDF-only retry budgets and evidence; every provider boundary is mocked."""
 
+from mathbank.ai_timeouts import DOCUMENT_AI_TIMEOUT_SECONDS
+
 from copy import deepcopy
 import hashlib
 import json
@@ -35,7 +37,7 @@ def recognize(post, **kwargs):
 
 @pytest.mark.parametrize("failure", [requests.ReadTimeout, requests.ConnectTimeout, requests.ConnectionError,
                                     requests.exceptions.ProxyError, requests.exceptions.ChunkedEncodingError])
-def test_transport_failure_retries_once_with_600_seconds(failure):
+def test_transport_failure_retries_once_with_document_timeout(failure):
     calls, events = [], []
     def post(*args, **kwargs):
         calls.append(kwargs)
@@ -44,10 +46,10 @@ def test_transport_failure_retries_once_with_600_seconds(failure):
         return response()
     result = recognize(post, report_attempt=events.append)
     assert len(calls) == result["visual_calls"] == 2
-    assert all(item == {"timeout": 600, "check_status": False, "retry_connection": False,
+    assert all(item == {"timeout": DOCUMENT_AI_TIMEOUT_SECONDS, "check_status": False, "retry_connection": False,
                         "allow_redirects": False} for item in calls)
     assert [item["status"] for item in result["attempts"]] == ["failed", "succeeded"]
-    assert all(item["timeout_seconds"] == 600 for item in result["attempts"])
+    assert all(item["timeout_seconds"] == DOCUMENT_AI_TIMEOUT_SECONDS for item in result["attempts"])
     assert result["usage"] == {"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 17}
     assert result["usage_complete"] is False
     assert "private" not in str(events)
@@ -253,7 +255,7 @@ def test_transport_proxy_retry_does_not_multiply_pdf_attempt_budget(monkeypatch)
     with pytest.raises(vision.PDFVisionRequestError):
         vision.request_pdf_vision(provider, {}, post=post_chat_completion, validate=lambda body: {},
                                   label="PDF", stage="test")
-    assert len(calls) == 2 and all(item["timeout"] == 600 for item in calls)
+    assert len(calls) == 2 and all(item["timeout"] == DOCUMENT_AI_TIMEOUT_SECONDS for item in calls)
     assert all(item["allow_redirects"] is False for item in calls)
 
 

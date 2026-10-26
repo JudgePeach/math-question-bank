@@ -1,4 +1,6 @@
 """Fake-only tests for the shared PDF request budget and reference transport."""
+
+from mathbank.ai_timeouts import DOCUMENT_AI_TIMEOUT_SECONDS
 from copy import deepcopy
 import json
 from types import SimpleNamespace
@@ -73,7 +75,7 @@ def test_complete_19_questions_exact_local_assembly_callbacks_and_controls():
     result=run(post,source=source,on_plan=plans.append,on_result=results.append,diagnostics=diagnostics)
     assert len(calls)==1 and len(result['questions'])==19
     assert [q['content'] for q in result['questions']]==[f'原题${i}+1$。' for i in range(1,20)]
-    assert calls[0][0]['max_tokens']==6000 and calls[0][1]['timeout']==600
+    assert calls[0][0]['max_tokens']==6000 and calls[0][1]['timeout']==DOCUMENT_AI_TIMEOUT_SECONDS
     assert calls[0][1]['retry_connection'] is False and calls[0][1]['allow_redirects'] is False
     assert len(plans)==1 and results[-1]['question_ids']==[f'q{i}' for i in range(1,20)]
     assert diagnostics['pdf_local_structure']['calls']==1

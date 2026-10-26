@@ -24,6 +24,7 @@ from mathbank.db_migrations import LATEST_SCHEMA_VERSION
 NEW_RUNTIME_MODULES = (
     "mathbank/question_reads.py",
     "mathbank/background_export.py",
+    "mathbank/question_queries.py",
 )
 
 
@@ -71,9 +72,11 @@ def test_actual_portable_copy_includes_both_new_runtime_modules(portable_source_
     run_child(tree, """
         from mathbank.question_reads import find_association_candidates, question_summary_load_options
         from mathbank.background_export import DatabaseExportQueue
+        from mathbank.question_queries import QuestionReadSnapshot, page_questions
         from mathbank.paths import DATABASE_FILE
         assert callable(find_association_candidates)
         assert callable(question_summary_load_options)
+        assert callable(QuestionReadSnapshot) and callable(page_questions)
         assert not DATABASE_FILE.exists()
     """)
 

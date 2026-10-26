@@ -4,13 +4,15 @@ from pathlib import Path
 import shutil
 import subprocess
 
+from frontend_timeout_helpers import FRONTEND_TIMEOUTS
+
 ROOT = Path(__file__).resolve().parents[1]
 
 
 def _run_node(source: str):
     node = shutil.which("node")
     assert node, "Node.js is required for executable frontend regressions"
-    result = subprocess.run([node, "-"], input=source, text=True,
+    result = subprocess.run([node, "-"], input=FRONTEND_TIMEOUTS + source, text=True,
                             capture_output=True, timeout=15)
     assert result.returncode == 0, result.stdout + result.stderr
 
@@ -77,7 +79,7 @@ const fetch = (url, options = {}) => {
   }));
   const timed = fetchConfigStatus(); await flush();
   assert.equal(timers.size, 1);
-  const timer = [...timers.values()][0]; assert.equal(timer.ms, 8000); timer.fn();
+  const timer = [...timers.values()][0]; assert.equal(timer.ms, 30000); timer.fn();
   await timed; assert.match(indicator.innerHTML, /尚未就绪/);
   assert.equal(timers.size, 0);
 })().catch(error => {process.stderr.write(String(error.stack)); process.exitCode = 1;});

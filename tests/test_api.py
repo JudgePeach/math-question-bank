@@ -1,3 +1,5 @@
+
+from mathbank.ai_timeouts import DOCUMENT_AI_TIMEOUT_SECONDS
 import base64
 import os
 import json
@@ -254,6 +256,10 @@ def test_ai_classify_returns_coarse_form_without_question_type():
         "main.post_chat_completion", return_value=response
     ), patch(
         "main.get_current_curriculum", return_value={"必修一": {"1. 集合": []}}
+    ), patch(
+        "main.load_ai_knowledge_catalog", return_value=[{
+            "code": "demo:set", "name": "集合", "original_name": "集合", "aliases": [],
+        }]
     ):
         from main import ai_classify
 
@@ -263,7 +269,7 @@ def test_ai_classify_returns_coarse_form_without_question_type():
             "下列结论正确的是\\begin{choices}\\item A\\item B\\end{choices}"
         )
 
-    assert ai_result == {
+    expected = {
         "status": "success",
         "compulsory": "必修一",
         "chapter": "1. 集合",
@@ -271,9 +277,14 @@ def test_ai_classify_returns_coarse_form_without_question_type():
         "question_form": "choice",
         "question_form_source": "ai",
         "knowledge_points": [],
-        "knowledge_point_warnings": [],
         "version_code": "A",
     }
+    assert {key: ai_result[key] for key in expected} == expected
+    assert ai_result["placement_valid"] is True
+    assert ai_result["knowledge_point_diagnostics"]["outcome"] == "missing_field"
+    assert ai_result["knowledge_point_diagnostics"]["accepted"] == 0
+    assert any("未返回知识点字段" in warning for warning in ai_result["knowledge_point_warnings"])
+    assert ai_result["classification_diagnostics"]["elapsed_ms"] >= 0
     assert fillin_result["question_form"] == "fill_in_blank"
     assert fillin_result["question_form_source"] == "structure"
     assert choices_result["question_form"] == "choice"
@@ -596,7 +607,7 @@ def test_parse_paper_flows_use_shared_provider_resolution(client):
         assert "reasoning_effort" not in kwargs["json"]
         assert "thinking_budget" not in kwargs["json"]
         assert "max_tokens" not in kwargs["json"]
-        assert kwargs["timeout"] == 600
+        assert kwargs["timeout"] == DOCUMENT_AI_TIMEOUT_SECONDS
 
 def test_figure_align_api(client):
     headers = {"X-Local-Token": LOCAL_TOKEN}

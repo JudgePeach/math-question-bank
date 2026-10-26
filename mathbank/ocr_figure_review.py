@@ -19,6 +19,7 @@ import requests
 from PIL import Image
 
 from mathbank.ai_http import post_chat_completion
+from mathbank.ai_timeouts import AI_REQUEST_TIMEOUT_SECONDS
 from mathbank.ai_json import parse_ai_json
 from mathbank.ai_providers import apply_model_thinking_policy, apply_structured_output_policy
 from mathbank.asset_security import resolve_upload_asset, normalize_raster_image
@@ -28,7 +29,7 @@ from mathbank.prompts import SINGLE_OCR_FIGURE_REVIEW_INSTRUCTIONS, build_single
 from mathbank.ocr_raster_layout import source_pixel_bbox, normalized_bbox, context_bbox, raster_ink_components, compatible_ink_hint, bounded_bbox_change
 
 
-REVIEW_TIMEOUT_SECONDS = 240
+REVIEW_TIMEOUT_SECONDS = AI_REQUEST_TIMEOUT_SECONDS
 MAX_REVIEW_PNG_BYTES = 24 * 1024 * 1024
 MAX_REVIEW_PIXELS = 16_000_000
 _CHECKS = frozenset({"same_figure", "full_graphic", "labels_complete", "no_foreign_content", "correct_anchor"})

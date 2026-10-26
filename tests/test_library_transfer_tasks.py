@@ -47,6 +47,30 @@ def _export(directory, payload, progress):
     return {"question_count": 2, "image_count": 0}
 
 
+def test_missing_image_backup_warning_survives_later_failure_and_restart(tmp_path):
+    warning = {"code": "missing_existing_images", "missing_count": 2,
+               "message": "原有题库有 2 张图片缺失，原文与引用已保留。"}
+    def run(directory, progress):
+        progress("backup", result={"backup_path": "safe-backup.zip", "backup_warnings": [warning]})
+        progress("writing")
+        raise RuntimeError("simulated later import failure")
+    task_id = _id()
+    archive, digest = _archive(tmp_path)
+    tasks = LibraryTransferTasks(tmp_path / "tasks", run_import=run, run_export=_export)
+    try:
+        tasks.submit_import(task_id, archive, digest)
+        final = _wait(tasks, task_id)
+        assert final["status"] == "failed"
+        assert final["result"]["backup_warnings"] == [warning]
+    finally:
+        tasks.close()
+    restored = LibraryTransferTasks(tasks.root, run_import=lambda *_: pytest.fail("unexpected replay"), run_export=_export)
+    try:
+        assert restored.get(task_id)["result"] == final["result"]
+    finally:
+        restored.close()
+
+
 def test_concurrent_same_intent_runs_once_and_new_intent_still_appends(tmp_path):
     entered, release = threading.Event(), threading.Event()
     calls = []

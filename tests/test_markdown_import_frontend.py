@@ -8,6 +8,7 @@ import subprocess
 
 import pytest
 
+from frontend_timeout_helpers import FRONTEND_TIMEOUTS
 from test_preview_browser import browser
 
 
@@ -23,6 +24,7 @@ def markdown_import_script():
         return source[begin:source.index(end, begin)]
 
     shipped = "\n".join([
+        FRONTEND_TIMEOUTS,
         section("window.currentImportSourceFormat = 'tex'", "function openImportModal()"),
         section("function setupImportFileHandlers()", "function demoteCurrentImportLog"),
         section("function runAIPaperParse()", "let documentImportTaskGeneration = 0"),

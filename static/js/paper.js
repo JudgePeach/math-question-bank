@@ -45,6 +45,15 @@
             tab: 'all' // 'all' or 'selected'
         },
         isFilterCollapsed: true,
+        aiSelectionPrompt: '',
+        aiSelectionLimit: 5,
+        aiReferenceMode: 'recent_gaokao',
+        aiReferenceKey: '',
+        aiSelectionBusy: false,
+        aiReferenceExams: [],
+        aiReferenceLoaded: false,
+        aiReferenceLoading: false,
+        aiReferenceError: '',
         bankQuestions: [], // Current server-paginated question bank page
         streamPagination: {
             all: { page: 1, total: null, totalPages: 1, loading: false, error: '', retryPage: 1 },
@@ -570,6 +579,7 @@
         const panel = document.getElementById(meta ? 'paperMetaDetails' : 'paperAiDetails');
         if (panel) panel.hidden = !open;
         document.getElementById(meta ? 'togglePaperMetaBtn' : 'togglePaperAiBtn')?.setAttribute('aria-expanded', String(open));
+        if (!meta && open) window.loadPaperReferenceExams();
     };
     window.clearPaperFilters = function () {
         Object.assign(window.PaperStore.filters, {compulsory:'', chapter:'', knowledge:'', sub_knowledge:[], sub_knowledge_mode:'any', question_type:'', difficulty:''});
@@ -1060,12 +1070,21 @@
                     </div>
                 </section>
                 <section id="paperAiDetails" class="paper-configuration-panel paper-ai-details" aria-labelledby="togglePaperAiBtn" ${window.PaperStore.isAiExpanded ? '' : 'hidden'}>
-                    <div class="paper-ai-entry"><input type="text" id="paperAiPromptInput" aria-label="AI选题要求" value="${escapeHtml(window.PaperStore.aiSelectionPrompt || '')}" oninput="window.PaperStore.aiSelectionPrompt = this.value" onkeypress="if(event.key==='Enter') triggerAiPaperSelect()" class="glass-input" placeholder="例如：抽取5道函数选择题，包含基础题与挑战题"><button type="button" onclick="triggerAiPaperSelect()" class="glass-btn-primary">开始选题</button></div>
+                    <div class="paper-ai-entry"><input type="text" id="paperAiPromptInput" aria-label="AI选题要求" value="${escapeHtml(window.PaperStore.aiSelectionPrompt || '')}" oninput="window.PaperStore.aiSelectionPrompt = this.value" onkeydown="if(event.key==='Enter'&&!event.isComposing) triggerAiPaperSelect()" class="glass-input" placeholder="例如：函数专题，兼顾基础、迁移与综合应用"><button type="button" id="paperAiSelectBtn" onclick="triggerAiPaperSelect()" aria-busy="${Boolean(window.PaperStore.aiSelectionBusy)}" ${window.PaperStore.aiSelectionBusy ? 'disabled' : ''} class="glass-btn-primary">${window.PaperStore.aiSelectionBusy ? '正在选题…' : '开始选题'}</button></div>
+                    <div class="paper-ai-options">
+                        <label>新增题量<input id="paperAiLimitInput" type="number" min="1" max="30" step="1" value="${escapeHtml(String(window.PaperStore.aiSelectionLimit))}" oninput="window.PaperStore.aiSelectionLimit = this.value" class="glass-input"></label>
+                        <label>风格参考<select id="paperAiReferenceMode" onchange="updatePaperAiReferenceMode(this.value)" class="glass-select"><option value="recent_gaokao" ${window.PaperStore.aiReferenceMode === 'recent_gaokao' ? 'selected' : ''}>近年高考真题</option><option value="none" ${window.PaperStore.aiReferenceMode === 'none' ? 'selected' : ''}>按选题要求</option></select></label>
+                        <label class="paper-ai-reference-field">参考试卷<select id="paperAiReferenceKey" onchange="window.PaperStore.aiReferenceKey = this.value" class="glass-select" ${window.PaperStore.aiReferenceMode === 'none' ? 'disabled' : ''}><option value="">自动参考近年真题</option></select></label>
+                    </div>
+                    <div class="paper-ai-reference-status"><span id="paperAiReferenceStatus" role="status"></span><button type="button" id="paperAiReferenceRetryBtn" onclick="loadPaperReferenceExams(true)" class="glass-btn" hidden>重新加载参考卷</button></div>
+                    <p class="paper-ai-help">在当前筛选范围内新增题目，保留已选题，自动参考相关课标要求。可在要求中说明已学进度；真题用于参考考查方式与难度梯度。明确题数优先，否则使用新增题量。</p>
                 </section>
             </div>`;
         refreshPaperFilterSummary();
         mountKnowledgePointPicker('paper', document.getElementById('paperKnowledgePointPicker'));
         if (typeof window.renderSubKnowledgeOptions === 'function') window.renderSubKnowledgeOptions('paper', f.sub_knowledge || []);
+        renderPaperAiReferenceOptions();
+        if (window.PaperStore.isAiExpanded) window.loadPaperReferenceExams();
     }
 
     let filterDebounceTimer = null;
@@ -1175,76 +1194,204 @@
         }
     };
 
-    window.triggerAiPaperSelect = async function () {
+    // Reference metadata stays outside the paper body and is fetched only on demand.
+    function renderPaperAiReferenceOptions() {
+        const store = window.PaperStore;
+        const select = document.getElementById('paperAiReferenceKey');
+        if (select) {
+            select.replaceChildren();
+            const addOption = (value, text) => {
+                const option = document.createElement('option');
+                option.value = value;
+                option.textContent = text;
+                select.appendChild(option);
+            };
+            addOption('', '自动参考近年真题');
+            store.aiReferenceExams.forEach(exam => {
+                if (!exam || typeof exam.key !== 'string') return;
+                addOption(exam.key, `${exam.title || exam.key}（${Number(exam.question_count) || 0}题${exam.completeness_note ? '，' + exam.completeness_note : ''}）`);
+            });
+            if (store.aiReferenceKey && !store.aiReferenceExams.some(exam => exam.key === store.aiReferenceKey)) {
+                addOption(store.aiReferenceKey, '原参考卷（请重新加载核对）');
+            }
+            select.value = store.aiReferenceKey;
+            select.disabled = store.aiReferenceMode === 'none' || store.aiReferenceLoading;
+        }
+        const status = document.getElementById('paperAiReferenceStatus');
+        if (status) status.textContent = store.aiReferenceMode === 'none' ? '按当前选题要求与筛选选题。'
+            : store.aiReferenceLoading ? '正在读取库中近年高考参考卷…'
+            : store.aiReferenceError || (store.aiReferenceLoaded
+                ? (store.aiReferenceExams.length ? `可参考 ${store.aiReferenceExams.length} 份库内真题，完整性以各卷说明为准。` : '库中未找到可用的近年高考参考卷，选题时会说明参考不足。')
+                : '展开后读取库内真题参考。');
+        const retry = document.getElementById('paperAiReferenceRetryBtn');
+        if (retry) retry.hidden = store.aiReferenceMode === 'none' || !store.aiReferenceError || store.aiReferenceLoading;
+    }
+
+    window.loadPaperReferenceExams = async function (retry = false) {
+        const store = window.PaperStore;
+        if (store.aiReferenceMode === 'none' || store.aiReferenceLoading || (store.aiReferenceLoaded && !retry)) return;
+        store.aiReferenceLoading = true;
+        store.aiReferenceError = '';
+        renderPaperAiReferenceOptions();
+        try {
+            const response = await fetch('/api/paper/reference-exams');
+            const data = await response.json();
+            if (!response.ok || data.status !== 'success' || !Array.isArray(data.data)) {
+                throw new Error(paperAiResponseMessage(data, '参考卷读取失败，请重试。'));
+            }
+            store.aiReferenceExams = data.data.filter(exam => exam && typeof exam.key === 'string');
+            store.aiReferenceLoaded = true;
+        } catch (error) {
+            store.aiReferenceError = error.message || '参考卷读取失败，请重试。';
+        } finally {
+            store.aiReferenceLoading = false;
+            renderPaperAiReferenceOptions();
+        }
+    };
+
+    window.updatePaperAiReferenceMode = function (value) {
+        window.PaperStore.aiReferenceMode = value === 'none' ? 'none' : 'recent_gaokao';
+        renderPaperAiReferenceOptions();
+        if (window.PaperStore.aiReferenceMode === 'recent_gaokao') window.loadPaperReferenceExams();
+    };
+
+    function paperAiResponseMessage(data, fallback) {
+        if (!data || typeof data !== 'object') return fallback;
+        const detail = data.detail || data.message;
+        if (typeof detail === 'string' && detail) return detail;
+        if (detail && typeof detail.message === 'string') return detail.message;
+        if (Array.isArray(detail)) return detail.map(item => item && item.msg).filter(Boolean).join('；') || fallback;
+        return fallback;
+    }
+
+    function getPaperAiSelectionRequest() {
+        const store = window.PaperStore;
+        const f = store.filters;
         const input = document.getElementById('paperAiPromptInput');
-        const btn = document.querySelector('button[onclick="triggerAiPaperSelect()"]');
-        if (!input || !input.value.trim()) {
-            if (window.showToast) window.showToast('请先输入智能抽卷要求', 'warning');
+        return {
+            prompt: input ? input.value.trim() : (store.aiSelectionPrompt || '').trim(),
+            expected_version_code: window.activeCurriculumVersion || null,
+            limit: Number(store.aiSelectionLimit),
+            reference_mode: store.aiReferenceMode,
+            reference_key: store.aiReferenceMode === 'none' ? '' : store.aiReferenceKey,
+            exclude_ids: store.cart.map(item => Number(item.id)),
+            paper_type: store.meta.paper_type,
+            compulsory: f.compulsory,
+            chapter: f.chapter,
+            knowledge: f.knowledge,
+            question_type: f.question_type,
+            difficulty: f.difficulty,
+            keyword: f.keyword,
+            ...KnowledgePointState.filter('paper')
+        };
+    }
+
+    function getPaperAiSelectionSignature() {
+        return JSON.stringify({
+            request: getPaperAiSelectionRequest(),
+            cart: getPaperCartSignature(),
+            filters: window.PaperStore.filters,
+            meta: window.PaperStore.meta,
+            workspace: window.PaperStore.activeWorkspace
+        });
+    }
+
+    let paperAiSelectionInFlight = false;
+    function setPaperAiSelectionBusy(busy) {
+        window.PaperStore.aiSelectionBusy = busy;
+        const button = document.getElementById('paperAiSelectBtn');
+        if (!button) return;
+        button.disabled = busy;
+        button.setAttribute('aria-busy', String(busy));
+        button.textContent = busy ? '正在选题…' : '开始选题';
+    }
+
+    window.triggerAiPaperSelect = async function () {
+        if (paperAiSelectionInFlight) {
+            if (window.showToast) window.showToast('选题正在进行，请等待本次结果。', 'info');
             return;
         }
-        const promptText = input.value.trim();
-        const origBtnHtml = btn ? btn.innerHTML : '';
-
+        const request = getPaperAiSelectionRequest();
+        if (!request.prompt) {
+            if (window.showToast) window.showToast('请先输入智能选题要求', 'warning');
+            return;
+        }
+        if (!Number.isInteger(request.limit) || request.limit < 1 || request.limit > 30) {
+            if (window.showToast) window.showToast('新增题量请输入 1 到 30 的整数。', 'warning');
+            return;
+        }
+        const expectedSignature = getPaperAiSelectionSignature();
+        const expectedCart = window.PaperStore.cart;
+        const expectedMeta = window.PaperStore.meta;
+        const selectionCurrent = () => window.PaperStore.cart === expectedCart
+            && window.PaperStore.meta === expectedMeta
+            && getPaperAiSelectionSignature() === expectedSignature;
+        paperAiSelectionInFlight = true;
+        setPaperAiSelectionBusy(true);
         try {
-            if (btn) {
-                btn.disabled = true;
-                btn.innerHTML = `<i class="fa-solid fa-brain fa-spin text-xs"></i><span>AI 思考组卷中...</span>`;
-            }
-            if (window.showToast) window.showToast('正在调用 AI 大模型分析需求并遴选最佳题目...', 'info');
-            const f = window.PaperStore.filters;
-            const res = await fetch('/api/paper/ai-select', {
+            if (window.showToast) window.showToast('正在结合选题要求与库内参考遴选题目…', 'info');
+            const response = await fetch('/api/paper/ai-select', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    prompt: promptText,
-                    expected_version_code: window.activeCurriculumVersion || null,
-                    limit: 5,
-                    compulsory: f.compulsory,
-                    chapter: f.chapter,
-                    knowledge: f.knowledge,
-                    question_type: f.question_type,
-                    difficulty: f.difficulty,
-                    ...KnowledgePointState.filter('paper')
-                })
+                body: JSON.stringify(request)
             });
-            const data = await res.json();
-            if (data.status === 'success' && Array.isArray(data.data)) {
-                let addedCount = 0;
-                data.data.forEach(q => {
-                    if (!window.isInCart(q.id)) {
-                        window.PaperStore.cart.push({ id: q.id, score: q.question_type === 'detailed_answer' ? 12 : 5 });
-                        window.PaperStore.questionsMap[q.id] = q;
-                        addedCount++;
-                    }
-                });
-                if (data.ai_analysis) {
-                    window.PaperStore.meta.ai_analysis = data.ai_analysis;
-                    window.PaperStore.meta.ai_model_used = data.model_used || '大模型';
-                    saveMetaToStorage();
-                }
-                saveCartToStorage();
-                renderPart3QuestionStream();
-                window.renderPaperCanvas();
-                if (window.showToast) {
-                    const engineLabel = data.fallback ? '算法' : (data.model_used || 'AI 大模型');
-                    window.showToast(`AI (${engineLabel}) 成功挑选并加入了 ${addedCount} 道试题`, 'success');
-                }
-            } else {
-                if (window.showToast) window.showToast(data.message || '抽选试题无结果', 'warning');
+            const data = await response.json();
+            if (!selectionCurrent()) {
+                if (window.showToast) window.showToast('卷面、教材或选题条件已变化，本次结果未加入，请按当前条件重新选题。', 'warning');
+                return;
             }
-        } catch (e) {
-            if (window.showToast) window.showToast('AI 抽题请求异常', 'error');
+            if (!response.ok) throw new Error(paperAiResponseMessage(data, `选题请求失败（HTTP ${response.status}）`));
+            if (data.status !== 'success' || !Array.isArray(data.data)) {
+                throw new Error(paperAiResponseMessage(data, '未取得可用的选题结果。'));
+            }
+            // Explicit counts and mixed type quotas in the prompt may override
+            // the default count. Follow the validated server plan without truncating it.
+            const plannedCount = Number(data.selection_summary && data.selection_summary.requested);
+            const effectiveLimit = Number.isInteger(plannedCount) && plannedCount >= 1 && plannedCount <= 30
+                ? plannedCount : request.limit;
+            let addedCount = 0;
+            data.data.forEach(q => {
+                const qid = Number(q && q.id);
+                if (addedCount >= effectiveLimit || !Number.isInteger(qid) || qid <= 0 || window.isInCart(qid)) return;
+                const suggestedScore = Number(q.suggested_score);
+                const score = Number.isFinite(suggestedScore) && suggestedScore > 0 && suggestedScore <= 1000
+                    ? suggestedScore : q.question_type === 'detailed_answer' ? 12 : 5;
+                window.PaperStore.cart.push({ id: qid, score });
+                window.PaperStore.questionsMap[qid] = q;
+                addedCount++;
+            });
+            const warnings = Array.isArray(data.warnings) ? data.warnings.filter(item => typeof item === 'string' && item) : [];
+            const analysis = typeof data.ai_analysis === 'string' ? data.ai_analysis.trim() : '';
+            const countNote = `本次新增 ${addedCount} / ${effectiveLimit} 题；当前卷面共 ${window.PaperStore.cart.length} 题。`;
+            window.PaperStore.meta.ai_analysis = [countNote, analysis, warnings.length ? `提示：\n${warnings.join('\n')}` : ''].filter(Boolean).join('\n\n');
+            window.PaperStore.meta.ai_model_used = data.fallback ? '本地规则选题' : (data.model_used || 'AI');
+            window.PaperStore.meta.ai_selection_summary = data.selection_summary || null;
+            window.PaperStore.meta.ai_reference_profile = data.reference_profile || null;
+            saveMetaToStorage();
+            saveCartToStorage();
+            renderPart3QuestionStream();
+            window.renderPaperCanvas();
+            if (window.showToast) {
+                const hasShortfall = addedCount < effectiveLimit || Number(data.selection_summary && data.selection_summary.shortfall) > 0;
+                const limited = Boolean(data.fallback) || warnings.length > 0 || hasShortfall;
+                const suffix = data.fallback ? '，本次使用本地规则，请核对选题依据。'
+                    : hasShortfall ? '，未达到目标题量，请查看选题说明。'
+                    : warnings.length ? '，请查看选题提示。' : '。';
+                window.showToast(`已新增 ${addedCount} / ${effectiveLimit} 道题${suffix}`, limited ? 'warning' : 'success');
+            }
+        } catch (error) {
+            if (window.showToast) window.showToast(error.message || '智能选题请求异常，请重试。', 'error');
         } finally {
-            if (btn) {
-                btn.disabled = false;
-                btn.innerHTML = origBtnHtml;
-            }
+            paperAiSelectionInFlight = false;
+            setPaperAiSelectionBusy(false);
         }
     };
 
     window.clearAiAnalysis = function () {
         delete window.PaperStore.meta.ai_analysis;
         delete window.PaperStore.meta.ai_model_used;
+        delete window.PaperStore.meta.ai_selection_summary;
+        delete window.PaperStore.meta.ai_reference_profile;
         saveMetaToStorage();
         window.renderPaperCanvas();
     };
@@ -1986,15 +2133,13 @@
                     <div class="flex items-center justify-between mb-1.5 pb-1 border-b border-brand-200/50 dark:border-brand-900/60">
                         <div class="flex items-center space-x-1.5 text-xs font-bold text-brand-700 dark:text-brand-200">
                             <i class="fa-solid fa-brain text-brand-500"></i>
-                            <span>双向细目表与考点覆盖分析 (${escapeHtml(meta.ai_model_used || '大模型')})</span>
+                            <span>选题依据与覆盖情况 (${escapeHtml(meta.ai_model_used || 'AI')})</span>
                         </div>
                         <button onclick="window.clearAiAnalysis()" class="text-[10px] text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 px-1.5 py-0.5 rounded-md hover:bg-slate-200/60 font-medium transition-all" title="关闭分析框">
                             <i class="fa-solid fa-xmark mr-1"></i>关闭分析
                         </button>
                     </div>
-                    <div class="text-xs text-slate-700 dark:text-slate-300 whitespace-pre-wrap leading-relaxed">
-                        ${escapeHtml(meta.ai_analysis)}
-                    </div>
+                    <div class="text-xs text-slate-700 dark:text-slate-300 whitespace-pre-wrap leading-relaxed">${escapeHtml(meta.ai_analysis)}</div>
                 </div>
             `;
         }
@@ -3258,6 +3403,7 @@
             });
 
             if (res.ok && res.headers.get('content-type')?.includes('application/pdf')) {
+                document.getElementById('paperCompileErrorPanel')?.remove();
                 rememberPaperExportPreflight(res);
                 const blob = await res.blob();
                 const url = URL.createObjectURL(blob);
@@ -3274,6 +3420,8 @@
                 } catch (e) {}
                 if (tab && !tab.closed) {
                     setPdfTabErrorState(tab, `${targetName} PDF 编译失败`, errData.diagnostic, errLog);
+                } else {
+                    showPaperExportDiagnostic(errData.diagnostic, errLog);
                 }
                 if (window.showToast) window.showToast(errLog, 'error');
             }
@@ -3368,6 +3516,35 @@
         } catch(e) {}
     }
 
+    function paperDiagnosticEvidenceHtml(report) {
+        const excerptLabel = report.excerpt_location_confidence === 'compiler_context'
+            ? '编译器读到的未闭合片段（题范围定位）'
+            : report.source_candidate_count > 1 ? '题内候选片段（请逐处核对）'
+            : report.source_match_line ? '题内候选片段' : '请核对这一处';
+        const excerpt = report.error_excerpt
+            ? `<section class="section"><h2>${excerptLabel}</h2><pre class="overflow-auto whitespace-pre-wrap break-all">${escapeHtml(report.error_excerpt)}</pre><p>请在对应题目的编辑框中核对；此片段来自导出副本，题库原文尚未修改。</p></section>` : '';
+        const local = report.ai_used && (report.local_summary || report.local_cause || report.local_fixes)
+            ? `<section class="section"><h2>编译日志确认的信息</h2><p>${escapeHtml(report.local_summary || '')}</p><p>${escapeHtml(report.local_cause || '')}</p><ol>${(report.local_fixes || []).map(item => `<li>${escapeHtml(item)}</li>`).join('')}</ol></section>` : '';
+        const note = report.ai_note ? `<p>${escapeHtml(report.ai_note)}</p>` : '';
+        return excerpt + local + note;
+    }
+
+    function showPaperExportDiagnostic(report, message) {
+        const actions = document.querySelector('#a4PaperPreviewSheet .paper-preview-actions');
+        if (!actions || !report) return;
+        let panel = document.getElementById('paperCompileErrorPanel');
+        if (!panel) {
+            panel = document.createElement('section');
+            panel.id = 'paperCompileErrorPanel';
+            panel.style.gridColumn = '1 / -1';
+            panel.style.width = '100%';
+            panel.className = 'mt-3 rounded-xl border border-rose-200 bg-white p-4 text-sm text-slate-700 dark:bg-slate-900 dark:text-slate-200';
+            panel.setAttribute('role', 'alert');
+            actions.appendChild(panel);
+        }
+        panel.innerHTML = `<h3 class="font-semibold">${escapeHtml(message || report.summary)}</h3><p>${escapeHtml(report.location || '位置待核对')}</p>${paperDiagnosticEvidenceHtml(report)}<ol>${(report.fixes || []).map(item => `<li>${escapeHtml(item)}</li>`).join('')}</ol><details><summary>查看局部源码和编译信息</summary><pre class="overflow-auto whitespace-pre-wrap break-all">${escapeHtml(report.source_context || '')}\n${escapeHtml(report.technical_error || '')}</pre></details>`;
+    }
+
     function setPdfTabErrorState(tab, title, diagnostic, fallbackMessage) {
         if (!tab) return;
         const report = diagnostic || {};
@@ -3416,11 +3593,12 @@
                             <div>
                                 <h1>${escapeHtml(report.summary || fallbackMessage || title)}</h1>
                                 <p>${escapeHtml(report.location || '试卷公式或模板附近')}</p>
-                                <span class="badge">${report.ai_used ? 'AI 已结合编译日志解释' : '本地诊断结果'}</span>
+                                <span class="badge">${report.ai_used ? 'AI 补充建议，请核对' : '本地诊断结果'}</span>
                             </div>
                         </div>
                         <section class="section"><h2>为什么会这样</h2><p>${escapeHtml(report.cause || fallbackMessage || 'LaTeX 编译没有完成。')}</p></section>
                         <section class="section"><h2>建议如何修复</h2><ol>${fixesHtml}</ol></section>
+                        ${paperDiagnosticEvidenceHtml(report)}
                         ${sourceHtml}
                         ${technicalHtml}
                         <button onclick="window.close()">关闭此页并返回修改</button>
@@ -3495,7 +3673,7 @@
         if (cancel) cancel.disabled = true;
     }
 
-    function showPandocInstallError(message) {
+    function showPandocInstallError(message, reconnect = false) {
         const error = document.getElementById('pandocInstallError');
         const install = document.getElementById('pandocInstallBtn');
         const compatibility = document.getElementById('pandocCompatibilityBtn');
@@ -3506,7 +3684,8 @@
         }
         if (install) {
             install.disabled = false;
-            install.innerHTML = '<i class="fa-solid fa-rotate-right mr-1.5" aria-hidden="true"></i>重新安装';
+            install.innerHTML = '<i class="fa-solid fa-rotate-right mr-1.5" aria-hidden="true"></i>'
+                + (reconnect ? '重新连接原任务' : '重新安装');
         }
         if (compatibility) compatibility.disabled = false;
         if (cancel) cancel.disabled = false;
@@ -3533,27 +3712,44 @@
     }
 
     async function pollPandocInstall(taskId) {
-        const deadline = Date.now() + 15 * 60 * 1000;
+        const deadline = Date.now() + MathBankTimeouts.PANDOC_INSTALL_MS;
         while (Date.now() < deadline) {
-            const response = await fetch(`/api/runtime/pandoc/install/${encodeURIComponent(taskId)}`);
-            if (!response.ok) throw new Error('Pandoc 安装任务已失效。');
-            const data = await response.json();
-            const state = data.pandoc || {};
-            updatePandocInstallProgress(state);
-            if (state.status === 'completed' || state.status === 'ready') return true;
-            if (state.status === 'error') throw new Error(state.error || state.message || 'Pandoc 安装失败。');
+            const controller = new AbortController();
+            const timeout = setTimeout(() => controller.abort(), Math.min(MathBankTimeouts.QUERY_MS, deadline - Date.now()));
+            try {
+                const response = await fetch(`/api/runtime/pandoc/install/${encodeURIComponent(taskId)}`, {signal: controller.signal});
+                if (!response.ok) {
+                    const error = new Error(response.status === 404 ? 'Pandoc 安装任务已失效。' : '暂时无法查询 Pandoc 安装进度。');
+                    error.pandocTaskTerminal = response.status === 404;
+                    throw error;
+                }
+                const data = await response.json();
+                const state = data.pandoc || {};
+                updatePandocInstallProgress(state);
+                if (state.status === 'completed' || state.status === 'ready') return true;
+                if (state.status === 'error') {
+                    const error = new Error(state.error || state.message || 'Pandoc 安装失败。');
+                    error.pandocTaskTerminal = true;
+                    throw error;
+                }
+            } catch (error) {
+                if (error.name === 'AbortError') throw new Error('查询 Pandoc 安装进度超时，可重新连接原任务。');
+                throw error;
+            } finally {
+                clearTimeout(timeout);
+            }
             await new Promise(resolve => setTimeout(resolve, 750));
         }
-        throw new Error('Pandoc 安装等待超时，请重试。');
+        throw new Error('Pandoc 安装等待超时，可重新连接原任务查看进度。');
     }
 
     async function installPandocAndContinue(existingTaskId = null) {
+        let retainedTaskId = existingTaskId;
         while (true) {
             try {
                 let state;
-                if (existingTaskId) {
-                    state = { task_id: existingTaskId };
-                    existingTaskId = null;
+                if (retainedTaskId) {
+                    state = { task_id: retainedTaskId };
                 } else {
                     updatePandocInstallProgress({ progress: 0, message: '正在准备安装…' });
                     const response = await fetch('/api/runtime/pandoc/install', { method: 'POST' });
@@ -3565,13 +3761,15 @@
                 }
                 if (state.status !== 'ready') {
                     if (!state.task_id) throw new Error('Pandoc 安装任务缺少标识。');
+                    retainedTaskId = state.task_id;
                     await pollPandocInstall(state.task_id);
                 }
                 setPandocModalVisible(false);
                 if (window.showToast) window.showToast('Word 可编辑公式组件已安装，正在继续导出…', 'success');
                 return true;
             } catch (error) {
-                showPandocInstallError(error && error.message ? error.message : 'Pandoc 安装失败。');
+                if (error?.pandocTaskTerminal) retainedTaskId = null;
+                showPandocInstallError(error && error.message ? error.message : 'Pandoc 安装失败。', Boolean(retainedTaskId));
                 const decision = await new Promise(resolve => {
                     const install = document.getElementById('pandocInstallBtn');
                     const compatibility = document.getElementById('pandocCompatibilityBtn');
@@ -3751,6 +3949,7 @@
             });
 
             if (res.ok) {
+                document.getElementById('paperCompileErrorPanel')?.remove();
                 rememberPaperExportPreflight(res);
                 const blob = await res.blob();
                 const rawTitle = (window.PaperStore.meta.title || '试卷').trim();
@@ -3785,6 +3984,7 @@
                 if (window.showToast) window.showToast(`LaTeX 打包《${filename}》导出成功！`, 'success');
             } else {
                 const errData = await res.json();
+                showPaperExportDiagnostic(errData.diagnostic, errData.message);
                 if (window.showToast) window.showToast(paperExportErrorMessage(res, errData, '导出失败'), 'error');
             }
         } catch (e) {

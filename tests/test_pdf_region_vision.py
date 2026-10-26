@@ -1,5 +1,7 @@
 """Local PDF crop transcription protocol, with network and paid calls blocked."""
 
+from mathbank.ai_timeouts import DOCUMENT_AI_TIMEOUT_SECONDS
+
 import base64
 from copy import deepcopy
 from io import BytesIO
@@ -372,6 +374,6 @@ def test_region_protocol_failure_then_success_keeps_all_usage(setup, monkeypatch
     monkeypatch.setattr(vision, "post_chat_completion", retry)
     result = call(setup)
     assert len(calls) == result["visual_calls"] == 2
-    assert all(item["timeout"] == 600 and item["retry_connection"] is False for item in calls)
+    assert all(item["timeout"] == DOCUMENT_AI_TIMEOUT_SECONDS and item["retry_connection"] is False for item in calls)
     assert result["usage"] == {key: value * 2 for key, value in setup.response["usage"].items()}
     assert result["usage_complete"] is True

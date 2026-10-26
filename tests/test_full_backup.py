@@ -1,4 +1,5 @@
 import hashlib
+import errno
 import json
 import os
 import sqlite3
@@ -1008,6 +1009,164 @@ def test_backup_fails_if_database_references_a_missing_upload(tmp_path):
         )
 
     assert list(snapshots.glob("mathbank-backup-*.zip")) == []
+
+
+def _missing_image_backup(tmp_path, *, include_present=True):
+    database, uploads = tmp_path / "source.db", tmp_path / "source-uploads"
+    uploads.mkdir()
+    references = ["/static/uploads/missing.png"]
+    if include_present:
+        references.append("/static/uploads/present.png")
+        (uploads / "present.png").write_bytes(b"preserved-image-bytes")
+    _create_database(database, image_paths=references,
+                     content="原始题干 ![](/static/uploads/missing.png)", answer="原始解析")
+    original = database.read_bytes()
+    archive = create_full_backup(output_dir=tmp_path / "snapshots", database_path=database,
+        uploads_dir=uploads, metadata_path=tmp_path / "custom_metadata.json", retention=None,
+        allow_missing_uploads=True)
+    assert database.read_bytes() == original
+    return archive, database, uploads
+
+
+@pytest.mark.parametrize("include_present", [False, True])
+def test_missing_image_backup_preserves_database_references_and_restores(tmp_path, capsys, include_present):
+    archive, source, _ = _missing_image_backup(tmp_path, include_present=include_present)
+    manifest = verify_full_backup(archive)
+    assert manifest["format_version"] == 3
+    assert manifest["assets_complete"] is False
+    assert manifest["database"]["missing_uploads"] == ["uploads/missing.png"]
+    assert manifest["upload_file_count"] == int(include_present)
+    warnings = backup_module.backup_asset_warnings(archive)
+    assert warnings == [{"code": "missing_existing_images", "missing_count": 1,
+        "message": "原有题库有 1 张图片缺失，备份已记录缺失清单；题目原文与图片引用均已保留。"}]
+    with zipfile.ZipFile(archive) as zipped:
+        assert "uploads/missing.png" not in zipped.namelist()
+        if include_present:
+            assert zipped.read("uploads/present.png") == b"preserved-image-bytes"
+    target = tmp_path / "restored.db"
+    target_uploads = tmp_path / "restored-uploads"
+    _create_database(target, question_count=2)
+    target_uploads.mkdir()
+    restore_full_backup(archive, database_path=target, uploads_dir=target_uploads,
+        metadata_path=tmp_path / "target-metadata" / "custom_metadata.json",
+        safety_backup_dir=tmp_path / "safety", runtime_lock_path=tmp_path / "runtime.lock")
+    with _sqlite_connection(source) as connection:
+        expected = connection.execute("SELECT * FROM questions ORDER BY id").fetchall()
+    with _sqlite_connection(target) as connection:
+        assert connection.execute("SELECT * FROM questions ORDER BY id").fetchall() == expected
+    assert not (target_uploads / "missing.png").exists()
+    assert {path.name for path in target_uploads.iterdir()} == ({"present.png"} if include_present else set())
+    if include_present:
+        assert (target_uploads / "present.png").read_bytes() == b"preserved-image-bytes"
+    assert "恢复包原有 1 张图片缺失" in capsys.readouterr().out
+
+
+def test_tolerant_backup_with_all_images_present_keeps_v2_compatibility(tmp_path):
+    database, uploads = tmp_path / "bank.db", tmp_path / "uploads"
+    uploads.mkdir()
+    (uploads / "present.png").write_bytes(b"image")
+    _create_database(database, image_paths=["/static/uploads/present.png"])
+    archive = create_full_backup(output_dir=tmp_path / "snapshots", database_path=database,
+        uploads_dir=uploads, metadata_path=tmp_path / "missing.json", retention=None,
+        allow_missing_uploads=True)
+    manifest = verify_full_backup(archive)
+    assert manifest["format_version"] == 2
+    assert "missing_uploads" not in manifest["database"]
+    assert "assets_complete" not in manifest
+    assert backup_module.backup_asset_warnings(archive) == []
+
+
+@pytest.mark.parametrize("mutation", ["extra", "duplicate", "traversal", "archived", "old_version", "flag",
+                                     "no_references", "no_structured"])
+def test_missing_image_manifest_rejects_false_or_unsafe_declarations(tmp_path, mutation):
+    archive, _, _ = _missing_image_backup(tmp_path)
+    def change(manifest):
+        database = manifest["database"]
+        if mutation == "extra":
+            database["missing_uploads"].append("uploads/other.png")
+        elif mutation == "duplicate":
+            database["missing_uploads"] *= 2
+        elif mutation == "traversal":
+            database["missing_uploads"] = ["uploads/../secret.png"]
+        elif mutation == "archived":
+            database["missing_uploads"].append("uploads/present.png")
+        elif mutation == "old_version":
+            manifest["format_version"] = 2
+        elif mutation == "flag":
+            manifest["assets_complete"] = True
+        elif mutation == "no_references":
+            database.pop("referenced_uploads")
+        else:
+            database.pop("structured_upload_references")
+    _rewrite_backup_sources(archive, manifest_update=change)
+    with pytest.raises(RuntimeError):
+        verify_full_backup(archive)
+
+
+def test_missing_image_declaration_cannot_hide_deleted_archived_image(tmp_path):
+    archive, _, _ = _missing_image_backup(tmp_path)
+    _rewrite_backup_sources(archive, remove=("uploads/present.png",),
+        manifest_update=lambda manifest: manifest.update(upload_file_count=0))
+    with pytest.raises(RuntimeError, match="缺少数据库引用"):
+        verify_full_backup(archive)
+
+
+def test_missing_image_backup_still_verifies_present_image_hashes(tmp_path):
+    archive, _, _ = _missing_image_backup(tmp_path)
+    with zipfile.ZipFile(archive) as zipped:
+        original_hash = json.loads(zipped.read("manifest.json"))["files"]["uploads/present.png"]["sha256"]
+    _rewrite_backup_sources(archive, replacements={"uploads/present.png": b"tampered-image"},
+        manifest_update=lambda manifest: manifest["files"]["uploads/present.png"].update(sha256=original_hash))
+    with pytest.raises(RuntimeError, match="校验失败"):
+        verify_full_backup(archive)
+
+
+@pytest.mark.parametrize("kind", ["directory", "symlink", "permission", "disk", "output_missing"])
+def test_tolerant_backup_does_not_swallow_other_asset_failures(tmp_path, monkeypatch, kind):
+    database, uploads = tmp_path / "bank.db", tmp_path / "uploads"
+    uploads.mkdir()
+    image = uploads / "figure.png"
+    if kind == "directory":
+        image.mkdir()
+    elif kind == "symlink":
+        image.symlink_to(tmp_path / "absent.png")
+    else:
+        image.write_bytes(b"image")
+        original_copy = backup_module.shutil.copy2
+        def fail_copy(source, target, *args, **kwargs):
+            if Path(source) == image:
+                if kind == "permission":
+                    raise PermissionError(errno.EACCES, "denied")
+                if kind == "disk":
+                    raise OSError(errno.ENOSPC, "full")
+                raise FileNotFoundError(errno.ENOENT, "output unavailable")
+            return original_copy(source, target, *args, **kwargs)
+        monkeypatch.setattr(backup_module.shutil, "copy2", fail_copy)
+    _create_database(database, image_paths=["/static/uploads/figure.png"])
+    with pytest.raises((RuntimeError, OSError)):
+        create_full_backup(output_dir=tmp_path / "snapshots", database_path=database,
+            uploads_dir=uploads, metadata_path=tmp_path / "missing.json", retention=None,
+            allow_missing_uploads=True)
+    assert not list((tmp_path / "snapshots").glob("mathbank-backup-*.zip"))
+
+
+def test_tolerant_backup_records_source_disappearing_during_copy(tmp_path, monkeypatch):
+    database, uploads = tmp_path / "bank.db", tmp_path / "uploads"
+    uploads.mkdir()
+    image = uploads / "figure.png"
+    image.write_bytes(b"image")
+    _create_database(database, image_paths=["/static/uploads/figure.png"])
+    original_copy = backup_module.shutil.copy2
+    def remove_source(source, target, *args, **kwargs):
+        if Path(source) == image:
+            image.unlink()
+            raise FileNotFoundError(errno.ENOENT, "source disappeared")
+        return original_copy(source, target, *args, **kwargs)
+    monkeypatch.setattr(backup_module.shutil, "copy2", remove_source)
+    archive = create_full_backup(output_dir=tmp_path / "snapshots", database_path=database,
+        uploads_dir=uploads, metadata_path=tmp_path / "missing.json", retention=None,
+        allow_missing_uploads=True)
+    assert verify_full_backup(archive)["database"]["missing_uploads"] == ["uploads/figure.png"]
 
 
 def test_standard_backup_archives_only_referenced_production_rasters(tmp_path):

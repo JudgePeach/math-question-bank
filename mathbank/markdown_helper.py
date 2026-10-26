@@ -77,7 +77,7 @@ def prepare_markdown_source(source: str) -> dict:
     if not isinstance(source, str) or not source.strip():
         raise ValueError("Markdown 源码为空。")
     if len(source.encode("utf-8")) > MAX_MARKDOWN_BYTES:
-        raise ValueError("Markdown 源码过大，请控制在 5MB 以内。")
+        raise ValueError(f"Markdown 源码过大，请控制在 {MAX_MARKDOWN_BYTES // (1024 * 1024)}MB 以内。")
     normalized = source.lstrip("\ufeff").replace("\x00", "").replace("\r\n", "\n").replace("\r", "\n")
     graphics = markdown_image_references(normalized)
     warnings = [MARKDOWN_IMPORT_WARNING]

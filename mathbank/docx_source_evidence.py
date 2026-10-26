@@ -35,6 +35,7 @@ from defusedxml import ElementTree as SafeET
 from mathbank.docx_helper import MAX_DOCUMENT_XML, _validate_archive
 from mathbank.paths import SYSTEM_GENERATED_DIR
 from mathbank.task_manager import TaskCancelled
+from mathbank.processing_timeouts import SOURCE_RENDER_TIMEOUT_SECONDS
 
 
 MAX_DOCX_BYTES = 20 * 1024 * 1024
@@ -47,7 +48,7 @@ MAX_TOTAL_IMAGE_BYTES = 64 * 1024 * 1024
 MAX_PAGE_TEXT = 50000
 MAX_TOTAL_TEXT = 500000
 RENDER_DPI = 150
-RENDER_TIMEOUT_SECONDS = 90
+RENDER_TIMEOUT_SECONDS = SOURCE_RENDER_TIMEOUT_SECONDS
 EVIDENCE_KIND = "original_docx_render"
 EVIDENCE_VERSION = 2
 FOOTER_CACHE_EVIDENCE_KIND = "docx_embedded_footer_cache_render"
@@ -426,7 +427,7 @@ def _native_pdf(renderer: str, docx_path: Path, work: Path, check_cancelled: Cal
             while process.poll() is None:
                 check_cancelled()
                 if time.monotonic() - started > RENDER_TIMEOUT_SECONDS:
-                    raise _EvidenceError("原Word原生渲染超过90秒上限")
+                    raise _EvidenceError(f"原Word原生渲染超过{RENDER_TIMEOUT_SECONDS}秒上限")
                 if log.tell() > 2 * 1024 * 1024:
                     raise _EvidenceError("原Word原生渲染日志异常，已停止转换")
                 time.sleep(0.1)

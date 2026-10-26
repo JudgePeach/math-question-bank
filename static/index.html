@@ -450,8 +450,8 @@
                 <label class="bank-sort-control" for="filterSort">
                     <i class="fa-solid fa-arrow-down-wide-short" aria-hidden="true"></i>
                     <select id="filterSort" aria-label="题目排序方式">
-                        <option value="desc" selected>最近更新</option>
-                        <option value="asc">最早更新</option>
+                        <option value="desc" selected>倒序排列</option>
+                        <option value="asc">正序排列</option>
                     </select>
                 </label>
             </div>
@@ -1273,17 +1273,29 @@
 
             <div class="space-y-4">
                 <p class="text-xs text-slate-500 leading-relaxed">
-                    使用同一分类模型分析教材定位、题型，并按现有知识点体系推荐主要考查与辅助知识点。已有知识点会保留；选择题仍需您确认单选或多选。
+                    使用同一分类模型分析教材定位、题型，并按现有知识点体系推荐主要考查与辅助知识点。已有知识点会保留；可只补充知识点，或确认题型后应用全部分类。
                 </p>
 
                 <!-- Loading State -->
                 <div id="classifyLoading" role="status" aria-live="polite" class="hidden glass-card rounded-xl p-6 text-center space-y-3">
                     <i class="fa-solid fa-spinner animate-spin text-brand-500 text-2xl"></i>
-                    <p class="text-xs text-slate-500 font-medium">正在分析题型、教材定位与知识点...</p>
+                    <p id="classifyLoadingText" class="text-xs text-slate-500 font-medium">正在分析题型、教材定位与知识点...</p>
                 </div>
 
                 <!-- Recommendation Result -->
                 <div id="classifyResult" aria-live="polite" class="hidden space-y-3">
+                    <div class="flex flex-wrap items-center justify-between gap-2">
+                        <span id="classifyResultMode" tabindex="-1" class="text-[11px] font-medium text-slate-500"></span>
+                        <div class="flex flex-wrap items-center gap-2">
+                            <button type="button" id="classifyRefineButton" onclick="refineAIClassify()" aria-busy="false" disabled
+                                data-tooltip="只对当前题按精细档重新分析，可能增加耗时和用量；全局默认不变，不会自动保存题目。"
+                                class="hidden glass-btn min-h-[44px] px-3 py-2 rounded-xl text-xs font-medium whitespace-nowrap disabled:opacity-50 disabled:cursor-not-allowed">本题精细复核</button>
+                            <button type="button" id="classifyRefineCancelButton" onclick="cancelAIClassifyRefinement()"
+                                data-tooltip="停止等待精细结果并保留快速建议；已经发出的模型请求可能仍在处理，不会自动重发。"
+                                class="hidden glass-btn min-h-[44px] px-3 py-2 rounded-xl text-xs font-medium whitespace-nowrap">取消复核</button>
+                        </div>
+                    </div>
+                    <p id="classifyPlacementNotice" class="hidden text-xs text-amber-700 whitespace-pre-wrap"></p>
                     <div class="p-4 rounded-xl bg-brand-50 border border-brand-100 space-y-3">
                         <div>
                             <span class="text-[10px] uppercase font-bold text-brand-600 tracking-wider flex items-center mb-1.5"><i class="fa-solid fa-robot mr-1.5 animate-bounce"></i>AI 推荐教材定位：</span>
@@ -1302,7 +1314,7 @@
                             </div>
                             <span id="recQuestionForm" class="inline-flex bg-indigo-100 text-indigo-800 px-2.5 py-1 rounded-lg text-[11px] font-bold">待识别</span>
                             <div id="choiceTypeConfirm" class="hidden space-y-2" role="radiogroup" aria-label="确认选择题类型">
-                                <p class="text-[11px] text-amber-700 font-medium"><i class="fa-solid fa-circle-info mr-1"></i>已识别为选择题，请手动确认是单选题还是多选题。</p>
+                                <p class="text-[11px] text-amber-700 font-medium"><i class="fa-solid fa-circle-info mr-1"></i>应用全部分类前，请确认单选或多选；只应用知识点可跳过。</p>
                                 <div class="grid grid-cols-2 gap-2">
                                     <button type="button" id="classifySingleChoiceBtn" role="radio" aria-checked="false" onclick="selectClassifiedChoiceType('single_choice')" class="question-type-choice-button min-h-[44px] px-3 py-2 rounded-xl text-xs font-semibold">
                                         <i class="fa-solid fa-circle-check question-type-choice-check" aria-hidden="true"></i>
@@ -1320,19 +1332,23 @@
                     <div class="rounded-xl border border-slate-200 p-3 space-y-2 text-xs">
                         <strong>识别的知识点</strong>
                         <div id="classifyKnowledgePoints" class="space-y-2"></div>
+                        <p id="classifyExistingPointDifferences" class="hidden text-[11px] text-slate-500 whitespace-pre-wrap"></p>
                         <p id="classifyKnowledgePointWarnings" class="text-[11px] text-amber-700 whitespace-pre-wrap"></p>
                     </div>
                 </div>
             </div>
 
-            <div class="flex justify-end space-x-2 pt-3 border-t border-slate-200/50">
+            <div class="flex flex-wrap justify-end gap-2 pt-3 border-t border-slate-200/50">
                 <button type="button" onclick="closeClassifyModal()" class="glass-btn px-4 py-2 rounded-xl text-xs font-medium text-slate-500">手动选择</button>
                 <button type="button" id="classifyAIButton" onclick="runAIClassify()" class="glass-btn-primary px-5 py-2 rounded-xl font-medium text-xs flex items-center space-x-1.5">
                     <i class="fa-solid fa-wand-magic-sparkles"></i>
                     <span>一键 AI 分析</span>
                 </button>
-                <button type="button" id="classifyApplyButton" onclick="applyClassifyRecommendation()" class="hidden glass-btn-primary px-5 py-2 rounded-xl font-medium text-xs">
+                <button type="button" id="classifyApplyButton" onclick="applyClassifyRecommendation()" class="hidden glass-btn-primary min-h-[44px] px-5 py-2 rounded-xl font-medium text-xs">
                     应用分类并保存题目
+                </button>
+                <button type="button" id="classifyPointsApplyButton" onclick="applyClassifyKnowledgePointsOnly()" class="hidden glass-btn min-h-[44px] px-5 py-2 rounded-xl font-medium text-xs">
+                    只应用知识点
                 </button>
             </div>
         </div>
@@ -1401,7 +1417,7 @@
                             <div class="space-y-1">
                                 <label class="block text-xs font-semibold text-slate-500 flex items-center justify-between">
                                     <span>SiliconFlow API Key (硅基流动云端)</span>
-                                    <a href="https://cloud.siliconflow.cn/" target="_blank" class="text-brand-500 hover:underline text-[10px]">获取 API Key</a>
+                                    <a href="https://cloud.siliconflow.cn/i/hkgjSWrg" target="_blank" class="text-brand-500 hover:underline text-[10px]">获取 API Key</a>
                                 </label>
                                 <input type="password" id="settingsSiliconflowKey" placeholder="输入您的 SILICONFLOW_API_KEY"
                                        class="glass-input w-full px-3.5 py-2.5 rounded-xl text-xs font-mono">
@@ -1509,6 +1525,14 @@
                                             <!-- Dynamic Load -->
                                         </div>
                                     </div>
+                                    <div class="flex items-center gap-2 pt-1">
+                                        <label for="classifyQuality" class="text-[11px] text-slate-600 dark:text-slate-300">分类质量</label>
+                                        <select id="classifyQuality" class="glass-select flex-1 min-w-0 px-2 py-1.5 rounded-lg text-xs">
+                                            <option value="quick">快速（默认）</option>
+                                            <option value="precise">精细（按需提高预算）</option>
+                                        </select>
+                                    </div>
+                                    <p class="text-[10px] text-slate-500 dark:text-slate-400">精细模式可能更慢、用量更高；渠道支持时开启思考。只影响之后主动分类。</p>
                                 </div>
 
                                 <!-- 4. 默认公式识图模型 -->
@@ -1675,7 +1699,7 @@
                                 <label for="libraryImportFile">选择题库分享包</label>
                                 <input id="libraryImportFile" type="file" accept=".zip,application/zip" onchange="updateLibraryTransferControls()" aria-describedby="libraryImportHelp libraryImportRepeatNote" class="block min-h-[44px] w-full min-w-0 text-xs text-slate-600 dark:text-slate-300">
                             </div>
-                            <p id="libraryImportRepeatNote" class="mb-transfer-import-note"><i class="fa-solid fa-circle-info" aria-hidden="true"></i><span>每次导入都会新增全部题目，不查重。导入前自动备份。</span></p>
+                            <p id="libraryImportRepeatNote" class="mb-transfer-import-note"><i class="fa-solid fa-circle-info" aria-hidden="true"></i><span>每次导入都会新增全部题目，不查重。导入前自动备份；原有题库缺失的图片会记录并提示，保留题目原文后继续导入。</span></p>
                             <label id="libraryImportRepeatLabel" class="hidden mb-transfer-repeat"><input id="libraryImportRepeatConfirm" type="checkbox" onchange="updateLibraryTransferControls()"><span>我确认再次新增此包中的全部题目</span></label>
                             <button type="button" id="libraryImportBtn" onclick="importLibraryTransfer()" disabled class="glass-btn-primary min-h-[44px] px-4 py-2 rounded-xl text-xs font-medium disabled:opacity-50 disabled:cursor-wait"><i class="fa-solid fa-upload mr-1.5" aria-hidden="true"></i><span>批量导入</span></button>
                         </section>
@@ -1685,6 +1709,7 @@
                         <progress id="libraryTransferProgress" class="hidden mb-transfer-progress" aria-label="当前阶段进度"></progress>
                         <p id="libraryTransferTaskInfo" class="hidden text-[11px] text-slate-500 dark:text-slate-400"></p>
                         <p id="libraryTransferBackup" class="hidden text-[11px] text-slate-500 dark:text-slate-400"></p>
+                        <p id="libraryTransferWarnings" class="hidden text-xs leading-relaxed whitespace-pre-line text-amber-700 dark:text-amber-300"></p>
                         <div class="mb-transfer-task-actions">
                             <button type="button" id="libraryTransferReconnect" class="hidden glass-btn" onclick="reconnectLibraryTransfer()">重新连接，查询原任务</button>
                             <a id="libraryTransferDownload" class="hidden glass-btn" download>下载 ZIP 分享包</a>
@@ -2420,7 +2445,7 @@
                     </label>
 
                     <div>
-                        <div class="mb-1.5 flex items-center justify-between gap-2"><label for="answerTikzReferenceInput" class="text-xs font-bold text-slate-700">参考图片</label><span class="text-[10px] text-slate-400">可选 · 最大 10MB</span></div>
+                        <div class="mb-1.5 flex items-center justify-between gap-2"><label for="answerTikzReferenceInput" class="text-xs font-bold text-slate-700">参考图片</label><span id="answerTikzReferenceLimit" class="text-[10px] text-slate-400">可选 · 最大 10MB</span></div>
                         <input type="file" id="answerTikzReferenceInput" accept="image/png,image/jpeg,image/webp,image/gif" class="hidden">
                         <div id="answerTikzReferenceDropZone" role="button" tabindex="0" aria-label="上传或粘贴 TikZ 参考图" class="group flex min-h-[170px] cursor-pointer items-center justify-center overflow-hidden rounded-2xl border-2 border-dashed border-slate-300 bg-white p-4 text-center outline-none transition-colors hover:border-indigo-400 hover:bg-indigo-50/35 focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/20">
                             <div id="answerTikzReferencePlaceholder" class="space-y-2">
@@ -2481,12 +2506,18 @@
             </div>
 
             <div class="border-b border-slate-200 px-6 py-3 space-y-2 shrink-0 bg-slate-50">
-                <label for="pdfCropTargetField" class="text-xs font-semibold text-slate-700">截图插入位置</label>
+                <label id="pdfCropTargetLabel" for="pdfCropTargetField" class="text-xs font-semibold text-slate-700">截图插入位置</label>
                 <select id="pdfCropTargetField" class="glass-select px-2 py-1 rounded-lg text-xs" aria-label="截图插入字段">
                     <option value="content">题干</option>
                     <option value="answer_markdown">答案与解析</option>
                 </select>
-                <p class="text-[11px] text-slate-600">在下方原文中点击需要插图的位置，再在原页上框选。选中的待补图标记会被原位替换。</p>
+                <p id="pdfCropTargetInstructions" class="text-[11px] text-slate-600">在下方原文中点击需要插图的位置，再在原页上框选。选中的待补图标记会被原位替换。</p>
+                <div id="pdfCropReplacementPreview" hidden class="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2">
+                    <div class="flex items-center gap-3">
+                        <img alt="本次要替换的旧插图" data-safe-image-open="true" class="max-w-[96px] max-h-[64px] object-contain bg-white rounded cursor-zoom-in">
+                        <span class="text-[11px] text-amber-800">待替换的原图（点击可放大）<br>在原 PDF 中重新框选，确认后原位替换。</span>
+                    </div>
+                </div>
                 <textarea id="pdfCropTargetText" readonly rows="3" aria-label="点击原文选择截图插入位置" class="glass-input w-full px-3 py-2 rounded-lg text-xs font-mono resize-y max-h-36"></textarea>
                 <p id="pdfCropTargetHint" class="text-[10px] text-slate-500"></p>
             </div>

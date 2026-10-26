@@ -1,7 +1,7 @@
 """Shared model-request limits for document import and source review."""
 
 
-DOCUMENT_AI_TIMEOUT_SECONDS = 600
+from mathbank.ai_timeouts import DOCUMENT_AI_TIMEOUT_SECONDS
 
 
 def is_retryable_document_http_status(status_code: int) -> bool:

@@ -113,7 +113,8 @@ def test_paper_bundle_compile_failure_never_returns_a_partial_archive(client, fa
     results[failed_output] = (None, "XeLaTeX is unavailable in this test")
     with patch("main.compile_tex_to_pdf", side_effect=results) as compile_pdf:
         response = client.post("/api/paper/export/bundle", json=payload, headers=headers)
-    assert compile_pdf.call_count == 2
+    # Stop at the first failed document; later PDFs cannot repair this archive.
+    assert compile_pdf.call_count == failed_output + 1
     assert response.status_code == 400
     assert response.headers.get("content-type") == "application/json"
     assert "未生成不完整归档" in response.json()["message"]

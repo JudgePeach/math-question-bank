@@ -102,12 +102,14 @@ def test_native_regional_and_full_pages_share_one_split_without_duplicate_vision
         main.DOCUMENT_TASKS.remove(task_id)
 
 
-def test_failed_regional_call_never_retries_full_page_or_splits(monkeypatch):
+@pytest.mark.parametrize("page_count", [1, 2])
+def test_failed_regional_call_never_retries_full_page_or_splits(monkeypatch, page_count):
     import main
     from mathbank import pdf_native_regions, pdf_region_vision, pdf_page_vision
 
     monkeypatch.setattr(main, "inspect_and_extract_pdf", lambda *a, **k: {
-        "pdf_type": "mixed", "pages": [{"page_index": 0, "markdown": "BAD", "needs_ocr": True}]})
+        "pdf_type": "mixed", "pages": [
+            {"page_index": index, "markdown": "BAD", "needs_ocr": True} for index in range(page_count)]})
     monkeypatch.setattr(pdf_native_regions, "plan_pdf_regions", lambda *a: {
         "native_characters": 50, "regions": [{}], "area_ratio": .3})
     calls = []
@@ -123,10 +125,13 @@ def test_failed_regional_call_never_retries_full_page_or_splits(monkeypatch):
     task_id = "regional-failure-" + uuid.uuid4().hex
     main.DOCUMENT_TASKS.create(task_id, document_type="pdf", temp_assets=[])
     try:
-        main.run_pdf_parsing_task(task_id, pdf_bytes(1), "failure.pdf", pdf_strategy="layout_aware")
+        main.run_pdf_parsing_task(task_id, pdf_bytes(page_count), "failure.pdf", pdf_strategy="layout_aware")
         task = main.DOCUMENT_TASKS.snapshot(task_id)
         assert task["status"] == "error" and "局部识别缺少区域" in task["error"]
-        assert calls == [True]
+        assert task.get("partial") is not True and not task.get("data")
+        assert "pdf_resume_state" not in task
+        assert [item["page_number"] for item in task["diagnostics"]["pdf_failed_pages"]] == list(range(1, page_count + 1))
+        assert calls == [True] * page_count
     finally:
         main.DOCUMENT_TASKS.remove(task_id)
 

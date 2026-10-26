@@ -1,4 +1,6 @@
 """PDF crop semantics, full-page relocation and immutable cache receipts (offline)."""
+
+from mathbank.ai_timeouts import DOCUMENT_AI_TIMEOUT_SECONDS
 from copy import deepcopy
 from dataclasses import replace
 import hashlib
@@ -69,7 +71,7 @@ def located(record,box=(600,450,900,800)):
 def post_for(callback=None):
     calls=[]
     def post(_provider,payload,**kwargs):
-        assert kwargs=={"timeout":600,"check_status":False,"retry_connection":False,"allow_redirects":False}
+        assert kwargs=={"timeout":DOCUMENT_AI_TIMEOUT_SECONDS,"check_status":False,"retry_connection":False,"allow_redirects":False}
         data=metadata(payload)
         calls.append((data,deepcopy(payload),threading.get_ident()))
         entries=callback(data) if callback else [accepted(record) for record in data["figures"]]

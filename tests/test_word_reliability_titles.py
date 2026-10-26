@@ -2,8 +2,9 @@
 import pytest
 
 from mathbank.docx_helper import _new_diagnostics
-from mathbank.source_metadata import prepare_word_source_metadata, apply_source_metadata_response, SourceMetadataContractError, build_source_metadata_messages
+from mathbank.source_metadata import prepare_word_source_metadata, apply_source_metadata_response, build_source_metadata_messages
 import json
+from copy import deepcopy
 
 
 @pytest.mark.parametrize("heading", [
@@ -55,10 +56,19 @@ def test_explicit_short_choice_heading_constrains_returned_type(label, expected,
     assert plan["questions"][0]["explicit_question_type"] == expected
     row = {"id": plan["questions"][0]["id"], "question_type": expected,
            "category_compulsory": "必修一", "category_chapter": "集合", "difficulty": "normal"}
-    assert apply_source_metadata_response({"items": [row]}, plan, {"必修一": {"集合": []}})[0]["question_type"] == expected
+    original = apply_source_metadata_response({"items": [row]}, plan, {"必修一": {"集合": []}})[0]
+    assert original["question_type"] == expected
     row["question_type"] = opposite
-    with pytest.raises(SourceMetadataContractError):
-        apply_source_metadata_response({"items": [row]}, plan, {"必修一": {"集合": []}})
+    before = deepcopy(row)
+    preserved = apply_source_metadata_response({"items": [row]}, plan, {"必修一": {"集合": []}})[0]
+    assert row == before
+    assert preserved["question_type"] == expected
+    assert preserved["content"] == original["content"]
+    assert preserved["answer_markdown"] == original["answer_markdown"]
+    review = preserved["classification_review"]
+    assert review["required"] is False
+    assert review["original"]["question_type"] == opposite
+    assert "source_question_type_preserved" in review["reason_codes"]
 
 
 def test_metadata_classification_retains_declared_grade_context_and_allows_analysis():

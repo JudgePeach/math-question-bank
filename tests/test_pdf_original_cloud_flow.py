@@ -5,6 +5,11 @@ The upstream routing is frozen.  Explicit additions for knowledge labels,
 teacher-entered titles and cooperative cancellation are removed from a copy
 before comparing its AST with that baseline.  Every other statement remains
 covered; uploads and transient storage also have real isolated HTTP tests.
+
+The explicitly authorized cloud-PDF partial/retry addition has its own fixed
+canonical AST below. Other processing functions retain upstream AST checks;
+ordinary successful upload and partial/cancel/retry behavior have isolated
+mock HTTP regressions. No expected hash is computed from current source.
 """
 import ast
 from copy import deepcopy
@@ -33,6 +38,12 @@ FUNCTION_HASHES = {
         "1874f5e6463fad1ae7f0c7e685e1af182103219a7b39f6a1c662ecfb455f3f30",
         "a6af08897a22cd9107c84dbbc872baebf0c41e697f4fd963f2e58b8a4d6f20e1"),
 }
+
+# Reviewed 2026-10-25: page-error-only exact-source drafts and an in-process,
+# same-task explicit retry checkpoint and bounded configurable OCR capacity;
+# no project mode/persistent PDF draft. Default total remains four.
+# The original upstream hash above stays recorded for provenance.
+PDF_PARTIAL_CANONICAL_AST = "ff39f0fa3871a8fb89039a6514d69ef2c004d9098fe80f9595bc746d6176d23a"
 
 
 def _ast_key(node):
@@ -106,21 +117,36 @@ def _upstream_function_copy(node):
     if node.name == "parse_paper_text_internal":
         _replace_statement_block(node, '''
 curriculum = copy.deepcopy(get_current_curriculum())
-system_instructions = build_pdf_parse_system_prompt(curriculum, generate_answers_bool, load_ai_knowledge_catalog())
+knowledge_catalog = copy.deepcopy(load_ai_knowledge_catalog())
+system_instructions = build_pdf_parse_system_prompt(curriculum, generate_answers_bool, knowledge_catalog)
 ''', '''
 system_instructions = build_pdf_parse_system_prompt(get_current_curriculum(), generate_answers_bool)
 ''')
+        _replace_statement_block(node, '''
+for question in parsed_questions:
+    bind_ai_knowledge_catalog(question, knowledge_catalog)
+''', "")
         _replace_statement_block(node,
             "validate_import_knowledge(parsed_questions, curriculum, diagnostics=diagnostics)",
             "validate_import_knowledge(parsed_questions, get_current_curriculum())", count=2)
     elif node.name == "post_process_pdf_parsed_questions":
         _replace_statement_block(node, '''
-knowledge_catalog = load_ai_knowledge_catalog()
+knowledge_catalog = (load_ai_knowledge_catalog() if any(
+    not hasattr(question.get("knowledge_points"), "catalog") for question in parsed_questions) else [])
 for question in parsed_questions:
     if "knowledge_points" in question:
         annotate_ai_knowledge_points(question, knowledge_catalog)
 ''', "")
     elif node.name == "run_pdf_parsing_task":
+        # Reviewed 2026-10-26: partial delivery requires at least one successful
+        # page; an entirely failed OCR batch retains the original error path.
+        _replace_statement_block(node, '''
+if not any(text is not None for text in ocr_results):
+    raise ValueError(
+        "全部选中页面识别未完成，未执行拆题: "
+        + diagnostics["pdf_failed_pages"][0]["error"]
+    )
+''', "")
         _replace_statement_block(node, '''
 task = DOCUMENT_TASKS.snapshot(task_id) or {}
 options = (task.get("document_input") or {}).get("options") or {}
@@ -161,7 +187,8 @@ def test_cloud_pdf_functions_allow_only_reviewed_increments_over_original_ast(fu
     if function == "parse_page_range":
         assert hashlib.sha256(ast.get_source_segment(source, node).encode()).hexdigest() == original_source
     canonical = _upstream_function_copy(node)
-    assert hashlib.sha256(_ast_key(canonical).encode()).hexdigest() == original_ast
+    expected_ast = PDF_PARTIAL_CANONICAL_AST if function == "run_pdf_parsing_task" else original_ast
+    assert hashlib.sha256(_ast_key(canonical).encode()).hexdigest() == expected_ast
 
 
 def test_original_processor_has_no_new_local_draft_or_parallel_rules():
@@ -179,7 +206,8 @@ def test_original_processor_has_no_new_local_draft_or_parallel_rules():
     # The upstream source retained proven native/transcript metadata routing;
     # forcing every plan to full-body API would be another behavioral change.
     assert 'pdf_plan["mode"] in {"hybrid", "whole_metadata"}' in body
-    assert 'max_workers=min(len(pages_requiring_ocr), 4)' in body
+    assert 'max_workers=min(len(pages_requiring_ocr), PDF_OCR_CAPACITY.total)' in body
+    assert 'PDF_OCR_CAPACITY.page_slot(input_bytes, check_cancelled=check_pdf_cancelled)' in body
 
 
 MODULE_HASHES = {
@@ -191,10 +219,18 @@ MODULE_HASHES = {
     "pdf_vision_request.py": "43a13a271ebe5ef67cb67ed2625fdcd293bf591dbee265fd94a6aacb75f0fa10",
 }
 
+# Reviewed 2026-10-25: only page diagnostics may be cleaned/ignored locally;
+# markdown, figure identities, completeness and response finish remain strict.
+# Keep the upstream module hash above as the original provenance baseline.
+PDF_PAGE_DIAGNOSTICS_SHA256 = "7c29d3028404dc62237c1c35ebf7f1fdecd6cc9b18b5598d29c9f77716b79f51"
+
 
 @pytest.mark.parametrize("filename", MODULE_HASHES)
 def test_cloud_pdf_modules_match_original_bytes(filename):
     content = (ROOT / "mathbank" / filename).read_bytes()
+    if filename == "pdf_page_vision.py":
+        assert hashlib.sha256(content).hexdigest() == PDF_PAGE_DIAGNOSTICS_SHA256
+        return
     if filename == "pdf_vision_request.py":
         # The single-image/new callers may request one attempt; old PDF callers
         # retain the same default two-attempt budget and transport behavior.
@@ -273,4 +309,15 @@ def test_cloud_pdf_paid_prompt_outputs_match_original_golden(name):
         field = '      "knowledge_points": [],\n'
         assert value.count(addition) == value.count(field) == 1
         value = value.replace(addition, "").replace(field, "")
+        # The reviewed field-name cleanup is shared by several JSON protocols.
+        # Preserve the frozen body-generation prompt around that exact change.
+        current = ("确定最终章节后，只有该章内唯一且有依据的小节才可写入当前输出协议的小节字段；"
+                   "若该章涉及多个小节且不能可靠确定唯一主小节，小节字段必须为空字符串，表示整章待细分。"
+                   "小节字段名称或路径码须服从本次JSON协议，不新增其他字段。"
+                   "以上目录先后规则仅决定教材定位；独立knowledge_points仍按各小问直接目标与实际解析区分main/auxiliary，"
+                   "不能将较后章节、解题中用到的模块或核心方法自动当作主要考查。")
+        original = ("确定最终章节后，只有该章内唯一且有依据的小节才可写入 `knowledge`；若该章涉及多个小节且不能可靠确定唯一主小节，"
+                    "`knowledge` 必须为空字符串，表示整章待细分。")
+        assert value.count(current) == 1
+        value = value.replace(current, original)
     assert hashlib.sha256(value.encode("utf-8")).hexdigest() == PROMPT_HASHES[name]

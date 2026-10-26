@@ -67,6 +67,14 @@ class SourceMetadataContractError(ValueError):
     """Metadata is unsafe; the caller may use one bounded whole-source fallback."""
 
 
+class SourceMetadataNoFallbackError(RuntimeError):
+    """A second full-body request must not bypass this source boundary."""
+
+
+class SourceMetadataIdentityError(SourceMetadataContractError, SourceMetadataNoFallbackError):
+    """Unknown/missing identity or attempted body changes; never guess a match."""
+
+
 class SourceMetadataMessageBudgetError(SourceMetadataContractError):
     """A complete prompt exceeds its budget without invalidating source evidence."""
 
@@ -930,11 +938,11 @@ def _require_certificate(plan: dict) -> None:
             plan.get("_source_review_evidence"))
         if (verified.get("status") != "ready" or _sha(original) != certificate.original_source_sha256
                 or verified.get("proof_sha256") != certificate.proof_sha256):
-            raise SourceMetadataContractError("原卷来源或原生范围证据已改变。")
+            raise SourceMetadataIdentityError("原卷来源或原生范围证据已改变，未追加模型请求。")
         rebuilt = "".join(original[slice(*bounds)] for bounds in
                           sorted((*certificate.owned_ranges, *certificate.context_ranges)))
         if rebuilt != plan.get("source"):
-            raise SourceMetadataContractError("局部来源投影已改变。")
+            raise SourceMetadataIdentityError("局部来源投影已改变，未追加模型请求。")
         certificate = certificate.projection
     if (not plan.get("eligible") or type(certificate) is not _WordSourceCertificate
             or certificate.source_sha256 != _sha(plan.get("source", ""))
@@ -942,12 +950,12 @@ def _require_certificate(plan: dict) -> None:
             or certificate.question_snapshot_sha256 != _question_snapshot(plan.get("questions", []))
             or certificate.document_metadata_sha256 != _sha(json.dumps(
                 plan.get("document_metadata", []), ensure_ascii=False, sort_keys=True))):
-        raise SourceMetadataContractError("缺少完整可靠的 Word 来源记录，须沿用整卷拆题。")
+        raise SourceMetadataIdentityError("缺少完整可靠的 Word 来源记录，未采用或重写来源。")
     if certificate.empty_asset_urls:
         from .docx_source_assets import verified_empty_asset_urls
         if verified_empty_asset_urls(plan["source"], plan.get("_asset_evidence"),
                                      plan.get("_asset_paths", ())) != certificate.empty_asset_urls:
-            raise SourceMetadataContractError("原Word占位图证据已改变，须重新核对原文。")
+            raise SourceMetadataIdentityError("原Word占位图证据已改变，须重新核对原文。")
 
 
 def build_source_metadata_messages(plan: dict, curriculum: dict, knowledge_catalog=None) -> list[dict]:
@@ -994,12 +1002,76 @@ def build_source_metadata_messages(plan: dict, curriculum: dict, knowledge_catal
     return [{"role": "system", "content": instructions}, {"role": "user", "content": data}]
 
 
+def _normalized_metadata_content(original: dict, normalize_fillin) -> str:
+    content = normalize_source_fillin(original["content"], normalize_fillin)
+    if original.get("math_normalization_safe"):
+        content = normalize_question_math_markdown(content)
+    return content
+
+
+def _map_normalized_source_evidence(evidence: str, source: str, normalized: str,
+                                    normalize_text: Callable[[str], str]) -> str:
+    """Map one proven quote only when its exact normalization can be replayed.
+
+    The quote has already passed source validation. A unique occurrence is
+    bracketed in the complete source, then the same local formatter is replayed.
+    Removing both surviving markers must reproduce the entire normalized source
+    byte for byte. This avoids fuzzy matching, substring-only normalization and
+    ambiguous alignment of repeated text. Unprovable boundaries remain invalid.
+    """
+    if evidence in normalized:
+        return evidence
+    start = source.find(evidence)
+    if start < 0 or source.find(evidence, start + 1) >= 0:
+        return evidence
+    prefix = "\ue000MBKE" + _sha(source + normalized)[:16]
+    while prefix in source or prefix in normalized:
+        prefix += "Z"
+    left_marker, right_marker = prefix + "L\ue001", prefix + "R\ue001"
+    marked = (source[:start] + left_marker + evidence + right_marker
+              + source[start + len(evidence):])
+    replay = normalize_text(marked)
+    if replay.count(left_marker) != 1 or replay.count(right_marker) != 1:
+        return evidence
+    left, right = replay.index(left_marker), replay.index(right_marker)
+    if right < left + len(left_marker):
+        return evidence
+    mapped = replay[left + len(left_marker):right]
+    without_markers = replay[:left] + mapped + replay[right + len(right_marker):]
+    return mapped if mapped.strip() and without_markers == normalized else evidence
+
+
+_HARMLESS_METADATA_FIELDS = frozenset({"confidence", "reason", "rationale", "explanation", "notes", "warnings"})
+
+
+def _metadata_review(row, curriculum, issues, original, *, required):
+    """Extend an application-owned classification review, never model prose."""
+    if not issues:
+        return
+    from .import_classification import _LocalReview, _catalogue
+    previous = row.get("classification_review")
+    review = deepcopy(previous) if isinstance(previous, _LocalReview) else _LocalReview(
+        required=False, reason_codes=[], message="", original={}, original_missing_fields=[],
+        normalized_fields=[], cleared_fields=[])
+    review["required"] = review.get("required") is True or required
+    review["reason_codes"] = list(dict.fromkeys([*review.get("reason_codes", []), *[code for code, _ in issues]]))
+    review["message"] = review.get("message", "") + "；".join(message for _, message in issues) + "。"
+    review["original"].update(original)
+    fields = ("category_compulsory", "category_chapter", "category_knowledge")
+    review._snapshot = {field: row.get(field) for field in fields}
+    catalogue = _catalogue(curriculum)
+    review._catalogue = tuple((book, tuple((chapter, tuple(sections)) for chapter, sections in chapters.items()))
+                             for book, chapters in catalogue.items())
+    row["classification_review"] = review
+
+
 def apply_source_metadata_response(parsed: dict, plan: dict, curriculum: dict, *,
                                    normalize_fillin: Callable[[str], str] | None = None,
                                    knowledge_catalog=None) -> list[dict]:
     _require_certificate(plan)
-    if not isinstance(parsed, dict) or set(parsed) != {"items"} or not isinstance(parsed["items"], list):
-        raise SourceMetadataContractError("元数据结果不是完整的 items 对象。")
+    if (not isinstance(parsed, dict) or not isinstance(parsed.get("items"), list)
+            or set(parsed) - {"items"} - _HARMLESS_METADATA_FIELDS):
+        raise SourceMetadataIdentityError("元数据结果不是完整的 items 对象，未采用或猜配来源。")
     known = {q["id"]: q for q in plan["questions"]}
     from .word_classification_scope import build_word_classification_scope, word_category_allowed
     scope = build_word_classification_scope(plan, curriculum)
@@ -1007,58 +1079,99 @@ def apply_source_metadata_response(parsed: dict, plan: dict, curriculum: dict, *
     difficulties = {row["value"] for row in DEFAULT_DIFFICULTIES}
     fields = {"id", "question_type", "category_compulsory", "category_chapter", "category_knowledge", "difficulty", "knowledge_points"}
     supplied = {}
+    outer_diagnostics = bool(set(parsed) - {"items"})
     for row in parsed["items"]:
         if isinstance(row, dict) and "category_knowledge" not in row:
             # Backward compatibility for providers using the previous schema:
             # missing refinement means whole-chapter, never a copied chapter label.
             row = {**row, "category_knowledge": ""}
-        required_fields = {"id", "question_type", "difficulty"}
-        if (not isinstance(row, dict) or not required_fields.issubset(row)
-                or set(row) - fields
-                or any(not isinstance(row[key], str) for key in required_fields)):
-            raise SourceMetadataContractError("元数据字段无效，不接收模型改写原文。")
-        row = dict(row)
+        if (not isinstance(row, dict) or not isinstance(row.get("id"), str)
+                or set(row) - fields - _HARMLESS_METADATA_FIELDS):
+            raise SourceMetadataIdentityError("元数据来源或字段无效，不接收模型改写原文。")
+        harmless = bool(set(row) - fields) or outer_diagnostics
+        row = {key: deepcopy(value) for key, value in row.items() if key in fields}
         identifier = row["id"]
         if identifier not in known or identifier in supplied:
-            raise SourceMetadataContractError("元数据来源标识未知或重复。")
-        if row["question_type"] not in types or row["difficulty"] not in difficulties:
-            raise SourceMetadataContractError("元数据题型或难度不在当前支持范围。")
+            raise SourceMetadataIdentityError("元数据来源标识未知或重复，未猜配或追加整卷请求。")
+        issues, original_metadata, pending = [], {}, False
+        if harmless:
+            issues.append(("metadata_diagnostics_ignored", "已忽略模型附加的说明字段，原文及分类依据未因此改变"))
+        explicit_type = known[identifier].get("explicit_question_type")
+        raw_type = row.get("question_type")
+        if explicit_type and raw_type != explicit_type:
+            original_metadata["question_type"] = deepcopy(raw_type)
+            row["question_type"] = explicit_type
+            issues.append(("source_question_type_preserved", "模型题型与原卷明确分节不一致，已保留原卷题型，请核对差异"))
+        elif (not isinstance(raw_type, str) or raw_type not in types
+                or known[identifier]["has_choices"] and raw_type not in {"single_choice", "multi_choice"}):
+            original_metadata["question_type"] = deepcopy(raw_type)
+            row["question_type"] = ""
+            issues.append(("metadata_question_type_invalid", "题型未能确认，已保留完整原文，请人工选择"))
+            pending = True
+        raw_difficulty = row.get("difficulty")
+        if not isinstance(raw_difficulty, str) or raw_difficulty not in difficulties:
+            original_metadata["difficulty"] = deepcopy(raw_difficulty)
+            row["difficulty"] = None
+            issues.append(("metadata_difficulty_invalid", "难度未能确认，已保留完整原文，请人工选择"))
+            pending = True
         if scope.allow_outside:
             # Preserve the existing, privately certified Word source-grade
             # suggestion contract. It never creates a current-catalog path.
-            if not word_category_allowed(scope, row.get("category_compulsory"), row.get("category_chapter")):
-                raise SourceMetadataContractError("元数据教材建议不符合已核验原卷的学段范围。")
-            if (not isinstance(row.get("category_knowledge", ""), str)
-                    or row.get("category_knowledge", "")):
-                raise SourceMetadataContractError("目录外学段建议不能指定当前教材小节。")
+            if (not word_category_allowed(scope, row.get("category_compulsory"), row.get("category_chapter"))
+                    or not isinstance(row.get("category_knowledge", ""), str) or row.get("category_knowledge", "")):
+                original_metadata.update({key: deepcopy(row.get(key)) for key in
+                    ("category_compulsory", "category_chapter", "category_knowledge")})
+                row.update(category_compulsory="", category_chapter="", category_knowledge="")
+                issues.append(("metadata_source_scope_mismatch", "教材建议超出原卷已确认的学段或小节范围，请人工选择"))
+                pending = True
             row["category_knowledge"] = ""
         else:
             # Source IDs/body/type contracts remain strict; uncertain optional
             # labels must not cause a paid full-source rewrite or discard text.
             normalize_import_classifications([row], curriculum)
-        if known[identifier]["has_choices"] and row["question_type"] not in {"single_choice", "multi_choice"}:
-            raise SourceMetadataContractError("元数据题型与原卷选择题结构不一致。")
-        explicit_type = known[identifier].get("explicit_question_type")
-        if explicit_type and row["question_type"] != explicit_type:
-            raise SourceMetadataContractError("元数据题型与原卷明确的分节题型不一致。")
+        _metadata_review(row, curriculum, issues, original_metadata, required=pending)
         supplied[identifier] = row
     if set(supplied) != set(known):
-        raise SourceMetadataContractError("元数据未完整覆盖全部来源题目。")
+        raise SourceMetadataIdentityError("元数据未完整覆盖全部来源题目，未按顺序猜配或追加整卷请求。")
     questions = []
     for original in plan["questions"]:
         metadata = supplied[original["id"]]
-        content = normalize_source_fillin(original["content"], normalize_fillin)
-        if original.get("math_normalization_safe"):
-            content = normalize_question_math_markdown(content)
+        content = _normalized_metadata_content(original, normalize_fillin)
         answer = original["answer_markdown"]
         question = {"content": content, "answer_markdown": (_ORIGINAL_MARKER + answer) if answer else "",
             **{key: metadata[key] for key in fields - {"id"} if key in metadata}, "source": "",
             "referenced_images": embedded_question_assets(content, answer),
             **({"classification_review": metadata["classification_review"]}
                if "classification_review" in metadata else {})}
+        # Validate against precisely the frozen fields sent to the model,
+        # before local blank formatting or our answer-prefix decoration.
+        frozen_evidence = {"content": original["content"], "answer_markdown": answer}
         if "knowledge_points" in metadata:
-            annotate_ai_knowledge_points(question, knowledge_catalog)
+            frozen_evidence["knowledge_points"] = deepcopy(metadata["knowledge_points"])
+        annotate_ai_knowledge_points(frozen_evidence, knowledge_catalog)
+        points = frozen_evidence["knowledge_points"]
+        for point in points:
+            if point["evidence_source"] == "content" and content != original["content"]:
+                point["evidence"] = _map_normalized_source_evidence(
+                    point["evidence"], original["content"], content,
+                    lambda value: _normalized_metadata_content(
+                        {**original, "content": value}, normalize_fillin),
+                )
+            if "target_evidence" in point and content != original["content"]:
+                targets = point["target_evidence"]
+                quotes = [targets] if isinstance(targets, str) else targets
+                mapped = [_map_normalized_source_evidence(
+                    quote, original["content"], content,
+                    lambda value: _normalized_metadata_content({**original, "content": value}, normalize_fillin))
+                    for quote in quotes]
+                point["target_evidence"] = mapped[0] if isinstance(targets, str) else mapped
+        # Retain the verified list's catalogue/warnings and recheck the
+        # actual returned fields. Optional evidence failures never rewrite
+        # bodies or trigger a second model request.
+        question["knowledge_points"] = points
+        annotate_ai_knowledge_points(question, knowledge_catalog)
         questions.append(question)
+    _require_certificate(plan)
     return questions
 
 

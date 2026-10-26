@@ -18,7 +18,10 @@ def crop_script(pdf_script):
     source = (ROOT / "static/js/import.js").read_text(encoding="utf-8")
     begin = source.index("function openPdfCropModalForQuestion(")
     opening = source[begin:source.index("function renderPdfPagesThumbnails(", begin)]
-    return pdf_script.split("const pdfScenarios =", 1)[0] + opening + r"""
+    api = (ROOT / "static/js/api.js").read_text(encoding="utf-8")
+    assets = api[api.index("window.MathBankImageAssets ="):api.index("// Image references remain")]
+    return pdf_script.split("const pdfScenarios =", 1)[0] + assets + opening + r"""
+window.ImageLayoutTools={key:path=>path.replace(/^\//,''),normalize:layouts=>JSON.parse(JSON.stringify(layouts))};
 Element.prototype.setSelectionRange=function(start,end){this.selectionStart=start;this.selectionEnd=end;};
 window.MathBankModal={open(){},close(){}};
 window.MathBankDocumentImportSession={getProjectId:()=>window.__projectId,saveSoon:()=>{window.__saves+=1;}};
@@ -57,10 +60,79 @@ async function resolveCrop(path='/static/uploads/tmp/manual-answer.png'){
     "discarded_response_is_registered_for_session_cleanup",
     "selecting_another_page_while_request_runs_is_blocked",
     "figure_report_passes_a_proved_answer_target",
+    "clicked_image_url_span_preserves_literal_alt_title_and_other_occurrences",
+    "replacement_selection_remains_locked_and_preserves_layout",
+    "stale_replacement_span_is_rejected_before_open",
+    "replaced_private_reference_is_not_a_visible_attachment",
+    "replaced_drawing_detaches_only_after_its_last_field_reference",
+    "literal_reference_cannot_resurrect_the_replaced_image",
 ])
 def test_pdf_manual_crop_target_frontend(crop_script, scenario):
     checks = r"""
 const cropScenarios={
+ async literal_reference_cannot_resurrect_the_replaced_image(){
+  const old='/static/uploads/tmp/old.png',next='/static/uploads/tmp/new.png';
+  const literal='`![字面图片]('+old+')`';const body=literal+'\n![原图]('+old+')';
+  const {q,content}=ready(body,'原答案');q.image_paths=[old];
+  const span=window.MathBankImageAssets.spans(body)[0];
+  openPdfCropModalForQuestion(0,{replacement:{field:'content',...span}});
+  submitPdfCropCoordinates();await resolveCrop(next);
+  assert.equal(content.value,literal+'\n![原图]('+next+')');assert.deepEqual(q.image_paths,[next]);
+ },
+ async clicked_image_url_span_preserves_literal_alt_title_and_other_occurrences(){
+  const old='/static/uploads/tmp/old.png',next='/static/uploads/tmp/new.png';
+  const literal='`![代码]('+old+')`';
+  const body='😀前文'+literal+'\n![图一]('+old+' "原说明")\n![图二](<'+old+'>)\n后文';
+  const {q,content,answer}=ready(body,'原答案');q.image_paths=[old];
+  const spans=window.MathBankImageAssets.spans(body);assert.equal(spans.length,2);
+  openPdfCropModalForQuestion(0,{replacement:{field:'content',...spans[1]}});
+  submitPdfCropCoordinates();await resolveCrop(next);
+  assert.equal(content.value,body.slice(0,spans[1].start)+next+body.slice(spans[1].end));
+  assert.equal(answer.value,'原答案');assert.deepEqual(q.image_paths,[old,next]);
+ },
+ async replacement_selection_remains_locked_and_preserves_layout(){
+  const old='/static/uploads/tmp/old.png',next='/static/uploads/tmp/new.png';
+  const body='第一步。\n![原说明]('+old+')\n第二步。';
+  const {q,answer}=ready('题干',body);q.image_paths=[old];
+  q.image_layouts={[window.ImageLayoutTools.key(old)]:{align:'left',size:'large'}};
+  const span=window.MathBankImageAssets.spans(body)[0];
+  openPdfCropModalForQuestion(0,{replacement:{field:'answer_markdown',...span}});
+  configurePdfCropTarget(window.activePdfCropSession,'content');
+  document.getElementById('pdfCropTargetText').setSelectionRange(0,0);
+  assert.equal(window.activePdfCropSession.targetField,'answer_markdown');
+  assert.equal(document.getElementById('pdfCropTargetField').disabled,true);
+  submitPdfCropCoordinates();await resolveCrop(next);
+  assert.equal(answer.value,body.replace(old,next));assert.deepEqual(q.image_paths,[next]);
+  assert.deepEqual(q.image_layouts,{[window.ImageLayoutTools.key(next)]:{align:'left',size:'large'}});
+  assert.equal(q.document_import_manual_crops[0].replaced_image_path,old);
+  assert.equal(q.document_import_manual_crops[0].ai_verified,false);
+ },
+ async stale_replacement_span_is_rejected_before_open(){
+  const old='/static/uploads/tmp/old.png';const {q}=ready('![原图]('+old+')','答案');q.image_paths=[old];
+  const span=window.MathBankImageAssets.spans(q.content)[0];span.start+=1;
+  openPdfCropModalForQuestion(0,{replacement:{field:'content',...span}});
+  assert.equal(window.activePdfCropSession,null);assert.ok(toasts.at(-1).includes('插图位置已变化'));
+ },
+ async replaced_private_reference_is_not_a_visible_attachment(){
+  const old='/static/uploads/tmp/old.png',next='/static/uploads/tmp/new.png';
+  const {q,content}=ready('![原图]('+old+')','答案');q.image_paths=[old];q.tikz_reference_image_path=old;
+  const span=window.MathBankImageAssets.spans(content.value)[0];
+  openPdfCropModalForQuestion(0,{replacement:{field:'content',...span}});
+  submitPdfCropCoordinates();await resolveCrop(next);
+  assert.deepEqual(q.image_paths,[next]);assert.equal(q.tikz_reference_image_path,old);
+ },
+ async replaced_drawing_detaches_only_after_its_last_field_reference(){
+  const old='/static/uploads/tmp/old.png',next='/static/uploads/tmp/new.png';
+  for(const repeated of [false,true]){
+   const mark='![原图]('+old+')';const {q,content}=ready(mark+(repeated?'\n'+mark:''),'答案');q.image_paths=[old];
+   q.content_tikz_assets=[{image_path:old,tikz_code:'原绘图源码',reference_image_path:old}];q.tikz_code='原绘图源码';
+   const span=window.MathBankImageAssets.spans(content.value)[0];
+   openPdfCropModalForQuestion(0,{replacement:{field:'content',...span}});
+   submitPdfCropCoordinates();await resolveCrop(next);
+   assert.equal(q.content_tikz_assets.length,repeated?1:0);assert.equal(q.tikz_code,repeated?'原绘图源码':'');
+   assert.deepEqual(q.image_paths,repeated?[old,next]:[next]);
+  }
+ },
  async answer_placeholder_is_replaced_at_its_original_position(){
   const {q,content,answer}=ready();const before=answer.value,report={pdf_figure_review:{total:1,verified:0,pending:1,checked:1,calls:2,items:[]}};
   renderSourceIntegrityReport(report);const record=JSON.stringify(report);openAnswer();

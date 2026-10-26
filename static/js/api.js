@@ -1,3 +1,25 @@
+        // Request waits only: animation, debounce and polling cadence stay separate.
+        const MathBankTimeouts = Object.freeze({
+            LOCAL_PROBE_MS: 30000,
+            QUERY_MS: 60000,
+            UPLOAD_MS: 600000,
+            PANDOC_INSTALL_MS: 30 * 60 * 1000
+        });
+        window.MathBankTimeouts = MathBankTimeouts;
+
+        const MathBankLimits = Object.freeze(Object.fromEntries(Object.entries({
+            image_upload_bytes: 10 * 1024 * 1024, text_source_bytes: 5 * 1024 * 1024,
+            document_upload_bytes: 30 * 1024 * 1024, pdf_pages: 80
+        }).map(([key, fallback]) => {
+            const value = window.__processingLimits?.[key];
+            return [key, Number.isSafeInteger(value) && value > 0 ? value : fallback];
+        })));
+        window.MathBankLimits = MathBankLimits;
+        document.addEventListener('DOMContentLoaded', () => {
+            const label = document.getElementById('answerTikzReferenceLimit');
+            if (label) label.textContent = `可选 · 最大 ${MathBankLimits.image_upload_bytes / (1024 * 1024)}MB`;
+        });
+
         // Shared frontend trust boundary. All later cascade modules must use this
         // helper before inserting database, OCR, import or AI output into HTML.
         const MathBankSafe = (() => {
@@ -844,6 +866,14 @@
                     if (key in mapped) mapped[key] = mapText(mapped[key], mapping);
                 });
                 if ('image_paths' in mapped) mapped.image_paths = mapArray(mapped.image_paths, path, true);
+                // Promotion preserves crop pixels. Keep local PDF navigation
+                // receipts pointing to the promoted copy, retaining source-page
+                // evidence and replacement history verbatim.
+                ['pdf_source_figures', 'document_import_manual_crops'].forEach(key => {
+                    if (Array.isArray(mapped[key])) mapped[key] = mapped[key].map(item => item && ({
+                        ...item, image_path: path(item.image_path)
+                    }));
+                });
                 ['content_tikz_assets', 'answer_tikz_assets'].forEach(key => {
                     if (key in mapped) mapped[key] = mapArray(mapped[key], asset => asset && ({
                         ...asset, image_path: path(asset.image_path),
@@ -861,7 +891,7 @@
                 }
                 return mapped;
             }
-            return Object.freeze({ collect, all, withoutReviewOnly, normalizeMap, mapText, mapInput, mapRecord });
+            return Object.freeze({ spans, collect, all, withoutReviewOnly, normalizeMap, mapText, mapInput, mapRecord });
         })();
         // Image references remain at their authored anchors; only the final cluster detaches.
         window.ImageLayoutTools = {
@@ -1034,7 +1064,7 @@
             if (configSettingsController) configSettingsController.abort();
             const settingsController = new AbortController();
             configSettingsController = settingsController;
-            const settingsTimeout = setTimeout(() => settingsController.abort(), 8000);
+            const settingsTimeout = setTimeout(() => settingsController.abort(), MathBankTimeouts.LOCAL_PROBE_MS);
             // Fetch preferred engine configuration from backend to resolve defaults
             const settingsRequest = fetch('/api/settings', {signal: settingsController.signal})
                 .then(r => {
@@ -1075,6 +1105,8 @@
                     
                     const classifyCfg = parseModelConfig(settings.prefer_classify_model, 'deepseek', 'deepseek-flash');
                     const classifyProv = document.getElementById('classifyModelProvider');
+                    const quality = document.getElementById('classifyQuality');
+                    if (quality) quality.value = settings.classification_policy?.mode === 'precise' ? 'precise' : 'quick';
                     if (classifyProv) {
                         classifyProv.value = classifyCfg.provider;
                         renderModelSelector('classify', classifyCfg.provider, classifyCfg.model);
@@ -1112,7 +1144,7 @@
             const indicator = document.getElementById('apiStatusIndicator');
             const controller = new AbortController();
             configHealthController = controller;
-            const healthTimeout = setTimeout(() => controller.abort(), 8000);
+            const healthTimeout = setTimeout(() => controller.abort(), MathBankTimeouts.LOCAL_PROBE_MS);
             const healthRequest = fetch('/healthz', {signal: controller.signal, cache: 'no-store'})
                 .then(response => {
                     if (!response.ok) throw new Error('题库尚未就绪');
@@ -1537,6 +1569,8 @@
                     
                     // 3. 题目智能分类模型
                     const classifyCfg = parseModelConfig(settings.prefer_classify_model, 'deepseek', 'deepseek-flash');
+                    const quality = document.getElementById('classifyQuality');
+                    if (quality) quality.value = settings.classification_policy?.mode === 'precise' ? 'precise' : 'quick';
                     document.getElementById('classifyModelProvider').value = classifyCfg.provider;
                     renderModelSelector('classify', classifyCfg.provider, classifyCfg.model);
                     
@@ -1760,6 +1794,8 @@
             formData.append('prefer_solve_model', preferSolveModel);
             formData.append('prefer_parse_model', preferParseModel);
             formData.append('prefer_classify_model', preferClassifyModel);
+            const quality = document.getElementById('classifyQuality');
+            if (quality) formData.append('classify_quality', quality.value);
             formData.append('prefer_draw_model', preferDrawModel);
             
             // Chain both saves: metadata JSON and ENV settings parameters
@@ -2349,6 +2385,8 @@
             const backup = document.getElementById('libraryTransferBackup');
             backup.textContent = backupPath ? '导入前备份：' + backupPath : '';
             backup.classList.toggle('hidden', !backupPath);
+            const warnings = document.getElementById('libraryTransferWarnings');
+            warnings.textContent = ''; warnings.classList.add('hidden');
             updateLibraryTransferStatusVisibility();
         }
         function updateLibraryTransferStatusVisibility() {
@@ -2462,6 +2500,12 @@
                 }
             }
             setLibraryTransferStatus(message, state, typeof result.backup_path === 'string' ? result.backup_path : '');
+            const warnings = document.getElementById('libraryTransferWarnings');
+            const warningMessages = Array.isArray(result.backup_warnings) ? result.backup_warnings
+                .filter(warning => warning && typeof warning.message === 'string')
+                .map(warning => warning.message) : [];
+            warnings.textContent = warningMessages.join('\n');
+            warnings.classList.toggle('hidden', !warningMessages.length);
             document.getElementById('libraryTransferStatus').dataset.pane = task.operation;
             const info = document.getElementById('libraryTransferTaskInfo');
             info.textContent = (task.filename ? task.filename + ' · ' : '') + '任务 ' + task.task_id;
@@ -2514,7 +2558,7 @@
             const taskId = libraryTransferTask.task_id, generation = libraryTransferGeneration;
             libraryTransferPollPending = true;
             const controller = new AbortController(); libraryTransferPollController = controller;
-            const timeout = setTimeout(() => controller.abort(), 15000);
+            const timeout = setTimeout(() => controller.abort(), MathBankTimeouts.QUERY_MS);
             let nextDelay = 0;
             try {
                 const response = await fetch('/api/library-transfer/tasks/' + encodeURIComponent(taskId), {signal: controller.signal});
@@ -2594,7 +2638,7 @@
             let body, headers;
             if (operation === 'import') { body = new FormData(); body.append('file', file); body.append('client_request_id', taskId); }
             else { body = JSON.stringify({...payload, client_request_id: taskId}); headers = {'Content-Type': 'application/json'}; }
-            const controller = new AbortController(), timeout = setTimeout(() => controller.abort(), 120000);
+            const controller = new AbortController(), timeout = setTimeout(() => controller.abort(), MathBankTimeouts.UPLOAD_MS);
             try {
                 const response = await fetch('/api/library-transfer/tasks/' + operation, {method: 'POST', body, headers, signal: controller.signal});
                 if (!libraryTransferTaskIsCurrent(taskId, generation)) return;
@@ -2636,7 +2680,7 @@
                 state.intent += 1; libraryTransferBusy = 'export'; updateLibraryTransferControls();
                 setLibraryTransferStatus('正在核验已勾选题目，请稍候。', 'busy');
                 let submitted = false;
-                const checkController = new AbortController(), checkTimeout = setTimeout(() => checkController.abort(), 15000);
+                const checkController = new AbortController(), checkTimeout = setTimeout(() => checkController.abort(), MathBankTimeouts.QUERY_MS);
                 try {
                     const checkResponse = await fetch('/api/library-transfer/preview', {
                         method: 'POST', headers: {'Content-Type': 'application/json'},

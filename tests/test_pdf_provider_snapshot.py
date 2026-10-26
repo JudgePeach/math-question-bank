@@ -12,6 +12,7 @@ from types import SimpleNamespace
 import pytest
 
 from pdf_feature_contract import experimental_pdf_only
+from mathbank.ai_knowledge_points import bind_ai_knowledge_catalog
 from mathbank.ai_providers import TextProviderConfig, apply_model_thinking_policy
 from mathbank.document_project_parse import run_project_legacy_parse
 from mathbank.document_projects import DocumentProjectStore
@@ -48,6 +49,7 @@ def isolated_parser():
         "resolve_text_provider": resolve, "get_current_curriculum": lambda: {},
         "build_pdf_parse_system_prompt": lambda *_: "isolated original prompt",
         "load_ai_knowledge_catalog": lambda: [],
+        "bind_ai_knowledge_catalog": bind_ai_knowledge_catalog,
         "apply_model_thinking_policy": apply_model_thinking_policy,
         "parse_paper_completion": parse_paper_completion, "post_chat_completion": post,
         "PAPER_SPLIT_TIMEOUT_SECONDS": PAPER_SPLIT_TIMEOUT_SECONDS, "TaskCancelled": TaskCancelled,

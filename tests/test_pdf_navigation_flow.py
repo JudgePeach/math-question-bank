@@ -25,6 +25,7 @@ def _base():
 
 
 SCENARIO = r'''
+from mathbank.ai_timeouts import DOCUMENT_AI_TIMEOUT_SECONDS
 from mathbank import pdf_page_vision, pdf_vision_details, pdf_native_regions
 from mathbank.ai_providers import resolve_ocr_provider
 from mathbank.pdf_navigation_cache import bind_pdf_navigation
@@ -87,7 +88,7 @@ def no_new_navigation(page,*args,**kwargs):
 fitz.Page.get_pixmap=no_new_navigation
 def vision_post(provider,payload,**kwargs):
     assert provider is vision_provider
-    assert kwargs["timeout"]==600 and kwargs["retry_connection"] is False
+    assert kwargs["timeout"]==DOCUMENT_AI_TIMEOUT_SECONDS and kwargs["retry_connection"] is False
     assert kwargs["allow_redirects"] is False
     assert payload["enable_thinking"] is False
     images=[part for message in payload["messages"] if isinstance(message.get("content"),list)

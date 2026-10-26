@@ -190,10 +190,25 @@ def test_server_marker_cannot_be_hidden_across_two_blocks():
 
 
 @pytest.mark.parametrize("field,value", [("schema","v1"),("blocks",[]),("blocks",[block()]*(MAX_BLOCKS+1)),
-    ("page_complete","false"),("warnings","warning"),("warnings",["x"*501]),("markdown","duplicate source")])
+    ("page_complete","false"),("markdown","duplicate source")])
 def test_strict_envelope_and_resource_limits(field,value):
     p=packet();p[field]=value
     with pytest.raises(ValueError):validate_pdf_page_fragments(p,info())
+
+
+@pytest.mark.parametrize("warnings,retained", [("warning", "warning"), (["x" * 501], "x" * 500)])
+def test_nonstandard_warning_text_is_bounded_without_losing_or_certifying_fragments(warnings, retained):
+    p = packet()
+    p.update(warnings=warnings, page_complete=False)
+    before = deepcopy(p)
+    result = validate_pdf_page_fragments(p, info())
+    assert p == before
+    assert result["markdown"] == p["blocks"][0]["text"]
+    assert result["layout"]["page_complete"] is False
+    assert "page_incomplete" in result["fragments"]["blocks"][0]["pending_reasons"]
+    assert "待核对：" + retained in result["layout"]["notes"]
+    assert any("提示格式不规范" in note for note in result["layout"]["notes"])
+    assert all(len(note.removeprefix("待核对：")) <= 500 for note in result["layout"]["notes"])
 
 
 @pytest.mark.parametrize("field,value", [("role","problem"),("edge","continue"),("number","16"),

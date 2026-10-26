@@ -462,7 +462,7 @@
             const isCurrent = () => EditorState.isCurrent(session)
                 && sequence === relatedDropdownLoadSequence;
             updateRelatedCandidatePagination('查找中...');
-            const timeout = setTimeout(() => controller.abort(), 10000);
+            const timeout = setTimeout(() => controller.abort(), MathBankTimeouts.QUERY_MS);
             return fetch(`/api/questions/association-candidates?${params}`, {signal: controller.signal})
                 .then(response => {
                     if (!response.ok) throw new Error('关联题目查找失败');
@@ -1087,6 +1087,7 @@
             referenceRefreshSequence += 1;
             window.QuestionReferenceState.invalidate();
 
+            let pendingAIClassify = null;
             const saveOperation = (async () => {
                 const pendingLayoutQuestionId = EditorState.questionId;
                 if (pendingLayoutQuestionId && typeof window.waitForFigureLayoutWrite === 'function') {
@@ -1136,6 +1137,8 @@
                 
                 // Check if Compulsory or Chapter classifications are missing
                 if (!skipCheck && (!compulsory || !chapter)) {
+                    const classifyContext = captureAIClassifyContext();
+                    const classifySequence = classifyRequestSequence;
                     const choice = await showMissingCompulsoryModal();
                     if (choice === 'manual') {
                         if (typeof switchQuestionEditorPanel === 'function') switchQuestionEditorPanel('classification');
@@ -1167,9 +1170,9 @@
                             }
                         }
                     } else if (choice === 'ai') {
-                        // Automatically open AI classify modal and trigger AI analysis
-                        openClassifyModal();
-                        runAIClassify();
+                        // Finish this save attempt before entering classification.
+                        // Both classifier entry points correctly reject active saves.
+                        pendingAIClassify = {context: classifyContext, sequence: classifySequence};
                     }
                     return false;
                 }
@@ -1433,7 +1436,15 @@
                 window.refreshCurrentQuestionReferences();
             });
             updateQuestionSaveButtonState();
-            return saveQuestionInFlight;
+            return saveQuestionInFlight.then(result => {
+                if (pendingAIClassify && !saveQuestionInFlight
+                        && pendingAIClassify.sequence === classifyRequestSequence
+                        && isAIClassifyContextCurrent(pendingAIClassify.context)) {
+                    openClassifyModal();
+                    runAIClassify();
+                }
+                return result;
+            });
         }
 
         // AI classification modal handlers
@@ -1443,6 +1454,8 @@
         let temporaryClassifyKnowledgePoints = [];
         let classifyRequestSequence = 0;
         let classifyRequestController = null;
+        let classifyRefineInFlight = false;
+        let classifyRefineLockedControls = [];
 
         function captureAIClassifyContext() {
             const fields = ['editContent', 'editAnswerMarkdown', 'editReview', 'editQType',
@@ -1452,7 +1465,7 @@
         }
 
         function isAIClassifyContextCurrent(context) {
-            return Boolean(context) && KnowledgePointState.isCurrent(context.points)
+            return Boolean(context) && !context.serverVersionConflict && KnowledgePointState.isCurrent(context.points)
                 && context.version === (window.activeCurriculumVersion || '')
                 && context.fields.every(([id, value]) => String(document.getElementById(id)?.value || '') === value);
         }
@@ -1461,9 +1474,20 @@
             const host = document.getElementById('classifyKnowledgePoints');
             if (!host) return;
             host.replaceChildren();
-            const existing = new Set(temporaryClassifyContext.points.labels.map(item => item.code));
-            temporaryClassifyKnowledgePoints = KnowledgePointState.normalize(data.knowledge_points)
+            const existing = new Map(temporaryClassifyContext.points.labels.map(item => [item.code, item]));
+            const suggestions = KnowledgePointState.normalize(data.knowledge_points);
+            temporaryClassifyKnowledgePoints = suggestions
                 .filter(item => !existing.has(item.code)).map(item => ({...item, status: 'confirmed'}));
+            const differences = suggestions.filter(item => existing.has(item.code)
+                && ['role', 'evidence', 'evidence_source', 'reason'].some(key =>
+                    String(item[key] || '') !== String(existing.get(item.code)[key] || '')));
+            const differenceNotice = document.getElementById('classifyExistingPointDifferences');
+            if (differenceNotice) {
+                differenceNotice.textContent = differences.length
+                    ? `AI 对 ${differences.map(item => existing.get(item.code).name || item.name || item.code).join('、')} 的主辅作用或依据有不同建议。已有标注全部保留，可在知识点标签中人工复核。`
+                    : '';
+                differenceNotice.classList.toggle('hidden', !differences.length);
+            }
             if (!temporaryClassifyKnowledgePoints.length) {
                 host.append(knowledgePointNode('p', existing.size ? '没有新增知识点，已有知识点保持原样。' : '未识别到可靠的知识点，可稍后手动选择。', 'text-slate-500'));
             }
@@ -1471,14 +1495,24 @@
                 const row = knowledgePointNode('div', '', 'rounded-lg border border-slate-200 p-2 space-y-1');
                 const label = knowledgePointNode('label', '', 'flex items-center gap-2');
                 const include = document.createElement('input'); include.type = 'checkbox'; include.checked = true;
-                include.addEventListener('change', () => { item.classification_selected = include.checked; });
+                include.addEventListener('change', () => {
+                    if (classifyRefineInFlight) {
+                        include.checked = item.classification_selected !== false;
+                        return;
+                    }
+                    item.classification_selected = include.checked;
+                    updateClassifyPointsApplyEnabled();
+                });
                 label.append(include, knowledgePointNode('span', item.name || item.code));
                 const role = document.createElement('select'); role.className = 'glass-select text-[11px]';
                 role.setAttribute('aria-label', (item.name || item.code) + '考查作用');
                 [['main', '主要考查'], ['auxiliary', '辅助涉及']].forEach(([value, text]) => {
                     const option = knowledgePointNode('option', text); option.value = value; role.append(option);
                 });
-                role.value = item.role; role.addEventListener('change', () => { item.role = role.value; });
+                role.value = item.role; role.addEventListener('change', () => {
+                    if (classifyRefineInFlight) { role.value = item.role; return; }
+                    item.role = role.value;
+                });
                 label.append(role); row.append(label);
                 if (item.evidence || item.reason) {
                     const details = document.createElement('details'); details.className = 'text-[11px] text-slate-500';
@@ -1492,14 +1526,97 @@
             const warnings = document.getElementById('classifyKnowledgePointWarnings');
             if (warnings) warnings.textContent = (Array.isArray(data.knowledge_point_warnings) ? data.knowledge_point_warnings : [])
                 .filter(item => typeof item === 'string').join('\n');
+            updateClassifyPointsApplyEnabled();
+        }
 
+        function updateClassifyPointsApplyEnabled() {
+            const button = document.getElementById('classifyPointsApplyButton');
+            if (!button) return;
+            const enabled = Boolean(temporaryClassifyData)
+                && !classifyRefineInFlight
+                && isAIClassifyContextCurrent(temporaryClassifyContext)
+                && temporaryClassifyKnowledgePoints.some(item => item.classification_selected !== false);
+            button.disabled = !enabled;
+            button.setAttribute('aria-disabled', enabled ? 'false' : 'true');
         }
 
         function setClassifyApplyEnabled(enabled) {
             const applyBtn = document.getElementById('classifyApplyButton');
             if (!applyBtn) return;
+            enabled = enabled && !classifyRefineInFlight && Boolean(temporaryClassifyData)
+                && isAIClassifyContextCurrent(temporaryClassifyContext) && temporaryClassifyData.placement_valid !== false;
             applyBtn.disabled = !enabled;
             applyBtn.setAttribute('aria-disabled', enabled ? 'false' : 'true');
+        }
+
+        function refreshClassifyRefineControls() {
+            const mode = temporaryClassifyData?.classification_diagnostics?.policy?.mode;
+            const current = isAIClassifyContextCurrent(temporaryClassifyContext);
+            const button = document.getElementById('classifyRefineButton');
+            if (button) {
+                const visible = Boolean(temporaryClassifyData) && mode === 'quick';
+                button.classList.toggle('hidden', !visible);
+                button.disabled = !visible || !current || classifyRefineInFlight;
+                button.setAttribute('aria-disabled', button.disabled ? 'true' : 'false');
+                button.setAttribute('aria-busy', classifyRefineInFlight ? 'true' : 'false');
+                button.textContent = classifyRefineInFlight ? '精细复核中…' : '本题精细复核';
+            }
+            const cancel = document.getElementById('classifyRefineCancelButton');
+            if (cancel) cancel.classList.toggle('hidden', !classifyRefineInFlight);
+            const label = document.getElementById('classifyResultMode');
+            if (label) label.textContent = !temporaryClassifyData ? ''
+                : temporaryClassifyContext?.serverVersionConflict ? '教材版本已变化，快速建议仅供参照；请重载目录'
+                : !current ? '当前建议已失效，请重新分析'
+                : classifyRefineInFlight ? '精细复核中，当前保留快速建议'
+                : mode === 'quick' ? '本次结果：快速'
+                : mode === 'precise' ? '本次结果：精细' : '本次分类建议';
+            const aiButton = document.getElementById('classifyAIButton');
+            if (aiButton) {
+                aiButton.disabled = classifyRefineInFlight || Boolean(temporaryClassifyContext?.serverVersionConflict
+                    && temporaryClassifyContext.version === (window.activeCurriculumVersion || ''));
+                if (temporaryClassifyData && !current) aiButton.classList.remove('hidden');
+            }
+            if (!current) {
+                setClassifyApplyEnabled(false);
+                updateClassifyPointsApplyEnabled();
+            } else if (temporaryClassifyData) {
+                setClassifyApplyEnabled(temporaryClassifyData.question_form !== 'choice'
+                    || Boolean(temporaryClassifyQuestionType));
+                updateClassifyPointsApplyEnabled();
+            }
+        }
+
+        function restoreClassifyResultActions() {
+            const current = Boolean(temporaryClassifyData) && isAIClassifyContextCurrent(temporaryClassifyContext);
+            setClassifyApplyEnabled(current && (temporaryClassifyData.question_form !== 'choice'
+                || Boolean(temporaryClassifyQuestionType)));
+            updateClassifyPointsApplyEnabled();
+            refreshClassifyRefineControls();
+        }
+
+        function lockClassifyRefinePreview() {
+            const host = document.getElementById('classifyKnowledgePoints');
+            const controls = Array.from(host?.querySelectorAll?.('input, select') || [])
+                .map(node => ({node, disabled: Boolean(node.disabled), id: ''}));
+            ['classifySingleChoiceBtn', 'classifyMultiChoiceBtn'].forEach(id => {
+                const node = document.getElementById(id);
+                if (node) controls.push({node, disabled: Boolean(node.disabled), id});
+            });
+            classifyRefineLockedControls = controls;
+            controls.forEach(({node}) => { node.disabled = true; });
+        }
+
+        function unlockClassifyRefinePreview({freshResult = false} = {}) {
+            classifyRefineLockedControls.forEach(({node, disabled, id}) => {
+                node.disabled = disabled;
+                // A failed/cancelled preview regains its original flags;
+                // a valid new preview gets normal choice controls.
+                if (id) {
+                    const current = document.getElementById(id);
+                    if (current) current.disabled = freshResult ? false : disabled;
+                }
+            });
+            classifyRefineLockedControls = [];
         }
 
         function resetClassifiedChoiceType() {
@@ -1512,6 +1629,7 @@
         }
 
         function selectClassifiedChoiceType(questionType) {
+            if (classifyRefineInFlight) return;
             if (questionType !== 'single_choice' && questionType !== 'multi_choice') return;
             temporaryClassifyQuestionType = questionType;
             const selectedId = questionType === 'single_choice'
@@ -1530,6 +1648,9 @@
             if (questionDetailLoading || saveQuestionInFlight) return;
             classifyRequestSequence += 1;
             if (classifyRequestController) classifyRequestController.abort();
+            classifyRequestController = null;
+            unlockClassifyRefinePreview();
+            classifyRefineInFlight = false;
             const modal = document.getElementById('aiClassifyModal');
             modal.dataset.classifyOpen = 'true';
             modal.classList.remove('hidden');
@@ -1540,13 +1661,23 @@
             document.getElementById('classifyResult').classList.add('hidden');
             document.getElementById('classifyAIButton').classList.remove('hidden');
             document.getElementById('classifyApplyButton').classList.add('hidden');
+            document.getElementById('classifyPointsApplyButton')?.classList.add('hidden');
             document.getElementById('choiceTypeConfirm').classList.add('hidden');
             document.getElementById('unknownQuestionFormNotice').classList.add('hidden');
             temporaryClassifyData = null;
             temporaryClassifyContext = null;
             temporaryClassifyKnowledgePoints = [];
+            ['classifyPlacementNotice', 'classifyExistingPointDifferences'].forEach(id => {
+                const notice = document.getElementById(id);
+                if (notice) { notice.textContent = ''; notice.classList.add('hidden'); }
+            });
+            updateClassifyPointsApplyEnabled();
             resetClassifiedChoiceType();
             setClassifyApplyEnabled(true);
+            refreshClassifyRefineControls();
+            ['editContent', 'editAnswerMarkdown', 'editReview', 'editQType', 'editCompulsory', 'editChapter', 'editKnowledge']
+                .forEach(id => ['input', 'change'].forEach(event =>
+                    document.getElementById(id)?.addEventListener(event, refreshClassifyRefineControls)));
             
             setTimeout(() => {
                 modal.classList.remove('opacity-0');
@@ -1558,7 +1689,14 @@
         function closeClassifyModal() {
             classifyRequestSequence += 1;
             if (classifyRequestController) classifyRequestController.abort();
+            classifyRequestController = null;
+            unlockClassifyRefinePreview();
+            classifyRefineInFlight = false;
             temporaryClassifyData = null;
+            temporaryClassifyContext = null;
+            temporaryClassifyKnowledgePoints = [];
+            updateClassifyPointsApplyEnabled();
+            refreshClassifyRefineControls();
             const modal = document.getElementById('aiClassifyModal');
             delete modal.dataset.classifyOpen;
             window.MathBankModal.close(modal);
@@ -1571,87 +1709,185 @@
         }
 
         function runAIClassify() {
+            return requestAIClassify();
+        }
+
+        function refineAIClassify() {
+            if (classifyRefineInFlight || temporaryClassifyData?.classification_diagnostics?.policy?.mode !== 'quick'
+                    || !isAIClassifyContextCurrent(temporaryClassifyContext)) {
+                refreshClassifyRefineControls();
+                return Promise.resolve(false);
+            }
+            return requestAIClassify({quality: 'precise', preserveResult: true});
+        }
+
+        function cancelAIClassifyRefinement() {
+            if (!classifyRefineInFlight) return;
+            classifyRequestSequence += 1;
+            if (classifyRequestController) classifyRequestController.abort();
+            classifyRequestController = null;
+            unlockClassifyRefinePreview();
+            classifyRefineInFlight = false;
+            document.getElementById('classifyLoading').classList.add('hidden');
+            restoreClassifyResultActions();
+            document.getElementById('classifyResultMode')?.focus?.({preventScroll: true});
+            showToast('已停止等待精细复核，快速建议已保留；不会自动重发请求。', 'info');
+        }
+
+        function requestAIClassify({quality = null, preserveResult = false} = {}) {
             const content = document.getElementById('editContent').value;
             const modal = document.getElementById('aiClassifyModal');
-            if (questionDetailLoading || saveQuestionInFlight || !modal?.dataset.classifyOpen) return Promise.resolve(false);
+            if (classifyRefineInFlight || questionDetailLoading || saveQuestionInFlight || !modal?.dataset.classifyOpen) return Promise.resolve(false);
+            if (temporaryClassifyContext?.serverVersionConflict
+                    && temporaryClassifyContext.version === (window.activeCurriculumVersion || '')) {
+                showToast('教材版本已变化，请重新载入目录后再分析；旧建议仅供参照。', 'info');
+                return Promise.resolve(false);
+            }
             if (!content.trim()) { showToast('请先输入题干再进行 AI 分类。', 'info'); return Promise.resolve(false); }
             if (classifyRequestController) classifyRequestController.abort();
             const sequence = ++classifyRequestSequence;
-            const context = captureAIClassifyContext();
+            const context = preserveResult ? temporaryClassifyContext : captureAIClassifyContext();
+            if (preserveResult && (!isAIClassifyContextCurrent(context)
+                    || temporaryClassifyData?.classification_diagnostics?.policy?.mode !== 'quick')) return Promise.resolve(false);
             classifyRequestController = new AbortController();
-            temporaryClassifyData = null;
-            temporaryClassifyContext = context;
+            classifyRefineInFlight = preserveResult;
+            if (!preserveResult) {
+                temporaryClassifyData = null;
+                temporaryClassifyContext = context;
+                temporaryClassifyKnowledgePoints = [];
+            } else lockClassifyRefinePreview();
+            updateClassifyPointsApplyEnabled();
             const loading = document.getElementById('classifyLoading');
             const resultBox = document.getElementById('classifyResult');
             const aiBtn = document.getElementById('classifyAIButton');
             const applyBtn = document.getElementById('classifyApplyButton');
             
             loading.classList.remove('hidden');
+            const loadingText = document.getElementById('classifyLoadingText');
+            if (loadingText) loadingText.textContent = preserveResult
+                ? '正在精细复核当前题，快速建议仍保留；可能增加耗时与用量。'
+                : '正在分析题型、教材定位与知识点...';
             aiBtn.classList.add('hidden');
-            resultBox.classList.add('hidden');
-            applyBtn.classList.add('hidden');
+            if (!preserveResult) {
+                resultBox.classList.add('hidden');
+                applyBtn.classList.add('hidden');
+                document.getElementById('classifyPointsApplyButton')?.classList.add('hidden');
+            }
+            setClassifyApplyEnabled(false);
+            refreshClassifyRefineControls();
             
             const formData = new FormData();
             formData.append('content', content);
             formData.append('answer_markdown', document.getElementById('editAnswerMarkdown').value);
             formData.append('review_markdown', document.getElementById('editReview').value);
             if (context.version) formData.append('expected_version_code', context.version);
+            if (quality) formData.append('quality', quality);
             
             return fetch('/api/ai/classify', {
                 method: 'POST',
                 body: formData,
                 signal: classifyRequestController.signal
             })
-            .then(r => r.json())
+            .then(r => {
+                if (sequence !== classifyRequestSequence || !modal.dataset.classifyOpen) return null;
+                if (preserveResult && r.status === 409) {
+                    context.serverVersionConflict = true;
+                    throw new Error('教材版本已变化，请重新载入目录后再分析；旧建议仅供参照。');
+                }
+                if (preserveResult && r.ok === false) throw new Error('精细复核请求未成功，请保留快速建议。');
+                return r.json();
+            })
             .then(data => {
                 if (sequence !== classifyRequestSequence || !modal.dataset.classifyOpen) return false;
                 loading.classList.add('hidden');
                 if (!isAIClassifyContextCurrent(context) || (data.version_code && data.version_code !== context.version)) {
                     aiBtn.classList.remove('hidden');
-                    temporaryClassifyData = null;
+                    if (!preserveResult) temporaryClassifyData = null;
                     showToast('题目或知识点已修改，本次分析结果未应用，请重新分析。', 'info');
+                    return false;
+                }
+                if (preserveResult && (data.status !== 'success'
+                        || data.classification_diagnostics?.policy?.mode !== 'precise'
+                        || (context.version && data.version_code !== context.version)
+                        || !['compulsory', 'chapter', 'knowledge'].every(key => typeof data[key] === 'string')
+                        || !['choice', 'fill_in_blank', 'detailed_answer', 'unknown'].includes(data.question_form)
+                        || typeof data.placement_valid !== 'boolean'
+                        || !Array.isArray(data.knowledge_points))) {
+                    showToast('精细复核未返回有效的精细结果，快速建议已保留。' + (data.message || ''), 'warning');
                     return false;
                 }
                 
                 if (data.status === 'success') {
-                    temporaryClassifyData = data;
-                    renderClassifyKnowledgePoints(data);
-                    document.getElementById('recCompulsory').textContent = data.compulsory;
-                    document.getElementById('recChapter').textContent = data.chapter;
-                    const recKnowledge = document.getElementById('recKnowledge');
-                    if (recKnowledge) recKnowledge.textContent = data.knowledge || '整章定位（待细分）';
-                    const formLabels = {
-                        'choice': '选择题',
-                        'fill_in_blank': '填空题',
-                        'detailed_answer': '解答题',
-                        'unknown': '待手动确认'
-                    };
-                    const questionForm = formLabels[data.question_form] ? data.question_form : 'unknown';
-                    document.getElementById('recQuestionForm').textContent = formLabels[questionForm];
-                    document.getElementById('recQuestionFormSource').textContent = data.question_form_source === 'structure'
-                        ? '结构规则识别'
-                        : 'AI 建议';
+                    const previous = preserveResult ? {data: temporaryClassifyData, context: temporaryClassifyContext,
+                        points: temporaryClassifyKnowledgePoints, questionType: temporaryClassifyQuestionType,
+                        nodes: Array.from(resultBox.childNodes || [])} : null;
+                    try {
+                        // Keep actual quick nodes (and their selection listeners)
+                        // detached until the entire precise preview renders. Any
+                        // render failure restores the original usable preview.
+                        if (previous) resultBox.replaceChildren(...previous.nodes.map(node => node.cloneNode(true)));
+                        temporaryClassifyData = data;
+                        renderClassifyKnowledgePoints(data);
+                        document.getElementById('recCompulsory').textContent = data.compulsory || '未可靠定位';
+                        document.getElementById('recChapter').textContent = data.chapter || '未可靠定位';
+                        const recKnowledge = document.getElementById('recKnowledge');
+                        if (recKnowledge) recKnowledge.textContent = data.knowledge
+                            || (data.placement_valid === false ? '未可靠定位' : '整章定位（待细分）');
+                        const placementNotice = document.getElementById('classifyPlacementNotice');
+                        if (placementNotice) {
+                            placementNotice.textContent = data.placement_valid === false
+                                ? '教材位置未能可靠确定，原教材和题型保持不变。可以只应用所选知识点。'
+                                : data.classification_review?.required === true
+                                    ? '教材定位仍有待核对项，请检查推荐位置；也可以只应用所选知识点。' : '';
+                            placementNotice.classList.toggle('hidden', !placementNotice.textContent);
+                        }
+                        const formLabels = {
+                            'choice': '选择题',
+                            'fill_in_blank': '填空题',
+                            'detailed_answer': '解答题',
+                            'unknown': '待手动确认'
+                        };
+                        const questionForm = formLabels[data.question_form] ? data.question_form : 'unknown';
+                        document.getElementById('recQuestionForm').textContent = formLabels[questionForm];
+                        document.getElementById('recQuestionFormSource').textContent = data.question_form_source === 'structure'
+                            ? '结构规则识别'
+                            : 'AI 建议';
 
-                    const choiceConfirm = document.getElementById('choiceTypeConfirm');
-                    const unknownNotice = document.getElementById('unknownQuestionFormNotice');
-                    choiceConfirm.classList.toggle('hidden', questionForm !== 'choice');
-                    unknownNotice.classList.toggle('hidden', questionForm !== 'unknown');
-                    resetClassifiedChoiceType();
+                        const choiceConfirm = document.getElementById('choiceTypeConfirm');
+                        const unknownNotice = document.getElementById('unknownQuestionFormNotice');
+                        choiceConfirm.classList.toggle('hidden', questionForm !== 'choice' || data.placement_valid === false);
+                        unknownNotice.classList.toggle('hidden', questionForm !== 'unknown');
+                        resetClassifiedChoiceType();
 
-                    if (questionForm === 'fill_in_blank') {
-                        temporaryClassifyQuestionType = 'fill_in_blank';
-                        setClassifyApplyEnabled(true);
-                    } else if (questionForm === 'detailed_answer') {
-                        temporaryClassifyQuestionType = 'detailed_answer';
-                        setClassifyApplyEnabled(true);
-                    } else if (questionForm === 'choice') {
-                        setClassifyApplyEnabled(false);
-                    } else {
-                        setClassifyApplyEnabled(true);
+                        if (questionForm === 'fill_in_blank') {
+                            temporaryClassifyQuestionType = 'fill_in_blank';
+                            setClassifyApplyEnabled(true);
+                        } else if (questionForm === 'detailed_answer') {
+                            temporaryClassifyQuestionType = 'detailed_answer';
+                            setClassifyApplyEnabled(true);
+                        } else if (questionForm === 'choice') {
+                            setClassifyApplyEnabled(false);
+                        } else {
+                            setClassifyApplyEnabled(true);
+                        }
+
+                        resultBox.classList.remove('hidden');
+                        applyBtn.classList.remove('hidden');
+                        document.getElementById('classifyPointsApplyButton')?.classList.remove('hidden');
+                        classifyRefineInFlight = false;
+                        unlockClassifyRefinePreview({freshResult: true});
+                        refreshClassifyRefineControls();
+                    } catch (error) {
+                        if (previous) {
+                            temporaryClassifyData = previous.data;
+                            temporaryClassifyContext = previous.context;
+                            temporaryClassifyKnowledgePoints = previous.points;
+                            temporaryClassifyQuestionType = previous.questionType;
+                            classifyRefineInFlight = true;
+                            resultBox.replaceChildren(...previous.nodes);
+                        }
+                        throw error;
                     }
-                    
-                    resultBox.classList.remove('hidden');
-                    applyBtn.classList.remove('hidden');
                 } else {
                     showToast(data.message || 'AI 智能分类分析失败！', 'error');
                     aiBtn.classList.remove('hidden');
@@ -1660,18 +1896,52 @@
             .catch(err => {
                 if (err.name === 'AbortError' || sequence !== classifyRequestSequence || !modal.dataset.classifyOpen) return false;
                 loading.classList.add('hidden');
-                aiBtn.classList.remove('hidden');
-                showToast('AI 分类出错: ' + err, 'error');
+                if (!preserveResult) aiBtn.classList.remove('hidden');
+                showToast(preserveResult ? '精细复核未完成，快速建议已保留：' + err : 'AI 分类出错: ' + err, 'error');
+            })
+            .finally(() => {
+                if (sequence !== classifyRequestSequence || !modal.dataset.classifyOpen) return;
+                classifyRequestController = null;
+                classifyRefineInFlight = false;
+                unlockClassifyRefinePreview();
+                loading.classList.add('hidden');
+                restoreClassifyResultActions();
+                if (preserveResult) document.getElementById('classifyResultMode')?.focus?.({preventScroll: true});
             });
         }
 
-        function applyClassifyRecommendation() {
-            if (!temporaryClassifyData) return;
+        function canApplyClassifyRecommendation() {
+            if (classifyRefineInFlight || !temporaryClassifyData || questionDetailLoading || saveQuestionInFlight) return false;
             if (!isAIClassifyContextCurrent(temporaryClassifyContext)) {
-                temporaryClassifyData = null;
+                if (!temporaryClassifyContext?.serverVersionConflict) temporaryClassifyData = null;
                 setClassifyApplyEnabled(false);
+                updateClassifyPointsApplyEnabled();
+                refreshClassifyRefineControls();
                 document.getElementById('classifyAIButton').classList.remove('hidden');
                 showToast('题目或知识点已修改，请重新分析后再采用。', 'info');
+                return false;
+            }
+            return true;
+        }
+
+        function selectedClassifyKnowledgePoints() {
+            return temporaryClassifyKnowledgePoints.filter(item => item.classification_selected !== false)
+                .map(({classification_selected, ...item}) => item);
+        }
+
+        function applyClassifyKnowledgePointsOnly() {
+            if (!canApplyClassifyRecommendation()) return;
+            const additions = selectedClassifyKnowledgePoints();
+            if (!additions.length) return;
+            if (!KnowledgePointState.mergeSuggestions(temporaryClassifyContext.points, additions)) return;
+            closeClassifyModal();
+            showToast('所选知识点已应用，题目仍待保存。');
+        }
+
+        function applyClassifyRecommendation() {
+            if (!canApplyClassifyRecommendation()) return;
+            if (temporaryClassifyData.placement_valid === false) {
+                showToast('教材位置未能可靠确定，请只应用知识点或人工核对教材位置。', 'info');
                 return;
             }
             if (temporaryClassifyData.question_form === 'choice' && !temporaryClassifyQuestionType) {
@@ -1703,8 +1973,7 @@
             chapSelect.onchange();
             knowSelect.value = temporaryClassifyData.knowledge || '';
 
-            const additions = temporaryClassifyKnowledgePoints.filter(item => item.classification_selected !== false)
-                .map(({classification_selected, ...item}) => item);
+            const additions = selectedClassifyKnowledgePoints();
             KnowledgePointState.mergeSuggestions(temporaryClassifyContext.points, additions);
 
             if (temporaryClassifyQuestionType && qtypeSelect) {
@@ -1716,13 +1985,18 @@
             showToast('教材、题型及所选知识点已应用。');
             
             const classifiedSession = EditorState.snapshot();
+            const classifiedContext = captureAIClassifyContext();
+            const classifiedSequence = classifyRequestSequence;
             // Save only the editor session in which the teacher applied the result.
             setTimeout(() => {
-                if (EditorState.isCurrent(classifiedSession)) saveQuestion(true);
+                if (EditorState.isCurrent(classifiedSession)
+                        && classifiedSequence === classifyRequestSequence
+                        && isAIClassifyContextCurrent(classifiedContext)) saveQuestion(true);
             }, 250);
         }
 
         window.selectClassifiedChoiceType = selectClassifiedChoiceType;
+        window.applyClassifyKnowledgePointsOnly = applyClassifyKnowledgePointsOnly;
 
         // Delete Question
         function deleteQuestion(id) {
@@ -2554,7 +2828,7 @@
                 && vision.retries < visionCalls ? vision.retries : null;
             const requestSummary = resume ? pdfCurrentOcrReportSummary(vision, resume, report) : visionCalls
                 ? `逐页识别请求 ${visionCalls} 次` + (retryCount !== null ? `，其中失败后重试 ${retryCount} 次` : '') +
-                    (Number.isSafeInteger(vision?.timeout_seconds) && vision.timeout_seconds > 0 && vision.timeout_seconds <= 3600
+                    (Number.isSafeInteger(vision?.timeout_seconds) && vision.timeout_seconds > 0 && vision.timeout_seconds <= 7200
                         ? `；每次超时设为 ${vision.timeout_seconds} 秒。` : '。')
                 : '';
             return `PDF 提取方式：原生直提 ${nativePages} 页` +
@@ -2793,7 +3067,7 @@
                 && splitting.retries < splitting.calls ? splitting.retries : null;
             return `PDF 整卷拆题请求 ${splitting.calls} 次` +
                 (retries !== null ? `，其中失败后重试 ${retries} 次` : '') +
-                (Number.isSafeInteger(splitting.timeout_seconds) && splitting.timeout_seconds > 0 && splitting.timeout_seconds <= 3600
+                (Number.isSafeInteger(splitting.timeout_seconds) && splitting.timeout_seconds > 0 && splitting.timeout_seconds <= 7200
                     ? `；每次超时设为 ${splitting.timeout_seconds} 秒。` : '。');
         }
 
@@ -3361,9 +3635,15 @@
             const contentInput = card.querySelector('.card-content-textarea');
             const answerInput = card.querySelector('.card-answer-textarea');
             const snapshots = {content: String(contentInput?.value || ''), answer_markdown: String(answerInput?.value || '')};
+            const replacement = options.replacement || null;
+            if (replacement && !pdfCropReplacementIsValid(question, snapshots, replacement)) {
+                showToast('插图位置已变化，请在最新预览中重新点击需要替换的图片。', 'info');
+                return;
+            }
             const lastTarget = window.pdfCropLastTargets?.get(question);
             const explicitField = ['content', 'answer_markdown'].includes(options.targetField) ? options.targetField : '';
-            const targetField = explicitField || (lastTarget && lastTarget.value === snapshots[lastTarget.field] ? lastTarget.field : 'content');
+            const targetField = replacement?.field || explicitField
+                || (lastTarget && lastTarget.value === snapshots[lastTarget.field] ? lastTarget.field : 'content');
             window.activePdfCropSession = {
                 serial: window.pdfCropSessionSerial = (window.pdfCropSessionSerial || 0) + 1,
                 taskId: window.currentPdfTaskId,
@@ -3375,6 +3655,7 @@
                 snapshots,
                 modelSnapshot: JSON.stringify([question.content, question.answer_markdown]),
                 imagePathsSnapshot: JSON.stringify(question.image_paths || []),
+                replacement: replacement ? {...replacement} : null,
                 targetField,
                 slotLabel: typeof options.slotLabel === 'string' ? options.slotLabel : '',
                 selections: {},
@@ -3383,7 +3664,9 @@
                 slotId: typeof options.slotId === 'string' ? options.slotId : '',
                 closed: false
             };
-            if (!options.slotId && lastTarget && lastTarget.field === targetField && lastTarget.value === snapshots[targetField]) {
+            if (replacement) {
+                window.activePdfCropSession.selections[targetField] = {start: replacement.start || 0, end: replacement.end || 0};
+            } else if (!options.slotId && lastTarget && lastTarget.field === targetField && lastTarget.value === snapshots[targetField]) {
                 window.activePdfCropSession.selections[targetField] = {start: lastTarget.start, end: lastTarget.end};
             }
             configurePdfCropTarget(window.activePdfCropSession);
@@ -3683,24 +3966,61 @@
                             ? '.card-answer-textarea' : '.card-content-textarea');
                         if (!textarea) throw new Error('目标编辑框已关闭，请重新打开题卡后截图');
                         const previous = textarea.value;
-                        const result = pdfCropInsertImage(previous, croppedUrl, targetSelection);
+                        const replacement = cropSession.replacement;
+                        const result = replacement
+                            ? {text: replacement.attachment ? previous : previous.slice(0, replacement.start)
+                                + croppedUrl + previous.slice(replacement.end), replacedPath: replacement.path}
+                            : pdfCropInsertImage(previous, croppedUrl, targetSelection);
                         textarea.value = result.text;
                         q[targetField] = result.text;
-                        if (!q.image_paths.includes(croppedUrl)) q.image_paths.push(croppedUrl);
-                        if (result.replacedPath && result.replacedPath !== croppedUrl) {
-                            const remaining = [card.querySelector('.card-content-textarea').value,
-                                card.querySelector('.card-answer-textarea').value, q.review, q.tikz_reference_image_path,
-                                JSON.stringify(q.content_tikz_assets || []), JSON.stringify(q.answer_tikz_assets || [])].join('\n');
-                            if (!remaining.includes(result.replacedPath)) q.image_paths = q.image_paths.filter(path => path !== result.replacedPath);
+                        if (replacement?.attachment) {
+                            q.image_paths = q.image_paths.map(path => path === replacement.path ? croppedUrl : path);
                         }
-                        if (cropSession.slotId) {
+                        if (!q.image_paths.includes(croppedUrl)) q.image_paths.push(croppedUrl);
+                        const oldLayoutKey = result.replacedPath && window.ImageLayoutTools?.key(result.replacedPath);
+                        const newLayoutKey = window.ImageLayoutTools?.key(croppedUrl);
+                        if (oldLayoutKey && newLayoutKey && q.image_layouts?.[oldLayoutKey]) {
+                            q.image_layouts = {...q.image_layouts, [newLayoutKey]: {...q.image_layouts[oldLayoutKey]}};
+                        }
+                        if (result.replacedPath && result.replacedPath !== croppedUrl) {
+                            // A manually chosen raster supersedes this field's
+                            // drawing only after its last visible use is gone.
+                            // Other occurrences and the original import source
+                            // retain their drawing evidence.
+                            const assetField = targetField === 'content' ? 'content_tikz_assets' : 'answer_tikz_assets';
+                            if (replacement && Array.isArray(q[assetField])
+                                    && !window.MathBankImageAssets.collect(result.text).includes(result.replacedPath)) {
+                                const retainedAssets = q[assetField].filter(asset => asset.image_path !== result.replacedPath);
+                                if (retainedAssets.length !== q[assetField].length) {
+                                    q[assetField] = retainedAssets;
+                                    if (targetField === 'content') {
+                                        q.tikz_code = retainedAssets[0]?.tikz_code || '';
+                                        q.tikz_reference_image_path = retainedAssets[0]?.reference_image_path || '';
+                                    }
+                                }
+                            }
+                            const remaining = [card.querySelector('.card-content-textarea').value,
+                                card.querySelector('.card-answer-textarea').value, q.review].join('\n');
+                            // Private references are registered separately by
+                            // prepare_question_assets; they must not become a
+                            // visible, unanchored attachment after replacement.
+                            const stillVisible = window.MathBankImageAssets
+                                ? window.MathBankImageAssets.collect(remaining).includes(result.replacedPath)
+                                : remaining.includes(result.replacedPath);
+                            if (!stillVisible) {
+                                q.image_paths = q.image_paths.filter(path => path !== result.replacedPath);
+                                if (oldLayoutKey && q.image_layouts) delete q.image_layouts[oldLayoutKey];
+                            } else if (!q.image_paths.includes(result.replacedPath)) q.image_paths.push(result.replacedPath);
+                        }
+                        if (cropSession.slotId || replacement) {
                             const receipts = Array.isArray(q.document_import_manual_crops) ? q.document_import_manual_crops : [];
-                            q.document_import_manual_crops = receipts.filter(receipt => !(receipt?.slot_id === cropSession.slotId
+                            q.document_import_manual_crops = receipts.filter(receipt => !(cropSession.slotId && receipt?.slot_id === cropSession.slotId
                                 && receipt?.page_number === cropPageIndex + 1)).concat({slot_id: cropSession.slotId,
                                 page_number: cropPageIndex + 1, target_field: targetField, image_path: croppedUrl,
                                 project_card_id: String(q.project_card_id || ''), original_page_image: cropPageUrl || '',
                                 project_id: cropSession.projectId, task_id: cropSession.taskId,
                                 session_serial: cropSession.serial, original_selection: [targetSelection.start, targetSelection.end],
+                                ...(replacement ? {replaced_image_path: replacement.path} : {}),
                                 method: 'manual', ai_verified: false});
                         }
                         q.document_import_source_edited = true;
@@ -3713,7 +4033,8 @@
                             q.image_paths.forEach(path => appendSafeImageBadge(badgesContainer, path));
                         }
                     }
-                    showToast(`截图已插入${targetField === 'answer_markdown' ? '答案与解析' : '题干'}的选定位置。`);
+                    showToast(cropSession.replacement ? '已用新截图替换此图，其他图片保持原位。'
+                        : `截图已插入${targetField === 'answer_markdown' ? '答案与解析' : '题干'}的选定位置。`);
                     closePdfCropModal();
                     window.MathBankDocumentImportSession?.saveSoon();
                 } else {
@@ -3728,10 +4049,11 @@
             .finally(() => {
                 if (!cropIsCurrent() && window.activePdfCropSession !== cropSession) return;
                 cropSession.submitting = false;
-                if (fieldControl) fieldControl.disabled = false;
-                if (positionControl) positionControl.disabled = false;
+                if (fieldControl) fieldControl.disabled = !!cropSession.replacement;
+                if (positionControl) positionControl.disabled = !!cropSession.replacement;
                 if (!cropSession.closed) confirmBtn.disabled = !(rectWidth > 15 && rectHeight > 15);
-                confirmBtn.innerHTML = '<i class="fa-solid fa-crop-simple mr-1.5"></i><span>确认截取配图</span>';
+                confirmBtn.innerHTML = '<i class="fa-solid fa-crop-simple mr-1.5"></i><span>'
+                    + (cropSession.replacement ? '确认替换此图' : '确认截取配图') + '</span>';
             });
         }
 
@@ -3747,6 +4069,7 @@
         }
 
         function pdfCropTargetSelection(session) {
+            if (session.replacement) return {start: session.replacement.start || 0, end: session.replacement.end || 0};
             const value = session.snapshots?.[session.targetField] || '';
             const control = document.getElementById('pdfCropTargetText');
             const chosen = control && control.dataset.targetField === session.targetField
@@ -3771,6 +4094,7 @@
 
         function configurePdfCropTarget(session, nextField) {
             if (session.submitting) return;
+            if (session.replacement && nextField) return;
             const control = document.getElementById('pdfCropTargetText');
             const select = document.getElementById('pdfCropTargetField');
             if (nextField && ['content', 'answer_markdown'].includes(nextField)) {
@@ -3801,19 +4125,110 @@
                     ? {start: index, end: index + anchor.length} : {start: value.length, end: value.length};
             }
             if (select) {
-                select.disabled = false;
+                select.disabled = !!session.replacement;
                 select.value = session.targetField;
                 select.onchange = () => configurePdfCropTarget(session, select.value);
             }
             if (control) {
-                control.disabled = false;
+                control.disabled = !!session.replacement;
                 control.value = value;
                 control.dataset.targetField = session.targetField;
                 const selection = session.selections[session.targetField];
                 control.setSelectionRange(selection.start, selection.end);
             }
             const hint = document.getElementById('pdfCropTargetHint');
-            if (hint) hint.textContent = '仅替换选中的待补图标记或已有图片；没有选中标记时，在光标处插入，后面的解答保持原位。';
+            if (hint) hint.textContent = session.replacement
+                ? '本次只替换点中的这一处插图。取消或裁剪失败会保留原图；确认后请检查图形及标注是否完整。'
+                : '仅替换选中的待补图标记或已有图片；没有选中标记时，在光标处插入，后面的解答保持原位。';
+            const preview = document.getElementById('pdfCropReplacementPreview');
+            if (preview) {
+                preview.hidden = !session.replacement;
+                const image = preview.querySelector('img');
+                if (session.replacement) image.src = session.replacement.path;
+                else image.removeAttribute('src');
+            }
+            const instructions = document.getElementById('pdfCropTargetInstructions');
+            if (instructions) instructions.textContent = session.replacement
+                ? `正在替换${session.targetField === 'answer_markdown' ? '答案与解析' : '题干'}中的${session.replacement.attachment ? '附件图' : '插图'}。请在下方原 PDF 页面重新框选，也可从左侧切换原页。`
+                : '在下方原文中点击需要插图的位置，再在原页上框选。选中的待补图标记会被原位替换。';
+            const label = document.getElementById('pdfCropTargetLabel');
+            if (label) label.textContent = session.replacement ? '替换位置（已锁定）' : '截图插入位置';
+            const confirm = document.getElementById('pdfCropConfirmBtn');
+            if (confirm) confirm.innerHTML = '<i class="fa-solid fa-crop-simple mr-1.5"></i><span>'
+                + (session.replacement ? '确认替换此图' : '确认截取配图') + '</span>';
+        }
+
+        function pdfCropReplacementIsValid(question, snapshots, replacement) {
+            if (!['content', 'answer_markdown'].includes(replacement.field)
+                    || !window.MathBankSafe.safeImageUrl(replacement.path)) return false;
+            if (replacement.attachment) {
+                return replacement.field === 'content' && question.image_paths?.includes(replacement.path)
+                    && !window.MathBankImageAssets.collect(snapshots.content).includes(replacement.path)
+                    && !window.MathBankImageAssets.collect(snapshots.answer_markdown).includes(replacement.path);
+            }
+            return window.MathBankImageAssets.spans(snapshots[replacement.field]).some(span =>
+                span.start === replacement.start && span.end === replacement.end && span.path === replacement.path);
+        }
+
+        function pdfCropReplacementPage(question, path) {
+            const pages = new Set();
+            (Array.isArray(question.document_import_manual_crops) ? question.document_import_manual_crops : []).forEach(receipt => {
+                if (receipt?.image_path === path && Number.isInteger(receipt.page_number)) pages.add(receipt.page_number);
+            });
+            (Array.isArray(question.pdf_source_figures) ? question.pdf_source_figures : []).forEach(figure => {
+                if (figure?.image_path === path && Number.isInteger(figure.page_index)) pages.add(figure.page_index + 1);
+            });
+            pdfFigureReviewItems(parsedFigureReviewReport).forEach(figure => {
+                if (figure.image_path === path && Number.isInteger(figure.page_number)) pages.add(figure.page_number);
+            });
+            return pages.size === 1 ? [...pages][0] : null;
+        }
+
+        function configureParsedPdfImageReplacement(card, question, index, contentText, answerText) {
+            if (!question || card.__sourceQuestion !== question || !window.pdfPageImages?.length) return;
+            const snapshots = {content: contentText, answer_markdown: answerText};
+            ['content', 'answer_markdown'].forEach(field => {
+                const preview = card.querySelector(field === 'content' ? '.card-content-preview' : '.card-answer-preview');
+                if (!preview) return;
+                const spans = window.MathBankImageAssets.spans(snapshots[field]);
+                const images = [...preview.querySelectorAll('img')];
+                const paths = new Set(images.map(image => window.MathBankSafe.safeImageUrl(image.getAttribute('src'))).filter(Boolean));
+                paths.forEach(path => {
+                    const rendered = images.filter(image => window.MathBankSafe.safeImageUrl(image.getAttribute('src')) === path);
+                    const matches = spans.filter(span => span.path === path);
+                    const attachment = field === 'content' && matches.length === 0 && question.image_paths?.includes(path)
+                        && !window.MathBankImageAssets.collect(answerText).includes(path);
+                    // Mapping by occurrence is safe only when every authored
+                    // reference has exactly one rendered counterpart.
+                    if (!attachment && rendered.length !== matches.length) return;
+                    rendered.forEach((image, occurrence) => {
+                        const replacement = {field, path, ...(attachment ? {attachment: true} : matches[occurrence])};
+                        image.dataset.pdfCropReplace = 'true';
+                        image.setAttribute('role', 'button');
+                        image.setAttribute('tabindex', '0');
+                        image.setAttribute('aria-label', `重新截图替换${field === 'content' ? '题干' : '答案与解析'}中的此图`);
+                        image.title = '点击重新截图替换此图；Cmd/Ctrl 点击查看大图';
+                        image.style.cursor = 'crosshair';
+                        const replace = event => {
+                            if (event.ctrlKey || event.metaKey || event.altKey || event.shiftKey) return;
+                            event.preventDefault();
+                            event.stopPropagation();
+                            if (parsedQuestionsData[index] !== question || card.__sourceQuestion !== question
+                                    || card.querySelector('.card-content-textarea')?.value !== contentText
+                                    || card.querySelector('.card-answer-textarea')?.value !== answerText) {
+                                showToast('题卡内容已变化，请在最新预览中重新点击插图。', 'info');
+                                return;
+                            }
+                            openPdfCropModalForQuestion(index, {targetField: field, replacement,
+                                pageNumber: pdfCropReplacementPage(question, path)});
+                        };
+                        image.addEventListener('click', replace);
+                        image.addEventListener('keydown', event => {
+                            if (event.key === 'Enter' || event.key === ' ') replace(event);
+                        });
+                    });
+                });
+            });
         }
 
         function performOrphanedTempCropsCleanup() {
@@ -3919,7 +4334,8 @@
                 const bytes = new Uint8Array(buffer || new ArrayBuffer(0));
                 const label = file.name.toLowerCase().endsWith('.md') ? 'Markdown' : 'TeX';
                 if (!bytes.length) throw new Error(`${label} 文件为空`);
-                if (bytes.length > 5 * 1024 * 1024) throw new Error(`${label} 文件超过 5MB 上限`);
+                const sourceLimit = window.MathBankLimits?.text_source_bytes || 5 * 1024 * 1024;
+                if (bytes.length > sourceLimit) throw new Error(`${label} 文件超过 ${sourceLimit / (1024 * 1024)}MB 上限`);
 
                 const attempts = [];
                 if ((bytes[0] === 0xFF && bytes[1] === 0xFE) || (bytes[0] === 0xFE && bytes[1] === 0xFF)) {
@@ -4047,7 +4463,7 @@
                         const formData = new FormData();
                         formData.append('file', file);
                         const controller = typeof AbortController === 'function' ? new AbortController() : null;
-                        const timeoutId = controller ? setTimeout(() => controller.abort(), 8000) : null;
+                        const timeoutId = controller ? setTimeout(() => controller.abort(), MathBankTimeouts.UPLOAD_MS) : null;
                         const sourceEndpoint = sourceFormat === 'markdown' ? '/api/upload/markdown-source' : '/api/upload/tex-source';
                         return fetch(sourceEndpoint, {
                             method: 'POST',
@@ -4598,7 +5014,7 @@
             return creation;
         }
 
-        async function fetchDocumentImportJson(url, options = {}, timeoutMs = 10000) {
+        async function fetchDocumentImportJson(url, options = {}, timeoutMs = MathBankTimeouts.QUERY_MS) {
             const controller = typeof AbortController === 'function' ? new AbortController() : null;
             let timeoutId;
             const timeout = new Promise((resolve, reject) => {
@@ -4760,8 +5176,12 @@
                 if (!isCurrentDocumentPoll(identity) || identity.pending || Date.now() < identity.nextPollAt) return;
                 identity.pending = true;
                 fetchDocumentImportJson(`/api/tasks/${encodeURIComponent(taskId)}/status`)
-                .then(task => {
+                .then(async task => {
                     if (!isCurrentDocumentPoll(identity)) return;
+                    if (identity.failures > 0) {
+                        appendImportLog('已重新连接原任务，继续读取进度。', 'info');
+                        document.getElementById('importLoadingText').textContent = task.log || '已重新连接，正在读取任务进度';
+                    }
                     identity.failures = 0;
                     identity.nextPollAt = 0;
                     window.MathBankDocumentImportSession?.update({
@@ -4810,7 +5230,7 @@
                             } else if (task.status === 'ai_splitting' || (task.log && task.log.includes('大模型') || task.log.includes('pdf-inspector') || task.log.includes('Word 原生'))) {
                                 subText.textContent = '文本与公式已提取完毕，正在通过大模型进行题目切片与属性匹配...' +
                                     (Number.isSafeInteger(task.diagnostics?.pdf_splitting?.timeout_seconds)
-                                        && task.diagnostics.pdf_splitting.timeout_seconds > 0 && task.diagnostics.pdf_splitting.timeout_seconds <= 3600
+                                        && task.diagnostics.pdf_splitting.timeout_seconds > 0 && task.diagnostics.pdf_splitting.timeout_seconds <= 7200
                                         ? `每次超时 ${task.diagnostics.pdf_splitting.timeout_seconds} 秒，可恢复失败最多重试一次，复用已提取内容。` : '');
                             } else if (task.status === 'completed') {
                                 subText.textContent = task.partial === true && !task.data?.length
@@ -4830,9 +5250,22 @@
                     }
                     
                     if (task.status === 'completed' || task.status === 'partial') {
+                        if (task.diagnostics?.pdf_partial_checkpoint?.version === 1
+                                && task.diagnostics.pdf_partial_checkpoint.task_id === taskId) {
+                            // New saves may start while an earlier group is
+                            // settling. Drain every current group; after the
+                            // empty check merging stays synchronous so no new
+                            // save can lose its receipt to a detached card.
+                            while (parsedQuestionSaveInFlight.size || parsedBatchSaveInFlight) {
+                                const saves = [...parsedQuestionSaveInFlight.values()];
+                                if (parsedBatchSaveInFlight) saves.push(parsedBatchSaveInFlight);
+                                await Promise.allSettled(saves);
+                                if (!isCurrentDocumentPoll(identity)) return;
+                            }
+                        }
                         if (!finishDocumentPoll(identity)) return;
                         const workingCopyRestore = task.diagnostics?.pdf_draft_restore?.working_copy === true;
-                        const questions = window.MathBankDocumentImportSession?.mergeCompletion(task.data || [], {workingCopyRestore}) || task.data || [];
+                        const questions = window.MathBankDocumentImportSession?.mergeCompletion(task.data || [], {workingCopyRestore, taskId}) || task.data || [];
                         replaceParsedQuestions(questions, {saveDraft: !workingCopyRestore && questions.length > 0});
                         window.MathBankDocumentImportSession?.completed(task, questions);
                         if (typeof startDocumentResultRetention === 'function') startDocumentResultRetention(taskId);
@@ -4954,21 +5387,31 @@
                 .catch(err => {
                     if (!isCurrentDocumentPoll(identity)) return;
                     identity.failures += 1;
-                    identity.nextPollAt = Date.now() + Math.min(15000, 1500 * Math.pow(2, identity.failures));
+                    const retryDelay = Math.min(15000, 1500 * Math.pow(2, Math.min(identity.failures, 4)));
+                    identity.nextPollAt = Date.now() + retryDelay;
                     const missing = err.httpStatus === 404 || err.httpStatus === 410;
-                    const stopped = missing || identity.failures >= 3;
-                    appendImportLog(stopped
-                        ? `任务连接已暂停：${err.message}。当前任务与校对内容已保留，可重新连接。`
-                        : `任务连接暂时中断，正在重连（${identity.failures}/3）：${err.message}`, 'warning');
-                    if (stopped) {
+                    const authorizationRequired = err.httpStatus === 401 || err.httpStatus === 403;
+                    appendImportLog(missing
+                        ? `后台任务已不存在：${err.message}。当前校对内容已保留。`
+                        : authorizationRequired
+                        ? `本地授权校验未通过，请恢复页面授权；保留原任务并继续查询，不会重新上传：${err.message}`
+                        : `任务状态待确认，第 ${identity.failures} 次连接失败；${retryDelay / 1000} 秒后继续连接原任务：${err.message}`, 'warning');
+                    if (missing) {
                         finishDocumentPoll(identity);
-                        window.MathBankDocumentImportSession?.update({ phase: missing ? 'missing' : 'disconnected', error: err.message });
-                        document.getElementById('importLoadingText').textContent = '任务连接已暂停，校对内容已保留';
+                        window.MathBankDocumentImportSession?.update({ phase: 'missing', error: err.message });
+                        document.getElementById('importLoadingText').textContent = '后台任务已不存在，校对内容已保留';
                         const icon = document.querySelector('#importLoadingState .fa-circle-notch, #importLoadingState .fa-spinner');
                         if (icon) icon.className = 'fa-solid fa-circle-exclamation text-amber-500 text-3xl';
                         runBtn.disabled = false;
                         runBtn.innerHTML = '<i class="fa-solid fa-wand-magic-sparkles"></i> <span>开始解析</span>';
-                        showToast('暂时无法读取后台任务；已保留当前内容，可重新连接。', 'warning');
+                        showToast('后台确认任务不存在；已停止自动查询，当前校对内容仍保留。', 'warning');
+                    } else {
+                        window.MathBankDocumentImportSession?.update({ taskId, phase: 'reconnecting', error: err.message });
+                        document.getElementById('importLoadingText').textContent = authorizationRequired
+                            ? '本地授权待恢复；原任务与校对内容保留，继续查询原任务'
+                            : `连接中断，任务状态待确认；${retryDelay / 1000} 秒后自动重连`;
+                        const subText = document.getElementById('importSubLoadingText');
+                        if (subText) subText.textContent = '继续查询原任务，已有题卡与人工修改保留。可取消等待；不会重新上传或新建解析任务。';
                     }
                 })
                 .finally(() => {
@@ -5302,7 +5745,7 @@
 
         async function requestQuestionDuplicateCheck(items) {
             const controller = new AbortController();
-            const timeoutId = setTimeout(() => controller.abort(), 12000);
+            const timeoutId = setTimeout(() => controller.abort(), MathBankTimeouts.QUERY_MS);
             let response;
             try {
                 response = await fetch('/api/questions/check-duplicates', {
@@ -5316,7 +5759,7 @@
                 });
             } catch (error) {
                 if (error && error.name === 'AbortError') {
-                    throw new Error('查重超时（12 秒）');
+                    throw new Error(`查重超时（${MathBankTimeouts.QUERY_MS / 1000} 秒）`);
                 }
                 throw error;
             } finally {
@@ -6113,6 +6556,9 @@
                         <option value="detailed_answer" ${q.question_type === 'detailed_answer' ? 'selected' : ''}>解答题</option>
                     `;
                 }
+                if (q.question_type === '') {
+                    qTypeOptionsHtml = '<option value="" selected>-- 请确认题型 --</option>' + qTypeOptionsHtml;
+                }
 
                 let difficultyOptionsHtml = '';
                 if (window.systemMetadata && window.systemMetadata.difficulties) {
@@ -6126,6 +6572,9 @@
                         <option value="challenge" ${q.difficulty === 'challenge' ? 'selected' : ''}>挑战题</option>
                         <option value="qiangji" ${q.difficulty === 'qiangji' ? 'selected' : ''}>强基题</option>
                     `;
+                }
+                if (q.difficulty === null) {
+                    difficultyOptionsHtml = '<option value="" selected>-- 请确认难度 --</option>' + difficultyOptionsHtml;
                 }
 
                 const card = document.createElement('div');
@@ -6400,7 +6849,7 @@
                     if (typeof window.cleanChoiceStemParentheses === 'function') {
                         processedContent = window.cleanChoiceStemParentheses(processedContent);
                     }
-                    let html = parseMarkdownWithMath(processedContent);
+                    let html = parseMarkdownWithMath(processedContent, q?.image_layouts || {});
                     
                     // Lifecycle registration also contains answer/commentary images.
                     if (q && q.image_paths && q.image_paths.length > 0) {
@@ -6410,9 +6859,13 @@
                         const promptImages = window.MathBankImageAssets.withoutReviewOnly(
                             q.image_paths, contentText, answerText, q.review
                         );
+                        const privateReferences = new Set([q.tikz_reference_image_path,
+                            ...(Array.isArray(q.content_tikz_assets) ? q.content_tikz_assets : []).map(asset => asset.reference_image_path),
+                            ...(Array.isArray(q.answer_tikz_assets) ? q.answer_tikz_assets : []).map(asset => asset.reference_image_path)
+                        ].map(path => window.MathBankSafe.safeImageUrl(path)).filter(Boolean));
                         promptImages.forEach(p => {
                             const safePath = window.MathBankSafe.safeImageUrl(p);
-                            if (safePath && !answerImagePaths.has(safePath) && !html.includes(safePath)) {
+                            if (safePath && !privateReferences.has(safePath) && !answerImagePaths.has(safePath) && !html.includes(safePath)) {
                                 hasUnrenderedImage = true;
                                 imgHtml += `
                                     <div class="relative group border border-slate-200 rounded-lg overflow-hidden bg-white max-w-[120px] aspect-[4/3] flex items-center justify-center shadow-sm hover:shadow-sm transition-all duration-300">
@@ -6452,7 +6905,7 @@
                 answerPrev.innerHTML = '<span class="text-slate-400 italic text-[10px]">解析预览将在此实时渲染...</span>';
             } else {
                 try {
-                    answerPrev.innerHTML = parseMarkdownWithMath(answerText);
+                    answerPrev.innerHTML = parseMarkdownWithMath(answerText, q?.image_layouts || {});
                     renderMathInElement(answerPrev, {
                         delimiters: [
                             {left: '$$', right: '$$', display: true},
@@ -6466,12 +6919,16 @@
                     answerPrev.textContent = answerText;
                 }
             }
+            configureParsedPdfImageReplacement(card, q, index, contentText, answerText);
         }
 
         function validateParsedQuestionBeforeImport(index, options = {}) {
             const card = document.getElementById(`parsed-card-${index}`);
             const q = parsedQuestionsData[index];
-            if (!card || !q) return false;
+            if (!card || !q) {
+                options.onInvalid?.('题卡已不存在或尚未加载，请刷新题卡后重试。');
+                return false;
+            }
             const content = card.querySelector('.card-content-textarea')?.value.trim() || '';
             const questionType = card.querySelector('.card-qtype')?.value || '';
             const compulsory = card.querySelector('.card-compulsory')?.value || '';
@@ -6488,6 +6945,9 @@
             } else if (!questionType) {
                 message = `请确认第 ${index + 1} 题的题型！`;
                 target = card.querySelector('.card-qtype');
+            } else if (q.difficulty === null && !card.querySelector('.card-difficulty')?.value) {
+                message = `请选择第 ${index + 1} 题的难度，当前识图稿尚未分类！`;
+                target = card.querySelector('.card-difficulty');
             } else if (parsedQuestionNeedsClassificationReview(index, q)) {
                 updateParsedClassificationReview(index);
                 const problem = parsedClassificationProblem(parsedClassificationValues(card, q));
@@ -6507,6 +6967,7 @@
                     : card.querySelector('.card-chapter');
             }
             if (!message) return true;
+            options.onInvalid?.(message);
             if (options.notify !== false) showToast(message, 'warning');
             if (options.focus !== false && target) {
                 target.scrollIntoView({ behavior: 'smooth', block: 'center' });
@@ -6556,6 +7017,9 @@
                 knowledge_points: KnowledgePointState.normalize(q.knowledge_points),
                 sub_knowledge: typeof window.normalizeSubKnowledge === 'function' ? window.normalizeSubKnowledge(q.sub_knowledge) : [],
                 image_paths: duplicateItem ? duplicateItem.image_paths : safeDuplicateImagePaths(q.image_paths),
+                image_layouts: window.ImageLayoutTools?.normalize(q.image_layouts || {}) || {},
+                figure_align: q.figure_align || 'right', figure_size: q.figure_size || 'auto',
+                figure_align_custom: q.figure_align_custom === true,
                 content_tikz_assets: contentAssets, answer_tikz_assets: answerAssets,
                 tikz_code: String(contentAssets[0] ? (contentAssets[0].tikz_code || '') : (q.tikz_code || '')),
                 tikz_reference_image_path: String(contentAssets[0]
@@ -6718,6 +7182,10 @@
                 formData.append('difficulty', difficulty);
                 formData.append('source', source);
                 formData.append('answer_markdown', answer_markdown);
+                formData.append('image_layouts', JSON.stringify(window.ImageLayoutTools?.normalize(q.image_layouts || {}) || {}));
+                formData.append('figure_align', q.figure_align || 'right');
+                formData.append('figure_size', q.figure_size || 'auto');
+                formData.append('figure_align_custom', String(q.figure_align_custom === true));
                 formData.append('review', String(q.review || ''));
                 formData.append('knowledge_points', JSON.stringify(KnowledgePointState.normalize(q.knowledge_points)));
                 const parsedContentTikzAssets = safePersistedTikzAssets(q.content_tikz_assets);
@@ -6844,7 +7312,7 @@
                 return true;
             })().catch(err => {
                 if (isParsedQuestionSaveContextCurrent(saveGeneration, index, q)) {
-                    if (err.message !== 'Content empty' && err.message !== 'Curriculum empty') {
+                    if (!options.suppressToast && err.message !== 'Content empty' && err.message !== 'Curriculum empty') {
                         showToast(`第 ${index + 1} 题保存出错: ${err.message}`, 'error');
                     }
                 }
@@ -6958,6 +7426,36 @@
                     saveAllBtn.className = "flex items-center space-x-1.5 px-4 py-2 rounded-xl bg-brand-600/80 hover:bg-brand-600 text-white font-bold text-xs backdrop-blur-sm border border-brand-500/20 shadow-sm transition-all active:scale-95 cursor-pointer";
                 }
             }
+            renderParsedImportOutcomes();
+        }
+
+        function renderParsedImportOutcomes() {
+            const container = document.getElementById('parsedCardsContainer');
+            if (!container) return;
+            const entries = parsedQuestionsData.map((question, index) => ({index, outcome: question.import_outcome}))
+                .filter(entry => ['success', 'failed', 'skipped'].includes(entry.outcome?.status));
+            let report = document.getElementById('parsedBatchImportReport');
+            if (!entries.length) { if (report) report.remove(); return; }
+            if (!report) {
+                report = document.createElement('details');
+                report.id = 'parsedBatchImportReport';
+                report.className = 'rounded-xl border border-slate-200 bg-slate-50 p-3 text-xs mb-3';
+                report.open = true;
+                container.insertBefore(report, container.firstChild);
+            }
+            report.replaceChildren();
+            const summary = document.createElement('summary');
+            const counts = status => entries.filter(entry => entry.outcome.status === status).length;
+            summary.textContent = `入库处理记录：成功 ${counts('success')}，失败 ${counts('failed')}，跳过 ${counts('skipped')}`;
+            summary.className = 'font-bold cursor-pointer';
+            report.appendChild(summary);
+            const labels = {success: '成功', failed: '失败', skipped: '跳过'};
+            entries.forEach(({index, outcome}) => {
+                const line = document.createElement('p');
+                line.className = 'mt-2 whitespace-pre-wrap break-words';
+                line.textContent = `第 ${index + 1} 题 · ${labels[outcome.status]}：${String(outcome.reason || '')}`;
+                report.appendChild(line);
+            });
         }
 
         function toggleSelectAllParsed(checked) {
@@ -7024,11 +7522,23 @@
                 showToast('单次最多查重并导入 500 道题，请分批勾选。', 'warning');
                 return Promise.resolve(false);
             }
-            const invalidIndex = selectedIndices.find(index =>
-                !validateParsedQuestionBeforeImport(index, { notify: false, focus: false })
-            );
-            if (invalidIndex !== undefined) {
-                validateParsedQuestionBeforeImport(invalidIndex);
+            const setOutcome = (index, status, reason) => {
+                if (batchGeneration !== parsedQuestionsGeneration || !parsedQuestionsData[index]) return;
+                parsedQuestionsData[index].import_outcome = {status, reason: String(reason)};
+            };
+            const eligibleIndices = selectedIndices.filter(index => {
+                delete parsedQuestionsData[index].import_outcome;
+                let reason = '';
+                const valid = validateParsedQuestionBeforeImport(index, {
+                    notify: false, focus: false, onInvalid: message => { reason = message; }
+                });
+                if (!valid) setOutcome(index, 'skipped', reason || '题干、题型或分类待确认，未发起入库。');
+                return valid;
+            });
+            updateSelectedCount();
+            window.MathBankDocumentImportSession?.saveSoon();
+            if (!eligibleIndices.length) {
+                showToast(`本次跳过 ${selectedIndices.length} 道待确认题；题卡与修改已保留，请查看入库处理记录。`, 'warning');
                 return Promise.resolve(false);
             }
 
@@ -7050,20 +7560,24 @@
                 // Every batch click performs one fresh, current-DOM check before
                 // any question-save POST is allowed to start.
                 const outcome = await precheckParsedQuestionDuplicates({
-                    indices: selectedIndices,
+                    indices: eligibleIndices,
                     notifyFailure: true
                 });
                 if (batchGeneration !== parsedQuestionsGeneration) return false;
                 if (outcome.stale) {
+                    eligibleIndices.forEach(index => setOutcome(index, 'skipped', '整批查重期间题卡已修改，本次未入库；请重新查重。'));
                     showToast('题目在整批查重期间已修改，请重新点击导入。', 'info');
                     return false;
                 }
-                if (outcome.invalid) return false;
+                if (outcome.invalid) {
+                    eligibleIndices.forEach(index => setOutcome(index, 'skipped', outcome.error?.message || '查重准备未通过校验，本次未入库。'));
+                    return false;
+                }
 
-                let indicesToSave = selectedIndices.slice();
+                let indicesToSave = eligibleIndices.slice();
                 const independentOverrideIndices = new Set();
                 if (outcome.ok) {
-                    const suspectIndices = selectedIndices.filter(index =>
+                    const suspectIndices = eligibleIndices.filter(index =>
                         duplicateResultHasSignal(outcome.results.get(index))
                     );
                     if (suspectIndices.length > 0) {
@@ -7073,12 +7587,16 @@
                         );
                         if (batchGeneration !== parsedQuestionsGeneration) return false;
                         if (action === 'review') {
+                            eligibleIndices.forEach(index => setOutcome(index, 'skipped', '本次选择先审查疑似重复题，尚未入库。'));
+                            updateSelectedCount();
+                            window.MathBankDocumentImportSession?.saveSoon();
                             focusFirstParsedDuplicate(suspectIndices);
                             return false;
                         }
                         if (action === 'skip') {
                             const suspectSet = new Set(suspectIndices);
-                            indicesToSave = selectedIndices.filter(index => !suspectSet.has(index));
+                            indicesToSave = eligibleIndices.filter(index => !suspectSet.has(index));
+                            suspectIndices.forEach(index => setOutcome(index, 'skipped', '疑似重复，按本次选择保留待审，未入库。'));
                             if (indicesToSave.length === 0) {
                                 showToast('所选题目均需要审查，本次没有执行导入。', 'info');
                                 focusFirstParsedDuplicate(suspectIndices);
@@ -7087,7 +7605,9 @@
                         } else if (action && action.action === 'selected') {
                             const keep = new Set(action.indices.filter(index => suspectIndices.includes(index)));
                             const suspects = new Set(suspectIndices);
-                            indicesToSave = selectedIndices.filter(index => !suspects.has(index) || keep.has(index));
+                            indicesToSave = eligibleIndices.filter(index => !suspects.has(index) || keep.has(index));
+                            suspectIndices.filter(index => !keep.has(index)).forEach(index =>
+                                setOutcome(index, 'skipped', '疑似重复，本次未选择独立保留，未入库。'));
                             keep.forEach(index => independentOverrideIndices.add(index));
                             if (!indicesToSave.length) {
                                 showToast('本次未选择需要保留的题目，未执行导入。', 'info');
@@ -7107,15 +7627,30 @@
                 const results = await runParsedSavePool(indicesToSave, async index => {
                     if (batchGeneration !== parsedQuestionsGeneration) return false;
                     const result = outcome.ok ? outcome.results.get(index) : null;
-                    const saved = await saveParsedQuestion(index, {
-                        fromBatch: true,
-                        suppressRefresh: true,
-                        suppressToast: true,
-                        duplicateDecisionResolved: true,
-                        duplicateOverride: independentOverrideIndices.has(index) ? 'independent' : '',
-                        duplicateSnapshotHash: String(result && result.snapshot_hash || ''),
-                        localSnapshot: outcome.ok ? (parsedDuplicateSnapshots.get(index) || '') : ''
-                    });
+                    let saved;
+                    try {
+                        saved = await saveParsedQuestion(index, {
+                            fromBatch: true,
+                            suppressRefresh: true,
+                            suppressToast: true,
+                            duplicateDecisionResolved: true,
+                            duplicateOverride: independentOverrideIndices.has(index) ? 'independent' : '',
+                            duplicateSnapshotHash: String(result && result.snapshot_hash || ''),
+                            localSnapshot: outcome.ok ? (parsedDuplicateSnapshots.get(index) || '') : ''
+                        });
+                        if (batchGeneration !== parsedQuestionsGeneration) return false;
+                        if (saved === true) {
+                            setOutcome(index, 'success', parsedQuestionsData[index]?.modifiedAfterSave
+                                ? '本次快照已入库；保存期间的新修改仍留在题卡，尚未入库。' : '本次快照已入库。');
+                        } else {
+                            let reason = '';
+                            validateParsedQuestionBeforeImport(index, {notify: false, focus: false, onInvalid: message => {reason = message;}});
+                            setOutcome(index, 'skipped', reason || '查重结果或题卡在保存前发生变化，未入库；请核对题卡及重复提示后重试。');
+                        }
+                    } catch (error) {
+                        setOutcome(index, 'failed', `${error.message || '保存请求失败'}；题卡已保留，请核对后台结果后再决定重试。`);
+                        saved = false;
+                    }
                     completedCount += 1;
                     if (btnText && batchGeneration === parsedQuestionsGeneration) {
                         btnText.textContent = `批量入库中 (${completedCount}/${indicesToSave.length})...`;
@@ -7125,6 +7660,8 @@
 
                 if (batchGeneration !== parsedQuestionsGeneration) return false;
                 const successCount = results.filter(result => result === true).length;
+                const failedCount = selectedIndices.filter(index => parsedQuestionsData[index]?.import_outcome?.status === 'failed').length;
+                const skippedCount = selectedIndices.filter(index => parsedQuestionsData[index]?.import_outcome?.status === 'skipped').length;
                 const fingerprintWarningCount = indicesToSave.filter(index =>
                     parsedQuestionsData[index] && parsedQuestionsData[index].duplicateIndexWarning
                 ).length;
@@ -7139,17 +7676,19 @@
                 parsedQuestionsData.forEach((q, index) => updateParsedSavedState(index));
                 window.MathBankDocumentImportSession?.saveSoon();
                 const remainingUnsavedCount = parsedQuestionsData.filter(q => !q.saved).length;
-                if (remainingUnsavedCount === 0) {
-                    showToast(`批量导入完成！共 ${successCount} 道题目已全部成功导入本地库${fingerprintWarningNote}！`, fingerprintWarningCount ? 'warning' : 'success');
+                if (remainingUnsavedCount === 0 && !failedCount && !skippedCount) {
+                    showToast(`本次批量导入完成：成功 ${successCount}，失败 0，跳过 0${fingerprintWarningNote}。`, fingerprintWarningCount ? 'warning' : 'success');
                     // Keep the workspace until an explicit reset: an answer
                     // request or new source input can still arrive after save.
                     window.MathBankDocumentImportSession?.flush();
                 } else {
-                    showToast(`批量导入已完成！成功: ${successCount}/${indicesToSave.length}${fingerprintWarningNote}。疑似题、失败题及保存期间的新修改已保留，尚未全部导入。`, 'warning');
+                    showToast(`批量导入完成：成功 ${successCount}，失败 ${failedCount}，跳过 ${skippedCount}${fingerprintWarningNote}。逐题原因见入库处理记录；未入库题与新修改均已保留。`, 'warning');
                 }
                 return true;
             })().catch(error => {
                 if (batchGeneration === parsedQuestionsGeneration) {
+                    eligibleIndices.filter(index => !parsedQuestionsData[index]?.import_outcome).forEach(index =>
+                        setOutcome(index, 'skipped', `批量准备未完成：${error.message || '未知错误'}；未发起本题入库，题卡已保留。`));
                     showToast(`批量导入时发生错误: ${error.message}`, 'error');
                 }
                 return false;
@@ -7163,6 +7702,7 @@
                 if (icon) icon.className = originalIconClass;
                 if (btnText) btnText.textContent = originalText;
                 updateSelectedCount();
+                window.MathBankDocumentImportSession?.saveSoon();
             });
             parsedBatchSaveInFlight = operation;
             updateSelectedCount();
@@ -7419,6 +7959,36 @@
                 .trim();
         }
 
+        function setupSidebarSearch() {
+            const input = document.getElementById('searchInput');
+            if (!input) return;
+            let composing = false;
+            input.addEventListener('compositionstart', () => {
+                composing = true;
+                cancelPendingSidebarSearch();
+                invalidatePendingBankQuestions();
+            });
+            input.addEventListener('compositionend', () => {
+                composing = false;
+                if (input.value.trim()) scheduleSidebarSearch();
+                else runSidebarSearchImmediately();
+            });
+            input.addEventListener('input', event => {
+                if (composing || event.isComposing) {
+                    cancelPendingSidebarSearch();
+                    invalidatePendingBankQuestions();
+                    return;
+                }
+                if (input.value.trim()) scheduleSidebarSearch();
+                else runSidebarSearchImmediately();
+            });
+            input.addEventListener('keydown', event => {
+                if (event.key !== 'Enter' || composing || event.isComposing || event.keyCode === 229) return;
+                event.preventDefault();
+                runSidebarSearchImmediately();
+            });
+        }
+
         // App Initialization
         document.addEventListener('DOMContentLoaded', () => {
             // Check configs
@@ -7427,16 +7997,7 @@
             // Load and update drafts count
             updateDraftCountBadge();
 
-            // Bind search input to loadQuestions / loadDrafts dynamically
-            document.getElementById('searchInput').addEventListener('input', () => {
-                currentBankPage = 1;
-                currentDraftPage = 1;
-                if (activeSidebarTab === 'bank') {
-                    loadQuestions();
-                } else {
-                    loadDrafts();
-                }
-            });
+            setupSidebarSearch();
 
             // Bind filterType and filterDifficulty select elements dynamically to loadQuestions / loadDrafts
             document.getElementById('filterType').addEventListener('change', () => {
@@ -7615,8 +8176,9 @@
                     showToast('参考文件必须是图片。', 'error');
                     return;
                 }
-                if (file.size > 10 * 1024 * 1024) {
-                    showToast('参考图不能超过 10MB。', 'error');
+                const imageLimit = window.MathBankLimits?.image_upload_bytes || 10 * 1024 * 1024;
+                if (file.size > imageLimit) {
+                    showToast(`参考图不能超过 ${imageLimit / (1024 * 1024)}MB。`, 'error');
                     return;
                 }
                 clearTikzReference();

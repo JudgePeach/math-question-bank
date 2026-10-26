@@ -5,6 +5,37 @@ const PAGE_LIMIT = 20;
 let bankQuestionsLoadController = null;
 let bankQuestionsLoadSequence = 0;
 let bankQuestionsRetryTimer = null;
+let sidebarSearchTimer = null;
+const SIDEBAR_SEARCH_DELAY_MS = 300;
+
+function cancelPendingSidebarSearch() {
+    if (sidebarSearchTimer !== null) clearTimeout(sidebarSearchTimer);
+    sidebarSearchTimer = null;
+}
+
+function invalidatePendingBankQuestions() {
+    ++bankQuestionsLoadSequence;
+    if (bankQuestionsRetryTimer) clearTimeout(bankQuestionsRetryTimer);
+    bankQuestionsRetryTimer = null;
+    if (bankQuestionsLoadController) bankQuestionsLoadController.abort();
+    bankQuestionsLoadController = null;
+    document.getElementById('questionsList')?.removeAttribute('aria-busy');
+}
+
+function runSidebarSearchImmediately() {
+    cancelPendingSidebarSearch();
+    currentBankPage = currentDraftPage = 1;
+    if (activeSidebarTab === 'bank') loadQuestions();
+    else loadDrafts();
+}
+
+function scheduleSidebarSearch() {
+    cancelPendingSidebarSearch();
+    // Invalidate now: an old response must not render during the debounce wait.
+    invalidatePendingBankQuestions();
+    currentBankPage = currentDraftPage = 1;
+    sidebarSearchTimer = setTimeout(runSidebarSearchImmediately, SIDEBAR_SEARCH_DELAY_MS);
+}
 
 // A subdivision always carries its complete curriculum path. Legacy category
 // fields and free-form tags remain separate, and selections belong to a version.
@@ -1843,6 +1874,8 @@ window.visualViewport?.addEventListener('scroll', repositionKnowledgePointPicker
         }
 
         function loadDrafts() {
+            cancelPendingSidebarSearch();
+            invalidatePendingBankQuestions();
             if (typeof updateBankFilterSummary === 'function') updateBankFilterSummary();
             const qListContainer = document.getElementById('questionsList');
             const q = document.getElementById('searchInput').value.trim().toLowerCase();
@@ -2420,6 +2453,8 @@ window.visualViewport?.addEventListener('scroll', repositionKnowledgePointPicker
 
         // Load and List Saved Questions
         function loadQuestions(retryCount = 0) {
+            // Explicit filters, paging and refreshes supersede a queued keyword.
+            cancelPendingSidebarSearch();
             if (typeof updateBankFilterSummary === 'function') updateBankFilterSummary();
             const loadSequence = ++bankQuestionsLoadSequence;
             if (bankQuestionsRetryTimer) {

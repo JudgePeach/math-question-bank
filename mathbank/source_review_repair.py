@@ -133,11 +133,24 @@ def repair_verified_differences(items, decisions, *, provider, request, attachme
         budget["remaining"] -= 1
         result["calls"] += 1
         result[phase + "_calls"] += 1
-        response = request(provider, payload, timeout=timeout_seconds, check_status=False, retry_connection=False)
+        try:
+            response = request(provider, payload, timeout=timeout_seconds, check_status=False, retry_connection=False)
+        except TaskCancelled:
+            raise
+        except Exception as exc:
+            result['request_failure'] = {'phase': phase, 'code': 'transport_error',
+                                         'error_type': type(exc).__name__}
+            raise
         check_cancelled()
         if response.status_code != 200:
+            result['request_failure'] = {'phase': phase, 'code': 'http_error',
+                                         'http_status': int(response.status_code)}
             raise RepairStopped(f"自动修正或复核请求未成功（HTTP {response.status_code}），未重试请求。")
         body = response.json()
+        if isinstance(body, dict) and (body.get('error')
+                or body.get('status') in ('error', 'failed') and not body.get('choices')):
+            result['request_failure'] = {'phase': phase, 'code': 'provider_error'}
+            raise RepairStopped('自动修正或复核服务返回错误信息，未重试请求。')
         usage = body.get("usage") or {}
         for key in ("prompt_tokens", "completion_tokens", "total_tokens"):
             if type(usage.get(key)) is int and usage[key] >= 0:

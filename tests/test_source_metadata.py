@@ -170,7 +170,7 @@ def test_protected_math_code_and_image_paths_do_not_reach_fillin_normalizer():
     assert r"$\underline{AB}$" in again and "`x___ ![](/static/uploads/code___x.png)`" in again
 
 
-@pytest.mark.parametrize("change", ["missing", "unknown", "duplicate", "content", "bad_type", "bad_difficulty", "outer_extra"])
+@pytest.mark.parametrize("change", ["missing", "unknown", "duplicate", "content", "outer_extra"])
 def test_model_contract_failure_cannot_edit_or_drop_the_local_source(change):
     plan = prepare("1. 已知变量$x=3$，求其值。\n2. 给定参数$y=4$，写出结果。\n参考答案：\n2. $4$。\n1. $3$。")
     assert plan["eligible"], plan["fallback_reasons"]
@@ -184,10 +184,6 @@ def test_model_contract_failure_cannot_edit_or_drop_the_local_source(change):
         parsed["items"][1] = deepcopy(parsed["items"][0])
     elif change == "content":
         parsed["items"][0]["content"] = "changed"
-    elif change == "bad_type":
-        parsed["items"][0]["question_type"] = "unknown"
-    elif change == "bad_difficulty":
-        parsed["items"][0]["difficulty"] = "unknown"
     else:
         parsed["page_complete"] = True
     with pytest.raises(SourceMetadataContractError):
@@ -310,8 +306,11 @@ def test_explicit_original_section_type_cannot_be_changed_by_model(heading, corr
     questions = apply_source_metadata_response(reply, plan, CURRICULUM)
     assert questions[0]["question_type"] == correct_type
     reply["items"][0]["question_type"] = wrong_type
-    with pytest.raises(SourceMetadataContractError, match="分节"):
-        apply_source_metadata_response(reply, plan, CURRICULUM)
+    retained = apply_source_metadata_response(reply, plan, CURRICULUM)
+    assert retained[0]["question_type"] == correct_type
+    assert "source_question_type_preserved" in retained[0]["classification_review"]["reason_codes"]
+    assert retained[0]["classification_review"]["original"]["question_type"] == wrong_type
+    assert retained[0]["classification_review"]["required"] is False
 
 
 def test_unknown_generic_choice_section_does_not_guess_single_or_multi():

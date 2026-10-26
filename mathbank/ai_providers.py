@@ -153,7 +153,7 @@ def apply_model_thinking_policy(
     code = provider.provider_code
     host = urlsplit(provider.api_base or "").hostname
     explicit = provider.reasoning_effort in (_VALID_REASONING_EFFORTS - {"default"})
-    enabled = bool(thinking_enabled) if task == "solve" else task == "draw"
+    enabled = bool(thinking_enabled) if task in {"solve", "classify"} else task == "draw"
     if explicit:
         enabled = True
 
@@ -171,22 +171,27 @@ def apply_model_thinking_policy(
         # old V4 effort mapping nor another vendor's budget is transferable.
         for key in ("thinking", "reasoning_effort", "thinking_budget"):
             result.pop(key, None)
-        result["enable_thinking"] = bool(thinking_enabled) if task == "solve" else task == "draw"
+        result["enable_thinking"] = bool(thinking_enabled) if task in {"solve", "classify"} else task == "draw"
         return result
 
     if _is_siliconflow_qwen38_27b(provider):
         # This exact model defaults to thinking on SiliconFlow. Recognition,
         # splitting and classification must emit their requested result rather
         # than spending an implicit, unbounded reasoning budget first.
-        qwen_enabled = bool(thinking_enabled) if task == "solve" else task == "draw"
+        qwen_enabled = bool(thinking_enabled) if task in {"solve", "classify"} else task == "draw"
         for key in ("thinking", "reasoning_effort"):
             result.pop(key, None)
         result["enable_thinking"] = qwen_enabled
         if qwen_enabled:
             default_budget = 8192 if task == "draw" else 16384
+            classification_cap = result.get("max_tokens") if task == "classify" else None
+            if type(classification_cap) is int and classification_cap >= 256:
+                default_budget = min(8192, max(128, classification_cap // 2))
             budget = result.get("thinking_budget")
             if type(budget) is not int or not 128 <= budget <= 32768:
                 budget = default_budget
+            if type(classification_cap) is int and classification_cap >= 256:
+                budget = min(budget, max(128, classification_cap // 2))
             result["thinking_budget"] = budget
         else:
             result.pop("thinking_budget", None)
@@ -262,6 +267,21 @@ def _is_siliconflow_deepseek_v41_flash(provider_code: str, model_name: str) -> b
     """Bind the tested domestic contract to the selected provider and exact ID."""
     return (provider_code == "siliconflow"
             and model_name.lower() == "deepseek-ai/deepseek-v4.1-flash")
+
+
+def supports_classification_images(provider) -> bool:
+    """Only confirmed identities may add images to an existing text task.
+
+    Drawing entry points permit custom multimodal names. Classification must
+    not inherit that assumption for an arbitrary saved text-model name.
+    """
+    code, model = provider.provider_code, provider.model_name
+    return ((code == "deepseek" and _deepseek_supports_images(model))
+            or _is_siliconflow_deepseek_v41_flash(code, model)
+            or _is_siliconflow_qwen38_27b(provider)
+            # This exact user-requested relay identity accepted the bounded
+            # classification images in live probes; unknown relays stay text.
+            or (code == "zhongzhan_claude" and model == "gemini-3.8-flash-high"))
 
 
 def supports_pdf_split_stream(provider) -> bool:

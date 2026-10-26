@@ -199,7 +199,7 @@ def test_database_unique_card_constraint_is_real_not_only_python_check(environme
     assert _counts(factory) == (1, 1)
 
 
-def test_v13_to_v14_backs_up_before_ddl_and_preserves_all_question_fields(environment, tmp_path, monkeypatch):
+def test_v13_to_latest_backs_up_before_ddl_and_preserves_all_question_fields(environment, tmp_path, monkeypatch):
     path, engine, factory, _, _, card = environment
     with factory() as db:
         question = Question(content=card["content"], answer_markdown=card["answer_markdown"],
@@ -231,8 +231,8 @@ def test_v13_to_v14_backs_up_before_ddl_and_preserves_all_question_fields(enviro
     monkeypatch.setattr(db_migrations, "create_pre_migration_backup", backup)
     monkeypatch.setattr(db_migrations, "_ensure_document_import_receipts", ensure)
     result = db_migrations.migrate_database(engine)
-    assert result['from_version'] == 13 and result['to_version'] == 14
-    assert db_migrations.schema_version(engine) == 14
+    assert result['from_version'] == 13 and result['to_version'] == db_migrations.LATEST_SCHEMA_VERSION
+    assert db_migrations.schema_version(engine) == db_migrations.LATEST_SCHEMA_VERSION
     assert 'document_import_receipts' in inspect(engine).get_table_names()
     assert _question_hash(path) == before
     assert _question_hash(observed[0]) == before

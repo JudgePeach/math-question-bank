@@ -7,7 +7,9 @@ import hashlib
 import json
 
 from mathbank.ai_providers import apply_model_thinking_policy
-from mathbank.ai_knowledge_points import build_ai_knowledge_prompt, load_ai_knowledge_catalog
+from mathbank.ai_knowledge_points import (
+    annotate_ai_knowledge_points, build_ai_knowledge_prompt, load_ai_knowledge_catalog,
+)
 from mathbank.content_locks import lock_visible_math, reconcile_visible_math
 from mathbank.paper_parse import PAPER_SPLIT_TIMEOUT_SECONDS, parse_paper_completion
 from mathbank.import_classification import normalize_import_classifications
@@ -16,6 +18,8 @@ from mathbank.prompts import build_pdf_parse_system_prompt
 from mathbank.question_assets import embedded_question_assets
 from mathbank.source_metadata import (
     MAX_METADATA_MESSAGE_CHARACTERS, SourceMetadataContractError, SourceMetadataMessageBudgetError,
+    SourceMetadataIdentityError,
+    _HARMLESS_METADATA_FIELDS,
     apply_source_metadata_response, build_source_metadata_messages,
 )
 from mathbank.source_review_results import parse_review_response
@@ -38,10 +42,11 @@ class SourceHybridPermanentRequestError(ValueError):
     """A second request with the same configuration cannot repair this failure."""
 
 
-def build_source_hybrid_messages(plan: dict, curriculum: dict, groups: list[dict], *, source_label="文档") -> tuple[list[dict], dict]:
+def build_source_hybrid_messages(plan: dict, curriculum: dict, groups: list[dict], *,
+                                 source_label="文档", knowledge_catalog=None) -> tuple[list[dict], dict]:
     """Build one bounded envelope. Context is shared; source is never truncated."""
     context, items, risks, locks = [], [], [], {}
-    knowledge_catalog = load_ai_knowledge_catalog()
+    knowledge_catalog = load_ai_knowledge_catalog() if knowledge_catalog is None else knowledge_catalog
     metadata_instructions = None
     for group in groups:
         if group["route"] == "metadata":
@@ -102,22 +107,26 @@ def build_source_hybrid_messages(plan: dict, curriculum: dict, groups: list[dict
 
 
 def _adopt_parts(parsed: dict, groups: list[dict], locks: dict, curriculum: dict, normalize_fillin,
-                 original_questions: list[dict], original_source: str):
+                 original_questions: list[dict], original_source: str, knowledge_catalog=None):
     originals = {q["id"]:q for q in original_questions}
-    if not isinstance(parsed, dict) or set(parsed) != {"metadata", "splits"}:
-        raise SourceHybridContractError("混合结果外层无效。")
+    if (not isinstance(parsed, dict) or not {"metadata", "splits"} <= set(parsed)
+            or set(parsed) - {"metadata", "splits"} - _HARMLESS_METADATA_FIELDS):
+        raise SourceMetadataIdentityError("混合结果外层无效，未采用不完整来源身份。")
     metadata, splits = parsed["metadata"], parsed["splits"]
-    if not isinstance(metadata, dict) or set(metadata) != {"items"} or not isinstance(metadata["items"], list):
-        raise SourceHybridContractError("混合元数据结构无效。")
+    if (not isinstance(metadata, dict) or not isinstance(metadata.get("items"), list)
+            or set(metadata) - {"items"} - _HARMLESS_METADATA_FIELDS):
+        raise SourceMetadataIdentityError("混合元数据结构无效，未猜配来源身份。")
     known_meta = {qid for g in groups if g["route"] == "metadata" for qid in g["question_ids"]}
     by_id = {}
     for row in metadata["items"]:
         if not isinstance(row, dict) or not isinstance(row.get("id"), str):
-            raise SourceHybridContractError("混合元数据身份无效。")
+            raise SourceMetadataIdentityError("混合元数据身份无效，未猜配来源。")
         qid = row["id"]
         if qid not in known_meta or qid in by_id:
-            raise SourceHybridContractError("混合元数据ID未知或重复。")
+            raise SourceMetadataIdentityError("混合元数据ID未知或重复，未猜配来源。")
         by_id[qid] = row
+    if set(by_id) != known_meta:
+        raise SourceMetadataIdentityError("混合元数据未覆盖全部本组来源，未猜配或重复请求。")
     expected = {g["id"]:g for g in groups if g["route"] == "split"}
     if not isinstance(splits, list):
         raise SourceHybridContractError("混合风险组结构无效。")
@@ -127,22 +136,27 @@ def _adopt_parts(parsed: dict, groups: list[dict], locks: dict, curriculum: dict
             raise SourceHybridContractError("混合风险组字段无效。")
         gid = row["group_id"]
         if not isinstance(gid, str) or gid not in expected or gid in by_group:
-            raise SourceHybridContractError("混合风险组ID未知或重复。")
+            raise SourceMetadataIdentityError("混合风险组ID未知或重复，未采用冲突来源。")
         if isinstance(row["questions"], list):
             seen = set()
             for candidate in row["questions"]:
                 qid = candidate.get("source_id") if isinstance(candidate, dict) else None
                 if not isinstance(qid, str) or qid not in expected[gid]["question_ids"] or qid in seen:
-                    raise SourceHybridContractError("混合风险题ID未知或重复。")
+                    raise SourceMetadataIdentityError("混合风险题ID未知或重复，未采用冲突来源。")
                 seen.add(qid)
+            if seen != set(expected[gid]["question_ids"]):
+                raise SourceMetadataIdentityError("混合风险组未完整返回来源ID，未按次序猜配。")
         by_group[gid] = row["questions"]
     adopted, errors = {}, {}
     for group in groups:
         try:
             if group["route"] == "metadata":
                 packet = {"items":[by_id[qid] for qid in group["question_ids"] if qid in by_id]}
+                if set(metadata) - {"items"} or set(parsed) - {"metadata", "splits"}:
+                    packet["notes"] = None  # local ignored-diagnostic receipt; never adopt model prose
                 questions = apply_source_metadata_response(packet, group["_source_metadata_plan"], curriculum,
-                                                            normalize_fillin=normalize_fillin)
+                                                            normalize_fillin=normalize_fillin,
+                                                            knowledge_catalog=knowledge_catalog)
             else:
                 candidates = by_group[group["id"]]
                 if not isinstance(candidates, list) or len(candidates) != len(group["question_ids"]):
@@ -151,7 +165,7 @@ def _adopt_parts(parsed: dict, groups: list[dict], locks: dict, curriculum: dict
                 for candidate in candidates:
                     qid = candidate.get("source_id") if isinstance(candidate, dict) else None
                     if not isinstance(qid, str) or qid not in group["question_ids"] or qid in indexed:
-                        raise SourceHybridContractError("风险题ID未知或重复。")
+                        raise SourceMetadataIdentityError("风险题ID未知或重复，未采用冲突来源。")
                     indexed[qid] = candidate
                 ordered = [deepcopy(indexed[qid]) for qid in group["question_ids"]]
                 questions = parse_paper_completion({"choices":[{"finish_reason":"stop",
@@ -163,14 +177,14 @@ def _adopt_parts(parsed: dict, groups: list[dict], locks: dict, curriculum: dict
                     images = set(embedded_question_assets(question["content"], question["answer_markdown"]))
                     images.update(question.get("referenced_images", []))
                     if not images.issubset(allowed_images):
-                        raise SourceHybridContractError("风险组引用了其他题组或未知图片。")
+                        raise SourceMetadataIdentityError("风险组引用了其他题组或未知图片，未采用冲突来源。")
                 raw, group_locks = locks[group["id"]]
                 report = reconcile_visible_math(questions, group_locks, raw)
                 matches = {row["question_index"]:row for row in report.get("source_matches", [])
                            if row["field"] == "content"}
                 if any(matches.get(index, {}).get("source_number") != number
                        for index, number in enumerate(group["source_numbers"])):
-                    raise SourceHybridContractError("风险题文未能对应本组原题，未采用重复或未知题。")
+                    raise SourceMetadataIdentityError("风险题文未能对应本组原题，未采用重复或未知题。")
                 answer_matches = {row["question_index"]:row for row in report.get("source_matches", [])
                                   if row["field"] == "answer_markdown"}
                 for index, qid in enumerate(group["question_ids"]):
@@ -180,12 +194,15 @@ def _adopt_parts(parsed: dict, groups: list[dict], locks: dict, curriculum: dict
                         if (answer_matches.get(index, {}).get("source_number") != original["source_number"]
                                 or any("原版答案文字或公式位置" in reason for reason in
                                        questions[index].get("source_review", {}).get("reasons", []))):
-                            raise SourceHybridContractError("风险题原答案未对应原题，未采用交换或遗漏的原解。")
+                            raise SourceMetadataIdentityError("风险题原答案未对应原题，未采用交换或遗漏的原解。")
                     elif answer and not original.get("original_correct_marker"):
-                        raise SourceHybridContractError("原题没有原答案，未采用模型新增解答。")
+                        raise SourceMetadataIdentityError("原题没有原答案，未采用模型新增解答。")
                 for q in questions:
                     q.pop("source_id", None)
+                    annotate_ai_knowledge_points(q, knowledge_catalog)
             adopted[group["id"]] = questions
+        except SourceMetadataIdentityError:
+            raise
         except (ValueError, TypeError, KeyError) as exc:
             errors[group["id"]] = type(exc).__name__
     return adopted, errors
@@ -206,12 +223,16 @@ def request_source_hybrid(plan: dict, curriculum: dict, *, provider, post,
     diagnostics[diagnostics_key] = report
     if not provider.api_key or not provider.chat_completions_url:
         raise SourceMetadataContractError("拆题服务未配置。")
+    # One installed directory accompanies both routes and any scoped retry.
+    # A teacher edit while the request is in flight must not reinterpret it.
+    knowledge_catalog = deepcopy(load_ai_knowledge_catalog())
 
     def send(groups):
         check_cancelled()
         plan_validator(plan, task_id=task_id, generation=generation)
         try:
-            messages, locks = build_source_hybrid_messages(plan, curriculum, groups, source_label=source_label)
+            messages, locks = build_source_hybrid_messages(
+                plan, curriculum, groups, source_label=source_label, knowledge_catalog=knowledge_catalog)
             payload = apply_model_thinking_policy({"model":provider.model_name, "messages":messages,
                 "response_format":{"type":"json_object"}, "temperature":0.2, "max_tokens":65536},
                 provider=provider, task="parse")
@@ -241,7 +262,7 @@ def request_source_hybrid(plan: dict, curriculum: dict, *, provider, post,
             attempt["response_sha256"] = hashlib.sha256(raw.encode()).hexdigest()
             parsed = parse_review_response(raw)
             result = _adopt_parts(parsed, groups, locks, curriculum, normalize_fillin,
-                                  plan["_inspection"]["questions"], plan["source"])
+                                  plan["_inspection"]["questions"], plan["source"], knowledge_catalog)
             check_cancelled()
             plan_validator(plan, task_id=task_id, generation=generation)
             return result
@@ -277,6 +298,9 @@ def request_source_hybrid(plan: dict, curriculum: dict, *, provider, post,
         # Budget preparation has made no POST and does not revoke the source.
         # Cancellation and source validation above still take precedence.
         return fallback(type(exc).__name__)
+    except SourceMetadataIdentityError:
+        report.update(status="metadata_rejected", no_fallback=True)
+        raise
     except hard_stop_errors:
         report["status"] = "source_changed"
         raise
@@ -298,6 +322,9 @@ def request_source_hybrid(plan: dict, curriculum: dict, *, provider, post,
             raise
         except SourceMetadataMessageBudgetError as exc:
             report["scoped_fallback_error_type"] = type(exc).__name__
+        except SourceMetadataIdentityError:
+            report.update(status="metadata_rejected", no_fallback=True)
+            raise
         except hard_stop_errors:
             report["status"] = "source_changed"
             raise
@@ -317,7 +344,9 @@ def request_source_hybrid(plan: dict, curriculum: dict, *, provider, post,
     questions = [row[1] for row in records]
     preserved = {index for index, row in enumerate(records) if row[2]}
     report.update(status="partial" if errors else "used", adopted_groups=len(adopted),
-                  failed_group_ids=list(errors), question_count=len(questions))
+                  failed_group_ids=list(errors), question_count=len(questions),
+                  metadata_pending_count=sum(q.get("classification_review", {}).get("required") is True
+                                             for q in questions))
     if not questions:
         raise SourceHybridContractError("混合及一次有界回退均未得到完整可用题组。")
     check_cancelled()

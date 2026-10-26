@@ -4,6 +4,8 @@ from pathlib import Path
 import shutil
 import subprocess
 
+from frontend_timeout_helpers import FRONTEND_TIMEOUTS
+
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -15,6 +17,7 @@ def test_association_baseline_and_stale_responses():
     editor = (ROOT / "static/js/editor.js").read_text()
     imports = (ROOT / "static/js/import.js").read_text()
     sources = [
+        FRONTEND_TIMEOUTS,
         api[api.index("const EditorState ="):api.index("// Global variables")],
         editor[editor.index("function backupEditorState"):editor.index("// Custom Premium Confirmation Modal")],
         imports[imports.index("let relatedListLoadSequence"):imports.index("// Jump to select another question by ID")],

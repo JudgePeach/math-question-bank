@@ -7,6 +7,7 @@ import zipfile
 
 from mathbank.latex_diagnostics import build_local_latex_diagnostic
 from mathbank.database import Question
+from mathbank.processing_timeouts import LATEX_EXPORT_TIMEOUT_SECONDS
 from mathbank.paper_helper import (
     build_answer_sheet_latex,
     build_latex_document,
@@ -167,6 +168,7 @@ def test_compile_rejects_error_even_if_xelatex_leaves_a_pdf():
     calls = []
 
     def fake_run(_cmd, *, cwd, **_kwargs):
+        assert _kwargs["timeout"] == LATEX_EXPORT_TIMEOUT_SECONDS
         calls.append(cwd)
         Path(cwd, "paper.pdf").write_bytes(b"partial pdf")
         Path(cwd, "paper.log").write_text(
@@ -192,6 +194,7 @@ def test_compile_auto_loads_known_missing_package():
     calls = []
 
     def fake_run(_cmd, *, cwd, **_kwargs):
+        assert _kwargs["timeout"] == LATEX_EXPORT_TIMEOUT_SECONDS
         calls.append(Path(cwd, "paper.tex").read_text(encoding="utf-8"))
         if r"\usepackage{cancel}" not in calls[-1]:
             Path(cwd, "paper.log").write_text(

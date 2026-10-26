@@ -35,6 +35,7 @@ ENV_EXAMPLE_FILE = PROJECT_ROOT / ".env.example"
 DIST_DIR = PROJECT_ROOT / "dist"
 BUILD_CACHE_DIR = PROJECT_ROOT / ".build_cache"
 CURRICULUMS_DIR = Path(__file__).resolve().parent / "resources" / "curriculums"
+KNOWLEDGE_PROMPT_PROFILES_DIR = PROJECT_ROOT / "mathbank" / "resources" / "knowledge_prompt_profiles"
 
 
 def project_path(*parts: str) -> Path:

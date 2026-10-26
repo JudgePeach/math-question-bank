@@ -1,5 +1,7 @@
 """Event-driven PDF layout concurrency checks; no real AI or database access."""
 
+from mathbank.ai_timeouts import DOCUMENT_AI_TIMEOUT_SECONDS
+
 from concurrent.futures import ThreadPoolExecutor
 import io
 import threading
@@ -242,7 +244,7 @@ def test_parallel_attempt_usage_and_retry_counts_remain_per_page(monkeypatch, tm
         index = int(payload["messages"][0]["content"][0]["text"])
         with lock:
             number = calls[index] = calls.get(index, 0) + 1
-        assert kwargs["timeout"] == 600
+        assert kwargs["timeout"] == DOCUMENT_AI_TIMEOUT_SECONDS
         assert kwargs["retry_connection"] is False and kwargs["allow_redirects"] is False
         if number == 1:
             barrier.wait(timeout=3)

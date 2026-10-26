@@ -65,9 +65,18 @@ const classificationScenarios={
   assert.equal(pendingCard.querySelector('.card-chapter').value,'','no implicit first chapter');
   toggleSelectAllParsed(true);assert.deepEqual(getCheckedUnsavedIndices(),[0,1]);
   pendingCard.querySelector('.card-select-checkbox').checked=true;
-  assert.equal(await saveAllParsedQuestions(),false);
-  assert.ok(toasts.at(-1).includes('当前教材中的学段'));
-  assert.equal(requests.length,0,'validation must precede duplicate checks and writes');
+  const checked=[];precheck=async options=>{checked.push(options.indices);return {ok:false};};
+  const work=saveAllParsedQuestions();await new Promise(setImmediate);
+  assert.deepEqual(checked,[[0,1]],'only qualified cards are duplicate checked');
+  assert.equal(requests.length,2,'a pending card does not stop qualified cards');
+  assert.ok(requests.every(request=>request.url==='/api/questions'));
+  requests.forEach(request=>request.resolve(success()));
+  assert.equal(await work,true);
+  assert.deepEqual(parsedQuestionsData.map(q=>!!q.saved),[true,true,false]);
+  assert.equal(pending.import_outcome.status,'skipped');
+  assert.ok(pending.import_outcome.reason.includes('当前教材中的学段'));
+  assert.ok(document.getElementById('parsedBatchImportReport').children[0].textContent.includes('成功 2，失败 0，跳过 1'));
+  assert.equal(parsedQuestionsData.length,3,'all cards remain in the session');
   assert.equal(normalized.classification_review.required,false);
  },
  async chapter_confirmation_is_explicit_and_does_not_certify_source_content() {
@@ -174,9 +183,51 @@ const classificationScenarios={
     'fresh_cards_refresh_new_paths_without_losing_old_values_or_rebinding',
 ])
 def test_document_classification_controls(classification_script, scenario):
-    run_node(classification_script + '\nclassificationScenarios[' + json.dumps(scenario) + r""" ]()
+    output = run_node(classification_script + '\nclassificationScenarios[' + json.dumps(scenario) + r""" ]()
+.then(()=>console.log('completed'))
 .catch(error=>{console.error(error);process.exitCode=1});
 """)
+    assert 'completed' in output, 'scenario must finish rather than exit with an unresolved Promise'
+
+
+def test_batch_partial_failure_keeps_all_cards_and_plain_text_reasons(classification_script):
+    output = run_node(classification_script + r"""
+(async()=>{
+ const valid=classified(),failed=classified(),pending=classified({category_compulsory:'',category_chapter:'',classification_review:review()});
+ const list=cards([valid,failed,pending]);list[2].querySelector('.card-select-checkbox').checked=true;
+ precheck=async options=>{assert.deepEqual(options.indices,[0,1]);return {ok:false};};
+ const work=saveAllParsedQuestions();await new Promise(setImmediate);
+ assert.equal(requests.length,2);
+ requests[0].resolve(success());
+ requests[1].resolve({ok:false,status:503,json:async()=>({detail:'模拟服务错误 <img src=x onerror=bad()>'})});
+ assert.equal(await work,true);
+ assert.deepEqual(parsedQuestionsData.map(q=>q.import_outcome.status),['success','failed','skipped']);
+ assert.deepEqual(parsedQuestionsData.map(q=>!!q.saved),[true,false,false]);
+ const report=document.getElementById('parsedBatchImportReport');
+ assert.ok(report.children[0].textContent.includes('成功 1，失败 1，跳过 1'));
+ assert.ok(report.children[2].textContent.includes('<img src=x onerror=bad()>'));
+ assert.equal(report.querySelector('img'),null,'error messages must stay plain text');
+ assert.equal(parsedQuestionsData.length,3);assert.equal(parsedQuestionSaveInFlight.size,0);
+ assert.ok(toasts.at(-1).includes('成功 1，失败 1，跳过 1'));
+ console.log('completed');
+})().catch(error=>{console.error(error);process.exitCode=1});
+""")
+    assert 'completed' in output
+
+
+@pytest.mark.parametrize('outcome', [{'ok': False, 'stale': True}, {'ok': False, 'invalid': True}])
+def test_batch_precheck_exit_keeps_per_card_skip_reasons(classification_script, outcome):
+    output = run_node(classification_script + '\nconst fixtureOutcome=' + json.dumps(outcome) + r""";
+(async()=>{
+ cards([classified(),classified()]);precheck=async()=>fixtureOutcome;
+ assert.equal(await saveAllParsedQuestions(),false);
+ assert.equal(requests.length,0);assert.equal(parsedQuestionsData.length,2);
+ assert.ok(parsedQuestionsData.every(q=>q.import_outcome.status==='skipped'&&q.import_outcome.reason));
+ assert.ok(document.getElementById('parsedBatchImportReport').children[0].textContent.includes('跳过 2'));
+ console.log('completed');
+})().catch(error=>{console.error(error);process.exitCode=1});
+""")
+    assert 'completed' in output
 
 
 def test_session_preserves_pending_and_confirmed_classification_without_paid_requests(pdf_script):

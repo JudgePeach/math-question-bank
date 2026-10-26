@@ -122,7 +122,8 @@ def export_database_to_files(db: Session = None, *, quiet: bool = False):
             # Freeze only IDs in this read snapshot.  Large relation evidence
             # must not remain in both all ORM rows and the complete JSON tree
             # while the independently formatted Markdown is being generated.
-            question_ids = [row[0] for row in db.query(Question.id).order_by(Question.id.asc())]
+            from mathbank.question_ordering import sequence_order
+            question_ids = [row[0] for row in db.query(Question.id).order_by(*sequence_order())]
             active_version = resolve_active_version()
             source_files = content_source_export_files()
             source_paths = {
@@ -141,7 +142,9 @@ def export_database_to_files(db: Session = None, *, quiet: bool = False):
             markdown_points = {}
 
             def write_batch(handle, batch_ids, first_record):
-                questions = db.query(Question).filter(Question.id.in_(batch_ids)).order_by(Question.id.asc()).all()
+                questions = db.query(Question).filter(Question.id.in_(batch_ids)).all()
+                by_id = {question.id: question for question in questions}
+                questions = [by_id[qid] for qid in batch_ids]
                 payloads, mappings = serialize_exchange_questions(db, questions, active_version)
                 for payload in payloads:
                     # Prefixing each record's two-space pretty JSON reproduces
@@ -376,7 +379,7 @@ def generate_markdown_library(questions, filepath: str, *, curriculum_mappings=N
         if not structure:
             f.write("*题库空空如也，请先在系统网页端录入题目。*\n")
         else:
-            # 建立有序的序列号映射（按照 ID 升序，从 1 开始）
+            # 按调用方冻结的全库独立排序生成连续序号（从 1 开始）
             seq_mapping = {q.id: idx for idx, q in enumerate(questions, 1)}
             
             for comp in sorted(structure.keys()):

@@ -5,7 +5,7 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
-from mathbank.backup import RuntimeLockError, restore_full_backup, verify_full_backup
+from mathbank.backup import RuntimeLockError, backup_asset_warnings, restore_full_backup, verify_full_backup
 
 
 def main() -> int:
@@ -18,6 +18,8 @@ def main() -> int:
     manifest = verify_full_backup(args.archive)
     print(f"备份验证通过: {manifest['created_at']}")
     print(f"数据表计数: {manifest['database']['row_counts']}")
+    for warning in backup_asset_warnings(args.archive):
+        print(f"[Backup Warning] {warning['message']}")
     if not args.apply:
         print("当前仅验证，未修改任何数据。")
         return 0

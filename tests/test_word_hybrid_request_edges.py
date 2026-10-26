@@ -38,9 +38,7 @@ def test_source_change_during_original_full_fallback_cannot_return_stale_result(
 
     def post(_provider, payload, **_options):
         posts.append(True)
-        parsed = reply_for(plan, payload)
-        parsed['metadata']['items'][0]['id'] = 'unknown-id-requires-full-fallback'
-        return Response(parsed)
+        raise ConnectionError('isolated transport failure')
 
     def fallback():
         fallbacks.append(True)

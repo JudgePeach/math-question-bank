@@ -38,6 +38,7 @@ PDF_DETAIL_NAVIGATION_RULE = (
     "仍按第一张整页图返回原协议及全页bbox，绝不能把详情图的局部坐标当作全页坐标。"
 )
 _PAGE_FIELDS = {"markdown", "figures", "ignored_candidates", "page_complete", "warnings"}
+_PAGE_DIAGNOSTICS = {"WARN", "review_required"}
 _FIGURE_FIELDS = {"slot", "bbox", "candidate_ids", "review_required", "review_reason"}
 _IGNORED_FIELDS = {"id", "reason"}
 _IGNORED_REASONS = {"formula", "table_border", "decoration", "page_background"}
@@ -106,8 +107,49 @@ def _prompt_page_info(page_info: dict) -> dict:
     return clean
 
 
+def _clean_page_warnings(result: dict) -> list[str]:
+    """Bound and preserve diagnostic text without rejecting usable content."""
+    raw = result.get("warnings")
+    changed = "warnings" not in result or not isinstance(raw, list)
+    values = raw if isinstance(raw, list) else [raw] if isinstance(raw, str) else []
+    changed = changed or len(values) > MAX_WARNINGS
+    warnings = []
+    for value in values[:MAX_WARNINGS]:
+        if not isinstance(value, str):
+            changed = True
+            continue
+        clean = "".join(char for char in value if ord(char) >= 32 or char in "\n\t").strip()
+        changed = changed or clean != value or len(clean) > MAX_REASON_CHARS
+        clean = clean[:MAX_REASON_CHARS]
+        if clean and clean not in warnings:
+            warnings.append(clean)
+        else:
+            changed = True
+    if "WARN" in result:
+        value = result["WARN"]
+        if isinstance(value, str) and value.strip():
+            clean = "".join(char for char in value if ord(char) >= 32 or char in "\n\t").strip()
+            if clean and clean[:MAX_REASON_CHARS] not in warnings:
+                warnings.append(clean[:MAX_REASON_CHARS])
+        changed = True
+    if "review_required" in result:
+        # This optional diagnostic never changes page_complete or source proof.
+        if result["review_required"] is True:
+            warnings.append("模型提示本页仍需核对，请对照原页检查。")
+        elif type(result["review_required"]) is not bool:
+            changed = True
+    if len(warnings) > MAX_WARNINGS:
+        changed = True
+    if changed:
+        return ["部分核对提示格式不规范，已在本地清理或忽略；正文未改写，未重新识图。",
+                *warnings[:MAX_WARNINGS - 1]]
+    return warnings[:MAX_WARNINGS]
+
+
 def _validated_page(result, page_info: dict) -> dict:
-    _require_fields(result, _PAGE_FIELDS, "页面")
+    if (not isinstance(result, dict) or not (_PAGE_FIELDS - {"warnings"}) <= set(result)
+            or set(result) - _PAGE_FIELDS - _PAGE_DIAGNOSTICS):
+        raise ValueError("PDF 页面联合识别的页面字段缺失或包含未支持字段。")
     markdown = result["markdown"]
     if not isinstance(markdown, str) or not markdown.strip():
         raise ValueError("PDF 页面联合识别没有返回有效正文。")
@@ -117,10 +159,7 @@ def _validated_page(result, page_info: dict) -> dict:
         raise ValueError("PDF 页面联合识别不能生成图片路径，只能返回插图占位。")
     if not isinstance(result["page_complete"], bool):
         raise ValueError("PDF 页面联合识别的完整性标记必须为布尔值。")
-    warnings = result["warnings"]
-    if (not isinstance(warnings, list) or len(warnings) > MAX_WARNINGS
-            or any(not isinstance(value, str) or not value.strip() or len(value) > MAX_REASON_CHARS for value in warnings)):
-        raise ValueError("PDF 页面联合识别的核对提示格式无效。")
+    warnings = _clean_page_warnings(result)
     try:
         return _validated_layout(result, page_info, markdown, warnings)
     except ValueError as exc:

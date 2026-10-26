@@ -16,6 +16,8 @@ from mathbank.math_markdown import (
     _replace_latex_environments,
 )
 from mathbank.tex_helper import _balanced_group
+from mathbank.content_locks import _reference_literal_ranges
+from mathbank.question_assets import markdown_literal_ranges
 
 
 _PROTECTED = re.compile(
@@ -47,6 +49,110 @@ _LATEX_UNIT = re.compile(r"\\(?:textperthousand|permil)(?![A-Za-z])|[℃‰]")
 _REASONING_SYMBOLS = {"∵": r"\because", "∴": r"\therefore"}
 _REASONING_TOKEN = re.compile(r"\\(?:[A-Za-z]+|[^\n])|[∵∴]")
 _TEXT_ARGUMENT_COMMANDS = {"text", "textrm", "textnormal", "textbf", "textit", "emph", "mbox", "hbox"}
+_PROSE_GEOMETRY_SYMBOLS = {"△": r"\triangle", "∠": r"\angle"}
+_PROSE_GEOMETRY_TOKEN = re.compile(r"\\(?:[A-Za-z]+|[^\n])|[△∠$]")
+
+
+def _replace_latex_prose_geometry_symbols(source: str, *, in_math: bool = False) -> str:
+    r"""Use the math font for two prose glyphs without changing authored math.
+
+    In particular, Unicode △ in math has its own spacing class. Replacing it
+    with ``\triangle`` there would change that spacing, so only text contexts
+    enter math mode. Local placeholders are restored before the existing
+    school-symbol adapters run; their behavior is independent of this pass.
+    """
+    if not any(char in source for char in _PROSE_GEOMETRY_SYMBOLS):
+        return source
+
+    prefix = "\ue000MATHBANKPROSEGEOMETRY"
+    while prefix in source:
+        prefix += "X"
+    protected: list[tuple[str, str]] = []
+
+    def save(value: str) -> str:
+        marker = f"{prefix}{len(protected)}\ue001"
+        protected.append((marker, value))
+        return marker
+
+    # The public adapter already protects assets and locks. Reuse the export
+    # literal scanners as well for TeX literal commands and HTML attributes.
+    ranges = [*markdown_literal_ranges(source), *_reference_literal_ranges(source)]
+    ranges.extend(match.span() for match in re.finditer(r"<[!/]?[A-Za-z][^>\n]*>", source))
+    parts: list[str] = []
+    merged: list[tuple[int, int]] = []
+    for start, end in sorted(ranges):
+        if merged and start < merged[-1][1]:
+            merged[-1] = (merged[-1][0], max(end, merged[-1][1]))
+        else:
+            merged.append((start, end))
+    copied = 0
+    for start, end in merged:
+        parts.extend((source[copied:start], save(source[start:end])))
+        copied = end
+    parts.append(source[copied:])
+    value = "".join(parts)
+
+    def replace_tokens(text: str, *, math_context: bool) -> str:
+        parts: list[str] = []
+        cursor = copied = 0
+        while match := _PROSE_GEOMETRY_TOKEN.search(text, cursor):
+            cursor = match.end()
+            if _is_escaped(text, match.start()):
+                continue
+            token = match.group()
+            if token in _PROSE_GEOMETRY_SYMBOLS:
+                if math_context:
+                    continue
+                replacement = r"\ensuremath{" + _PROSE_GEOMETRY_SYMBOLS[token] + "}"
+            elif token.removeprefix("\\") in _TEXT_ARGUMENT_COMMANDS | {"ensuremath"}:
+                group_start = cursor
+                while group_start < len(text) and text[group_start].isspace():
+                    group_start += 1
+                group = _balanced_group(text, group_start)
+                if group is None:
+                    if text[group_start:group_start + 1] == "{":
+                        break  # An unfinished text argument keeps its remainder.
+                    continue
+                content = _replace_latex_prose_geometry_symbols(
+                    group[0], in_math=token == r"\ensuremath",
+                )
+                replacement = text[match.start():group_start] + "{" + content + "}"
+                cursor = group[1]
+            elif not math_context and token in {"$", r"\(", r"\["}:
+                break  # Complete math was protected; this boundary is incomplete.
+            elif not math_context and token == r"\begin":
+                group = _balanced_group(text, cursor)
+                if group and group[0] in _STANDALONE_MATH_ENVIRONMENTS | _INNER_MATH_ENVIRONMENTS:
+                    break
+                continue
+            else:
+                continue
+            parts.extend((text[copied:match.start()], replacement))
+            copied = cursor
+        parts.append(text[copied:])
+        return "".join(parts)
+
+    if not in_math:
+        def math_span(span: str) -> str:
+            size = 2 if span.startswith(("$$", r"\(", r"\[")) else 1
+            return save(span[:size] + replace_tokens(span[size:-size], math_context=True) + span[-size:])
+
+        value = _replace_delimited_math(value, math_span)
+
+        def environment(span: str, name: str) -> str:
+            opening = span.index("}") + 1
+            closing = span.rfind(r"\end{")
+            content = _replace_latex_prose_geometry_symbols(
+                span[opening:closing],
+                in_math=name in _STANDALONE_MATH_ENVIRONMENTS | _INNER_MATH_ENVIRONMENTS,
+            )
+            return save(span[:opening] + content + span[closing:])
+
+        value = _replace_latex_environments(value, environment)
+    result = replace_tokens(value, math_context=in_math)
+    for marker, original in reversed(protected):
+        result = result.replace(marker, original)
+    return result
 
 
 def _replace_latex_reasoning_symbols(source: str, *, in_math: bool) -> str:
@@ -168,7 +274,7 @@ def _paired_end(source: str, start: int, opening: str, closing: str) -> int:
 
 
 def _normalize_export_symbols(value: str, *, target: str, school_commands: bool = False) -> str:
-    r"""Adapt only ``▱`` / ``\parallelogram`` for a rendering destination.
+    r"""Adapt the explicitly supported notation for a rendering destination.
 
     Code, images/URLs, TikZ, comments and source locks remain byte-for-byte
     intact. Prose symbols use ``\(...\)`` for Word so adjacent existing dollar
@@ -179,7 +285,8 @@ def _normalize_export_symbols(value: str, *, target: str, school_commands: bool 
     if not value or ("▱" not in value and r"\parallelogram" not in value
                      and not (school_commands and (any(char in value for char in "℃‰")
                               or any("\\" + name in value for name in _WORD_SCHOOL_ARITIES)
-                              or target == "latex" and any(char in value for char in _REASONING_SYMBOLS)))):
+                              or target == "latex" and any(char in value for char in
+                                                         (*_REASONING_SYMBOLS, *_PROSE_GEOMETRY_SYMBOLS))))):
         return value or ""
 
     protected: dict[str, str] = {}
@@ -261,6 +368,7 @@ def _normalize_export_symbols(value: str, *, target: str, school_commands: bool 
                 else (r"\celsius{}" if match.group() == "℃" else r"\perthousand{}"),
                 result,
             )
+            result = _replace_latex_prose_geometry_symbols(result)
             if any(char in result for char in _REASONING_SYMBOLS):
                 result = _replace_delimited_math(
                     result, lambda span: save(_replace_latex_reasoning_symbols(span, in_math=True)),

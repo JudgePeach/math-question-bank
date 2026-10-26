@@ -282,7 +282,9 @@ def test_review_draft_reload_keeps_asset_without_content_badge():
 
 
 def test_parsed_prompt_preview_never_supplements_review_only_image():
-    sources = SOURCES + section(IMPORT, 'function renderParsedCardPreview(card, contentText, answerText)',
+    sources = SOURCES + section(IMPORT, 'function configureParsedPdfImageReplacement(',
+                               'function performOrphanedTempCropsCleanup') \
+        + section(IMPORT, 'function renderParsedCardPreview(card, contentText, answerText)',
                                  'function validateParsedQuestionBeforeImport')
     run_js(r"""
       globalThis.parseMarkdownWithMath=text=>text;
@@ -299,7 +301,29 @@ def test_parsed_prompt_preview_never_supplements_review_only_image():
       parsedQuestionsData[0].content+=' '+mark(old);
       renderParsedCardPreview(card,parsedQuestionsData[0].content,'正确解析');
       assert.equal(contentPreview.innerHTML.includes(old),true);
+      parsedQuestionsData[0].content='题干';
+      parsedQuestionsData[0].tikz_reference_image_path=reference;
+      renderParsedCardPreview(card,'题干','正确解析');
+      assert.equal(contentPreview.innerHTML.includes(reference),false,'private crop references never become visible attachments');
     """, sources=sources)
+
+
+def test_pdf_crop_navigation_tracks_promoted_image_without_rewriting_source_evidence():
+    run_js(r"""
+      const receipt={image_path:old,replaced_image_path:reference,original_page_image:reference,
+        page_number:7,method:'manual',ai_verified:false};
+      const source={image_path:old,page_index:6,bbox:[1,2,3,4]};
+      const mapped=window.MathBankImageAssets.mapRecord({pdf_source_figures:[source],
+        document_import_manual_crops:[receipt]}, {[old]:final,[reference]:finalReference});
+      assert.equal(mapped.pdf_source_figures[0].image_path,final);
+      assert.equal(mapped.pdf_source_figures[0].page_index,6);
+      assert.deepEqual(mapped.pdf_source_figures[0].bbox,[1,2,3,4]);
+      assert.equal(mapped.document_import_manual_crops[0].image_path,final);
+      assert.equal(mapped.document_import_manual_crops[0].page_number,7);
+      assert.equal(mapped.document_import_manual_crops[0].replaced_image_path,reference);
+      assert.equal(mapped.document_import_manual_crops[0].original_page_image,reference);
+      assert.equal(receipt.image_path,old);assert.equal(source.image_path,old);
+    """)
 
 
 def test_migration_changes_only_exact_destination_and_keeps_alt_filename_prefix():

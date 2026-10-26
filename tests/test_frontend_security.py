@@ -1,4 +1,6 @@
 from pathlib import Path
+
+from frontend_timeout_helpers import FRONTEND_TIMEOUTS
 import shutil
 import subprocess
 
@@ -662,6 +664,7 @@ def test_document_poll_generation_rejects_old_terminal_callbacks_in_real_js():
     assert "processAsyncAnswerGeneration(parsedQuestionsData, parsedQuestionsGeneration)" in latex_source
 
     script = f"""
+{FRONTEND_TIMEOUTS}
 const window = {{ currentPdfTaskId: null }};
 {helper_source}
 
@@ -1047,7 +1050,8 @@ def test_duplicate_checks_are_click_triggered_snapshot_bound_and_explicitly_over
     assert "duplicateDecisionResolved: true" in batch_source
     assert "selectedIndices.length > 500" in batch_source
     assert "independentOverrideIndices.has(index)" in batch_source
-    assert "if (outcome.invalid) return false" in batch_source
+    assert "if (outcome.invalid) {" in batch_source
+    assert "setOutcome(index, 'skipped'" in batch_source
     assert ", 3);" in batch_source
     assert "selectedIndices.map(idx => saveParsedQuestion" not in batch_source
 

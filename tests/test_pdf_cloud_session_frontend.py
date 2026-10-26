@@ -113,3 +113,80 @@ assert.equal(session.isRestored(),true);assert.equal(requests.length,0);
 session.clear();
 """
     run_node(script)
+
+
+def test_partial_pdf_same_task_merges_only_new_ids_and_preserves_edits_receipts(pdf_script):
+    script = cloud_script(pdf_script) + r"""
+const checkpoint={version:1,task_id:'partial-task',resume_action:'retry_failed_pages',preserve_edits:true,failed_pages:[2]};
+const first={...verifiedQuestion(),pdf_source_card_id:'source-1',saved:true,saved_id:123,savedSnapshot:{content:'old'}};
+show([first]);session.begin({taskId:'partial-task',documentType:'pdf',phase:'completed',canResume:true,
+ diagnostics:{pdf_partial_checkpoint:checkpoint}});
+const card=document.getElementById('parsed-card-0');
+edit(card,'.card-content-textarea','教师校对后的题干');
+card.querySelector('.card-select-checkbox').checked=false;
+const merged=session.mergeCompletion([{...first,content:'旧机器稿'},
+ {content:'补做新增题',pdf_source_card_id:'source-2'}],{taskId:'partial-task'});
+assert.equal(merged.length,2);assert.equal(merged[0].content,'教师校对后的题干');
+assert.equal(merged[0].saved_id,123);assert.deepEqual(merged[0].savedSnapshot,{content:'old'});
+assert.equal(merged[0].document_import_selected,false);
+replaceParsedQuestions(merged);renderParsedQuestionsList(merged);
+assert.equal(session.mergeCompletion([{content:'再次返回',pdf_source_card_id:'source-2'}],{taskId:'partial-task'}).length,2);
+const unrelated=[{content:'普通结果',pdf_source_card_id:'source-1'}];
+assert.equal(session.mergeCompletion(unrelated,{taskId:'other-task'}),unrelated,'a matching model id alone cannot activate merging');
+session.flush();assert.deepEqual(writes,[]);assert.equal(requests.length,0,'merging never starts paid work or question writes');
+assert.equal(document.getElementById('documentImportRecoveryPanel').hidden,false);
+assert.ok(document.getElementById('documentImportRecoveryPanel').querySelectorAll('button').some(button=>button.textContent==='补做失败页'));
+console.log('completed');
+"""
+    assert 'completed' in run_node(script)
+
+
+def test_partial_pdf_resume_is_explicit_single_same_task_and_rejects_late_response(pdf_script):
+    script = cloud_script(pdf_script) + r"""
+(async()=>{
+ const diagnostics={pdf_partial_checkpoint:{version:1,task_id:'partial-task',resume_action:'retry_failed_pages',preserve_edits:true,failed_pages:[2]}};
+ show([{...verifiedQuestion(),pdf_source_card_id:'source-1'}]);
+ session.begin({taskId:'partial-task',documentType:'pdf',phase:'completed',canResume:true,diagnostics});
+ assert.equal(requests.length,0,'rendering a checkpoint cannot auto resume');
+ const work=session.resume();const duplicateClick=session.resume();
+ assert.equal(requests.length,1);assert.equal(requests[0].url,'/api/tasks/partial-task/resume');
+ assert.equal(requests[0].options.method,'POST');
+ session.begin({taskId:'new-task',documentType:'pdf',phase:'completed'});
+ window.currentPdfTaskId='new-task';
+ requests[0].resolve({ok:true,json:async()=>({status:'success',task_id:'partial-task'})});
+ await Promise.all([work,duplicateClick]);
+ assert.equal(window.currentPdfTaskId,'new-task');assert.equal(intervals.size,0,'old resume cannot attach a new poll');
+ assert.deepEqual(writes,[]);assert.equal(session.isRestored(),false);
+ console.log('completed');
+})().catch(error=>{console.error(error);process.exitCode=1});
+"""
+    assert 'completed' in run_node(script)
+
+
+def test_partial_pdf_completion_waits_for_pending_import_receipt(pdf_script):
+    script = cloud_script(pdf_script) + r"""
+(async()=>{
+ const diagnostics={pdf_partial_checkpoint:{version:1,task_id:'partial-task',resume_action:'retry_failed_pages',preserve_edits:true,failed_pages:[]}};
+ const first={...verifiedQuestion(),pdf_source_card_id:'source-1'};
+ const second={...verifiedQuestion(),pdf_source_card_id:'source-B'};
+ show([first,second]);session.begin({taskId:'partial-task',documentType:'pdf',phase:'running',diagnostics});
+ let finishSave,finishOther,finishLater;
+ const save=new Promise(resolve=>finishSave=resolve),other=new Promise(resolve=>finishOther=resolve);
+ parsedQuestionSaveInFlight.set(first,save);parsedQuestionSaveInFlight.set(second,other);
+ const generation=beginDocumentImportTask({skipCancellation:true});pollPdfTaskStatus('partial-task',generation);
+ [...intervals.values()][0]();requests[0].resolve({ok:true,json:async()=>({task_id:'partial-task',status:'completed',document_type:'pdf',diagnostics,
+  data:[{...first,content:'旧机器稿'},{content:'补做题',pdf_source_card_id:'source-2'}]})});await flush();
+ assert.equal(parsedQuestionsData.length,2,'completion cannot detach an outstanding question save');
+ edit(document.getElementById('parsed-card-0'),'.card-content-textarea','等待入库时的人工修订');
+ parsedQuestionSaveInFlight.delete(first);finishSave(true);await flush();
+ const later=new Promise(resolve=>finishLater=resolve);parsedQuestionSaveInFlight.set(first,later);
+ parsedQuestionSaveInFlight.delete(second);finishOther(true);await flush();
+ assert.equal(parsedQuestionsData.length,2,'a new save started during the wait must also finish before merging');
+ assert.notEqual(activeDocumentPoll,null);
+ first.saved_id=789;parsedQuestionSaveInFlight.delete(first);finishLater(true);await flush();
+ assert.equal(parsedQuestionsData.length,3);assert.equal(parsedQuestionsData[0].saved_id,789);
+ assert.equal(parsedQuestionsData[0].content,'等待入库时的人工修订');
+ assert.equal(activeDocumentPoll,null);console.log('completed');
+})().catch(error=>{console.error(error);process.exitCode=1});
+"""
+    assert 'completed' in run_node(script)

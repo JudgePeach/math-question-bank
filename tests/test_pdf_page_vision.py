@@ -1,5 +1,7 @@
 """Joint OCR/figure protocol checks without network, model fees or app state."""
 
+from mathbank.ai_timeouts import DOCUMENT_AI_TIMEOUT_SECONDS
+
 from copy import deepcopy
 from pathlib import Path
 import json
@@ -272,8 +274,6 @@ def test_truncated_or_unknown_completion_is_rejected_even_with_valid_json(setup,
 
 @pytest.mark.parametrize("field,value", [
     ("markdown", ""), ("markdown", 2), ("page_complete", "true"),
-    ("warnings", "warning"), ("warnings", [None]),
-    ("warnings", ["x" * 501]), ("warnings", ["warning"] * 17),
 ])
 def test_invalid_transcript_or_envelope_is_not_accepted(setup, field, value):
     data = page_result()
@@ -281,6 +281,40 @@ def test_invalid_transcript_or_envelope_is_not_accepted(setup, field, value):
     with pytest.raises(ValueError):
         call(setup, data)
     assert len(setup.calls) == 2
+
+
+@pytest.mark.parametrize("warnings", ["warning", None, {}, [None], [""],
+    ["x" * 501], ["warning"] * 17, ["valid warning", 9, {"not": "text"}], ["bad\x00control"]])
+def test_malformed_diagnostics_keep_body_figures_and_one_paid_page_call(setup, warnings):
+    data = page_result()
+    data["warnings"] = warnings
+    data["page_complete"] = False
+    result = call(setup, data)
+    assert result["markdown"] == data["markdown"]
+    assert len(result["layout"]["figures"]) == 1
+    assert result["layout"]["page_complete"] is False
+    assert "本地清理或忽略" in result["layout"]["notes"][0]
+    assert len(result["layout"]["notes"]) <= vision.MAX_WARNINGS
+    assert all(len(note) <= vision.MAX_REASON_CHARS + 4 for note in result["layout"]["notes"])
+    assert len(setup.calls) == 1
+
+
+@pytest.mark.parametrize("extra", [{"WARN": "原页符号需核对"}, {"WARN": {}},
+    {"review_required": True}, {"review_required": "false"}, {"review_required": 1}])
+def test_known_page_diagnostic_extensions_are_advisory_without_reocr(setup, extra):
+    data = {**page_result(), **extra, "page_complete": False}
+    result = call(setup, data)
+    assert result["markdown"] == data["markdown"] and len(result["layout"]["figures"]) == 1
+    assert result["layout"]["page_complete"] is False
+    assert result["layout"]["notes"] and len(setup.calls) == 1
+
+
+def test_missing_warning_field_does_not_discard_the_page(setup):
+    data = page_result()
+    del data["warnings"]
+    result = call(setup, data)
+    assert result["markdown"] == data["markdown"] and len(setup.calls) == 1
+    assert "本地清理或忽略" in result["layout"]["notes"][0]
 
 
 @pytest.mark.parametrize("change", ["unknown", "missing", "not_object", "invalid_json"])
@@ -578,7 +612,7 @@ def test_page_timeout_then_success_reports_actual_attempts(setup, monkeypatch):
     result = call(setup, report_attempt=events.append)
     assert result["markdown"] == page_result()["markdown"]
     assert len(calls) == result["visual_calls"] == 2
-    assert all(item["timeout"] == 600 and item["retry_connection"] is False for item in calls)
+    assert all(item["timeout"] == DOCUMENT_AI_TIMEOUT_SECONDS and item["retry_connection"] is False for item in calls)
     assert result["usage_complete"] is False
     assert [item["status"] for item in result["attempts"]] == ["failed", "succeeded"]
     assert any(item.get("retrying") for item in events)

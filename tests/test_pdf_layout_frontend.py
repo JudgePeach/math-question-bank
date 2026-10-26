@@ -877,7 +877,8 @@ const pdfScenarios = {
     assert.equal(parsedQuestionNeedsSourceReview(0),false);
     assert.equal(paperSplittingReportSummary({retries:1}),'','missing calls remain unknown');
     assert.ok(paperSplittingReportSummary({calls:1,retries:0,timeout_seconds:360}).includes('360 秒'),'legacy task reports retain their actual timeout');
-    for (const timeout_seconds of [null,'600',NaN,Infinity,-1,0,0.5,true,3601]) {
+    assert.ok(paperSplittingReportSummary({calls:1,retries:0,timeout_seconds:7200}).includes('7200 秒'),'configured maximum remains reportable');
+    for (const timeout_seconds of [null,'600',NaN,Infinity,-1,0,0.5,true,7201]) {
       assert.equal(paperSplittingReportSummary({calls:1,retries:0,timeout_seconds}).includes('超时设为'),false);
     }
     const generation=beginDocumentImportTask();

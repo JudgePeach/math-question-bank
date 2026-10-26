@@ -1,0 +1,4216 @@
+{
+  "schema_version": 1,
+  "source": {
+    "title": "普通高中数学课程标准 日常修订版（2017年版2025年修订）",
+    "edition": "2017年版2025年修订；用户提供的日常修订版PDF",
+    "source_pdf": "普通高中数学课程标准日常修订版（2017年版2025年修订）.pdf",
+    "source_sha256": "fc9258bb37ed2e052a4b1be608865a5481f770ae7e28ce536e835d2354353f86",
+    "source_status": "用户提供的日常修订版资料；未独立认证为最新正式发布版本",
+    "scope": "供组卷参考的必修、选择性必修与考试设计原文选摘，非完整课标；来源标题及页码保留。",
+    "excerpt_policy": "选摘为源检索块中的完整小节或连续完整段落，excerpt_span保留其在chunk.text中的字符位置；选修拓展原文与图片未捆绑。"
+  },
+  "entries": [
+    {
+      "document": "docs/04_必修课程要求.md",
+      "pdf_pages": [
+        17
+      ],
+      "book_pages": [
+        14
+      ],
+      "source_sha256": "fc9258bb37ed2e052a4b1be608865a5481f770ae7e28ce536e835d2354353f86",
+      "id": "7def302f46e4ac53",
+      "chunk_id": "7def302f46e4ac53",
+      "heading": "主题一 预备知识 / 【内容要求】 / 1. 集合",
+      "course_type": "compulsory",
+      "kind": "content",
+      "topics": [
+        "集合"
+      ],
+      "optional": false,
+      "excerpt_span": [
+        0,
+        120
+      ],
+      "text": "#### 1. 集合\n\n集合是刻画一类事物的语言和工具。本单元的学习，可以帮助学生使用集合的语言简洁、准确地表述数学的研究对象，学会用数学的语言表达和交流，积累数学抽象的经验。\n\n内容包括：集合的概念与表示、集合的基本关系、集合的基本运算。",
+      "text_sha256": "a02c487a9f7cc38a46b01a97c4d49c798bb22369cc658e717c09eb7aa9f0e23e"
+    },
+    {
+      "document": "docs/04_必修课程要求.md",
+      "pdf_pages": [
+        18
+      ],
+      "book_pages": [
+        15
+      ],
+      "source_sha256": "fc9258bb37ed2e052a4b1be608865a5481f770ae7e28ce536e835d2354353f86",
+      "id": "81a8943439c3e109",
+      "chunk_id": "81a8943439c3e109",
+      "heading": "主题一 预备知识 / 【内容要求】 / 1. 集合 / （1）集合的概念与表示",
+      "course_type": "compulsory",
+      "kind": "content",
+      "topics": [
+        "集合"
+      ],
+      "optional": false,
+      "excerpt_span": [
+        0,
+        100
+      ],
+      "text": "##### （1）集合的概念与表示\n①通过实例，了解集合的含义，理解元素与集合的属于关系。\n②针对具体问题，能在自然语言和图形语言的基础上，用符号语言刻画集合。\n③在具体情境中，了解全集与空集的含义。",
+      "text_sha256": "e31efb4147c28883d27796750ce91621b2cbd05291a53cec78fa053f49620782"
+    },
+    {
+      "document": "docs/04_必修课程要求.md",
+      "pdf_pages": [
+        18
+      ],
+      "book_pages": [
+        15
+      ],
+      "source_sha256": "fc9258bb37ed2e052a4b1be608865a5481f770ae7e28ce536e835d2354353f86",
+      "id": "0e12a5a86c93cf9d",
+      "chunk_id": "0e12a5a86c93cf9d",
+      "heading": "主题一 预备知识 / 【内容要求】 / 1. 集合 / （2）集合的基本关系",
+      "course_type": "compulsory",
+      "kind": "content",
+      "topics": [
+        "集合"
+      ],
+      "optional": false,
+      "excerpt_span": [
+        0,
+        43
+      ],
+      "text": "##### （2）集合的基本关系\n理解集合之间包含与相等的含义，能识别给定集合的子集。",
+      "text_sha256": "5737e97ccaddd24ce7a36e6e7bc76f6c217b4513f714291f9f8cd329f484ec00"
+    },
+    {
+      "document": "docs/04_必修课程要求.md",
+      "pdf_pages": [
+        18
+      ],
+      "book_pages": [
+        15
+      ],
+      "source_sha256": "fc9258bb37ed2e052a4b1be608865a5481f770ae7e28ce536e835d2354353f86",
+      "id": "affaa066efaf618c",
+      "chunk_id": "affaa066efaf618c",
+      "heading": "主题一 预备知识 / 【内容要求】 / 1. 集合 / （3）集合的基本运算",
+      "course_type": "compulsory",
+      "kind": "content",
+      "topics": [
+        "集合"
+      ],
+      "optional": false,
+      "excerpt_span": [
+        0,
+        120
+      ],
+      "text": "##### （3）集合的基本运算\n①理解两个集合的并集与交集的含义，能求两个集合的并集与交集。\n②理解在给定集合中一个子集的补集的含义，能求给定子集的补集。\n③能使用 Venn 图表达集合的基本关系与基本运算，体会图形对理解抽象概念的作用。",
+      "text_sha256": "6572b015676e01677ef8ff381f0cd4fd21294f55cefa043922c6e982f2c79151"
+    },
+    {
+      "document": "docs/04_必修课程要求.md",
+      "pdf_pages": [
+        18
+      ],
+      "book_pages": [
+        15
+      ],
+      "source_sha256": "fc9258bb37ed2e052a4b1be608865a5481f770ae7e28ce536e835d2354353f86",
+      "id": "a2beb4d4f23b1b21",
+      "chunk_id": "a2beb4d4f23b1b21",
+      "heading": "主题一 预备知识 / 【内容要求】 / 2. 常用逻辑用语",
+      "course_type": "compulsory",
+      "kind": "content",
+      "topics": [
+        "常用逻辑用语"
+      ],
+      "optional": false,
+      "excerpt_span": [
+        0,
+        182
+      ],
+      "text": "#### 2. 常用逻辑用语\n\n常用逻辑用语是数学语言的重要组成部分，是数学表达和交流的工具，是逻辑思维的基本语言。本单元的学习，可以帮助学生使用常用逻辑用语表达数学对象、进行数学推理，体会常用逻辑用语在表述数学内容和论证数学结论中的作用，提高交流的严谨性与准确性。\n\n内容包括：必要条件、充分条件、充要条件，全称量词与存在量词，全称量词命题与存在量词命题的否定。",
+      "text_sha256": "a7a39a025ff4d1101409747cf256293906204d51dadc44569ce4fccdcbacb481"
+    },
+    {
+      "document": "docs/04_必修课程要求.md",
+      "pdf_pages": [
+        18
+      ],
+      "book_pages": [
+        15
+      ],
+      "source_sha256": "fc9258bb37ed2e052a4b1be608865a5481f770ae7e28ce536e835d2354353f86",
+      "id": "3049b2a4e6a56e7f",
+      "chunk_id": "3049b2a4e6a56e7f",
+      "heading": "主题一 预备知识 / 【内容要求】 / 2. 常用逻辑用语 / （1）必要条件、充分条件、充要条件",
+      "course_type": "compulsory",
+      "kind": "content",
+      "topics": [
+        "常用逻辑用语"
+      ],
+      "optional": false,
+      "excerpt_span": [
+        0,
+        143
+      ],
+      "text": "##### （1）必要条件、充分条件、充要条件\n①通过对典型数学命题的梳理，理解必要条件的意义，理解性质定理与必要条件的关系。\n②通过对典型数学命题的梳理，理解充分条件的意义，理解判定定理与充分条件的关系。\n③通过对典型数学命题的梳理，理解充要条件的意义，理解数学定义与充要条件的关系。",
+      "text_sha256": "07a31a726b4ac46de4180aef932f7d70739d150135991d65de84c3b10300432e"
+    },
+    {
+      "document": "docs/04_必修课程要求.md",
+      "pdf_pages": [
+        19
+      ],
+      "book_pages": [
+        16
+      ],
+      "source_sha256": "fc9258bb37ed2e052a4b1be608865a5481f770ae7e28ce536e835d2354353f86",
+      "id": "6b98d3cdfeff1478:s1",
+      "chunk_id": "6b98d3cdfeff1478",
+      "heading": "主题一 预备知识 / 【内容要求】 / 2. 常用逻辑用语 / （2）全称量词与存在量词",
+      "course_type": "compulsory",
+      "kind": "content",
+      "topics": [
+        "常用逻辑用语"
+      ],
+      "optional": false,
+      "excerpt_span": [
+        0,
+        44
+      ],
+      "text": "##### （2）全称量词与存在量词\n通过已知的数学实例，理解全称量词与存在量词的意义。",
+      "text_sha256": "752b3038e22fe17822a155cea76a9db7a6fef275b440da46f9ff5860914946f8"
+    },
+    {
+      "document": "docs/04_必修课程要求.md",
+      "pdf_pages": [
+        19
+      ],
+      "book_pages": [
+        16
+      ],
+      "source_sha256": "fc9258bb37ed2e052a4b1be608865a5481f770ae7e28ce536e835d2354353f86",
+      "id": "6b98d3cdfeff1478:s2",
+      "chunk_id": "6b98d3cdfeff1478",
+      "heading": "主题一 预备知识 / 【内容要求】 / 2. 常用逻辑用语 / （3）全称量词命题与存在量词命题的否定",
+      "course_type": "compulsory",
+      "kind": "content",
+      "topics": [
+        "常用逻辑用语"
+      ],
+      "optional": false,
+      "excerpt_span": [
+        45,
+        116
+      ],
+      "text": "##### （3）全称量词命题与存在量词命题的否定\n①能正确使用存在量词对全称量词命题进行否定。\n②能正确使用全称量词对存在量词命题进行否定。",
+      "text_sha256": "45a2598f288137afaa418d2cefb2b93c0cbe811b4d4c8a1ea56f3ee8e114f727"
+    },
+    {
+      "document": "docs/04_必修课程要求.md",
+      "pdf_pages": [
+        19
+      ],
+      "book_pages": [
+        16
+      ],
+      "source_sha256": "fc9258bb37ed2e052a4b1be608865a5481f770ae7e28ce536e835d2354353f86",
+      "id": "4d25dd7f8c7429ec:s1",
+      "chunk_id": "4d25dd7f8c7429ec",
+      "heading": "主题一 预备知识 / 【内容要求】 / 3. 相等关系与不等关系",
+      "course_type": "compulsory",
+      "kind": "content",
+      "topics": [
+        "不等式"
+      ],
+      "optional": false,
+      "excerpt_span": [
+        0,
+        116
+      ],
+      "text": "#### 3. 相等关系与不等关系\n相等关系、不等关系是数学中最基本的数量关系，是构建方程、不等式的基础。本单元的学习，可以帮助学生通过类比，理解等式和不等式的共性与差异，掌握基本不等式。\n内容包括：等式与不等式的性质、基本不等式。",
+      "text_sha256": "2e40acf01c0d58de40c30896af946babfc2308f4ff40e72896165ce87a6f7c95"
+    },
+    {
+      "document": "docs/04_必修课程要求.md",
+      "pdf_pages": [
+        19
+      ],
+      "book_pages": [
+        16
+      ],
+      "source_sha256": "fc9258bb37ed2e052a4b1be608865a5481f770ae7e28ce536e835d2354353f86",
+      "id": "4d25dd7f8c7429ec:s2",
+      "chunk_id": "4d25dd7f8c7429ec",
+      "heading": "主题一 预备知识 / 【内容要求】 / （1）等式与不等式的性质",
+      "course_type": "compulsory",
+      "kind": "content",
+      "topics": [
+        "不等式"
+      ],
+      "optional": false,
+      "excerpt_span": [
+        117,
+        162
+      ],
+      "text": "##### （1）等式与不等式的性质\n梳理等式的性质，理解不等式的概念，掌握不等式的性质。",
+      "text_sha256": "b196f5c441fe5be90ee4cee386b51c68d47de2e5f1368448c940e5b86695fe13"
+    },
+    {
+      "document": "docs/04_必修课程要求.md",
+      "pdf_pages": [
+        19
+      ],
+      "book_pages": [
+        16
+      ],
+      "source_sha256": "fc9258bb37ed2e052a4b1be608865a5481f770ae7e28ce536e835d2354353f86",
+      "id": "4d25dd7f8c7429ec:s3",
+      "chunk_id": "4d25dd7f8c7429ec",
+      "heading": "主题一 预备知识 / 【内容要求】 / （2）基本不等式",
+      "course_type": "compulsory",
+      "kind": "content",
+      "topics": [
+        "不等式"
+      ],
+      "optional": false,
+      "excerpt_span": [
+        163,
+        272
+      ],
+      "text": "##### （2）基本不等式\n掌握基本不等式 $\\sqrt{ab} \\leqslant \\frac{a+b}{2}$ ($a, b \\geqslant 0$)。结合具体实例，能用基本不等式解决简单的最大值或最小值问题。",
+      "text_sha256": "058ffb52f24c5b988a781de7fa840f5d7052afc43441de3db7cc132c14060573"
+    },
+    {
+      "document": "docs/04_必修课程要求.md",
+      "pdf_pages": [
+        19
+      ],
+      "book_pages": [
+        16
+      ],
+      "source_sha256": "fc9258bb37ed2e052a4b1be608865a5481f770ae7e28ce536e835d2354353f86",
+      "id": "58f03787792522d3:s1",
+      "chunk_id": "58f03787792522d3",
+      "heading": "主题一 预备知识 / 【内容要求】 / 4. 从函数观点看一元二次方程和一元二次不等式",
+      "course_type": "compulsory",
+      "kind": "content",
+      "topics": [
+        "不等式"
+      ],
+      "optional": false,
+      "excerpt_span": [
+        0,
+        161
+      ],
+      "text": "#### 4. 从函数观点看一元二次方程和一元二次不等式\n用函数理解方程和不等式是数学的基本思想方法。本单元的学习，可以帮助学生用一元二次函数认识一元二次方程和一元二次不等式。通过梳理初中数学的相关内容，理解函数、方程和不等式之间的联系，体会数学的整体性。\n内容包括：从函数观点看一元二次方程、从函数观点看一元二次不等式。",
+      "text_sha256": "8ca7276213fdb5c386c4ddb3526d51dfe72e55a1fed67b71db4fe26a14509135"
+    },
+    {
+      "document": "docs/04_必修课程要求.md",
+      "pdf_pages": [
+        19
+      ],
+      "book_pages": [
+        16
+      ],
+      "source_sha256": "fc9258bb37ed2e052a4b1be608865a5481f770ae7e28ce536e835d2354353f86",
+      "id": "58f03787792522d3:s2",
+      "chunk_id": "58f03787792522d3",
+      "heading": "主题一 预备知识 / 【内容要求】 / （1）从函数观点看一元二次方程",
+      "course_type": "compulsory",
+      "kind": "content",
+      "topics": [
+        "不等式"
+      ],
+      "optional": false,
+      "excerpt_span": [
+        162,
+        233
+      ],
+      "text": "##### （1）从函数观点看一元二次方程\n会结合一元二次函数的图象，判断一元二次方程实根的存在性及实根的个数，了解函数的零点与方程根的关系。",
+      "text_sha256": "f3ea68fb668e08f66c32d1e24386af35ce7c959fc5a81f09702d0c2e91add905"
+    },
+    {
+      "document": "docs/04_必修课程要求.md",
+      "pdf_pages": [
+        20
+      ],
+      "book_pages": [
+        17
+      ],
+      "source_sha256": "fc9258bb37ed2e052a4b1be608865a5481f770ae7e28ce536e835d2354353f86",
+      "id": "bf0dc567c907b35f",
+      "chunk_id": "bf0dc567c907b35f",
+      "heading": "主题一 预备知识 / 【内容要求】 / 4. 从函数观点看一元二次方程和一元二次不等式 / (2) 从函数观点看一元二次不等式",
+      "course_type": "compulsory",
+      "kind": "content",
+      "topics": [
+        "不等式"
+      ],
+      "optional": false,
+      "excerpt_span": [
+        0,
+        144
+      ],
+      "text": "##### (2) 从函数观点看一元二次不等式\n\n①经历从实际情境中抽象出一元二次不等式的过程，了解一元二次不等式的现实意义。能借助一元二次函数求解一元二次不等式，并能用集合表示一元二次不等式的解集。\n\n②借助一元二次函数的图象，了解一元二次不等式与相应函数、方程的联系（参见案例 1）。",
+      "text_sha256": "69c79723cdc344831162e5361f18adc0e7c523c94e02aeace2f69e2b0297da77"
+    },
+    {
+      "document": "docs/04_必修课程要求.md",
+      "pdf_pages": [
+        20
+      ],
+      "book_pages": [
+        17
+      ],
+      "source_sha256": "fc9258bb37ed2e052a4b1be608865a5481f770ae7e28ce536e835d2354353f86",
+      "id": "ef89a00592ff4e22:s1",
+      "chunk_id": "ef89a00592ff4e22",
+      "heading": "主题一 预备知识 / 【教学提示】",
+      "course_type": "compulsory",
+      "kind": "teaching",
+      "topics": [
+        "集合",
+        "常用逻辑用语",
+        "不等式"
+      ],
+      "optional": false,
+      "excerpt_span": [
+        0,
+        82
+      ],
+      "text": "### 【教学提示】\n\n初中阶段数学知识相对具体，高中阶段数学知识相对抽象。教师应针对这一特征帮助学生完成从初中到高中数学学习的过渡，包括学习心理、学习方式等方面。",
+      "text_sha256": "a47cccf2b7c13ef41772c244687a5839c66471006858c0e0d8e787721e515e19"
+    },
+    {
+      "document": "docs/04_必修课程要求.md",
+      "pdf_pages": [
+        20
+      ],
+      "book_pages": [
+        17
+      ],
+      "source_sha256": "fc9258bb37ed2e052a4b1be608865a5481f770ae7e28ce536e835d2354353f86",
+      "id": "ef89a00592ff4e22:s2",
+      "chunk_id": "ef89a00592ff4e22",
+      "heading": "主题一 预备知识 / 【教学提示】",
+      "course_type": "compulsory",
+      "kind": "teaching",
+      "topics": [
+        "集合",
+        "常用逻辑用语"
+      ],
+      "optional": false,
+      "excerpt_span": [
+        84,
+        302
+      ],
+      "text": "在集合、常用逻辑用语的教学中，教师应创设合适的教学情境，以义务教育阶段学过的数学内容为载体，引导学生用集合语言和常用逻辑用语梳理、表达学过的相应数学内容。应引导学生理解属于关系可以定义集合的基本关系，了解元素 $a$ 与由元素 $a$ 组成的集合 $\\{a\\}$ 的差异，即 $a \\in \\{a\\}$，$a$ 与 $\\{a\\}$ 不相同。在梳理过程中，可以针对学生的实际布置不同的任务，采用自主学习与合作学习相结合的方式组织教学活动。",
+      "text_sha256": "3a6706e3ea355be6b4b80a359828e75fe041adee09db2d8bc32b4f9506d3a881"
+    },
+    {
+      "document": "docs/04_必修课程要求.md",
+      "pdf_pages": [
+        20
+      ],
+      "book_pages": [
+        17
+      ],
+      "source_sha256": "fc9258bb37ed2e052a4b1be608865a5481f770ae7e28ce536e835d2354353f86",
+      "id": "ef89a00592ff4e22:s3",
+      "chunk_id": "ef89a00592ff4e22",
+      "heading": "主题一 预备知识 / 【教学提示】",
+      "course_type": "compulsory",
+      "kind": "teaching",
+      "topics": [
+        "不等式"
+      ],
+      "optional": false,
+      "excerpt_span": [
+        304,
+        359
+      ],
+      "text": "在相等关系与不等关系的教学中，应引导学生通过类比学过的等式与不等式的性质，进一步探索等式与不等式的共性与差异。",
+      "text_sha256": "f31f9f529e5eacbf89948c1413db22ead45136630316a516418e454c471dc02d"
+    },
+    {
+      "document": "docs/04_必修课程要求.md",
+      "pdf_pages": [
+        20
+      ],
+      "book_pages": [
+        17
+      ],
+      "source_sha256": "fc9258bb37ed2e052a4b1be608865a5481f770ae7e28ce536e835d2354353f86",
+      "id": "ef89a00592ff4e22:s4",
+      "chunk_id": "ef89a00592ff4e22",
+      "heading": "主题一 预备知识 / 【教学提示】",
+      "course_type": "compulsory",
+      "kind": "teaching",
+      "topics": [
+        "不等式"
+      ],
+      "optional": false,
+      "excerpt_span": [
+        361,
+        508
+      ],
+      "text": "在从函数观点看一元二次方程和一元二次不等式的教学中，可以先以讨论具体的一元二次函数变化情况为情境，引导学生发现一元二次函数与一元二次方程的关系，引出一元二次不等式概念；然后进一步引导学生探索一般的一元二次函数与一元二次方程、一元二次不等式的关系，归纳总结出用一元二次函数解一元二次不等式的程序。",
+      "text_sha256": "f6938f8f111bd35d2bb9732bb7409013d2e16c9737fb7b5dd771b82e2b71854f"
+    },
+    {
+      "document": "docs/04_必修课程要求.md",
+      "pdf_pages": [
+        20
+      ],
+      "book_pages": [
+        17
+      ],
+      "source_sha256": "fc9258bb37ed2e052a4b1be608865a5481f770ae7e28ce536e835d2354353f86",
+      "id": "ef89a00592ff4e22:s5",
+      "chunk_id": "ef89a00592ff4e22",
+      "heading": "主题一 预备知识 / 【教学提示】",
+      "course_type": "compulsory",
+      "kind": "teaching",
+      "topics": [
+        "常用逻辑用语"
+      ],
+      "optional": false,
+      "excerpt_span": [
+        510,
+        618
+      ],
+      "text": "教学中，要根据内容的定位和教育价值，关注数学学科核心素养的培养。要让学生逐渐养成借助直观理解概念、进行逻辑推理的思维习惯，以及独立思考、合作交流的学习习惯，引导学生感悟高中阶段数学课程的特征，适应高中阶段的数学学习。",
+      "text_sha256": "e4e5cad42d8f701edca1e79f25c62001985acb836a2d8eefcc790e47c3a8779f"
+    },
+    {
+      "document": "docs/04_必修课程要求.md",
+      "pdf_pages": [
+        21
+      ],
+      "book_pages": [
+        18
+      ],
+      "source_sha256": "fc9258bb37ed2e052a4b1be608865a5481f770ae7e28ce536e835d2354353f86",
+      "id": "e69728c178fe4d10:s1",
+      "chunk_id": "e69728c178fe4d10",
+      "heading": "主题一 预备知识 / 【学业要求】",
+      "course_type": "compulsory",
+      "kind": "achievement",
+      "topics": [
+        "集合"
+      ],
+      "optional": false,
+      "excerpt_span": [
+        0,
+        106
+      ],
+      "text": "### 【学业要求】\n\n能够在现实情境或数学情境中，概括出数学对象的一般特征，并用集合语言予以表达。初步学会用三种语言（自然语言、图形语言、符号语言）表达数学研究对象，并能进行转换。理解集合的基本关系与基本运算。",
+      "text_sha256": "22cfd9d09c32738de491075e428df92c44b65a261b2702676711a0f397637bca"
+    },
+    {
+      "document": "docs/04_必修课程要求.md",
+      "pdf_pages": [
+        21
+      ],
+      "book_pages": [
+        18
+      ],
+      "source_sha256": "fc9258bb37ed2e052a4b1be608865a5481f770ae7e28ce536e835d2354353f86",
+      "id": "e69728c178fe4d10:s2",
+      "chunk_id": "e69728c178fe4d10",
+      "heading": "主题一 预备知识 / 【学业要求】",
+      "course_type": "compulsory",
+      "kind": "achievement",
+      "topics": [
+        "常用逻辑用语"
+      ],
+      "optional": false,
+      "excerpt_span": [
+        108,
+        147
+      ],
+      "text": "能够借助常用逻辑用语进行数学表达、论证和交流，体会常用逻辑用语在数学中的作用。",
+      "text_sha256": "d2fb276305e9efa99d4b1f28e1bdd47f62337b4d5681e9bd4819d5fd14501698"
+    },
+    {
+      "document": "docs/04_必修课程要求.md",
+      "pdf_pages": [
+        21
+      ],
+      "book_pages": [
+        18
+      ],
+      "source_sha256": "fc9258bb37ed2e052a4b1be608865a5481f770ae7e28ce536e835d2354353f86",
+      "id": "e69728c178fe4d10:s3",
+      "chunk_id": "e69728c178fe4d10",
+      "heading": "主题一 预备知识 / 【学业要求】",
+      "course_type": "compulsory",
+      "kind": "achievement",
+      "topics": [
+        "不等式"
+      ],
+      "optional": false,
+      "excerpt_span": [
+        149,
+        206
+      ],
+      "text": "能够从函数观点认识一元二次方程和一元二次不等式，感悟数学知识之间的关联，认识函数的重要性。掌握等式与不等式的性质。",
+      "text_sha256": "a86fae277a8d126b84eb45df4396f9c306e118f8b45e7182fcd13d2c2e68935b"
+    },
+    {
+      "document": "docs/04_必修课程要求.md",
+      "pdf_pages": [
+        21
+      ],
+      "book_pages": [
+        18
+      ],
+      "source_sha256": "fc9258bb37ed2e052a4b1be608865a5481f770ae7e28ce536e835d2354353f86",
+      "id": "6472a1b06c79fe60",
+      "chunk_id": "6472a1b06c79fe60",
+      "heading": "主题二 函数 / 【内容要求】 / 1. 函数概念与性质",
+      "course_type": "compulsory",
+      "kind": "content",
+      "topics": [
+        "函数"
+      ],
+      "optional": false,
+      "excerpt_span": [
+        0,
+        180
+      ],
+      "text": "#### 1. 函数概念与性质\n\n本单元的学习，可以帮助学生建立完整的函数概念，不仅把函数理解为刻画变量之间依赖关系的数学语言和工具，也把函数理解为实数集合之间的对应关系；能用代数运算和函数图象揭示函数的主要性质；在现实问题中，能利用函数构建模型，解决问题。\n\n内容包括：函数概念、函数性质、*函数的形成与发展（标有 * 的内容均为选学内容，不作为考试要求）。",
+      "text_sha256": "ac0d2dff8c169792fb14b8b313343870b0b52c6850c4bfd395ac2c174f169b48"
+    },
+    {
+      "document": "docs/04_必修课程要求.md",
+      "pdf_pages": [
+        22
+      ],
+      "book_pages": [
+        19
+      ],
+      "source_sha256": "fc9258bb37ed2e052a4b1be608865a5481f770ae7e28ce536e835d2354353f86",
+      "id": "22c22ef9ead6b0b7",
+      "chunk_id": "22c22ef9ead6b0b7",
+      "heading": "主题二 函数 / 【内容要求】 / 1. 函数概念与性质 / （1）函数概念",
+      "course_type": "compulsory",
+      "kind": "content",
+      "topics": [
+        "函数"
+      ],
+      "optional": false,
+      "excerpt_span": [
+        0,
+        196
+      ],
+      "text": "##### （1）函数概念\n\n①在初中用变量之间的依赖关系描述函数的基础上，用集合语言和对应关系刻画函数，建立完整的函数概念（参见案例2），体会集合语言和对应关系在刻画函数概念中的作用。了解构成函数的要素，能求简单函数的定义域。\n\n②在实际情境中，会根据不同的需要选择恰当的方法（如图象法、列表法、解析法等）表示函数，理解函数图象的作用。\n\n③通过具体实例，了解简单的分段函数，并能简单应用。",
+      "text_sha256": "a9a4dee72456659d4693dd29809a18d7e11d5ab144b2d4ca191f37450509297b"
+    },
+    {
+      "document": "docs/04_必修课程要求.md",
+      "pdf_pages": [
+        22
+      ],
+      "book_pages": [
+        19
+      ],
+      "source_sha256": "fc9258bb37ed2e052a4b1be608865a5481f770ae7e28ce536e835d2354353f86",
+      "id": "397c7b27c699e448",
+      "chunk_id": "397c7b27c699e448",
+      "heading": "主题二 函数 / 【内容要求】 / 1. 函数概念与性质 / （2）函数性质",
+      "course_type": "compulsory",
+      "kind": "content",
+      "topics": [
+        "函数"
+      ],
+      "optional": false,
+      "excerpt_span": [
+        0,
+        106
+      ],
+      "text": "##### （2）函数性质\n\n①借助函数图象，会用符号语言表达函数的单调性、最大（小）值，理解它们的作用和实际意义。\n\n②结合具体函数，了解奇偶性的概念和几何意义。\n\n③结合三角函数，了解周期性的概念和几何意义。",
+      "text_sha256": "cfd6447b5627e75b149a820b4b687f3aca64dac7f59eefe99d125d8ace9265cc"
+    },
+    {
+      "document": "docs/04_必修课程要求.md",
+      "pdf_pages": [
+        22
+      ],
+      "book_pages": [
+        19
+      ],
+      "source_sha256": "fc9258bb37ed2e052a4b1be608865a5481f770ae7e28ce536e835d2354353f86",
+      "id": "389450f9eca7d725",
+      "chunk_id": "389450f9eca7d725",
+      "heading": "主题二 函数 / 【内容要求】 / 1. 函数概念与性质 / （3）* 函数的形成与发展",
+      "course_type": "compulsory",
+      "kind": "content",
+      "topics": [
+        "函数"
+      ],
+      "optional": true,
+      "excerpt_span": [
+        0,
+        81
+      ],
+      "text": "##### （3）* 函数的形成与发展\n\n收集、阅读函数的形成与发展的历史资料，撰写小论文，论述函数发展的过程、重要结果、主要人物、关键事件及其对人类文明的贡献。",
+      "text_sha256": "688a66e5d35c382d71f0f34cbc081745926edd2e6fb684af22798f5230ed41a5"
+    },
+    {
+      "document": "docs/04_必修课程要求.md",
+      "pdf_pages": [
+        22
+      ],
+      "book_pages": [
+        19
+      ],
+      "source_sha256": "fc9258bb37ed2e052a4b1be608865a5481f770ae7e28ce536e835d2354353f86",
+      "id": "31b7afa9cb17a747",
+      "chunk_id": "31b7afa9cb17a747",
+      "heading": "主题二 函数 / 【内容要求】 / 2. 幂函数、指数函数、对数函数",
+      "course_type": "compulsory",
+      "kind": "content",
+      "topics": [
+        "基本函数",
+        "函数"
+      ],
+      "optional": false,
+      "excerpt_span": [
+        0,
+        177
+      ],
+      "text": "#### 2. 幂函数、指数函数、对数函数\n\n幂函数、指数函数与对数函数是最基本的、应用最广泛的函数，是进一步学习数学的基础。本单元的学习，可以帮助学生学会用函数图象和代数运算的方法研究这些函数的性质；理解这些函数中所蕴含的运算规律；运用这些函数建立模型，解决简单的实际问题，体会这些函数在解决实际问题中的作用。\n\n内容包括：幂函数、指数函数、对数函数。",
+      "text_sha256": "21a36f6948d9042927bbafaa42486ae781c970d044b1a6c2e2674b38d0827a7e"
+    },
+    {
+      "document": "docs/04_必修课程要求.md",
+      "pdf_pages": [
+        22
+      ],
+      "book_pages": [
+        19
+      ],
+      "source_sha256": "fc9258bb37ed2e052a4b1be608865a5481f770ae7e28ce536e835d2354353f86",
+      "id": "33a7034f7f0a1bd1",
+      "chunk_id": "33a7034f7f0a1bd1",
+      "heading": "主题二 函数 / 【内容要求】 / 2. 幂函数、指数函数、对数函数 / （1）幂函数",
+      "course_type": "compulsory",
+      "kind": "content",
+      "topics": [
+        "基本函数",
+        "函数"
+      ],
+      "optional": false,
+      "excerpt_span": [
+        0,
+        95
+      ],
+      "text": "##### （1）幂函数\n\n通过具体实例，结合 $y=x$，$y=\\frac{1}{x}$，$y=x^2$，$y=\\sqrt{x}$，$y=x^3$ 的图象，理解它们的变化规律，了解幂函数。",
+      "text_sha256": "266f046703818c89627b96c952f373cff6deb75cf34e6f73c848569f22a4584f"
+    },
+    {
+      "document": "docs/04_必修课程要求.md",
+      "pdf_pages": [
+        23
+      ],
+      "book_pages": [
+        20
+      ],
+      "source_sha256": "fc9258bb37ed2e052a4b1be608865a5481f770ae7e28ce536e835d2354353f86",
+      "id": "8366cb60e4236303",
+      "chunk_id": "8366cb60e4236303",
+      "heading": "主题二 函数 / 【内容要求】 / 2. 幂函数、指数函数、对数函数 / （2）指数函数",
+      "course_type": "compulsory",
+      "kind": "content",
+      "topics": [
+        "基本函数",
+        "函数"
+      ],
+      "optional": false,
+      "excerpt_span": [
+        0,
+        255
+      ],
+      "text": "##### （2）指数函数\n\n①通过对有理数指数幂 $a^{\\frac{m}{n}}$（$a>0$，且 $a \\neq 1$；$m,\\ n \\in \\mathbf{Z}$，且 $n \\neq 0$）、实数指数幂 $a^x$（$a>0$，且 $a \\neq 1$；$x \\in \\mathbf{R}$）含义的认识，了解指数幂的拓展过程，掌握指数幂的运算性质。\n\n②通过具体实例，了解指数函数的实际意义，理解指数函数的概念。\n\n③能用描点法或借助计算工具画出具体指数函数的图象，探索并理解指数函数的单调性与特殊点。",
+      "text_sha256": "b33cc4999cad05d01b5d157d20549622a49c00e2cb76bf796e3da8700a526126"
+    },
+    {
+      "document": "docs/04_必修课程要求.md",
+      "pdf_pages": [
+        23
+      ],
+      "book_pages": [
+        20
+      ],
+      "source_sha256": "fc9258bb37ed2e052a4b1be608865a5481f770ae7e28ce536e835d2354353f86",
+      "id": "49337af5ab362762",
+      "chunk_id": "49337af5ab362762",
+      "heading": "主题二 函数 / 【内容要求】 / 2. 幂函数、指数函数、对数函数 / （3）对数函数",
+      "course_type": "compulsory",
+      "kind": "content",
+      "topics": [
+        "基本函数",
+        "函数"
+      ],
+      "optional": false,
+      "excerpt_span": [
+        0,
+        236
+      ],
+      "text": "##### （3）对数函数\n\n①理解对数的概念和运算性质，知道用换底公式能将一般对数转化成自然对数或常用对数。\n\n②通过具体实例，了解对数函数的概念。能用描点法或借助计算工具画出具体对数函数的图象，探索并了解对数函数的单调性与特殊点。\n\n③知道对数函数 $y=\\log_a x$ 与指数函数 $y=a^x$ 互为反函数（$a>0$，且 $a \\neq 1$）。\n\n④$^*$收集、阅读对数概念的形成与发展的历史资料，撰写小论文，论述对数发明的过程以及对数对简化运算的作用。",
+      "text_sha256": "8677170250b89e7d349f6220de6f354eacc723668c490c8cba843b8aa837c5d6"
+    },
+    {
+      "document": "docs/04_必修课程要求.md",
+      "pdf_pages": [
+        23
+      ],
+      "book_pages": [
+        20
+      ],
+      "source_sha256": "fc9258bb37ed2e052a4b1be608865a5481f770ae7e28ce536e835d2354353f86",
+      "id": "0a886db079af00c7",
+      "chunk_id": "0a886db079af00c7",
+      "heading": "主题二 函数 / 【内容要求】 / 3. 三角函数",
+      "course_type": "compulsory",
+      "kind": "content",
+      "topics": [
+        "三角函数"
+      ],
+      "optional": false,
+      "excerpt_span": [
+        0,
+        232
+      ],
+      "text": "#### 3. 三角函数\n\n三角函数是一类最典型的周期函数。本单元的学习，可以帮助学生在用锐角三角函数刻画直角三角形中边角关系的基础上，借助单位圆建立一般三角函数的概念，体会引入弧度制的必要性；用几何直观和代数运算的方法研究三角函数的周期性、奇偶性（对称性）、单调性和最大（小）值等性质；探索和研究三角函数之间的一些恒等关系；利用三角函数构建数学模型，解决实际问题。\n\n内容包括：角与弧度、三角函数概念和性质、同角三角函数的基本关系式、三角恒等变换、三角函数应用。",
+      "text_sha256": "60580c002b9d633488e85cd79e1e0a6542c9aa76d62c65998aee19221da7f26b"
+    },
+    {
+      "document": "docs/04_必修课程要求.md",
+      "pdf_pages": [
+        24
+      ],
+      "book_pages": [
+        21
+      ],
+      "source_sha256": "fc9258bb37ed2e052a4b1be608865a5481f770ae7e28ce536e835d2354353f86",
+      "id": "0d75fa88c0b6d171",
+      "chunk_id": "0d75fa88c0b6d171",
+      "heading": "主题二 函数 / 【内容要求】 / 3. 三角函数 / （1）角与弧度",
+      "course_type": "compulsory",
+      "kind": "content",
+      "topics": [
+        "三角函数"
+      ],
+      "optional": false,
+      "excerpt_span": [
+        0,
+        60
+      ],
+      "text": "##### （1）角与弧度\n\n了解任意角的概念和弧度制，能进行弧度与角度的互化，体会引入弧度制的必要性（参见案例 3）。",
+      "text_sha256": "2e4b3b3eabfb68a147f802cb7ce477b6d8a38c4603e1a8a039f554864157685a"
+    },
+    {
+      "document": "docs/04_必修课程要求.md",
+      "pdf_pages": [
+        24
+      ],
+      "book_pages": [
+        21
+      ],
+      "source_sha256": "fc9258bb37ed2e052a4b1be608865a5481f770ae7e28ce536e835d2354353f86",
+      "id": "e5fdf37277372a94",
+      "chunk_id": "e5fdf37277372a94",
+      "heading": "主题二 函数 / 【内容要求】 / 3. 三角函数 / （2）三角函数概念和性质",
+      "course_type": "compulsory",
+      "kind": "content",
+      "topics": [
+        "三角函数"
+      ],
+      "optional": false,
+      "excerpt_span": [
+        0,
+        379
+      ],
+      "text": "##### （2）三角函数概念和性质\n\n①借助单位圆理解三角函数（正弦函数、余弦函数、正切函数）的定义，能画出这些三角函数的图象，了解三角函数的周期性、单调性、奇偶性、最大（小）值。借助单位圆的对称性，利用定义推导出诱导公式（$\\alpha \\pm \\frac{\\pi}{2}$，$\\alpha \\pm \\pi$ 的正弦、余弦、正切）。\n\n②借助图象理解正弦函数、余弦函数在 $[0, 2\\pi]$ 上，正切函数在 $(-\\frac{\\pi}{2}, \\frac{\\pi}{2})$ 上的性质。\n\n③结合具体实例，了解 $y = A \\sin(\\omega x + \\varphi)$（$A \\neq 0$，$\\omega \\neq 0$）的实际意义；能借助图象理解参数 $\\omega$，$\\varphi$，$A$ 的意义，了解参数的变化对函数图象的影响。",
+      "text_sha256": "145c9787d7449a3a887dd5e63a9ba95b1ceecae0bb883d3e39cb3a3d307cc7a6"
+    },
+    {
+      "document": "docs/04_必修课程要求.md",
+      "pdf_pages": [
+        24
+      ],
+      "book_pages": [
+        21
+      ],
+      "source_sha256": "fc9258bb37ed2e052a4b1be608865a5481f770ae7e28ce536e835d2354353f86",
+      "id": "032b1469a7225dd2",
+      "chunk_id": "032b1469a7225dd2",
+      "heading": "主题二 函数 / 【内容要求】 / 3. 三角函数 / （3）同角三角函数的基本关系式",
+      "course_type": "compulsory",
+      "kind": "content",
+      "topics": [
+        "三角函数"
+      ],
+      "optional": false,
+      "excerpt_span": [
+        0,
+        97
+      ],
+      "text": "##### （3）同角三角函数的基本关系式\n\n理解同角三角函数的基本关系式：$\\sin^2 x + \\cos^2 x = 1$，$\\frac{\\sin x}{\\cos x} = \\tan x$。",
+      "text_sha256": "99480d553b66ebd7b774557c0164a7b0e2e2490df229d81278c4cb2ee772158e"
+    },
+    {
+      "document": "docs/04_必修课程要求.md",
+      "pdf_pages": [
+        24
+      ],
+      "book_pages": [
+        21
+      ],
+      "source_sha256": "fc9258bb37ed2e052a4b1be608865a5481f770ae7e28ce536e835d2354353f86",
+      "id": "e5e790dbe66087ff",
+      "chunk_id": "e5e790dbe66087ff",
+      "heading": "主题二 函数 / 【内容要求】 / 3. 三角函数 / （4）三角恒等变换",
+      "course_type": "compulsory",
+      "kind": "content",
+      "topics": [
+        "三角函数"
+      ],
+      "optional": false,
+      "excerpt_span": [
+        0,
+        156
+      ],
+      "text": "##### （4）三角恒等变换\n\n①经历推导两角差余弦公式的过程，知道两角差余弦公式的意义。\n\n②能从两角差的余弦公式推导出两角和与差的正弦、余弦、正切公式，二倍角的正弦、余弦、正切公式，了解它们的内在联系。\n\n③能运用上述公式进行简单的恒等变换（包括推导出积化和差、和差化积、半角公式，这三组公式不要求记忆）。",
+      "text_sha256": "917a5bd7300e72b758c09f6f09143cf00a8525efe7946973be89b7683f3860fc"
+    },
+    {
+      "document": "docs/04_必修课程要求.md",
+      "pdf_pages": [
+        24
+      ],
+      "book_pages": [
+        21
+      ],
+      "source_sha256": "fc9258bb37ed2e052a4b1be608865a5481f770ae7e28ce536e835d2354353f86",
+      "id": "7cf5d98ec182c87f",
+      "chunk_id": "7cf5d98ec182c87f",
+      "heading": "主题二 函数 / 【内容要求】 / 3. 三角函数 / （5）三角函数应用",
+      "course_type": "compulsory",
+      "kind": "content",
+      "topics": [
+        "三角函数"
+      ],
+      "optional": false,
+      "excerpt_span": [
+        0,
+        67
+      ],
+      "text": "##### （5）三角函数应用\n\n会用三角函数解决简单的实际问题，体会可以利用三角函数构建刻画事物周期变化的数学模型（参见案例 4）。",
+      "text_sha256": "c568f45da7b04593cc21bb2fe0667a9cc07fa943838490aa36cad3f19829dd2e"
+    },
+    {
+      "document": "docs/04_必修课程要求.md",
+      "pdf_pages": [
+        25
+      ],
+      "book_pages": [
+        22
+      ],
+      "source_sha256": "fc9258bb37ed2e052a4b1be608865a5481f770ae7e28ce536e835d2354353f86",
+      "id": "454d19248bba0581",
+      "chunk_id": "454d19248bba0581",
+      "heading": "主题二 函数 / 【内容要求】 / 4. 函数应用",
+      "course_type": "compulsory",
+      "kind": "content",
+      "topics": [
+        "函数"
+      ],
+      "optional": false,
+      "excerpt_span": [
+        0,
+        151
+      ],
+      "text": "#### 4. 函数应用\n\n函数应用不仅体现在用函数解决数学问题，更重要的是用函数解决实际问题。本单元的学习，可以帮助学生掌握运用函数性质求方程近似解的基本方法（二分法）；理解用函数构建数学模型的基本过程；运用模型思想发现和提出问题、分析和解决问题。\n\n内容包括：二分法与求方程近似解、函数与数学模型。",
+      "text_sha256": "9d8a2eecf659b2bc9293937d9055964140e4df163d6e824b151dc47810c87bd6"
+    },
+    {
+      "document": "docs/04_必修课程要求.md",
+      "pdf_pages": [
+        25
+      ],
+      "book_pages": [
+        22
+      ],
+      "source_sha256": "fc9258bb37ed2e052a4b1be608865a5481f770ae7e28ce536e835d2354353f86",
+      "id": "572861652486d81d",
+      "chunk_id": "572861652486d81d",
+      "heading": "主题二 函数 / 【内容要求】 / 4. 函数应用 / （1）二分法与求方程近似解",
+      "course_type": "compulsory",
+      "kind": "content",
+      "topics": [
+        "函数"
+      ],
+      "optional": false,
+      "excerpt_span": [
+        0,
+        135
+      ],
+      "text": "##### （1）二分法与求方程近似解\n\n①结合学过的函数图象，了解函数零点与方程解的关系。\n\n②结合具体连续函数及其图象的特点，了解函数零点存在定理，探索用二分法求方程近似解的思路并会画程序框图，能借助计算工具用二分法求方程近似解，了解用二分法求方程近似解具有一般性。",
+      "text_sha256": "7b0eeadd7134f75f658c14acd0a9d8a6b10be0d046205fbe41221e1de155e392"
+    },
+    {
+      "document": "docs/04_必修课程要求.md",
+      "pdf_pages": [
+        25
+      ],
+      "book_pages": [
+        22
+      ],
+      "source_sha256": "fc9258bb37ed2e052a4b1be608865a5481f770ae7e28ce536e835d2354353f86",
+      "id": "aff3611ff042cf4c",
+      "chunk_id": "aff3611ff042cf4c",
+      "heading": "主题二 函数 / 【内容要求】 / 4. 函数应用 / （2）函数与数学模型",
+      "course_type": "compulsory",
+      "kind": "content",
+      "topics": [
+        "函数"
+      ],
+      "optional": false,
+      "excerpt_span": [
+        0,
+        224
+      ],
+      "text": "##### （2）函数与数学模型\n\n①理解函数模型是描述客观世界中变量关系和规律的重要数学语言和工具。在实际情境中，会选择合适的函数类型刻画现实问题的变化规律。\n\n②结合现实情境中的具体问题，利用计算工具，比较对数函数、一元一次函数、指数函数增长速度的差异，理解“对数增长”“直线上升”“指数爆炸”等术语的现实含义。\n\n③收集、阅读一些现实生活、生产实际或者经济领域中的数学模型，体会人们是如何借助函数刻画实际问题的，感悟数学模型中参数的现实意义。",
+      "text_sha256": "5aaaaf081ee1cd3981a3c9bd359735e2f1bbc89ac1899ec4eade26adf8d54c0c"
+    },
+    {
+      "document": "docs/04_必修课程要求.md",
+      "pdf_pages": [
+        25,
+        26
+      ],
+      "book_pages": [
+        22,
+        23
+      ],
+      "source_sha256": "fc9258bb37ed2e052a4b1be608865a5481f770ae7e28ce536e835d2354353f86",
+      "id": "cdbe013fdf4251c7:s1",
+      "chunk_id": "cdbe013fdf4251c7",
+      "heading": "主题二 函数 / 【教学提示】",
+      "course_type": "compulsory",
+      "kind": "teaching",
+      "topics": [
+        "函数"
+      ],
+      "optional": false,
+      "excerpt_span": [
+        0,
+        136
+      ],
+      "text": "### 【教学提示】\n\n教师应把本主题的内容视为一个整体，引导学生从变量之间的依赖关系、实数集合之间的对应关系、函数图象的几何直观等角度整体认识函数概念；通过梳理函数的单调性、周期性、奇偶性（对称性）、最大（小）值等，认识函数的整体性质；经历运用函数解决实际问题的全过程。",
+      "text_sha256": "89bd2a7a2c5fc4953f85661bf33a461fe8654fc605225ce512363689d603d22d"
+    },
+    {
+      "document": "docs/04_必修课程要求.md",
+      "pdf_pages": [
+        25,
+        26
+      ],
+      "book_pages": [
+        22,
+        23
+      ],
+      "source_sha256": "fc9258bb37ed2e052a4b1be608865a5481f770ae7e28ce536e835d2354353f86",
+      "id": "cdbe013fdf4251c7:s2",
+      "chunk_id": "cdbe013fdf4251c7",
+      "heading": "主题二 函数 / 【教学提示】",
+      "course_type": "compulsory",
+      "kind": "teaching",
+      "topics": [
+        "函数"
+      ],
+      "optional": false,
+      "excerpt_span": [
+        138,
+        242
+      ],
+      "text": "函数概念的引入，可以用学生熟悉的例子为背景进行抽象。例如，可以从学生已知的、基于变量关系的函数定义入手，引导学生通过生活或数学中的问题，构建函数的一般概念，体会用对应关系定义函数的必要性，感悟数学抽象的层次。",
+      "text_sha256": "1e211b090479bda0279f22f03a9055e4c5e51a7f01e074805579db91fa5935eb"
+    },
+    {
+      "document": "docs/04_必修课程要求.md",
+      "pdf_pages": [
+        25,
+        26
+      ],
+      "book_pages": [
+        22,
+        23
+      ],
+      "source_sha256": "fc9258bb37ed2e052a4b1be608865a5481f770ae7e28ce536e835d2354353f86",
+      "id": "cdbe013fdf4251c7:s3",
+      "chunk_id": "cdbe013fdf4251c7",
+      "heading": "主题二 函数 / 【教学提示】",
+      "course_type": "compulsory",
+      "kind": "teaching",
+      "topics": [
+        "函数"
+      ],
+      "optional": false,
+      "excerpt_span": [
+        244,
+        327
+      ],
+      "text": "函数单调性的教学，要引导学生正确使用符号语言清晰地刻画函数的性质（参见案例5）。在函数定义域、值域以及函数性质的教学过程中，应避免编制偏题、怪题，避免烦琐的技巧训练。",
+      "text_sha256": "9ea9a86d719b7638aa4847994e1abece3581421c86705844aca43732a1378eb7"
+    },
+    {
+      "document": "docs/04_必修课程要求.md",
+      "pdf_pages": [
+        25,
+        26
+      ],
+      "book_pages": [
+        22,
+        23
+      ],
+      "source_sha256": "fc9258bb37ed2e052a4b1be608865a5481f770ae7e28ce536e835d2354353f86",
+      "id": "cdbe013fdf4251c7:s4",
+      "chunk_id": "cdbe013fdf4251c7",
+      "heading": "主题二 函数 / 【教学提示】",
+      "course_type": "compulsory",
+      "kind": "teaching",
+      "topics": [
+        "基本函数"
+      ],
+      "optional": false,
+      "excerpt_span": [
+        329,
+        405
+      ],
+      "text": "指数函数的教学，应关注指数函数的运算法则和变化规律，引导学生经历从整数指数幂到有理数指数幂，再到实数指数幂的拓展过程，掌握指数函数的运算法则和变化规律。",
+      "text_sha256": "238591fa23e516344031c626c86dac900afd3b9e914c2b8d9cf5db5645b8cc0e"
+    },
+    {
+      "document": "docs/04_必修课程要求.md",
+      "pdf_pages": [
+        25,
+        26
+      ],
+      "book_pages": [
+        22,
+        23
+      ],
+      "source_sha256": "fc9258bb37ed2e052a4b1be608865a5481f770ae7e28ce536e835d2354353f86",
+      "id": "cdbe013fdf4251c7:s5",
+      "chunk_id": "cdbe013fdf4251c7",
+      "heading": "主题二 函数 / 【教学提示】",
+      "course_type": "compulsory",
+      "kind": "teaching",
+      "topics": [
+        "基本函数"
+      ],
+      "optional": false,
+      "excerpt_span": [
+        407,
+        471
+      ],
+      "text": "对数函数的教学，应通过比较同底数的指数函数和对数函数（例如，$y=2^x$ 和 $y=\\log_2 x$），认识它们互为反函数。",
+      "text_sha256": "195bfe8a2c23f14d17012b8f194f6ba42b7308dcaf23985b53d362572a47c24b"
+    },
+    {
+      "document": "docs/04_必修课程要求.md",
+      "pdf_pages": [
+        25,
+        26
+      ],
+      "book_pages": [
+        22,
+        23
+      ],
+      "source_sha256": "fc9258bb37ed2e052a4b1be608865a5481f770ae7e28ce536e835d2354353f86",
+      "id": "cdbe013fdf4251c7:s6",
+      "chunk_id": "cdbe013fdf4251c7",
+      "heading": "主题二 函数 / 【教学提示】",
+      "course_type": "compulsory",
+      "kind": "teaching",
+      "topics": [
+        "三角函数"
+      ],
+      "optional": false,
+      "excerpt_span": [
+        473,
+        599
+      ],
+      "text": "三角函数的教学，应发挥单位圆的作用，引导学生结合实际情境，借助单位圆的直观，探索三角函数的有关性质（参见案例6）。在三角恒等变换的教学中，可以采用不同的方式得到三角恒等变换基本公式；也可以在向量的学习中，引导学生利用向量的数量积推导出两角差的余弦公式。",
+      "text_sha256": "56a3a610e7c7298c392923dfbab52abe72696017c6002500f2bc656c8ea7d540"
+    },
+    {
+      "document": "docs/04_必修课程要求.md",
+      "pdf_pages": [
+        25,
+        26
+      ],
+      "book_pages": [
+        22,
+        23
+      ],
+      "source_sha256": "fc9258bb37ed2e052a4b1be608865a5481f770ae7e28ce536e835d2354353f86",
+      "id": "cdbe013fdf4251c7:s7",
+      "chunk_id": "cdbe013fdf4251c7",
+      "heading": "主题二 函数 / 【教学提示】",
+      "course_type": "compulsory",
+      "kind": "teaching",
+      "topics": [
+        "基本函数",
+        "三角函数"
+      ],
+      "optional": false,
+      "excerpt_span": [
+        601,
+        676
+      ],
+      "text": "函数应用的教学，要引导学生理解如何用函数描述客观世界事物的变化规律，体会幂函数、指数函数、对数函数、三角函数等函数与现实世界的密切联系（参见案例7）。",
+      "text_sha256": "4c20f8d2e40a6d749b466d4e72846ee8d55772611b0ee73d6fff5b8e86832641"
+    },
+    {
+      "document": "docs/04_必修课程要求.md",
+      "pdf_pages": [
+        25,
+        26
+      ],
+      "book_pages": [
+        22,
+        23
+      ],
+      "source_sha256": "fc9258bb37ed2e052a4b1be608865a5481f770ae7e28ce536e835d2354353f86",
+      "id": "cdbe013fdf4251c7:s8",
+      "chunk_id": "cdbe013fdf4251c7",
+      "heading": "主题二 函数 / 【教学提示】",
+      "course_type": "compulsory",
+      "kind": "teaching",
+      "topics": [
+        "基本函数",
+        "三角函数"
+      ],
+      "optional": false,
+      "excerpt_span": [
+        678,
+        773
+      ],
+      "text": "鼓励学生运用信息技术学习、探索和解决问题。例如，利用计算器、计算机画出幂函数、指数函数、对数函数、三角函数等的图象，探索、比较它们的变化规律，研究函数的性质，求方程的近似解等（参见案例8）。",
+      "text_sha256": "27d541486c652bca0105d38a7967ee9159dc6d833fd17596b9687fdac4439f56"
+    },
+    {
+      "document": "docs/04_必修课程要求.md",
+      "pdf_pages": [
+        25,
+        26
+      ],
+      "book_pages": [
+        22,
+        23
+      ],
+      "source_sha256": "fc9258bb37ed2e052a4b1be608865a5481f770ae7e28ce536e835d2354353f86",
+      "id": "cdbe013fdf4251c7:s9",
+      "chunk_id": "cdbe013fdf4251c7",
+      "heading": "主题二 函数 / 【教学提示】",
+      "course_type": "compulsory",
+      "kind": "teaching",
+      "topics": [
+        "函数",
+        "基本函数",
+        "三角函数"
+      ],
+      "optional": false,
+      "excerpt_span": [
+        775,
+        844
+      ],
+      "text": "可以组织学生收集、阅读函数的形成与发展的历史资料，结合内容撰写报告，论述函数发展的过程、重要结果、主要人物、关键事件及其对人类文明的贡献。",
+      "text_sha256": "b97e72fd261f46367363bddda65f2aa0842727e134591f30602f6abb379d2039"
+    },
+    {
+      "document": "docs/04_必修课程要求.md",
+      "pdf_pages": [
+        27
+      ],
+      "book_pages": [
+        24
+      ],
+      "source_sha256": "fc9258bb37ed2e052a4b1be608865a5481f770ae7e28ce536e835d2354353f86",
+      "id": "97bcc80e6ff20cc1:s1",
+      "chunk_id": "97bcc80e6ff20cc1",
+      "heading": "主题二 函数 / 【学业要求】",
+      "course_type": "compulsory",
+      "kind": "achievement",
+      "topics": [
+        "函数"
+      ],
+      "optional": false,
+      "excerpt_span": [
+        0,
+        98
+      ],
+      "text": "### 【学业要求】\n\n能够从两个变量之间的依赖关系、实数集合之间的对应关系、函数图象的几何直观等多个角度，理解函数的意义与数学表达；理解函数符号表达与抽象定义之间的关联，知道函数抽象概念的意义。",
+      "text_sha256": "b00ba089b731d956dcce234a7e781ff2d98694e5d18f7eac4367ff9bb428a4cb"
+    },
+    {
+      "document": "docs/04_必修课程要求.md",
+      "pdf_pages": [
+        27
+      ],
+      "book_pages": [
+        24
+      ],
+      "source_sha256": "fc9258bb37ed2e052a4b1be608865a5481f770ae7e28ce536e835d2354353f86",
+      "id": "97bcc80e6ff20cc1:s2",
+      "chunk_id": "97bcc80e6ff20cc1",
+      "heading": "主题二 函数 / 【学业要求】",
+      "course_type": "compulsory",
+      "kind": "achievement",
+      "topics": [
+        "函数",
+        "基本函数",
+        "三角函数"
+      ],
+      "optional": false,
+      "excerpt_span": [
+        100,
+        219
+      ],
+      "text": "能够理解函数的单调性、最大（小）值，了解函数的奇偶性、周期性；理解一些基本函数类（如一元一次函数、反比例函数、一元二次函数、幂函数、指数函数、对数函数、三角函数等）的背景、概念和性质；能从整体的角度探索具体函数模型和一般函数的性质和应用。",
+      "text_sha256": "43801a1bfdca194a9ff1b4bc202f6d22e1461ead72589dd6d08104ef65e60be6"
+    },
+    {
+      "document": "docs/04_必修课程要求.md",
+      "pdf_pages": [
+        27
+      ],
+      "book_pages": [
+        24
+      ],
+      "source_sha256": "fc9258bb37ed2e052a4b1be608865a5481f770ae7e28ce536e835d2354353f86",
+      "id": "97bcc80e6ff20cc1:s3",
+      "chunk_id": "97bcc80e6ff20cc1",
+      "heading": "主题二 函数 / 【学业要求】",
+      "course_type": "compulsory",
+      "kind": "achievement",
+      "topics": [
+        "函数"
+      ],
+      "optional": false,
+      "excerpt_span": [
+        221,
+        318
+      ],
+      "text": "能够对简单的实际问题，选择适当的函数构建数学模型，解决问题；能够从函数观点认识方程，并运用函数的性质求方程的近似解；能够从函数观点认识不等式，并运用函数的性质解不等式。具有用函数分析事物的意识。",
+      "text_sha256": "83287cbf0e468f9b20f1c3609d8dfcf782d0d74e1831409a7878934327476992"
+    },
+    {
+      "document": "docs/04_必修课程要求.md",
+      "pdf_pages": [
+        27
+      ],
+      "book_pages": [
+        24
+      ],
+      "source_sha256": "fc9258bb37ed2e052a4b1be608865a5481f770ae7e28ce536e835d2354353f86",
+      "id": "97bcc80e6ff20cc1:s4",
+      "chunk_id": "97bcc80e6ff20cc1",
+      "heading": "主题二 函数 / 【学业要求】",
+      "course_type": "compulsory",
+      "kind": "achievement",
+      "topics": [
+        "函数",
+        "基本函数",
+        "三角函数"
+      ],
+      "optional": false,
+      "excerpt_span": [
+        320,
+        351
+      ],
+      "text": "重点提升数学抽象、数学建模、数学运算、直观想象和逻辑推理素养。",
+      "text_sha256": "b8bbde77fb4bef705cc53d7cc4efeb56c0036ca943ff31249afddf70fd487a6a"
+    },
+    {
+      "document": "docs/04_必修课程要求.md",
+      "pdf_pages": [
+        27,
+        28
+      ],
+      "book_pages": [
+        24,
+        25
+      ],
+      "source_sha256": "fc9258bb37ed2e052a4b1be608865a5481f770ae7e28ce536e835d2354353f86",
+      "id": "c104159a3ad5c0f7",
+      "chunk_id": "c104159a3ad5c0f7",
+      "heading": "主题三 几何与代数 / 【内容要求】 / 1. 平面向量及其应用",
+      "course_type": "compulsory",
+      "kind": "content",
+      "topics": [
+        "平面向量"
+      ],
+      "optional": false,
+      "excerpt_span": [
+        0,
+        266
+      ],
+      "text": "#### 1. 平面向量及其应用\n\n向量理论具有深刻的数学内涵和丰富的物理背景。向量既是代数研究对象，也是几何研究对象，是沟通几何与代数的桥梁。向量是描述直线、曲线、平面、曲面以及高维空间数学问题的基本工具，是进一步学习和研究其他数学领域问题的基础，在解决实际问题中发挥重要作用。\n\n本单元的学习，可以帮助学生理解平面向量的几何意义和代数意义；掌握平面向量的概念、运算、向量基本定理以及向量的应用；用向量语言、方法表述和解决现实生活、数学和物理中的问题。\n\n内容包括：向量概念、向量运算、向量基本定理及坐标表示、向量应用与解三角形。",
+      "text_sha256": "8732c58007c71b9dc07fb57bbe245963d56e4c6eb9a0455886e37abb8b16e6eb"
+    },
+    {
+      "document": "docs/04_必修课程要求.md",
+      "pdf_pages": [
+        28
+      ],
+      "book_pages": [
+        25
+      ],
+      "source_sha256": "fc9258bb37ed2e052a4b1be608865a5481f770ae7e28ce536e835d2354353f86",
+      "id": "ebb049fb51013360",
+      "chunk_id": "ebb049fb51013360",
+      "heading": "主题三 几何与代数 / 【内容要求】 / 1. 平面向量及其应用 / （1）向量概念",
+      "course_type": "compulsory",
+      "kind": "content",
+      "topics": [
+        "平面向量"
+      ],
+      "optional": false,
+      "excerpt_span": [
+        0,
+        83
+      ],
+      "text": "##### （1）向量概念\n\n①通过对力、速度、位移等的分析，了解平面向量的实际背景，理解平面向量的意义和两个向量相等的含义。\n\n②理解平面向量的几何表示和基本要素。",
+      "text_sha256": "da688942ecd203b4c25aafa9d91c8ae393d609443db5ff83812a01774aebd55d"
+    },
+    {
+      "document": "docs/04_必修课程要求.md",
+      "pdf_pages": [
+        28
+      ],
+      "book_pages": [
+        25
+      ],
+      "source_sha256": "fc9258bb37ed2e052a4b1be608865a5481f770ae7e28ce536e835d2354353f86",
+      "id": "58592fc090c55438",
+      "chunk_id": "58592fc090c55438",
+      "heading": "主题三 几何与代数 / 【内容要求】 / 1. 平面向量及其应用 / （2）向量运算",
+      "course_type": "compulsory",
+      "kind": "content",
+      "topics": [
+        "平面向量"
+      ],
+      "optional": false,
+      "excerpt_span": [
+        0,
+        231
+      ],
+      "text": "##### （2）向量运算\n\n①借助实例和平面向量的几何表示，掌握平面向量加、减运算及运算规则，理解其几何意义。\n\n②通过实例分析，掌握平面向量数乘运算及运算规则，理解其几何意义。理解两个平面向量共线的含义。\n\n③了解平面向量的线性运算性质及其几何意义。\n\n④通过物理中功等实例，理解平面向量数量积的概念及其物理意义，会计算平面向量的数量积。\n\n⑤通过几何直观，了解平面向量投影的概念以及投影向量的意义（参见案例9）。\n\n⑥会用数量积判断两个平面向量的垂直关系。",
+      "text_sha256": "d6f49777fa48db9eacb71bf558f7d1d3c9328f121bcb7a08b2d651b104b78e93"
+    },
+    {
+      "document": "docs/04_必修课程要求.md",
+      "pdf_pages": [
+        28
+      ],
+      "book_pages": [
+        25
+      ],
+      "source_sha256": "fc9258bb37ed2e052a4b1be608865a5481f770ae7e28ce536e835d2354353f86",
+      "id": "801a2d047ec5615d",
+      "chunk_id": "801a2d047ec5615d",
+      "heading": "主题三 几何与代数 / 【内容要求】 / 1. 平面向量及其应用 / （3）向量基本定理及坐标表示",
+      "course_type": "compulsory",
+      "kind": "content",
+      "topics": [
+        "平面向量"
+      ],
+      "optional": false,
+      "excerpt_span": [
+        0,
+        139
+      ],
+      "text": "##### （3）向量基本定理及坐标表示\n\n①掌握平面向量基本定理。\n\n②借助平面直角坐标系，掌握平面向量的正交分解及坐标表示。\n\n③会用坐标表示平面向量的加、减运算与数乘运算。\n\n④能用坐标表示平面向量的数量积，会表示两个平面向量的夹角。\n\n⑤能用坐标表示平面向量共线、垂直。",
+      "text_sha256": "785ef9daab98a7f29791591fec43860f0773eb6bdd2a54272b307639a84ac5a4"
+    },
+    {
+      "document": "docs/04_必修课程要求.md",
+      "pdf_pages": [
+        28,
+        29
+      ],
+      "book_pages": [
+        25,
+        26
+      ],
+      "source_sha256": "fc9258bb37ed2e052a4b1be608865a5481f770ae7e28ce536e835d2354353f86",
+      "id": "086d75ff56aea1b3",
+      "chunk_id": "086d75ff56aea1b3",
+      "heading": "主题三 几何与代数 / 【内容要求】 / 1. 平面向量及其应用 / （4）向量应用与解三角形",
+      "course_type": "compulsory",
+      "kind": "content",
+      "topics": [
+        "平面向量",
+        "解三角形"
+      ],
+      "optional": false,
+      "excerpt_span": [
+        0,
+        132
+      ],
+      "text": "##### （4）向量应用与解三角形\n\n①会用向量方法解决简单的平面几何问题、力学问题以及其他实际\n\n问题，体会向量在解决数学和实际问题中的作用。\n②借助向量的运算，探索三角形边长与角度的关系，掌握余弦定理、正弦定理。\n③能用余弦定理、正弦定理解决简单的实际问题。",
+      "text_sha256": "a63bc31c43987a1e175791310f3634d568273e62c304b4f754e5e4560c40e586"
+    },
+    {
+      "document": "docs/04_必修课程要求.md",
+      "pdf_pages": [
+        29
+      ],
+      "book_pages": [
+        26
+      ],
+      "source_sha256": "fc9258bb37ed2e052a4b1be608865a5481f770ae7e28ce536e835d2354353f86",
+      "id": "f395ba546f89ac0c",
+      "chunk_id": "f395ba546f89ac0c",
+      "heading": "主题三 几何与代数 / 【内容要求】 / 2. 复数",
+      "course_type": "compulsory",
+      "kind": "content",
+      "topics": [
+        "复数"
+      ],
+      "optional": false,
+      "excerpt_span": [
+        0,
+        120
+      ],
+      "text": "#### 2. 复数\n\n复数是一类重要的运算对象，有广泛的应用。本单元的学习，可以帮助学生通过方程求解等，理解引入复数的必要性，了解数系的扩充，掌握复数的表示、运算及其几何意义。\n\n内容包括：复数的概念、复数的运算、$^*$复数的三角表示。",
+      "text_sha256": "64fd73689110443b42fc10c19c5d07a847bf5b5290c1dcf9e5da8ea5903911f1"
+    },
+    {
+      "document": "docs/04_必修课程要求.md",
+      "pdf_pages": [
+        29
+      ],
+      "book_pages": [
+        26
+      ],
+      "source_sha256": "fc9258bb37ed2e052a4b1be608865a5481f770ae7e28ce536e835d2354353f86",
+      "id": "f1770a9d7d44fcf9",
+      "chunk_id": "f1770a9d7d44fcf9",
+      "heading": "主题三 几何与代数 / 【内容要求】 / 2. 复数 / (1) 复数的概念",
+      "course_type": "compulsory",
+      "kind": "content",
+      "topics": [
+        "复数"
+      ],
+      "optional": false,
+      "excerpt_span": [
+        0,
+        61
+      ],
+      "text": "##### (1) 复数的概念\n\n①通过方程的解，认识复数。\n\n②理解复数的代数表示及其几何意义，理解两个复数相等的含义。",
+      "text_sha256": "16bc0f44215b3930976337cc5c01d576d737bf30ea182403d80fd9c617ff9ac5"
+    },
+    {
+      "document": "docs/04_必修课程要求.md",
+      "pdf_pages": [
+        29
+      ],
+      "book_pages": [
+        26
+      ],
+      "source_sha256": "fc9258bb37ed2e052a4b1be608865a5481f770ae7e28ce536e835d2354353f86",
+      "id": "0a7bd8779cb0b265",
+      "chunk_id": "0a7bd8779cb0b265",
+      "heading": "主题三 几何与代数 / 【内容要求】 / 2. 复数 / (2) 复数的运算",
+      "course_type": "compulsory",
+      "kind": "content",
+      "topics": [
+        "复数"
+      ],
+      "optional": false,
+      "excerpt_span": [
+        0,
+        47
+      ],
+      "text": "##### (2) 复数的运算\n\n掌握复数代数表示式的四则运算，了解复数加、减运算的几何意义。",
+      "text_sha256": "57f6ee46f5cc5fad7f68daa22704b6864054a0300edcea114ea9c2e2a98f5e05"
+    },
+    {
+      "document": "docs/04_必修课程要求.md",
+      "pdf_pages": [
+        29
+      ],
+      "book_pages": [
+        26
+      ],
+      "source_sha256": "fc9258bb37ed2e052a4b1be608865a5481f770ae7e28ce536e835d2354353f86",
+      "id": "f07aca00ae21a794",
+      "chunk_id": "f07aca00ae21a794",
+      "heading": "主题三 几何与代数 / 【内容要求】 / 2. 复数 / (3)$^*$复数的三角表示",
+      "course_type": "compulsory",
+      "kind": "content",
+      "topics": [
+        "复数"
+      ],
+      "optional": true,
+      "excerpt_span": [
+        0,
+        83
+      ],
+      "text": "##### (3)$^*$复数的三角表示\n\n通过复数的几何意义，了解复数的三角表示，了解复数的代数表示与三角表示之间的关系，了解复数乘、除运算的三角表示及其几何意义。",
+      "text_sha256": "56cfb5118386f437fc7f3c8f5bb92da0dbe4d2d84946109574a14475dc659281"
+    },
+    {
+      "document": "docs/04_必修课程要求.md",
+      "pdf_pages": [
+        29,
+        30
+      ],
+      "book_pages": [
+        26,
+        27
+      ],
+      "source_sha256": "fc9258bb37ed2e052a4b1be608865a5481f770ae7e28ce536e835d2354353f86",
+      "id": "ece2ac4020c468a2",
+      "chunk_id": "ece2ac4020c468a2",
+      "heading": "主题三 几何与代数 / 【内容要求】 / 3. 立体几何初步",
+      "course_type": "compulsory",
+      "kind": "content",
+      "topics": [
+        "立体几何"
+      ],
+      "optional": false,
+      "excerpt_span": [
+        0,
+        214
+      ],
+      "text": "#### 3. 立体几何初步\n\n立体几何研究现实世界中物体的形状、大小与位置关系。本单元的学习，可以帮助学生以长方体为载体，认识和理解空间点、直线、平面的位置关系；用数学语言表述有关平行、垂直的性质与判定，并对某些结论进行论证；了解一些简单几何体的表面积与体积的计算方法；运用直观感知、操作确认、推理论证、度量计算等认识和探索空间图形的性质，建立空间观念。\n\n内容包括：基本立体图形、基本图形位置关系、${}^*$几何学的发展。",
+      "text_sha256": "49f54ea91562bf01077825da359d928a150ed8a7f4d91986aa699423b155f436"
+    },
+    {
+      "document": "docs/04_必修课程要求.md",
+      "pdf_pages": [
+        30
+      ],
+      "book_pages": [
+        27
+      ],
+      "source_sha256": "fc9258bb37ed2e052a4b1be608865a5481f770ae7e28ce536e835d2354353f86",
+      "id": "ee2e77b5e956c4cf",
+      "chunk_id": "ee2e77b5e956c4cf",
+      "heading": "主题三 几何与代数 / 【内容要求】 / 3. 立体几何初步 / （1）基本立体图形",
+      "course_type": "compulsory",
+      "kind": "content",
+      "topics": [
+        "立体几何"
+      ],
+      "optional": false,
+      "excerpt_span": [
+        0,
+        166
+      ],
+      "text": "##### （1）基本立体图形\n\n①利用实物、计算机软件等观察空间图形，掌握柱、锥、台、球及简单组合体的结构特征，能运用这些特征描述现实生活中简单物体的结构。\n\n②知道棱柱、棱锥、棱台、球的表面积和体积的计算公式，能用公式解决简单的实际问题。\n\n③能用斜二测法画出简单空间图形（长方体、球、圆柱、圆锥、棱柱及其简单组合体）的直观图。",
+      "text_sha256": "6729960ef19eecc9d4de5fff5ec7392f3d78a8e188827cc1a9c4dec5768d40a2"
+    },
+    {
+      "document": "docs/04_必修课程要求.md",
+      "pdf_pages": [
+        30,
+        31
+      ],
+      "book_pages": [
+        27,
+        28
+      ],
+      "source_sha256": "fc9258bb37ed2e052a4b1be608865a5481f770ae7e28ce536e835d2354353f86",
+      "id": "cfab3829c1c0029d",
+      "chunk_id": "cfab3829c1c0029d",
+      "heading": "主题三 几何与代数 / 【内容要求】 / 3. 立体几何初步 / （2）基本图形位置关系",
+      "course_type": "compulsory",
+      "kind": "content",
+      "topics": [
+        "立体几何"
+      ],
+      "optional": false,
+      "excerpt_span": [
+        0,
+        744
+      ],
+      "text": "##### （2）基本图形位置关系\n\n①借助长方体，在直观认识空间点、直线、平面的位置关系的基础上，抽象出空间点、直线、平面的位置关系的定义，了解以下基本事实和定理，基本事实 1～4 也称为公理。\n\n基本事实 1：过不在一条直线上的三个点，有且只有一个平面。\n\n基本事实 2：如果一条直线上的两个点在一个平面内，那么这条直线在这个平面内。\n\n基本事实 3：如果两个不重合的平面有一个公共点，那么它们有且只有一条过该点的公共直线。\n\n基本事实 4：平行于同一条直线的两条直线平行。\n\n定理：如果空间中两个角的两条边分别对应平行，那么这两个角相等或互补。\n\n②从上述定义和基本事实出发，借助长方体，通过直观感知，了解空间中直线与直线、直线与平面、平面与平面的平行和垂直的关系，归纳出以下性质定理，并加以证明。\n\n◆ 一条直线与一个平面平行，如果过该直线的平面与此平面相交，那么该直线与交线平行。\n\n◆ 两个平面平行，如果另一个平面与这两个平面相交，那么两条交线平行。\n\n◆ 垂直于同一个平面的两条直线平行。\n\n◆ 两个平面垂直，如果一个平面内有一条直线垂直于这两个平面的交线，那么这条直线与另一个平面垂直。\n\n③从上述定义和基本事实出发，借助长方体，通过直观感知，了解空间中直线与直线、直线与平面、平面与平面的平行和垂直的关系，归纳出以下判定定理。\n\n◆ 如果平面外一条直线与此平面内的一条直线平行，那么该直线与此平面平行。\n\n◆ 如果一个平面内的两条相交直线与另一个平面平行，那么这两个平面平行。\n\n◆ 如果一条直线与一个平面内的两条相交直线垂直，那么该直线与此平面垂直。\n\n◆ 如果一个平面过另一个平面的垂线，那么这两个平面垂直。\n\n④能用已获得的结论证明空间基本图形位置关系的简单命题。",
+      "text_sha256": "dd1bce9f8ad2727293b2faf7365182d23426adb1b3c94950d90af2364fe2eac5"
+    },
+    {
+      "document": "docs/04_必修课程要求.md",
+      "pdf_pages": [
+        31
+      ],
+      "book_pages": [
+        28
+      ],
+      "source_sha256": "fc9258bb37ed2e052a4b1be608865a5481f770ae7e28ce536e835d2354353f86",
+      "id": "e1ce88ac38d46028",
+      "chunk_id": "e1ce88ac38d46028",
+      "heading": "主题三 几何与代数 / 【内容要求】 / 3. 立体几何初步 / （3）$^*$ 几何学的发展",
+      "course_type": "compulsory",
+      "kind": "content",
+      "topics": [
+        "立体几何"
+      ],
+      "optional": true,
+      "excerpt_span": [
+        0,
+        80
+      ],
+      "text": "##### （3）$^*$ 几何学的发展\n\n收集、阅读几何学发展的历史资料，撰写小论文，论述几何学发展的过程、重要结果、主要人物、关键事件及其对人类文明的贡献。",
+      "text_sha256": "03851ac13d04113eb0b788857ecefc0adf663648b7659e80aaddf7dad39e963f"
+    },
+    {
+      "document": "docs/04_必修课程要求.md",
+      "pdf_pages": [
+        31,
+        32
+      ],
+      "book_pages": [
+        28,
+        29
+      ],
+      "source_sha256": "fc9258bb37ed2e052a4b1be608865a5481f770ae7e28ce536e835d2354353f86",
+      "id": "0ec5b8a98945d4c3:s1",
+      "chunk_id": "0ec5b8a98945d4c3",
+      "heading": "主题三 几何与代数 / 【教学提示】",
+      "course_type": "compulsory",
+      "kind": "teaching",
+      "topics": [
+        "平面向量",
+        "立体几何"
+      ],
+      "optional": false,
+      "excerpt_span": [
+        0,
+        227
+      ],
+      "text": "### 【教学提示】\n\n在平面向量及其应用的教学中，应从力、速度、位移等实际情境入手，从物理、几何、代数三个角度理解向量的概念与运算法则，引导学生运用类比的方法探索实数运算与向量运算的共性与差异。可以通过力的分解引出向量基本定理，建立基的概念和向量的坐标表示。可以引导学生运用向量解决一些物理和几何问题。例如，利用向量计算力使物体沿某方向运动所做的功，利用向量解决与平面内两条直线平行或垂直有关的问题等。对于向量的非正交分解只要求学生一般了解，不必展开。",
+      "text_sha256": "955e7d695ce3a5334a2adccc404bc96ba423e0ba73273e30a09095db74fb2b9e"
+    },
+    {
+      "document": "docs/04_必修课程要求.md",
+      "pdf_pages": [
+        31,
+        32
+      ],
+      "book_pages": [
+        28,
+        29
+      ],
+      "source_sha256": "fc9258bb37ed2e052a4b1be608865a5481f770ae7e28ce536e835d2354353f86",
+      "id": "0ec5b8a98945d4c3:s2",
+      "chunk_id": "0ec5b8a98945d4c3",
+      "heading": "主题三 几何与代数 / 【教学提示】",
+      "course_type": "compulsory",
+      "kind": "teaching",
+      "topics": [
+        "复数"
+      ],
+      "optional": false,
+      "excerpt_span": [
+        229,
+        340
+      ],
+      "text": "在复数的教学中，应注重对复数的表示及几何意义的理解，避免烦琐的计算与技巧训练。对于学有余力的学生，可以安排一些引申内容，\n\n如复数的三角表示等。可以适当融入数学文化，让学生体会数系扩充过程中理性思维的作用（参见案例10）。",
+      "text_sha256": "b577088d0cba06c0dd2774054151fac90fb8f9336a8126f688a1c53fba4b515c"
+    },
+    {
+      "document": "docs/04_必修课程要求.md",
+      "pdf_pages": [
+        31,
+        32
+      ],
+      "book_pages": [
+        28,
+        29
+      ],
+      "source_sha256": "fc9258bb37ed2e052a4b1be608865a5481f770ae7e28ce536e835d2354353f86",
+      "id": "0ec5b8a98945d4c3:s3",
+      "chunk_id": "0ec5b8a98945d4c3",
+      "heading": "主题三 几何与代数 / 【教学提示】",
+      "course_type": "compulsory",
+      "kind": "teaching",
+      "topics": [
+        "立体几何"
+      ],
+      "optional": false,
+      "excerpt_span": [
+        342,
+        582
+      ],
+      "text": "立体几何初步的教学重点是帮助学生逐步形成空间观念，应遵循从整体到局部、从具体到抽象的原则，提供丰富的实物模型或利用计算机软件呈现空间几何体，帮助学生认识空间几何体的结构特征，进一步掌握在平面上表示空间图形的方法和技能。通过对图形的观察和操作，引导学生发现和提出描述基本图形平行、垂直关系的命题，逐步学会用准确的数学语言表达这些命题，直观解释命题的含义和表述证明的思路，并证明其中一些命题；对相应的判定定理只要求直观感知、操作确认，在选择性必修课程中将用向量方法对这些定理加以论证。",
+      "text_sha256": "0e51b24d84f6de19b4d2ecc018fb5ecc5d449d4792a0eb8797e3fc08d22d8fee"
+    },
+    {
+      "document": "docs/04_必修课程要求.md",
+      "pdf_pages": [
+        31,
+        32
+      ],
+      "book_pages": [
+        28,
+        29
+      ],
+      "source_sha256": "fc9258bb37ed2e052a4b1be608865a5481f770ae7e28ce536e835d2354353f86",
+      "id": "0ec5b8a98945d4c3:s4",
+      "chunk_id": "0ec5b8a98945d4c3",
+      "heading": "主题三 几何与代数 / 【教学提示】",
+      "course_type": "compulsory",
+      "kind": "teaching",
+      "topics": [
+        "立体几何"
+      ],
+      "optional": false,
+      "excerpt_span": [
+        584,
+        663
+      ],
+      "text": "可以使用信息技术展示空间图形，为理解和掌握图形几何性质（包括证明）提供直观。教师可以指导和帮助学生选择一些立体几何问题作为数学探究活动的课题（参见案例11）。",
+      "text_sha256": "6629d2eede8fb582b2c8e272ff7eb4ad6784ef6660338f824f3159e9a558e875"
+    },
+    {
+      "document": "docs/04_必修课程要求.md",
+      "pdf_pages": [
+        31,
+        32
+      ],
+      "book_pages": [
+        28,
+        29
+      ],
+      "source_sha256": "fc9258bb37ed2e052a4b1be608865a5481f770ae7e28ce536e835d2354353f86",
+      "id": "0ec5b8a98945d4c3:s5",
+      "chunk_id": "0ec5b8a98945d4c3",
+      "heading": "主题三 几何与代数 / 【教学提示】",
+      "course_type": "compulsory",
+      "kind": "teaching",
+      "topics": [
+        "平面向量",
+        "解三角形",
+        "复数",
+        "立体几何"
+      ],
+      "optional": false,
+      "excerpt_span": [
+        665,
+        732
+      ],
+      "text": "可以组织学生收集、阅读几何学发展的历史资料，结合内容撰写报告，论述几何学发展过程中的重要结果、主要人物、关键事件及其对人类文明的贡献。",
+      "text_sha256": "7337eae05017d9bb5be4934984387550761cc62164fc66dd1e43e7f80d7f864b"
+    },
+    {
+      "document": "docs/04_必修课程要求.md",
+      "pdf_pages": [
+        32,
+        33
+      ],
+      "book_pages": [
+        29,
+        30
+      ],
+      "source_sha256": "fc9258bb37ed2e052a4b1be608865a5481f770ae7e28ce536e835d2354353f86",
+      "id": "c6bffb9f6c2d277f:s1",
+      "chunk_id": "c6bffb9f6c2d277f",
+      "heading": "主题三 几何与代数 / 【学业要求】",
+      "course_type": "compulsory",
+      "kind": "achievement",
+      "topics": [
+        "平面向量"
+      ],
+      "optional": false,
+      "excerpt_span": [
+        0,
+        76
+      ],
+      "text": "### 【学业要求】\n\n能够从多种角度掌握向量概念和运算法则，掌握向量基本定理；能够运用向量运算解决简单的几何和物理问题，知道数学运算与逻辑推理的关系。",
+      "text_sha256": "0e58b1222d7a814e53b09f51c608f4260d055acf7802798aadb193a84f8ad3d6"
+    },
+    {
+      "document": "docs/04_必修课程要求.md",
+      "pdf_pages": [
+        32,
+        33
+      ],
+      "book_pages": [
+        29,
+        30
+      ],
+      "source_sha256": "fc9258bb37ed2e052a4b1be608865a5481f770ae7e28ce536e835d2354353f86",
+      "id": "c6bffb9f6c2d277f:s3",
+      "chunk_id": "c6bffb9f6c2d277f",
+      "heading": "主题三 几何与代数 / 【学业要求】",
+      "course_type": "compulsory",
+      "kind": "achievement",
+      "topics": [
+        "立体几何"
+      ],
+      "optional": false,
+      "excerpt_span": [
+        105,
+        210
+      ],
+      "text": "能够通过直观图理解空间图形，掌握基本空间图形及其简单组合体的概念和基本特征，解决简单的实际问题。能够运用图形的概念描述图形的基本关系和基本结果。能够证明简单的几何命题（平行、垂直的性质定理），并会进行简单应用。",
+      "text_sha256": "efdbfdd7e988b9b679a40076289366ff91645b97a2e8ed9e11bc73038f01d3bd"
+    },
+    {
+      "document": "docs/04_必修课程要求.md",
+      "pdf_pages": [
+        32,
+        33
+      ],
+      "book_pages": [
+        29,
+        30
+      ],
+      "source_sha256": "fc9258bb37ed2e052a4b1be608865a5481f770ae7e28ce536e835d2354353f86",
+      "id": "c6bffb9f6c2d277f:s4",
+      "chunk_id": "c6bffb9f6c2d277f",
+      "heading": "主题三 几何与代数 / 【学业要求】",
+      "course_type": "compulsory",
+      "kind": "achievement",
+      "topics": [
+        "平面向量"
+      ],
+      "optional": false,
+      "excerpt_span": [
+        212,
+        264
+      ],
+      "text": "能够运用向量运算、推理论证等思想方法探索图形的位置关系和度量关系，能够通过数形结合建立几何与代数的联系。",
+      "text_sha256": "91d00fa4ac2ccadab7fb5ca431a966e55e90d7f10c753d7f83eca8d9d1349dcb"
+    },
+    {
+      "document": "docs/04_必修课程要求.md",
+      "pdf_pages": [
+        33
+      ],
+      "book_pages": [
+        30
+      ],
+      "source_sha256": "fc9258bb37ed2e052a4b1be608865a5481f770ae7e28ce536e835d2354353f86",
+      "id": "b943ccc92429d7a6",
+      "chunk_id": "b943ccc92429d7a6",
+      "heading": "主题四 概率与统计 / 【内容要求】 / 1. 概率",
+      "course_type": "compulsory",
+      "kind": "content",
+      "topics": [
+        "概率"
+      ],
+      "optional": false,
+      "excerpt_span": [
+        0,
+        106
+      ],
+      "text": "#### 1. 概率\n\n本单元的学习，可以帮助学生结合具体实例，理解样本点、有限样本空间、随机事件，会计算古典概型中简单随机事件的概率，加深对随机现象的认识和理解。\n\n内容包括：随机事件与概率、随机事件的独立性。",
+      "text_sha256": "208b1950ce85517e20c43c5f34eeccda3a7ce10884a8ed92bf242963ba57e57a"
+    },
+    {
+      "document": "docs/04_必修课程要求.md",
+      "pdf_pages": [
+        33
+      ],
+      "book_pages": [
+        30
+      ],
+      "source_sha256": "fc9258bb37ed2e052a4b1be608865a5481f770ae7e28ce536e835d2354353f86",
+      "id": "5d2e9caf5bb50751",
+      "chunk_id": "5d2e9caf5bb50751",
+      "heading": "主题四 概率与统计 / 【内容要求】 / 1. 概率 / （1）随机事件与概率",
+      "course_type": "compulsory",
+      "kind": "content",
+      "topics": [
+        "概率"
+      ],
+      "optional": false,
+      "excerpt_span": [
+        0,
+        181
+      ],
+      "text": "##### （1）随机事件与概率\n\n①结合具体实例，理解样本点和有限样本空间的含义，理解随机事件与样本点的关系（参见案例12）。了解随机事件的并、交与互斥的含义，能结合实例进行随机事件的并、交运算。\n\n②结合具体实例，理解古典概型，能计算古典概型中简单随机事件的概率。\n\n③通过实例，理解概率的性质，掌握随机事件概率的运算法则。\n\n④结合实例，会用频率估计概率。",
+      "text_sha256": "6a9947957b6b62ef10ce68489f608f44b41860437a2abd952a7a3b0419dbb3be"
+    },
+    {
+      "document": "docs/04_必修课程要求.md",
+      "pdf_pages": [
+        33
+      ],
+      "book_pages": [
+        30
+      ],
+      "source_sha256": "fc9258bb37ed2e052a4b1be608865a5481f770ae7e28ce536e835d2354353f86",
+      "id": "8474a54d5592d52e",
+      "chunk_id": "8474a54d5592d52e",
+      "heading": "主题四 概率与统计 / 【内容要求】 / 1. 概率 / （2）随机事件的独立性",
+      "course_type": "compulsory",
+      "kind": "content",
+      "topics": [
+        "概率"
+      ],
+      "optional": false,
+      "excerpt_span": [
+        0,
+        61
+      ],
+      "text": "##### （2）随机事件的独立性\n\n结合有限样本空间，了解两个随机事件独立性的含义。结合古典概型，能利用独立性计算概率。",
+      "text_sha256": "2355990eb2dfbf0a20a8551b6d16cd961813f0eb3bd798b36b8b6efdfb5c3bc8"
+    },
+    {
+      "document": "docs/04_必修课程要求.md",
+      "pdf_pages": [
+        34
+      ],
+      "book_pages": [
+        31
+      ],
+      "source_sha256": "fc9258bb37ed2e052a4b1be608865a5481f770ae7e28ce536e835d2354353f86",
+      "id": "f46d3c06e6038428",
+      "chunk_id": "f46d3c06e6038428",
+      "heading": "主题四 概率与统计 / 【内容要求】 / 2. 统计",
+      "course_type": "compulsory",
+      "kind": "content",
+      "topics": [
+        "统计"
+      ],
+      "optional": false,
+      "excerpt_span": [
+        0,
+        188
+      ],
+      "text": "#### 2. 统计\n\n本单元的学习，可以帮助学生进一步学习数据收集和整理的方法、数据直观图表的表示方法、数据统计特征的刻画方法；通过具体实例，感悟在实际生活中进行科学决策的必要性和可能性；体会统计思维与确定性思维的差异、归纳推断与演绎证明的差异；通过实际操作、计算机模拟等活动，积累数据分析的经验。\n\n内容包括：获取数据的基本途径及相关概念、抽样、统计图表、用样本估计总体。",
+      "text_sha256": "115b212b5f86408544715df5c1a0fb057457d5eff9a026309074a9cf911e58a1"
+    },
+    {
+      "document": "docs/04_必修课程要求.md",
+      "pdf_pages": [
+        34
+      ],
+      "book_pages": [
+        31
+      ],
+      "source_sha256": "fc9258bb37ed2e052a4b1be608865a5481f770ae7e28ce536e835d2354353f86",
+      "id": "8f244f7f8798bf97",
+      "chunk_id": "8f244f7f8798bf97",
+      "heading": "主题四 概率与统计 / 【内容要求】 / 2. 统计 / （1）获取数据的基本途径及相关概念",
+      "course_type": "compulsory",
+      "kind": "content",
+      "topics": [
+        "统计"
+      ],
+      "optional": false,
+      "excerpt_span": [
+        0,
+        97
+      ],
+      "text": "##### （1）获取数据的基本途径及相关概念\n\n①知道获取数据的基本途径，包括：统计报表和年鉴、社会调查、试验设计、普查和抽样、互联网等。\n\n②了解总体、样本、样本量的概念，了解数据的随机性。",
+      "text_sha256": "3597552331b210ec71ca28b73734a3b8fbed63aad6ff46153355aee91c1eeb1d"
+    },
+    {
+      "document": "docs/04_必修课程要求.md",
+      "pdf_pages": [
+        34
+      ],
+      "book_pages": [
+        31
+      ],
+      "source_sha256": "fc9258bb37ed2e052a4b1be608865a5481f770ae7e28ce536e835d2354353f86",
+      "id": "893eb962beafe73d",
+      "chunk_id": "893eb962beafe73d",
+      "heading": "主题四 概率与统计 / 【内容要求】 / 2. 统计 / （2）抽样",
+      "course_type": "compulsory",
+      "kind": "content",
+      "topics": [
+        "统计"
+      ],
+      "optional": false,
+      "excerpt_span": [
+        0,
+        236
+      ],
+      "text": "##### （2）抽样\n\n①简单随机抽样\n\n通过实例，了解简单随机抽样的含义及其解决问题的过程，掌握两种简单随机抽样方法：抽签法和随机数法。会计算样本均值和样本方差，了解样本与总体的关系。\n\n②分层随机抽样\n\n通过实例，了解分层随机抽样的特点和适用范围，了解分层随机抽样的必要性，掌握各层样本量比例分配的方法。结合具体实例，掌握分层随机抽样的样本均值和样本方差（参见案例13）。\n\n③抽样方法的选择\n\n在简单的实际情境中，能根据实际问题的特点，设计恰当的抽样方法解决问题。",
+      "text_sha256": "6f2b7744704354bf4b5a52e77beb4fb55b5ab4727281df0f8319be26b1141143"
+    },
+    {
+      "document": "docs/04_必修课程要求.md",
+      "pdf_pages": [
+        34
+      ],
+      "book_pages": [
+        31
+      ],
+      "source_sha256": "fc9258bb37ed2e052a4b1be608865a5481f770ae7e28ce536e835d2354353f86",
+      "id": "b627da50e6f2e909",
+      "chunk_id": "b627da50e6f2e909",
+      "heading": "主题四 概率与统计 / 【内容要求】 / 2. 统计 / （3）统计图表",
+      "course_type": "compulsory",
+      "kind": "content",
+      "topics": [
+        "统计"
+      ],
+      "optional": false,
+      "excerpt_span": [
+        0,
+        84
+      ],
+      "text": "##### （3）统计图表\n\n能根据实际问题的特点，选择恰当的统计图表（如频数分布直方图、频率分布直方图、散点图等）对数据进行可视化描述，体会合理使用统计图表的重要性。",
+      "text_sha256": "6632cba4afc6a80d05d837aa9a25fda6e2eb2e6d34c67786c56c156f9df66041"
+    },
+    {
+      "document": "docs/04_必修课程要求.md",
+      "pdf_pages": [
+        35
+      ],
+      "book_pages": [
+        32
+      ],
+      "source_sha256": "fc9258bb37ed2e052a4b1be608865a5481f770ae7e28ce536e835d2354353f86",
+      "id": "0962948229ca6a37",
+      "chunk_id": "0962948229ca6a37",
+      "heading": "主题四 概率与统计 / 【内容要求】 / 2. 统计 / （4）用样本估计总体",
+      "course_type": "compulsory",
+      "kind": "content",
+      "topics": [
+        "统计"
+      ],
+      "optional": false,
+      "excerpt_span": [
+        0,
+        176
+      ],
+      "text": "##### （4）用样本估计总体\n\n①结合实例，能用样本估计总体的集中趋势参数（平均数、中位数、众数），理解集中趋势参数的统计含义。\n\n②结合实例，能用样本估计总体的离散程度参数（标准差、方差、极差），理解离散程度参数的统计含义。\n\n③结合实例，能用样本估计总体的取值规律。\n\n④结合实例，能用样本估计百分位数，理解百分位数的统计含义（参见案例14）。",
+      "text_sha256": "74556a42605d1eae9c68336e6b93d9cf4bc5d718c7590efc40072d9c0e1f9afa"
+    },
+    {
+      "document": "docs/04_必修课程要求.md",
+      "pdf_pages": [
+        35,
+        36
+      ],
+      "book_pages": [
+        32,
+        33
+      ],
+      "source_sha256": "fc9258bb37ed2e052a4b1be608865a5481f770ae7e28ce536e835d2354353f86",
+      "id": "ced57c6cfd89b170:s1",
+      "chunk_id": "ced57c6cfd89b170",
+      "heading": "主题四 概率与统计 / 【教学提示】",
+      "course_type": "compulsory",
+      "kind": "teaching",
+      "topics": [
+        "概率",
+        "统计"
+      ],
+      "optional": false,
+      "excerpt_span": [
+        0,
+        201
+      ],
+      "text": "### 【教学提示】\n\n在概率的教学中，应引导学生通过日常生活中的实例了解随机事件与概率的意义。在随机事件和样本空间的教学中，应引导学生通过古典概型，认识样本空间，理解随机事件发生的含义；理解古典概型的特征：试验结果的有限性和每一个试验结果出现的等可能性，知道只有在这种特征下，才能定义出古典概型中随机事件发生的概率。教学中要适当介绍基本计数方法（如树状图、列表等），计算古典概型中随机事件发生的概率。",
+      "text_sha256": "1f7592a4f2cde3fac790cf32295d8ee4396b6182a4af35921f209ca718c2de65"
+    },
+    {
+      "document": "docs/04_必修课程要求.md",
+      "pdf_pages": [
+        35,
+        36
+      ],
+      "book_pages": [
+        32,
+        33
+      ],
+      "source_sha256": "fc9258bb37ed2e052a4b1be608865a5481f770ae7e28ce536e835d2354353f86",
+      "id": "ced57c6cfd89b170:s2",
+      "chunk_id": "ced57c6cfd89b170",
+      "heading": "主题四 概率与统计 / 【教学提示】",
+      "course_type": "compulsory",
+      "kind": "teaching",
+      "topics": [
+        "统计"
+      ],
+      "optional": false,
+      "excerpt_span": [
+        203,
+        421
+      ],
+      "text": "在统计的教学中，应引导学生根据实际问题的需求，选择不同的抽样方法获取数据，理解数据蕴含的信息；根据数据分析的需求，选择适当的统计图表描述和表达数据，并从样本数据中提取需要的数字特征，估计总体的统计规律，解决相应的实际问题。对统计中的基本概念（如总体、样本、样本量等），应结合具体问题进行描述性说明，在此基础上适当引入严格的定义，并利用数字特征（如平均值、方差等）和数据直观图表（如频数分布直方图、频率分布直方图、散点图等）进行数据分析。",
+      "text_sha256": "b96257af3498cb1c6aed400848bbb4026dd48a120a943ffc1c657ebf0faefe3d"
+    },
+    {
+      "document": "docs/04_必修课程要求.md",
+      "pdf_pages": [
+        35,
+        36
+      ],
+      "book_pages": [
+        32,
+        33
+      ],
+      "source_sha256": "fc9258bb37ed2e052a4b1be608865a5481f770ae7e28ce536e835d2354353f86",
+      "id": "ced57c6cfd89b170:s3",
+      "chunk_id": "ced57c6cfd89b170",
+      "heading": "主题四 概率与统计 / 【教学提示】",
+      "course_type": "compulsory",
+      "kind": "teaching",
+      "topics": [
+        "统计"
+      ],
+      "optional": false,
+      "excerpt_span": [
+        423,
+        518
+      ],
+      "text": "统计的教学活动应通过典型案例进行。教学中应通过对一些典型案例的处理，使学生经历较为系统的数据处理全过程，在此过程中学习数据分析的方法，理解数据分析的思路，运用所学知识和方法解决实际\n\n问题。",
+      "text_sha256": "921527d89ad4ef5ab0ee4c3fc2d4443f7f6b426e18992d89a6cce403f07da020"
+    },
+    {
+      "document": "docs/04_必修课程要求.md",
+      "pdf_pages": [
+        35,
+        36
+      ],
+      "book_pages": [
+        32,
+        33
+      ],
+      "source_sha256": "fc9258bb37ed2e052a4b1be608865a5481f770ae7e28ce536e835d2354353f86",
+      "id": "ced57c6cfd89b170:s4",
+      "chunk_id": "ced57c6cfd89b170",
+      "heading": "主题四 概率与统计 / 【教学提示】",
+      "course_type": "compulsory",
+      "kind": "teaching",
+      "topics": [
+        "概率",
+        "统计"
+      ],
+      "optional": false,
+      "excerpt_span": [
+        520,
+        617
+      ],
+      "text": "可以鼓励学生尽可能利用计算器、计算机进行模拟活动，处理数据，更好地体会概率的意义和统计思想。例如，利用计算器产生随机数来模拟掷硬币试验等，利用计算机来计算样本量较大的数据的样本均值、样本方差等。",
+      "text_sha256": "628b8ed7125953684cfd40003ad950876ec1aaecbb052a55a4f30e893b1c4410"
+    },
+    {
+      "document": "docs/04_必修课程要求.md",
+      "pdf_pages": [
+        36
+      ],
+      "book_pages": [
+        33
+      ],
+      "source_sha256": "fc9258bb37ed2e052a4b1be608865a5481f770ae7e28ce536e835d2354353f86",
+      "id": "2e46f4ce81407cbc:s1",
+      "chunk_id": "2e46f4ce81407cbc",
+      "heading": "主题四 概率与统计 / 【学业要求】",
+      "course_type": "compulsory",
+      "kind": "achievement",
+      "topics": [
+        "概率",
+        "统计"
+      ],
+      "optional": false,
+      "excerpt_span": [
+        0,
+        83
+      ],
+      "text": "### 【学业要求】\n\n能够掌握古典概型的基本特征，根据实际问题构建概率模型，解决简单的实际问题。能够借助古典概型初步认识有限样本空间、随机事件，以及随机事件的概率。",
+      "text_sha256": "caf5650f88b0a34c1fc24a895937d262aed24412e5c0bb01a24b3c2d4ca0a652"
+    },
+    {
+      "document": "docs/04_必修课程要求.md",
+      "pdf_pages": [
+        36
+      ],
+      "book_pages": [
+        33
+      ],
+      "source_sha256": "fc9258bb37ed2e052a4b1be608865a5481f770ae7e28ce536e835d2354353f86",
+      "id": "2e46f4ce81407cbc:s2",
+      "chunk_id": "2e46f4ce81407cbc",
+      "heading": "主题四 概率与统计 / 【学业要求】",
+      "course_type": "compulsory",
+      "kind": "achievement",
+      "topics": [
+        "统计"
+      ],
+      "optional": false,
+      "excerpt_span": [
+        85,
+        153
+      ],
+      "text": "能够根据实际问题的需求，选择恰当的抽样方法获取样本数据，并从中提取需要的数字特征推断总体。能够正确运用数据分析的方法解决简单的实际问题。",
+      "text_sha256": "4ade6f5ff90d19f0682c37124158c90fdb2871255841a5cb0f0c2f0417ff94eb"
+    },
+    {
+      "document": "docs/04_必修课程要求.md",
+      "pdf_pages": [
+        36
+      ],
+      "book_pages": [
+        33
+      ],
+      "source_sha256": "fc9258bb37ed2e052a4b1be608865a5481f770ae7e28ce536e835d2354353f86",
+      "id": "2e46f4ce81407cbc:s3",
+      "chunk_id": "2e46f4ce81407cbc",
+      "heading": "主题四 概率与统计 / 【学业要求】",
+      "course_type": "compulsory",
+      "kind": "achievement",
+      "topics": [
+        "统计"
+      ],
+      "optional": false,
+      "excerpt_span": [
+        155,
+        241
+      ],
+      "text": "具有运用随机思想进行数据分析的意识。能够区别统计思维与确定性思维的差异、归纳推断与演绎证明的差异。能够结合具体问题，理解统计推断结果的或然性，正确运用统计结果解释实际问题。",
+      "text_sha256": "4cdfc65adec7023755870dfdb1a5b46978862f4ecf490e5fbb26811f16c1b8c1"
+    },
+    {
+      "document": "docs/04_必修课程要求.md",
+      "pdf_pages": [
+        37,
+        38
+      ],
+      "book_pages": [
+        34,
+        35
+      ],
+      "source_sha256": "fc9258bb37ed2e052a4b1be608865a5481f770ae7e28ce536e835d2354353f86",
+      "id": "cd6856f30e0bfdbe",
+      "chunk_id": "cd6856f30e0bfdbe",
+      "heading": "主题五 数学建模活动与数学探究活动 / 【教学提示】",
+      "course_type": "compulsory",
+      "kind": "teaching",
+      "topics": [
+        "数学建模与探究"
+      ],
+      "optional": false,
+      "excerpt_span": [
+        0,
+        230
+      ],
+      "text": "### 【教学提示】\n\n教师要指导学生经历数学建模活动与数学探究活动的全过程（参见案例15）。包括：指导学生确定研究课题，组织学生建立课题研究小组（2～3人为宜）；指导学生撰写开题报告，组织学生开展开题交流活动，进一步完善解决问题的思路；指导学生开展课题研究，帮助学生克服解决问题过程中碰到的困难，解决问题，得到初步的结果；指导学生撰写\n\n研究报告（参见案例 15），组织结题活动。在数学建模活动与数学探究活动过程中，教师要引导学生遵守学术规范，坚守诚信底线。",
+      "text_sha256": "b7ad1eb5b2b5a1b34c2f5f195b212012629432de7ea1bddf57b2b6792ae3e1a6"
+    },
+    {
+      "document": "docs/04_必修课程要求.md",
+      "pdf_pages": [
+        38
+      ],
+      "book_pages": [
+        35
+      ],
+      "source_sha256": "fc9258bb37ed2e052a4b1be608865a5481f770ae7e28ce536e835d2354353f86",
+      "id": "ba88378b279f228d:s1",
+      "chunk_id": "ba88378b279f228d",
+      "heading": "主题五 数学建模活动与数学探究活动 / 【学业要求】",
+      "course_type": "compulsory",
+      "kind": "achievement",
+      "topics": [
+        "数学建模与探究"
+      ],
+      "optional": false,
+      "excerpt_span": [
+        0,
+        223
+      ],
+      "text": "### 【学业要求】\n\n学生应在教师指导下确定研究课题，参与课题研究的全过程：选题、开题、做题和结题。学生要学会撰写开题报告，开题报告应包括选题意义、文献综述、解决问题思路、研究计划、预期结果等。经历解决问题的过程，包括描述问题、数学表达、建立模型、求解模型、得到结论、反思完善等。学生要撰写研究报告，积极参与教师组织的结题答辩。根据选题的内容，报告可以采用专题作业、测量报告、算法程序、制作的实物、研究报告或小论文等多种形式。（参见案例 16）",
+      "text_sha256": "553fe0b9358b17abebd71cf8bc7f48229dd143dae3ab9e745f37f61c06a9e0b8"
+    },
+    {
+      "document": "docs/04_必修课程要求.md",
+      "pdf_pages": [
+        38
+      ],
+      "book_pages": [
+        35
+      ],
+      "source_sha256": "fc9258bb37ed2e052a4b1be608865a5481f770ae7e28ce536e835d2354353f86",
+      "id": "ba88378b279f228d:s2",
+      "chunk_id": "ba88378b279f228d",
+      "heading": "主题五 数学建模活动与数学探究活动 / 【学业要求】",
+      "course_type": "compulsory",
+      "kind": "achievement",
+      "topics": [
+        "数学建模与探究"
+      ],
+      "optional": false,
+      "excerpt_span": [
+        225,
+        261
+      ],
+      "text": "重点提升数学建模、数学抽象、数据分析、数学运算、逻辑推理和直观想象素养。",
+      "text_sha256": "e08bf9c7f80208fe46a235f6aa42e8f01f529f5ba44cbef91465c7dfd5391a20"
+    },
+    {
+      "document": "docs/05_选择性必修课程要求.md",
+      "pdf_pages": [
+        39,
+        40
+      ],
+      "book_pages": [
+        36,
+        37
+      ],
+      "source_sha256": "fc9258bb37ed2e052a4b1be608865a5481f770ae7e28ce536e835d2354353f86",
+      "id": "8bc3fada28b22937",
+      "chunk_id": "8bc3fada28b22937",
+      "heading": "主题一 函数 / 【内容要求】 / 1. 数列",
+      "course_type": "selective_compulsory",
+      "kind": "content",
+      "topics": [
+        "数列"
+      ],
+      "optional": false,
+      "excerpt_span": [
+        0,
+        216
+      ],
+      "text": "#### 1. 数列\n\n本单元的学习，可以帮助学生通过对日常生活中实际问题的分析，了解数列的概念；探索并掌握等差数列和等比数列的变化规律，建立通项公式与前 $n$ 项和公式；能运用等差数列、等比数列解决简单的实际问题和数学问题，感受数学模型的现实意义与应用；了解等差数列与一\n\n元一次函数、等比数列与指数函数的联系，感受数列与函数的共性与差异，体会数学的整体性。\n\n内容包括：数列概念、等差数列、等比数列、${}^*$ 数学归纳法。",
+      "text_sha256": "a00e42fb96d4b3d8bc4deaf9e46f8c07aad693cdaaf3661c72014b702f2eebb7"
+    },
+    {
+      "document": "docs/05_选择性必修课程要求.md",
+      "pdf_pages": [
+        40
+      ],
+      "book_pages": [
+        37
+      ],
+      "source_sha256": "fc9258bb37ed2e052a4b1be608865a5481f770ae7e28ce536e835d2354353f86",
+      "id": "f91100593810715f",
+      "chunk_id": "f91100593810715f",
+      "heading": "主题一 函数 / 【内容要求】 / 1. 数列 / （1）数列概念",
+      "course_type": "selective_compulsory",
+      "kind": "content",
+      "topics": [
+        "数列"
+      ],
+      "optional": false,
+      "excerpt_span": [
+        0,
+        66
+      ],
+      "text": "##### （1）数列概念\n\n通过日常生活和数学中的实例，了解数列的概念和表示方法（列表、图象、通项公式），了解数列是一种特殊函数。",
+      "text_sha256": "f0905d255f001b4a97d3fc74dabde4efa55049f3ee031d99d1d5e1a4ee82291c"
+    },
+    {
+      "document": "docs/05_选择性必修课程要求.md",
+      "pdf_pages": [
+        40
+      ],
+      "book_pages": [
+        37
+      ],
+      "source_sha256": "fc9258bb37ed2e052a4b1be608865a5481f770ae7e28ce536e835d2354353f86",
+      "id": "fc46d6e846ec6fc9",
+      "chunk_id": "fc46d6e846ec6fc9",
+      "heading": "主题一 函数 / 【内容要求】 / 1. 数列 / （2）等差数列",
+      "course_type": "selective_compulsory",
+      "kind": "content",
+      "topics": [
+        "数列"
+      ],
+      "optional": false,
+      "excerpt_span": [
+        0,
+        146
+      ],
+      "text": "##### （2）等差数列\n\n①通过生活中的实例，理解等差数列的概念和通项公式的意义。\n\n②探索并掌握等差数列的前 $n$ 项和公式，理解等差数列的通项公式与前 $n$ 项和公式的关系。\n\n③能在具体的问题情境中，发现数列的等差关系，并解决相应的问题。\n\n④体会等差数列与一元一次函数的关系。",
+      "text_sha256": "52f49a26114ad939bbb80b9643417aa1e981e97e0e84b6250888c57e7d0600a2"
+    },
+    {
+      "document": "docs/05_选择性必修课程要求.md",
+      "pdf_pages": [
+        40
+      ],
+      "book_pages": [
+        37
+      ],
+      "source_sha256": "fc9258bb37ed2e052a4b1be608865a5481f770ae7e28ce536e835d2354353f86",
+      "id": "90428c6a0b9085a4",
+      "chunk_id": "90428c6a0b9085a4",
+      "heading": "主题一 函数 / 【内容要求】 / 1. 数列 / （3）等比数列",
+      "course_type": "selective_compulsory",
+      "kind": "content",
+      "topics": [
+        "数列"
+      ],
+      "optional": false,
+      "excerpt_span": [
+        0,
+        144
+      ],
+      "text": "##### （3）等比数列\n\n①通过生活中的实例，理解等比数列的概念和通项公式的意义。\n\n②探索并掌握等比数列的前 $n$ 项和公式，理解等比数列的通项公式与前 $n$ 项和公式的关系。\n\n③能在具体的问题情境中，发现数列的等比关系，并解决相应的问题。\n\n④体会等比数列与指数函数的关系。",
+      "text_sha256": "e30fcd0eedb166262f535458d74423e63ac4f371bf66b0d0d705e96301f8ff33"
+    },
+    {
+      "document": "docs/05_选择性必修课程要求.md",
+      "pdf_pages": [
+        40
+      ],
+      "book_pages": [
+        37
+      ],
+      "source_sha256": "fc9258bb37ed2e052a4b1be608865a5481f770ae7e28ce536e835d2354353f86",
+      "id": "e53cb00437779c01",
+      "chunk_id": "e53cb00437779c01",
+      "heading": "主题一 函数 / 【内容要求】 / 1. 数列 / （4）${}^*$ 数学归纳法",
+      "course_type": "selective_compulsory",
+      "kind": "content",
+      "topics": [
+        "数列"
+      ],
+      "optional": true,
+      "excerpt_span": [
+        0,
+        54
+      ],
+      "text": "##### （4）${}^*$ 数学归纳法\n\n了解数学归纳法的原理，能用数学归纳法证明数列中的一些简单命题。",
+      "text_sha256": "5972a3e4bb48641dd64e494eadf255b2d5652dbe241c0eb7b9876aa5266fd672"
+    },
+    {
+      "document": "docs/05_选择性必修课程要求.md",
+      "pdf_pages": [
+        40,
+        41
+      ],
+      "book_pages": [
+        37,
+        38
+      ],
+      "source_sha256": "fc9258bb37ed2e052a4b1be608865a5481f770ae7e28ce536e835d2354353f86",
+      "id": "f033a308980fe281",
+      "chunk_id": "f033a308980fe281",
+      "heading": "主题一 函数 / 【内容要求】 / 2. 一元函数导数及其应用",
+      "course_type": "selective_compulsory",
+      "kind": "content",
+      "topics": [
+        "导数"
+      ],
+      "optional": false,
+      "excerpt_span": [
+        0,
+        131
+      ],
+      "text": "#### 2. 一元函数导数及其应用\n\n本单元的学习，可以帮助学生通过丰富的实际背景理解导数的概念，掌握导数的基本运算，运用导数研究函数的性质，并解决一些实际问题。\n\n内容包括：导数概念及其意义、导数运算、导数在研究函数中的应用、${}^*$微积分的创立与发展。",
+      "text_sha256": "bbaf82670565f69cad32830600846d769800fcff89e4cb8d141f51676e883510"
+    },
+    {
+      "document": "docs/05_选择性必修课程要求.md",
+      "pdf_pages": [
+        41
+      ],
+      "book_pages": [
+        38
+      ],
+      "source_sha256": "fc9258bb37ed2e052a4b1be608865a5481f770ae7e28ce536e835d2354353f86",
+      "id": "f27a8c887e4c1b17",
+      "chunk_id": "f27a8c887e4c1b17",
+      "heading": "主题一 函数 / 【内容要求】 / 2. 一元函数导数及其应用 / （1）导数概念及其意义",
+      "course_type": "selective_compulsory",
+      "kind": "content",
+      "topics": [
+        "导数"
+      ],
+      "optional": false,
+      "excerpt_span": [
+        0,
+        119
+      ],
+      "text": "##### （1）导数概念及其意义\n\n①通过实例分析，经历由平均变化率过渡到瞬时变化率的过程，了解导数概念的实际背景，知道导数是关于瞬时变化率的数学表达，体会导数的内涵与思想。\n\n②体会极限思想。\n\n③通过函数图象直观理解导数的几何意义。",
+      "text_sha256": "8517f9c612282fa61cff270e749df0d4eb93a99491b69355e118485d4ab868f5"
+    },
+    {
+      "document": "docs/05_选择性必修课程要求.md",
+      "pdf_pages": [
+        41
+      ],
+      "book_pages": [
+        38
+      ],
+      "source_sha256": "fc9258bb37ed2e052a4b1be608865a5481f770ae7e28ce536e835d2354353f86",
+      "id": "ef0fedd61f917691",
+      "chunk_id": "ef0fedd61f917691",
+      "heading": "主题一 函数 / 【内容要求】 / 2. 一元函数导数及其应用 / （2）导数运算",
+      "course_type": "selective_compulsory",
+      "kind": "content",
+      "topics": [
+        "导数"
+      ],
+      "optional": false,
+      "excerpt_span": [
+        0,
+        169
+      ],
+      "text": "##### （2）导数运算\n\n①能根据导数定义求函数 $y=c$，$y=x$，$y=x^2$，$y=x^3$，$y=\\frac{1}{x}$，$y=\\sqrt{x}$ 的导数。\n\n②能利用给出的基本初等函数的导数公式和导数的四则运算法则，求简单函数的导数；能求简单的复合函数（限于形如 $f(ax+b)$）的导数。\n\n③会使用导数公式表。",
+      "text_sha256": "21dc54310efeca35d455098e6f17087ba90bc011eb1f7eb4563915dcee2eff9a"
+    },
+    {
+      "document": "docs/05_选择性必修课程要求.md",
+      "pdf_pages": [
+        41
+      ],
+      "book_pages": [
+        38
+      ],
+      "source_sha256": "fc9258bb37ed2e052a4b1be608865a5481f770ae7e28ce536e835d2354353f86",
+      "id": "96747d6056107e45",
+      "chunk_id": "96747d6056107e45",
+      "heading": "主题一 函数 / 【内容要求】 / 2. 一元函数导数及其应用 / （3）导数在研究函数中的应用",
+      "course_type": "selective_compulsory",
+      "kind": "content",
+      "topics": [
+        "导数"
+      ],
+      "optional": false,
+      "excerpt_span": [
+        0,
+        212
+      ],
+      "text": "##### （3）导数在研究函数中的应用\n\n①结合实例，借助几何直观了解函数的单调性与导数的关系；能利用导数研究函数的单调性；对于多项式函数，能求不超过三次的多项式函数的单调区间。\n\n②借助函数的图象，了解函数在某点取得极值的必要条件和充分条件；能利用导数求某些函数的极大（小）值、最大（小）值；对于多项式函数，能求给定闭区间上不超过三次的多项式函数的最大（小）值；体会导数在研究单调性、极大（小）值、最大（小）值中的作用。",
+      "text_sha256": "d386b677156497f2b06077d2fd1ab41b5826d7ce3902ea4117dd822626a2e268"
+    },
+    {
+      "document": "docs/05_选择性必修课程要求.md",
+      "pdf_pages": [
+        41,
+        42
+      ],
+      "book_pages": [
+        38,
+        39
+      ],
+      "source_sha256": "fc9258bb37ed2e052a4b1be608865a5481f770ae7e28ce536e835d2354353f86",
+      "id": "54b8ba8345dce72c",
+      "chunk_id": "54b8ba8345dce72c",
+      "heading": "主题一 函数 / 【内容要求】 / 2. 一元函数导数及其应用 / （4）${}^*$微积分的创立与发展",
+      "course_type": "selective_compulsory",
+      "kind": "content",
+      "topics": [
+        "导数"
+      ],
+      "optional": true,
+      "excerpt_span": [
+        0,
+        125
+      ],
+      "text": "##### （4）${}^*$微积分的创立与发展\n\n收集、阅读对微积分的创立和发展起重大作用的有关资料，包括一些重要历史人物（如牛顿、莱布尼茨、柯西、魏尔斯特拉斯等）和事件，采取独立完成或者小组合作的方式，完成一篇有关微积分创立与发\n\n展的研究报告。",
+      "text_sha256": "683b8fb451f30a1d4382aee36003fa9f1b29b5bf5ca63545f08da64bb4a3e365"
+    },
+    {
+      "document": "docs/05_选择性必修课程要求.md",
+      "pdf_pages": [
+        42
+      ],
+      "book_pages": [
+        39
+      ],
+      "source_sha256": "fc9258bb37ed2e052a4b1be608865a5481f770ae7e28ce536e835d2354353f86",
+      "id": "10eccae060d23638:s1",
+      "chunk_id": "10eccae060d23638",
+      "heading": "主题一 函数 / 【教学提示】",
+      "course_type": "selective_compulsory",
+      "kind": "teaching",
+      "topics": [
+        "数列"
+      ],
+      "optional": false,
+      "excerpt_span": [
+        0,
+        95
+      ],
+      "text": "### 【教学提示】\n\n在数列的教学中，应引导学生通过具体实例（如购房贷款、放射性物质的衰变、人口增长等），理解等差数列、等比数列的概念、性质和应用；引导学生掌握数列中各个量之间的基本关系。",
+      "text_sha256": "b33def57f4435a3f6a7fca89cdc2a4fd06fa99381854673763b90d02c13481b0"
+    },
+    {
+      "document": "docs/05_选择性必修课程要求.md",
+      "pdf_pages": [
+        42
+      ],
+      "book_pages": [
+        39
+      ],
+      "source_sha256": "fc9258bb37ed2e052a4b1be608865a5481f770ae7e28ce536e835d2354353f86",
+      "id": "10eccae060d23638:s2",
+      "chunk_id": "10eccae060d23638",
+      "heading": "主题一 函数 / 【教学提示】",
+      "course_type": "selective_compulsory",
+      "kind": "teaching",
+      "topics": [
+        "数列"
+      ],
+      "optional": false,
+      "excerpt_span": [
+        97,
+        192
+      ],
+      "text": "应特别强调数列作为一类特殊的函数在解决实际问题中的作用，突出等差数列、等比数列的本质，引导学生通过类比的方法探索等差数列与一元一次函数、等比数列与指数函数的联系，加深对数列及函数概念的理解。",
+      "text_sha256": "0076fa1d631c4427b7dc515b6ce916bca17676a81bd8d2493f83ef3d1f5ae076"
+    },
+    {
+      "document": "docs/05_选择性必修课程要求.md",
+      "pdf_pages": [
+        42
+      ],
+      "book_pages": [
+        39
+      ],
+      "source_sha256": "fc9258bb37ed2e052a4b1be608865a5481f770ae7e28ce536e835d2354353f86",
+      "id": "10eccae060d23638:s3",
+      "chunk_id": "10eccae060d23638",
+      "heading": "主题一 函数 / 【教学提示】",
+      "course_type": "selective_compulsory",
+      "kind": "teaching",
+      "topics": [
+        "数列"
+      ],
+      "optional": false,
+      "excerpt_span": [
+        194,
+        305
+      ],
+      "text": "在教学中可以组织学生收集、阅读数列方面的研究成果，特别是我国古代的优秀研究成果，如“杨辉三角”、《四元玉鉴》等，撰写小论文，论述数列发展的过程、重要结果、主要人物、关键事件及其对人类文明的贡献，感悟我国古代数学的辉煌成就。",
+      "text_sha256": "6c7e70bb60b1018895bf0dc1d560850e4fc78d72b0af90fafaf23b4b925981db"
+    },
+    {
+      "document": "docs/05_选择性必修课程要求.md",
+      "pdf_pages": [
+        42
+      ],
+      "book_pages": [
+        39
+      ],
+      "source_sha256": "fc9258bb37ed2e052a4b1be608865a5481f770ae7e28ce536e835d2354353f86",
+      "id": "10eccae060d23638:s4",
+      "chunk_id": "10eccae060d23638",
+      "heading": "主题一 函数 / 【教学提示】",
+      "course_type": "selective_compulsory",
+      "kind": "teaching",
+      "topics": [
+        "导数"
+      ],
+      "optional": false,
+      "excerpt_span": [
+        307,
+        542
+      ],
+      "text": "在一元函数导数及其应用的教学中，应通过丰富的实际背景和具体实例引入导数的概念，例如，斜率、增长率、膨胀率、效率、密度、速度、加速度等；应引导学生经历由平均变化率过渡到瞬时变化率的过程，了解导数是如何刻画瞬时变化率的，感悟极限的思想；应引导学生通过具体实例感受导数在研究函数和解决实际问题中的作用，体会导数的意义。学生对导数概念的理解不可能一步到位，导数概念的学习应该贯穿在一元函数导数及其应用学习的始终。一般地，在高中阶段研究与导数有关的问题中，涉及的函数都是可导函数。",
+      "text_sha256": "f373735b9772ef727b332e954efdc1ae86a30a63c8b1ba931f71f0eb96a220ec"
+    },
+    {
+      "document": "docs/05_选择性必修课程要求.md",
+      "pdf_pages": [
+        42
+      ],
+      "book_pages": [
+        39
+      ],
+      "source_sha256": "fc9258bb37ed2e052a4b1be608865a5481f770ae7e28ce536e835d2354353f86",
+      "id": "10eccae060d23638:s5",
+      "chunk_id": "10eccae060d23638",
+      "heading": "主题一 函数 / 【教学提示】",
+      "course_type": "selective_compulsory",
+      "kind": "teaching",
+      "topics": [
+        "导数"
+      ],
+      "optional": false,
+      "excerpt_span": [
+        544,
+        618
+      ],
+      "text": "在教学中可以组织学生收集、阅读微积分创立与发展的历史资料，撰写小论文，论述微积分创立与发展的过程、重要结果、主要人物、关键事件及其对人类文明的贡献。",
+      "text_sha256": "3778c6eb232b6d6704712f4a946b5067377dc3d2def2e42ce74a16492d526904"
+    },
+    {
+      "document": "docs/05_选择性必修课程要求.md",
+      "pdf_pages": [
+        42,
+        43
+      ],
+      "book_pages": [
+        39,
+        40
+      ],
+      "source_sha256": "fc9258bb37ed2e052a4b1be608865a5481f770ae7e28ce536e835d2354353f86",
+      "id": "4415b7c8f46fc52f:s1",
+      "chunk_id": "4415b7c8f46fc52f",
+      "heading": "主题一 函数 / 【学业要求】",
+      "course_type": "selective_compulsory",
+      "kind": "achievement",
+      "topics": [
+        "数列"
+      ],
+      "optional": false,
+      "excerpt_span": [
+        0,
+        140
+      ],
+      "text": "### 【学业要求】\n\n能够结合具体实例，理解通项公式对于数列的重要性，知道通项公\n\n式是这类函数的解析表达式；通过等差数列和等比数列的研究，感悟数列是可以用来刻画现实世界中一类具有递推规律事物的数学模型，掌握通项公式与前 $n$ 项和公式的关系；能够运用数列解决简单的实际问题。",
+      "text_sha256": "92b8d13c7fcc97af7d3f9aeb8b542c5fceeae8b973cc2a90473008d11ca977dc"
+    },
+    {
+      "document": "docs/05_选择性必修课程要求.md",
+      "pdf_pages": [
+        42,
+        43
+      ],
+      "book_pages": [
+        39,
+        40
+      ],
+      "source_sha256": "fc9258bb37ed2e052a4b1be608865a5481f770ae7e28ce536e835d2354353f86",
+      "id": "4415b7c8f46fc52f:s2",
+      "chunk_id": "4415b7c8f46fc52f",
+      "heading": "主题一 函数 / 【学业要求】",
+      "course_type": "selective_compulsory",
+      "kind": "achievement",
+      "topics": [
+        "导数"
+      ],
+      "optional": false,
+      "excerpt_span": [
+        142,
+        300
+      ],
+      "text": "能够通过具体情境，直观理解导数概念，感悟极限思想，知道极限思想是人类深刻认识和表达现实世界必备的思维品质。理解导数是一种借助极限的运算，掌握导数的基本运算规则，能求简单函数和简单复合函数的导数。能够运用导数研究简单函数的性质和变化规律，能够利用导数解决简单的实际问题。知道微积分创立过程，以及微积分对数学发展的作用。",
+      "text_sha256": "279b85b0bd29ae5aa567be27396f7537bc66c726f581d61c4471d631c55aa7cf"
+    },
+    {
+      "document": "docs/05_选择性必修课程要求.md",
+      "pdf_pages": [
+        42,
+        43
+      ],
+      "book_pages": [
+        39,
+        40
+      ],
+      "source_sha256": "fc9258bb37ed2e052a4b1be608865a5481f770ae7e28ce536e835d2354353f86",
+      "id": "4415b7c8f46fc52f:s3",
+      "chunk_id": "4415b7c8f46fc52f",
+      "heading": "主题一 函数 / 【学业要求】",
+      "course_type": "selective_compulsory",
+      "kind": "achievement",
+      "topics": [
+        "导数"
+      ],
+      "optional": false,
+      "excerpt_span": [
+        302,
+        395
+      ],
+      "text": "能够凝练、归纳出研究高中函数主线的基本思路。能够借助函数的导数，从定性和定量、整体和局部等多种角度研究函数的性质和应用。能够用函数思想分析事物的变化规律，用函数的语言表达规律、构建模型。",
+      "text_sha256": "a19c1675c20ad4a6193d70cb7e9e7aa92eaca007e1fd667fa0cccac87e7c25af"
+    },
+    {
+      "document": "docs/05_选择性必修课程要求.md",
+      "pdf_pages": [
+        42,
+        43
+      ],
+      "book_pages": [
+        39,
+        40
+      ],
+      "source_sha256": "fc9258bb37ed2e052a4b1be608865a5481f770ae7e28ce536e835d2354353f86",
+      "id": "4415b7c8f46fc52f:s4",
+      "chunk_id": "4415b7c8f46fc52f",
+      "heading": "主题一 函数 / 【学业要求】",
+      "course_type": "selective_compulsory",
+      "kind": "achievement",
+      "topics": [
+        "数列",
+        "导数"
+      ],
+      "optional": false,
+      "excerpt_span": [
+        397,
+        428
+      ],
+      "text": "重点提升数学抽象、数学运算、直观想象、数学建模和逻辑推理素养。",
+      "text_sha256": "a75452c2f5ef11cde781b539b5e2d24a9c32ecb07e81649c305c62fe0c0a0e5d"
+    },
+    {
+      "document": "docs/05_选择性必修课程要求.md",
+      "pdf_pages": [
+        44
+      ],
+      "book_pages": [
+        41
+      ],
+      "source_sha256": "fc9258bb37ed2e052a4b1be608865a5481f770ae7e28ce536e835d2354353f86",
+      "id": "2735a07c80250a72",
+      "chunk_id": "2735a07c80250a72",
+      "heading": "主题二 几何与代数 / 【内容要求】 / 1. 空间向量与立体几何",
+      "course_type": "selective_compulsory",
+      "kind": "content",
+      "topics": [
+        "空间向量",
+        "立体几何"
+      ],
+      "optional": false,
+      "excerpt_span": [
+        0,
+        218
+      ],
+      "text": "#### 1. 空间向量与立体几何\n\n本单元的学习，可以帮助学生在学习平面向量的基础上，利用类比的方法理解空间向量的概念、运算、基本定理和应用，体会平面向量和空间向量的共性和差异；运用向量的方法研究空间基本图形的位置关系和度量关系，体会向量方法和综合几何方法的共性和差异；运用向量方法解决简单的数学问题和实际问题，感悟向量是研究几何问题的有效工具。\n\n内容包括：空间直角坐标系、空间向量及其运算、向量基本定理及坐标表示、空间向量的应用。",
+      "text_sha256": "bcbb2459427dc3dd11890be13a40b4103d5b5be009d82cbdcf89793d1841cb48"
+    },
+    {
+      "document": "docs/05_选择性必修课程要求.md",
+      "pdf_pages": [
+        44
+      ],
+      "book_pages": [
+        41
+      ],
+      "source_sha256": "fc9258bb37ed2e052a4b1be608865a5481f770ae7e28ce536e835d2354353f86",
+      "id": "068f931b6bad142c",
+      "chunk_id": "068f931b6bad142c",
+      "heading": "主题二 几何与代数 / 【内容要求】 / 1. 空间向量与立体几何 / （1）空间直角坐标系",
+      "course_type": "selective_compulsory",
+      "kind": "content",
+      "topics": [
+        "空间向量",
+        "立体几何"
+      ],
+      "optional": false,
+      "excerpt_span": [
+        0,
+        119
+      ],
+      "text": "##### （1）空间直角坐标系\n\n①在平面直角坐标系的基础上，了解空间直角坐标系，感受建立空间直角坐标系的必要性，会用空间直角坐标系刻画点的位置。\n\n②借助特殊长方体（所有棱分别与坐标轴平行）顶点的坐标，探索并得出空间两点间的距离公式。",
+      "text_sha256": "87bb9c3d00a2ade2b7469b0db6ef4ce54c5303f787c6a0ae7dab4702ea12e478"
+    },
+    {
+      "document": "docs/05_选择性必修课程要求.md",
+      "pdf_pages": [
+        44
+      ],
+      "book_pages": [
+        41
+      ],
+      "source_sha256": "fc9258bb37ed2e052a4b1be608865a5481f770ae7e28ce536e835d2354353f86",
+      "id": "db3a244bfe168fbf",
+      "chunk_id": "db3a244bfe168fbf",
+      "heading": "主题二 几何与代数 / 【内容要求】 / 1. 空间向量与立体几何 / （2）空间向量及其运算",
+      "course_type": "selective_compulsory",
+      "kind": "content",
+      "topics": [
+        "空间向量",
+        "立体几何"
+      ],
+      "optional": false,
+      "excerpt_span": [
+        0,
+        76
+      ],
+      "text": "##### （2）空间向量及其运算\n\n①经历由平面向量推广到空间向量的过程，理解空间向量的概念。\n\n②经历由平面向量的运算及其法则推广到空间向量的过程。",
+      "text_sha256": "4127a7afe522e46301a982f37de2ee99151d9edd88368e8314e62cd8e886acda"
+    },
+    {
+      "document": "docs/05_选择性必修课程要求.md",
+      "pdf_pages": [
+        44
+      ],
+      "book_pages": [
+        41
+      ],
+      "source_sha256": "fc9258bb37ed2e052a4b1be608865a5481f770ae7e28ce536e835d2354353f86",
+      "id": "5ca5f1695f56f7d6",
+      "chunk_id": "5ca5f1695f56f7d6",
+      "heading": "主题二 几何与代数 / 【内容要求】 / 1. 空间向量与立体几何 / （3）向量基本定理及坐标表示",
+      "course_type": "selective_compulsory",
+      "kind": "content",
+      "topics": [
+        "空间向量",
+        "立体几何"
+      ],
+      "optional": false,
+      "excerpt_span": [
+        0,
+        128
+      ],
+      "text": "##### （3）向量基本定理及坐标表示\n\n①掌握空间向量基本定理及其意义，掌握空间向量的正交分解及其坐标表示。\n\n②掌握空间向量的线性运算及其坐标表示。\n\n③掌握空间向量的数量积及其坐标表示。\n\n④了解空间向量投影的概念以及投影向量的意义（参见案例9）。",
+      "text_sha256": "b1f31dd71d32efe510c061486a9a6a0b0ab65351355714fcdbb5b2a1d2abc737"
+    },
+    {
+      "document": "docs/05_选择性必修课程要求.md",
+      "pdf_pages": [
+        44,
+        45
+      ],
+      "book_pages": [
+        41,
+        42
+      ],
+      "source_sha256": "fc9258bb37ed2e052a4b1be608865a5481f770ae7e28ce536e835d2354353f86",
+      "id": "360cf8be4df47739",
+      "chunk_id": "360cf8be4df47739",
+      "heading": "主题二 几何与代数 / 【内容要求】 / 1. 空间向量与立体几何 / （4）空间向量的应用",
+      "course_type": "selective_compulsory",
+      "kind": "content",
+      "topics": [
+        "空间向量",
+        "立体几何"
+      ],
+      "optional": false,
+      "excerpt_span": [
+        0,
+        214
+      ],
+      "text": "##### （4）空间向量的应用\n\n①能用向量语言描述直线和平面，理解直线的方向向量与平面的法向量。\n\n②能用向量语言表述直线与直线、直线与平面、平面与平面的夹角以及垂直与平行关系。\n\n③能用向量方法证明必修内容中有关直线、平面位置关系的判定定理。\n\n④能用向量方法解决点到直线、点到平面、相互平行的直线、相互平行的平面的距离问题（参见案例17）和简单夹角问题，并能描述解决这一类问题的程序，体会向量方法在研究几何问题中的作用。",
+      "text_sha256": "5d4915a08bf24b6a4afe446971fe45ebc707521f5dc498fb70ba2d9cc7294787"
+    },
+    {
+      "document": "docs/05_选择性必修课程要求.md",
+      "pdf_pages": [
+        45
+      ],
+      "book_pages": [
+        42
+      ],
+      "source_sha256": "fc9258bb37ed2e052a4b1be608865a5481f770ae7e28ce536e835d2354353f86",
+      "id": "2183794a4199ae91",
+      "chunk_id": "2183794a4199ae91",
+      "heading": "主题二 几何与代数 / 【内容要求】 / 2. 平面解析几何",
+      "course_type": "selective_compulsory",
+      "kind": "content",
+      "topics": [
+        "解析几何",
+        "圆锥曲线"
+      ],
+      "optional": false,
+      "excerpt_span": [
+        0,
+        185
+      ],
+      "text": "#### 2. 平面解析几何\n\n本单元的学习，可以帮助学生在平面直角坐标系中，认识直线、圆、椭圆、抛物线、双曲线的几何特征，建立它们的标准方程；运用代数方法进一步认识圆锥曲线的性质以及它们的位置关系；运用平面解析几何方法解决简单的数学问题和实际问题，感悟平面解析几何中蕴含的数学思想。\n\n内容包括：直线与方程、圆与方程、圆锥曲线与方程、$^*$平面解析几何的形成与发展。",
+      "text_sha256": "12b4d20f581fdbfbf7babcdb0a9bd38093575ceba036d6031753f9595f1a3cba"
+    },
+    {
+      "document": "docs/05_选择性必修课程要求.md",
+      "pdf_pages": [
+        45
+      ],
+      "book_pages": [
+        42
+      ],
+      "source_sha256": "fc9258bb37ed2e052a4b1be608865a5481f770ae7e28ce536e835d2354353f86",
+      "id": "5e27faca0344e4a6",
+      "chunk_id": "5e27faca0344e4a6",
+      "heading": "主题二 几何与代数 / 【内容要求】 / 2. 平面解析几何 / （1）直线与方程",
+      "course_type": "selective_compulsory",
+      "kind": "content",
+      "topics": [
+        "解析几何"
+      ],
+      "optional": false,
+      "excerpt_span": [
+        0,
+        230
+      ],
+      "text": "##### （1）直线与方程\n\n①在平面直角坐标系中，结合具体图形，探索确定直线位置的几何要素。\n\n②理解直线的倾斜角和斜率的概念，经历用代数方法刻画直线斜率的过程，掌握过两点的直线斜率的计算公式。\n\n③能根据斜率判定两条直线平行或垂直。\n\n④根据确定直线位置的几何要素，探索并掌握直线方程的几种形式（点斜式、两点式及一般式）。\n\n⑤能用解方程组的方法求两条直线的交点坐标。\n\n⑥探索并掌握平面上两点间的距离公式、点到直线的距离公式，会求两条平行直线间的距离。",
+      "text_sha256": "87d0e6d0816973e040bd4b80f322592a8b5c32dd66bcc5a84b481d82b11b6dfa"
+    },
+    {
+      "document": "docs/05_选择性必修课程要求.md",
+      "pdf_pages": [
+        45,
+        46
+      ],
+      "book_pages": [
+        42,
+        43
+      ],
+      "source_sha256": "fc9258bb37ed2e052a4b1be608865a5481f770ae7e28ce536e835d2354353f86",
+      "id": "23c2c14059d2498d:s1",
+      "chunk_id": "23c2c14059d2498d",
+      "heading": "主题二 几何与代数 / 【内容要求】 / 2. 平面解析几何 / （2）圆与方程",
+      "course_type": "selective_compulsory",
+      "kind": "content",
+      "topics": [
+        "解析几何"
+      ],
+      "optional": false,
+      "excerpt_span": [
+        0,
+        114
+      ],
+      "text": "##### （2）圆与方程\n\n①回顾确定圆的几何要素，在平面直角坐标系中，探索并掌握圆的标准方程与一般方程。\n\n②能根据给定直线、圆的方程，判断直线与圆、圆与圆的位置关系。\n③能用直线和圆的方程解决一些简单的数学问题与实际问题。",
+      "text_sha256": "c8da7b7ed220dbb3292158006616ec79c45d917d968efc9d20e686867a459d44"
+    },
+    {
+      "document": "docs/05_选择性必修课程要求.md",
+      "pdf_pages": [
+        45,
+        46
+      ],
+      "book_pages": [
+        42,
+        43
+      ],
+      "source_sha256": "fc9258bb37ed2e052a4b1be608865a5481f770ae7e28ce536e835d2354353f86",
+      "id": "23c2c14059d2498d:s2",
+      "chunk_id": "23c2c14059d2498d",
+      "heading": "主题二 几何与代数 / 【内容要求】 / 2. 平面解析几何 / （3）圆锥曲线与方程",
+      "course_type": "selective_compulsory",
+      "kind": "content",
+      "topics": [
+        "解析几何",
+        "圆锥曲线"
+      ],
+      "optional": false,
+      "excerpt_span": [
+        115,
+        290
+      ],
+      "text": "##### （3）圆锥曲线与方程\n①了解圆锥曲线的实际背景，感受圆锥曲线在刻画现实世界和解决实际问题中的作用。\n②经历从具体情境中抽象出椭圆的过程，掌握椭圆的定义、标准方程及简单几何性质。\n③了解抛物线与双曲线的定义、几何图形和标准方程，以及它们的简单几何性质。\n④通过圆锥曲线与方程的学习，进一步体会数形结合的思想。\n⑤了解椭圆、抛物线的简单应用。",
+      "text_sha256": "3c7a1ec8af491eb1b5af8a05e16de7631080abbb03f89d8890d5fb45011f87fc"
+    },
+    {
+      "document": "docs/05_选择性必修课程要求.md",
+      "pdf_pages": [
+        45,
+        46
+      ],
+      "book_pages": [
+        42,
+        43
+      ],
+      "source_sha256": "fc9258bb37ed2e052a4b1be608865a5481f770ae7e28ce536e835d2354353f86",
+      "id": "23c2c14059d2498d:s3",
+      "chunk_id": "23c2c14059d2498d",
+      "heading": "主题二 几何与代数 / 【内容要求】 / 2. 平面解析几何 / （4）$^*$ 平面解析几何的形成与发展",
+      "course_type": "selective_compulsory",
+      "kind": "content",
+      "topics": [
+        "解析几何"
+      ],
+      "optional": true,
+      "excerpt_span": [
+        291,
+        386
+      ],
+      "text": "##### （4）$^*$ 平面解析几何的形成与发展\n收集、阅读平面解析几何的形成与发展的历史资料，撰写小论文，论述平面解析几何发展的过程、重要结果、主要人物、关键事件及其对人类文明的贡献。",
+      "text_sha256": "651bb66a0aaf67551123d06f64855ea3a7e2c0744f9ce278a89bad9a6f518b81"
+    },
+    {
+      "document": "docs/05_选择性必修课程要求.md",
+      "pdf_pages": [
+        46,
+        47
+      ],
+      "book_pages": [
+        43,
+        44
+      ],
+      "source_sha256": "fc9258bb37ed2e052a4b1be608865a5481f770ae7e28ce536e835d2354353f86",
+      "id": "c50fc92e07b70403:s1",
+      "chunk_id": "c50fc92e07b70403",
+      "heading": "主题二 几何与代数 / 【教学提示】",
+      "course_type": "selective_compulsory",
+      "kind": "teaching",
+      "topics": [
+        "空间向量",
+        "解析几何",
+        "圆锥曲线"
+      ],
+      "optional": false,
+      "excerpt_span": [
+        0,
+        468
+      ],
+      "text": "### 【教学提示】\n本主题的研究对象是几何图形，所用的研究方法主要是代数方法。\n在空间向量与立体几何的教学中，应重视以下两方面：第一，引导学生运用类比的方法，经历向量及其运算由平面向空间的推广过程，探索空间向量与平面向量的共性和差异，引发学生思考维数增加所带来的影响；第二，鼓励学生灵活选择运用向量方法与综合几何方法，从不同角度解决立体几何问题（如距离问题），通过对比体会向量方法的优势。在上述过程中，引导学生理解向量基本定理的本质，感悟“基”的思想，并运用它解决立体几何中的问题。\n在平面解析几何的教学中，应引导学生经历以下过程：首先，通过实例了解几何图形的背景，例如，通过行星运行轨道、抛物运动轨迹\n\n等，使学生了解圆锥曲线的背景与应用；进而，结合情境清晰地描述图形的几何特征与问题，例如，两点确定一条直线，椭圆是到两个定点的距离之和为定长的动点的轨迹等；再结合具体问题合理地建立平面直角坐标系，用代数语言描述这些特征与问题；最后，借助几何图形的特点，形成解决问题的思路，通过直观想象和代数运算得到结果，并给出几何解释，解决问题。",
+      "text_sha256": "7f362365673285dda5ac3a15c9a97d46f30cb18783815bac5b065cf32edd43ca"
+    },
+    {
+      "document": "docs/05_选择性必修课程要求.md",
+      "pdf_pages": [
+        46,
+        47
+      ],
+      "book_pages": [
+        43,
+        44
+      ],
+      "source_sha256": "fc9258bb37ed2e052a4b1be608865a5481f770ae7e28ce536e835d2354353f86",
+      "id": "c50fc92e07b70403:s2",
+      "chunk_id": "c50fc92e07b70403",
+      "heading": "主题二 几何与代数 / 【教学提示】",
+      "course_type": "selective_compulsory",
+      "kind": "teaching",
+      "topics": [
+        "空间向量",
+        "解析几何",
+        "圆锥曲线"
+      ],
+      "optional": false,
+      "excerpt_span": [
+        470,
+        533
+      ],
+      "text": "应充分发挥信息技术的作用，通过计算机软件向学生演示方程中参数的变化对方程所表示的曲线的影响，使学生进一步理解曲线与方程的关系。",
+      "text_sha256": "a6b1f4ab11214556d7bbe1f8987653e8e04ed293fcf495a5b8500ed538095dc5"
+    },
+    {
+      "document": "docs/05_选择性必修课程要求.md",
+      "pdf_pages": [
+        46,
+        47
+      ],
+      "book_pages": [
+        43,
+        44
+      ],
+      "source_sha256": "fc9258bb37ed2e052a4b1be608865a5481f770ae7e28ce536e835d2354353f86",
+      "id": "c50fc92e07b70403:s3",
+      "chunk_id": "c50fc92e07b70403",
+      "heading": "主题二 几何与代数 / 【教学提示】",
+      "course_type": "selective_compulsory",
+      "kind": "teaching",
+      "topics": [
+        "解析几何"
+      ],
+      "optional": false,
+      "excerpt_span": [
+        535,
+        614
+      ],
+      "text": "在教学中，可以组织学生收集、阅读平面解析几何的形成与发展的历史资料，撰写小论文，论述平面解析几何发展的过程、重要结果、主要人物、关键事件及其对人类文明的贡献。",
+      "text_sha256": "da9c885841c0f71794ac8e576f2d64e9389af104c324bd84cb3f19c57e6d71df"
+    },
+    {
+      "document": "docs/05_选择性必修课程要求.md",
+      "pdf_pages": [
+        47,
+        48
+      ],
+      "book_pages": [
+        44,
+        45
+      ],
+      "source_sha256": "fc9258bb37ed2e052a4b1be608865a5481f770ae7e28ce536e835d2354353f86",
+      "id": "1ed1eb6a93b5a9bd:s1",
+      "chunk_id": "1ed1eb6a93b5a9bd",
+      "heading": "主题二 几何与代数 / 【学业要求】",
+      "course_type": "selective_compulsory",
+      "kind": "achievement",
+      "topics": [
+        "空间向量"
+      ],
+      "optional": false,
+      "excerpt_span": [
+        0,
+        118
+      ],
+      "text": "### 【学业要求】\n\n能够理解空间向量的概念、运算、背景和作用；能够依托空间向量建立空间图形及图形关系的想象力；能够掌握空间向量基本定理，体会其作用，并能简单应用；能够运用空间向量解决一些简单的实际问题，体会用向量解决一类问题的思路。",
+      "text_sha256": "b7be95d84959c5728b9464855b91584e2a1e47cb0b7cccfa3f77f9e350cb54df"
+    },
+    {
+      "document": "docs/05_选择性必修课程要求.md",
+      "pdf_pages": [
+        47,
+        48
+      ],
+      "book_pages": [
+        44,
+        45
+      ],
+      "source_sha256": "fc9258bb37ed2e052a4b1be608865a5481f770ae7e28ce536e835d2354353f86",
+      "id": "1ed1eb6a93b5a9bd:s2",
+      "chunk_id": "1ed1eb6a93b5a9bd",
+      "heading": "主题二 几何与代数 / 【学业要求】",
+      "course_type": "selective_compulsory",
+      "kind": "achievement",
+      "topics": [
+        "解析几何"
+      ],
+      "optional": false,
+      "excerpt_span": [
+        120,
+        250
+      ],
+      "text": "能够掌握平面解析几何解决问题的基本过程：根据具体问题情境的特点，建立平面直角坐标系；根据几何问题和图形的特点，用代数语言把几何问题转化为代数问题；根据对几何问题（图形）的分析，探索解决问题的思路；运用代数方法得到结论；给出代数结论合理的几何解释，解决几何问题。",
+      "text_sha256": "36375df1b8a9f4c78ba504b3ac309d929060955b6f7902685bd10a0dd85137a5"
+    },
+    {
+      "document": "docs/05_选择性必修课程要求.md",
+      "pdf_pages": [
+        47,
+        48
+      ],
+      "book_pages": [
+        44,
+        45
+      ],
+      "source_sha256": "fc9258bb37ed2e052a4b1be608865a5481f770ae7e28ce536e835d2354353f86",
+      "id": "1ed1eb6a93b5a9bd:s3",
+      "chunk_id": "1ed1eb6a93b5a9bd",
+      "heading": "主题二 几何与代数 / 【学业要求】",
+      "course_type": "selective_compulsory",
+      "kind": "achievement",
+      "topics": [
+        "解析几何",
+        "圆锥曲线"
+      ],
+      "optional": false,
+      "excerpt_span": [
+        252,
+        340
+      ],
+      "text": "能够根据不同的情境，建立平面直线和圆的方程，建立椭圆、抛物线、双曲线的标准方程，能够运用代数的方法研究上述曲线之间的基本关系，能够运用平面解析几何的思想解决一些简单的实际问题。",
+      "text_sha256": "6544de540a7b967a6a8bc956d36b3aad08e92e9406de7c7d121bedb5ddcc9734"
+    },
+    {
+      "document": "docs/05_选择性必修课程要求.md",
+      "pdf_pages": [
+        47,
+        48
+      ],
+      "book_pages": [
+        44,
+        45
+      ],
+      "source_sha256": "fc9258bb37ed2e052a4b1be608865a5481f770ae7e28ce536e835d2354353f86",
+      "id": "1ed1eb6a93b5a9bd:s4",
+      "chunk_id": "1ed1eb6a93b5a9bd",
+      "heading": "主题二 几何与代数 / 【学业要求】",
+      "course_type": "selective_compulsory",
+      "kind": "achievement",
+      "topics": [
+        "解析几何"
+      ],
+      "optional": false,
+      "excerpt_span": [
+        342,
+        439
+      ],
+      "text": "能够借助基本图形及其关系建立空间观念，能有选择地运用向量运算、坐标表达、推理论证等思想方法探索典型图形的性质、判定和应\n\n用，能运用数形结合的思想刻画事物的规律以及事物之间的关系，建立几何直观。",
+      "text_sha256": "a08640e30b60e3fe2a9fcf7be4d6347ae3a606bd84b59a6eb541d9588238e3b0"
+    },
+    {
+      "document": "docs/05_选择性必修课程要求.md",
+      "pdf_pages": [
+        47,
+        48
+      ],
+      "book_pages": [
+        44,
+        45
+      ],
+      "source_sha256": "fc9258bb37ed2e052a4b1be608865a5481f770ae7e28ce536e835d2354353f86",
+      "id": "1ed1eb6a93b5a9bd:s5",
+      "chunk_id": "1ed1eb6a93b5a9bd",
+      "heading": "主题二 几何与代数 / 【学业要求】",
+      "course_type": "selective_compulsory",
+      "kind": "achievement",
+      "topics": [
+        "空间向量",
+        "解析几何",
+        "圆锥曲线"
+      ],
+      "optional": false,
+      "excerpt_span": [
+        441,
+        472
+      ],
+      "text": "重点提升直观想象、数学运算、数学建模、逻辑推理和数学抽象素养。",
+      "text_sha256": "4293e15390a95189081d7bdcbb1083aa1b8c888850aa39b77ed31b8f1844e0c8"
+    },
+    {
+      "document": "docs/05_选择性必修课程要求.md",
+      "pdf_pages": [
+        48
+      ],
+      "book_pages": [
+        45
+      ],
+      "source_sha256": "fc9258bb37ed2e052a4b1be608865a5481f770ae7e28ce536e835d2354353f86",
+      "id": "fae240ed135ee3d8",
+      "chunk_id": "fae240ed135ee3d8",
+      "heading": "主题三 概率与统计 / 【内容要求】 / 1. 计数原理",
+      "course_type": "selective_compulsory",
+      "kind": "content",
+      "topics": [
+        "计数原理"
+      ],
+      "optional": false,
+      "excerpt_span": [
+        0,
+        126
+      ],
+      "text": "#### 1. 计数原理\n\n分类加法计数原理和分步乘法计数原理是解决计数问题的基础，称为基本计数原理。本单元的学习，可以帮助学生理解两个基本计数原理，运用计数原理探索排列、组合、二项式定理等问题。\n\n内容包括：两个基本计数原理、排列与组合、二项式定理。",
+      "text_sha256": "fa7a042d6400e9e29d880601febab9d28f09471b868b2f574e04246ee3086aea"
+    },
+    {
+      "document": "docs/05_选择性必修课程要求.md",
+      "pdf_pages": [
+        48
+      ],
+      "book_pages": [
+        45
+      ],
+      "source_sha256": "fc9258bb37ed2e052a4b1be608865a5481f770ae7e28ce536e835d2354353f86",
+      "id": "ebd823ebd9a30d4c",
+      "chunk_id": "ebd823ebd9a30d4c",
+      "heading": "主题三 概率与统计 / 【内容要求】 / 1. 计数原理 / （1）两个基本计数原理",
+      "course_type": "selective_compulsory",
+      "kind": "content",
+      "topics": [
+        "计数原理"
+      ],
+      "optional": false,
+      "excerpt_span": [
+        0,
+        48
+      ],
+      "text": "##### （1）两个基本计数原理\n\n通过实例，理解分类加法计数原理、分步乘法计数原理及其意义。",
+      "text_sha256": "3f1ce3c9b73a237652d29b2013a9b18fcd93833c4ce65145473585d7200a7b3a"
+    },
+    {
+      "document": "docs/05_选择性必修课程要求.md",
+      "pdf_pages": [
+        48
+      ],
+      "book_pages": [
+        45
+      ],
+      "source_sha256": "fc9258bb37ed2e052a4b1be608865a5481f770ae7e28ce536e835d2354353f86",
+      "id": "c693892546a72207",
+      "chunk_id": "c693892546a72207",
+      "heading": "主题三 概率与统计 / 【内容要求】 / 1. 计数原理 / （2）排列与组合",
+      "course_type": "selective_compulsory",
+      "kind": "content",
+      "topics": [
+        "计数原理"
+      ],
+      "optional": false,
+      "excerpt_span": [
+        0,
+        53
+      ],
+      "text": "##### （2）排列与组合\n\n通过实例，理解排列、组合的概念；能利用计数原理推导排列数公式、组合数公式。",
+      "text_sha256": "82eb98af8a3e7bb93f0854f7b41fed208cca34112dcbf98618a0d89a6a439059"
+    },
+    {
+      "document": "docs/05_选择性必修课程要求.md",
+      "pdf_pages": [
+        48
+      ],
+      "book_pages": [
+        45
+      ],
+      "source_sha256": "fc9258bb37ed2e052a4b1be608865a5481f770ae7e28ce536e835d2354353f86",
+      "id": "122987705c13f2ca",
+      "chunk_id": "122987705c13f2ca",
+      "heading": "主题三 概率与统计 / 【内容要求】 / 1. 计数原理 / （3）二项式定理",
+      "course_type": "selective_compulsory",
+      "kind": "content",
+      "topics": [
+        "计数原理"
+      ],
+      "optional": false,
+      "excerpt_span": [
+        0,
+        73
+      ],
+      "text": "##### （3）二项式定理\n\n能用多项式运算法则和计数原理证明二项式定理（参见案例 18，19），会用二项式定理解决与二项展开式有关的简单问题。",
+      "text_sha256": "3377bfd325f9ee6c5b8b6737e53ce0958aaaf9263afb963dd13ef98681d3032e"
+    },
+    {
+      "document": "docs/05_选择性必修课程要求.md",
+      "pdf_pages": [
+        49
+      ],
+      "book_pages": [
+        46
+      ],
+      "source_sha256": "fc9258bb37ed2e052a4b1be608865a5481f770ae7e28ce536e835d2354353f86",
+      "id": "4b610bef3e5223a7",
+      "chunk_id": "4b610bef3e5223a7",
+      "heading": "主题三 概率与统计 / 【内容要求】 / 2. 概率",
+      "course_type": "selective_compulsory",
+      "kind": "content",
+      "topics": [
+        "随机变量与分布",
+        "概率"
+      ],
+      "optional": false,
+      "excerpt_span": [
+        0,
+        194
+      ],
+      "text": "#### 2. 概率\n\n本单元的学习，可以帮助学生了解条件概率，理解条件概率与独立性的关系，能进行简单计算；感悟离散型随机变量及其分布列的含义，知道可以通过随机变量更好地刻画随机现象；理解伯努利试验，掌握二项分布，了解超几何分布；感悟服从正态分布的随机变量，知道连续型随机变量；基于随机变量及其分布解决简单的实际问题。\n\n内容包括：随机事件的条件概率、离散型随机变量及其分布列、正态分布。",
+      "text_sha256": "3b3e18a58ff99b7f3219f9a5e3469d54918ec6489525891bf33b2005a83aabb6"
+    },
+    {
+      "document": "docs/05_选择性必修课程要求.md",
+      "pdf_pages": [
+        49
+      ],
+      "book_pages": [
+        46
+      ],
+      "source_sha256": "fc9258bb37ed2e052a4b1be608865a5481f770ae7e28ce536e835d2354353f86",
+      "id": "12d9464dc43c390d",
+      "chunk_id": "12d9464dc43c390d",
+      "heading": "主题三 概率与统计 / 【内容要求】 / 2. 概率 / （1）随机事件的条件概率",
+      "course_type": "selective_compulsory",
+      "kind": "content",
+      "topics": [
+        "条件概率",
+        "概率"
+      ],
+      "optional": false,
+      "excerpt_span": [
+        0,
+        128
+      ],
+      "text": "##### （1）随机事件的条件概率\n\n①结合古典概型，了解条件概率，能计算简单随机事件的条件概率。\n\n②结合古典概型，理解条件概率与独立性的关系。\n\n③结合古典概型，会利用乘法公式计算概率。\n\n④结合古典概型，会利用全概率公式计算概率。*了解贝叶斯公式。",
+      "text_sha256": "6c6eb89d52b8923d5989ac2b43ea5cc6f6ece1c35e0c8582e05dfb270b81c989"
+    },
+    {
+      "document": "docs/05_选择性必修课程要求.md",
+      "pdf_pages": [
+        49
+      ],
+      "book_pages": [
+        46
+      ],
+      "source_sha256": "fc9258bb37ed2e052a4b1be608865a5481f770ae7e28ce536e835d2354353f86",
+      "id": "4d95b1cd6e795aeb",
+      "chunk_id": "4d95b1cd6e795aeb",
+      "heading": "主题三 概率与统计 / 【内容要求】 / 2. 概率 / （2）离散型随机变量及其分布列",
+      "course_type": "selective_compulsory",
+      "kind": "content",
+      "topics": [
+        "随机变量与分布",
+        "概率"
+      ],
+      "optional": false,
+      "excerpt_span": [
+        0,
+        147
+      ],
+      "text": "##### （2）离散型随机变量及其分布列\n\n①通过具体实例，了解离散型随机变量的概念，理解离散型随机变量分布列及其数字特征（均值、方差）。\n\n②通过具体实例，理解伯努利试验，掌握二项分布及其数字特征，并能解决简单的实际问题。\n\n③通过具体实例，了解超几何分布及其均值，并能解决简单的实际问题。",
+      "text_sha256": "be36e2a9e567a7f1121f259aedafe8f89315cfcd30fd438eb3d98444cf7b9bd6"
+    },
+    {
+      "document": "docs/05_选择性必修课程要求.md",
+      "pdf_pages": [
+        49
+      ],
+      "book_pages": [
+        46
+      ],
+      "source_sha256": "fc9258bb37ed2e052a4b1be608865a5481f770ae7e28ce536e835d2354353f86",
+      "id": "b9197c2aa1e238a3",
+      "chunk_id": "b9197c2aa1e238a3",
+      "heading": "主题三 概率与统计 / 【内容要求】 / 2. 概率 / （3）正态分布",
+      "course_type": "selective_compulsory",
+      "kind": "content",
+      "topics": [
+        "随机变量与分布",
+        "概率"
+      ],
+      "optional": false,
+      "excerpt_span": [
+        0,
+        89
+      ],
+      "text": "##### （3）正态分布\n\n①通过误差模型，了解服从正态分布的随机变量。通过具体实例，借助频率分布直方图的几何直观，了解正态分布的特征。\n\n②了解正态分布的均值、方差及其含义。",
+      "text_sha256": "53ce51a61180601a98044d403e309e8282c5fef522e8bdb35fb7df358b9bb03f"
+    },
+    {
+      "document": "docs/05_选择性必修课程要求.md",
+      "pdf_pages": [
+        50
+      ],
+      "book_pages": [
+        47
+      ],
+      "source_sha256": "fc9258bb37ed2e052a4b1be608865a5481f770ae7e28ce536e835d2354353f86",
+      "id": "e0a6fd739a64d80a",
+      "chunk_id": "e0a6fd739a64d80a",
+      "heading": "主题三 概率与统计 / 【内容要求】 / 3. 统计",
+      "course_type": "selective_compulsory",
+      "kind": "content",
+      "topics": [
+        "统计推断",
+        "统计"
+      ],
+      "optional": false,
+      "excerpt_span": [
+        0,
+        140
+      ],
+      "text": "#### 3. 统计\n\n本单元的学习，可以帮助学生了解样本相关系数的统计含义，了解一元线性回归模型和 $2\\times 2$ 列联表，运用这些方法解决简单的实际问题。会利用统计软件进行数据分析。\n\n内容包括：成对数据的统计相关性、一元线性回归模型、$2\\times 2$ 列联表。",
+      "text_sha256": "325d65411840a55af47173ac7f9ee33347f03a01af8d109d4774fc7b813e53a9"
+    },
+    {
+      "document": "docs/05_选择性必修课程要求.md",
+      "pdf_pages": [
+        50
+      ],
+      "book_pages": [
+        47
+      ],
+      "source_sha256": "fc9258bb37ed2e052a4b1be608865a5481f770ae7e28ce536e835d2354353f86",
+      "id": "80060091765dc068",
+      "chunk_id": "80060091765dc068",
+      "heading": "主题三 概率与统计 / 【内容要求】 / 3. 统计 / （1）成对数据的统计相关性",
+      "course_type": "selective_compulsory",
+      "kind": "content",
+      "topics": [
+        "统计推断",
+        "统计"
+      ],
+      "optional": false,
+      "excerpt_span": [
+        0,
+        91
+      ],
+      "text": "##### （1）成对数据的统计相关性\n\n①结合实例，了解样本相关系数的统计含义，了解样本相关系数与标准化数据向量夹角的关系。\n\n②结合实例，会通过相关系数比较多组成对数据的相关性。",
+      "text_sha256": "550f366de0f09f302a6887f5ccaec0e2c981d41832575b12d3d7b4addb7449b4"
+    },
+    {
+      "document": "docs/05_选择性必修课程要求.md",
+      "pdf_pages": [
+        50
+      ],
+      "book_pages": [
+        47
+      ],
+      "source_sha256": "fc9258bb37ed2e052a4b1be608865a5481f770ae7e28ce536e835d2354353f86",
+      "id": "b49bbeec7686b8e1",
+      "chunk_id": "b49bbeec7686b8e1",
+      "heading": "主题三 概率与统计 / 【内容要求】 / 3. 统计 / （2）一元线性回归模型",
+      "course_type": "selective_compulsory",
+      "kind": "content",
+      "topics": [
+        "统计推断",
+        "统计"
+      ],
+      "optional": false,
+      "excerpt_span": [
+        0,
+        120
+      ],
+      "text": "##### （2）一元线性回归模型\n\n①结合具体实例，了解一元线性回归模型的含义，了解模型参数的统计意义，了解最小二乘原理，掌握一元线性回归模型参数的最小二乘估计方法，会使用相关的统计软件。\n\n②针对实际问题，会用一元线性回归模型进行预测。",
+      "text_sha256": "98d96e3b283ada87676054a742780b77fcf56cf0af5818c88fa2d7be6c4a8228"
+    },
+    {
+      "document": "docs/05_选择性必修课程要求.md",
+      "pdf_pages": [
+        50
+      ],
+      "book_pages": [
+        47
+      ],
+      "source_sha256": "fc9258bb37ed2e052a4b1be608865a5481f770ae7e28ce536e835d2354353f86",
+      "id": "8867ec2544849d49",
+      "chunk_id": "8867ec2544849d49",
+      "heading": "主题三 概率与统计 / 【内容要求】 / 3. 统计 / （3）$2\\times 2$ 列联表",
+      "course_type": "selective_compulsory",
+      "kind": "content",
+      "topics": [
+        "统计推断",
+        "统计"
+      ],
+      "optional": false,
+      "excerpt_span": [
+        0,
+        92
+      ],
+      "text": "##### （3）$2\\times 2$ 列联表\n\n①通过实例，理解 $2\\times 2$ 列联表的统计意义。\n\n②通过实例，了解 $2\\times 2$ 列联表独立性检验及其应用。",
+      "text_sha256": "409d9164bd3ddf4042111886ff0b1991ad7af08f08517ef9bddb54d3e106e894"
+    },
+    {
+      "document": "docs/05_选择性必修课程要求.md",
+      "pdf_pages": [
+        50,
+        51
+      ],
+      "book_pages": [
+        47,
+        48
+      ],
+      "source_sha256": "fc9258bb37ed2e052a4b1be608865a5481f770ae7e28ce536e835d2354353f86",
+      "id": "bf564cafafe5038a:s1",
+      "chunk_id": "bf564cafafe5038a",
+      "heading": "主题三 概率与统计 / 【教学提示】",
+      "course_type": "selective_compulsory",
+      "kind": "teaching",
+      "topics": [
+        "计数原理",
+        "条件概率",
+        "概率",
+        "随机变量与分布",
+        "统计",
+        "统计推断"
+      ],
+      "optional": false,
+      "excerpt_span": [
+        0,
+        80
+      ],
+      "text": "### 【教学提示】\n\n教师应通过典型案例开展教学活动，案例的情境应是丰富的、有趣的、学生熟悉的。在案例教学中要重视过程，层次清楚，从具体到抽象，从实际到理论。",
+      "text_sha256": "6ca94589bc4be06278284d3b85bfe782a21a7c2df11547d6b4cd8c8bac95a684"
+    },
+    {
+      "document": "docs/05_选择性必修课程要求.md",
+      "pdf_pages": [
+        50,
+        51
+      ],
+      "book_pages": [
+        47,
+        48
+      ],
+      "source_sha256": "fc9258bb37ed2e052a4b1be608865a5481f770ae7e28ce536e835d2354353f86",
+      "id": "bf564cafafe5038a:s2",
+      "chunk_id": "bf564cafafe5038a",
+      "heading": "主题三 概率与统计 / 【教学提示】",
+      "course_type": "selective_compulsory",
+      "kind": "teaching",
+      "topics": [
+        "计数原理"
+      ],
+      "optional": false,
+      "excerpt_span": [
+        82,
+        147
+      ],
+      "text": "在计数原理的教学中，应结合具体情境，引导学生理解许多计数问题可以归结为分类和分步两类问题，引导学生根据计数原理分析问题、解决问题。",
+      "text_sha256": "f2f1b99a4c8b7118392be50cce8b0e0be9b39b4d4f3ea70211a4f32da6c8d63c"
+    },
+    {
+      "document": "docs/05_选择性必修课程要求.md",
+      "pdf_pages": [
+        50,
+        51
+      ],
+      "book_pages": [
+        47,
+        48
+      ],
+      "source_sha256": "fc9258bb37ed2e052a4b1be608865a5481f770ae7e28ce536e835d2354353f86",
+      "id": "bf564cafafe5038a:s3",
+      "chunk_id": "bf564cafafe5038a",
+      "heading": "主题三 概率与统计 / 【教学提示】",
+      "course_type": "selective_compulsory",
+      "kind": "teaching",
+      "topics": [
+        "概率",
+        "条件概率",
+        "随机变量与分布"
+      ],
+      "optional": false,
+      "excerpt_span": [
+        149,
+        302
+      ],
+      "text": "在概率的教学中，应引导学生通过具体实例，理解可以用随机变量更好地刻画随机现象，感悟随机变量与随机事件的关系；理解随机事件\n\n独立性与条件概率之间的关系；通过二项分布、超几何分布、正态分布的学习，理解随机变量及其分布。在教学过程中，应在引导学生利用所学知识解决一些实际问题的基础上，适当进行严格、准确的描述。",
+      "text_sha256": "966847f044c46d12b5bd5039c881e73d93dcae91a9a8007a6594b1aa5b70d371"
+    },
+    {
+      "document": "docs/05_选择性必修课程要求.md",
+      "pdf_pages": [
+        50,
+        51
+      ],
+      "book_pages": [
+        47,
+        48
+      ],
+      "source_sha256": "fc9258bb37ed2e052a4b1be608865a5481f770ae7e28ce536e835d2354353f86",
+      "id": "bf564cafafe5038a:s4",
+      "chunk_id": "bf564cafafe5038a",
+      "heading": "主题三 概率与统计 / 【教学提示】",
+      "course_type": "selective_compulsory",
+      "kind": "teaching",
+      "topics": [
+        "随机变量与分布",
+        "统计",
+        "统计推断"
+      ],
+      "optional": false,
+      "excerpt_span": [
+        304,
+        462
+      ],
+      "text": "在统计的教学中，应通过具体案例，引导学生理解两个随机变量的相关性可以通过成对样本数据进行分析；理解利用一元线性回归模型可以研究变量之间的随机关系，进行预测；理解利用 $2 \\times 2$ 列联表可以检验两个随机变量的独立性。在教学过程中，应通过具体案例引导学生参与数据分析的全过程，并鼓励学生使用相应的统计软件。",
+      "text_sha256": "513b11aa5f137fbb18ea04c4910767218be933279a808c0f170ba54b11d17fe2"
+    },
+    {
+      "document": "docs/05_选择性必修课程要求.md",
+      "pdf_pages": [
+        51
+      ],
+      "book_pages": [
+        48
+      ],
+      "source_sha256": "fc9258bb37ed2e052a4b1be608865a5481f770ae7e28ce536e835d2354353f86",
+      "id": "5cb9d0040c4edfa6:s1",
+      "chunk_id": "5cb9d0040c4edfa6",
+      "heading": "主题三 概率与统计 / 【学业要求】",
+      "course_type": "selective_compulsory",
+      "kind": "achievement",
+      "topics": [
+        "计数原理"
+      ],
+      "optional": false,
+      "excerpt_span": [
+        0,
+        67
+      ],
+      "text": "### 【学业要求】\n\n能够结合具体实例，识别和理解分类加法计数原理和分步乘法计数原理及其作用，并能够运用这些原理解决简单的实际问题。",
+      "text_sha256": "ea981a2a81f3eb97bcbfcac600e31890b8a76b61892d24f74c2b97563621503f"
+    },
+    {
+      "document": "docs/05_选择性必修课程要求.md",
+      "pdf_pages": [
+        51
+      ],
+      "book_pages": [
+        48
+      ],
+      "source_sha256": "fc9258bb37ed2e052a4b1be608865a5481f770ae7e28ce536e835d2354353f86",
+      "id": "5cb9d0040c4edfa6:s2",
+      "chunk_id": "5cb9d0040c4edfa6",
+      "heading": "主题三 概率与统计 / 【学业要求】",
+      "course_type": "selective_compulsory",
+      "kind": "achievement",
+      "topics": [
+        "概率",
+        "计数原理"
+      ],
+      "optional": false,
+      "excerpt_span": [
+        69,
+        160
+      ],
+      "text": "能够结合具体实例，理解排列、组合、二项式定理与两个计数原理的关系，能够运用两个计数原理推导排列、组合、二项式定理的相关公式，并能够运用它们解决简单的实际问题，特别是概率中的某些问题。",
+      "text_sha256": "5936baeb9f0eecddb7b8ec544de16b3001f9e3503d886681817a727a2f8d894e"
+    },
+    {
+      "document": "docs/05_选择性必修课程要求.md",
+      "pdf_pages": [
+        51
+      ],
+      "book_pages": [
+        48
+      ],
+      "source_sha256": "fc9258bb37ed2e052a4b1be608865a5481f770ae7e28ce536e835d2354353f86",
+      "id": "5cb9d0040c4edfa6:s3",
+      "chunk_id": "5cb9d0040c4edfa6",
+      "heading": "主题三 概率与统计 / 【学业要求】",
+      "course_type": "selective_compulsory",
+      "kind": "achievement",
+      "topics": [
+        "概率",
+        "条件概率",
+        "随机变量与分布"
+      ],
+      "optional": false,
+      "excerpt_span": [
+        162,
+        259
+      ],
+      "text": "能够结合具体实例，理解随机事件的独立性和条件概率的关系，理解离散型随机变量在描述随机现象中的作用，掌握两个基本概率模型及其应用，了解正态分布的作用，进一步深入理解随机思想在解决实际问题中的作用。",
+      "text_sha256": "00c65e88ff18ef85877651b0c284e0542f3d580fef5201c0ec1a8cfa4185d609"
+    },
+    {
+      "document": "docs/05_选择性必修课程要求.md",
+      "pdf_pages": [
+        51
+      ],
+      "book_pages": [
+        48
+      ],
+      "source_sha256": "fc9258bb37ed2e052a4b1be608865a5481f770ae7e28ce536e835d2354353f86",
+      "id": "5cb9d0040c4edfa6:s4",
+      "chunk_id": "5cb9d0040c4edfa6",
+      "heading": "主题三 概率与统计 / 【学业要求】",
+      "course_type": "selective_compulsory",
+      "kind": "achievement",
+      "topics": [
+        "统计",
+        "统计推断"
+      ],
+      "optional": false,
+      "excerpt_span": [
+        261,
+        347
+      ],
+      "text": "能够解决成对数据统计相关性的简单实际问题。能够结合具体实例，掌握运用一元线性回归分析的方法。了解运用 $2 \\times 2$ 列联表的方法，解决独立性检验的简单实际问题。",
+      "text_sha256": "020625222ea529ffd84c29394906b302fa9a99499ae5b08e21f1cf2c571bf916"
+    },
+    {
+      "document": "docs/05_选择性必修课程要求.md",
+      "pdf_pages": [
+        51
+      ],
+      "book_pages": [
+        48
+      ],
+      "source_sha256": "fc9258bb37ed2e052a4b1be608865a5481f770ae7e28ce536e835d2354353f86",
+      "id": "5cb9d0040c4edfa6:s5",
+      "chunk_id": "5cb9d0040c4edfa6",
+      "heading": "主题三 概率与统计 / 【学业要求】",
+      "course_type": "selective_compulsory",
+      "kind": "achievement",
+      "topics": [
+        "概率",
+        "随机变量与分布",
+        "统计"
+      ],
+      "optional": false,
+      "excerpt_span": [
+        349,
+        435
+      ],
+      "text": "能够选择合适的方法计算概率，能够选择合适的概率模型研究随机现象，能够用随机变量及其分布解释随机现象的规律，能够合理构建统计模型来描述成对数据的统计规律，具有数据分析的能力。",
+      "text_sha256": "3dee7ca38ec665fa0c36898307ee446cab26c9e358379d3f00517237f8379d9d"
+    },
+    {
+      "document": "docs/05_选择性必修课程要求.md",
+      "pdf_pages": [
+        51
+      ],
+      "book_pages": [
+        48
+      ],
+      "source_sha256": "fc9258bb37ed2e052a4b1be608865a5481f770ae7e28ce536e835d2354353f86",
+      "id": "5cb9d0040c4edfa6:s6",
+      "chunk_id": "5cb9d0040c4edfa6",
+      "heading": "主题三 概率与统计 / 【学业要求】",
+      "course_type": "selective_compulsory",
+      "kind": "achievement",
+      "topics": [
+        "计数原理",
+        "条件概率",
+        "概率",
+        "随机变量与分布",
+        "统计",
+        "统计推断"
+      ],
+      "optional": false,
+      "excerpt_span": [
+        437,
+        468
+      ],
+      "text": "重点提升数据分析、数学建模、逻辑推理、数学运算和数学抽象素养。",
+      "text_sha256": "a5e645809341dd8f246e23defae81a8ec7810f8b76c3d7a06751aa3764b9c8fd"
+    },
+    {
+      "document": "docs/05_选择性必修课程要求.md",
+      "pdf_pages": [
+        52
+      ],
+      "book_pages": [
+        49
+      ],
+      "source_sha256": "fc9258bb37ed2e052a4b1be608865a5481f770ae7e28ce536e835d2354353f86",
+      "id": "354a12b0938938b8",
+      "chunk_id": "354a12b0938938b8",
+      "heading": "主题四 数学建模活动与数学探究活动 / 【教学提示】",
+      "course_type": "selective_compulsory",
+      "kind": "teaching",
+      "topics": [
+        "数学建模与探究"
+      ],
+      "optional": false,
+      "excerpt_span": [
+        0,
+        239
+      ],
+      "text": "### 【教学提示】\n\n教师在学生初步经历数学建模活动与数学探究活动的基础上，可以鼓励学生完善必修课程中的研究课题，将必修中得到的结果与实际需求进行对比，进一步完善解决问题的过程，得到有价值的结果，改进研究报告；也可以鼓励学生自主选择新的研究课题，经历开题、做题、结题的过程，撰写研究报告或小论文，开展结题交流活动。教师应组织评价小组，可以邀请校外专家、社会人士、家长等参与评价，也可以组织学生互评。在数学建模活动与数学探究活动过程中，教师要引导学生遵守学术规范，坚守诚信底线。",
+      "text_sha256": "3fdb101dbb9c3b9e0e2506603175e5b37a57b1335ce903181515f243fa9cce2b"
+    },
+    {
+      "document": "docs/05_选择性必修课程要求.md",
+      "pdf_pages": [
+        52
+      ],
+      "book_pages": [
+        49
+      ],
+      "source_sha256": "fc9258bb37ed2e052a4b1be608865a5481f770ae7e28ce536e835d2354353f86",
+      "id": "f76af0d443c4f926:s1",
+      "chunk_id": "f76af0d443c4f926",
+      "heading": "主题四 数学建模活动与数学探究活动 / 【学业要求】",
+      "course_type": "selective_compulsory",
+      "kind": "achievement",
+      "topics": [
+        "数学建模与探究"
+      ],
+      "optional": false,
+      "excerpt_span": [
+        0,
+        136
+      ],
+      "text": "### 【学业要求】\n\n学生应与教师协商改进必修阶段完成的课题研究，进一步明确研究问题，改进解决问题的思路，得到更为符合实际的结果，并撰写研究报告；学生也可以自主选择新的研究课题，经历开题、做题和结题的过程。采用多种方式展示研究成果，积极参加各种级别的青少年科技展示活动。",
+      "text_sha256": "b388887a8459ebf801b15141f044a0abaf2d62fd41b48df7d8f24e4868429544"
+    },
+    {
+      "document": "docs/05_选择性必修课程要求.md",
+      "pdf_pages": [
+        52
+      ],
+      "book_pages": [
+        49
+      ],
+      "source_sha256": "fc9258bb37ed2e052a4b1be608865a5481f770ae7e28ce536e835d2354353f86",
+      "id": "f76af0d443c4f926:s2",
+      "chunk_id": "f76af0d443c4f926",
+      "heading": "主题四 数学建模活动与数学探究活动 / 【学业要求】",
+      "course_type": "selective_compulsory",
+      "kind": "achievement",
+      "topics": [
+        "数学建模与探究"
+      ],
+      "optional": false,
+      "excerpt_span": [
+        138,
+        174
+      ],
+      "text": "重点提升数学建模、数学抽象、数据分析、数学运算、逻辑推理和直观想象素养。",
+      "text_sha256": "e08bf9c7f80208fe46a235f6aa42e8f01f529f5ba44cbef91465c7dfd5391a20"
+    },
+    {
+      "document": "docs/07_学业质量标准.md",
+      "pdf_pages": [
+        75
+      ],
+      "book_pages": [
+        72
+      ],
+      "source_sha256": "fc9258bb37ed2e052a4b1be608865a5481f770ae7e28ce536e835d2354353f86",
+      "id": "417dc8d1640c231b",
+      "chunk_id": "417dc8d1640c231b",
+      "heading": "（一）学业质量内涵",
+      "course_type": "general",
+      "kind": "general",
+      "topics": [],
+      "optional": false,
+      "excerpt_span": [
+        0,
+        123
+      ],
+      "text": "## （一）学业质量内涵\n\n学业质量是学生在完成本学科课程学习后学业成就的综合表现，体现课程目标的达成程度，反映核心素养发展状况。学业质量标准依据学科核心素养水平划分，结合结构化课程内容，描述学习结果的典型表现，整体标识和刻画学业质量的不同水平。",
+      "text_sha256": "c11bac8f57e55f395eedc820b2b92d51ba1f891d07cf6d6ecab6395890827692"
+    },
+    {
+      "document": "docs/07_学业质量标准.md",
+      "pdf_pages": [
+        78
+      ],
+      "book_pages": [
+        75
+      ],
+      "source_sha256": "fc9258bb37ed2e052a4b1be608865a5481f770ae7e28ce536e835d2354353f86",
+      "id": "cb10cf90c827c83d",
+      "chunk_id": "cb10cf90c827c83d",
+      "heading": "（三）学业质量标准的应用",
+      "course_type": "general",
+      "kind": "general",
+      "topics": [],
+      "optional": false,
+      "excerpt_span": [
+        0,
+        125
+      ],
+      "text": "## （三）学业质量标准的应用\n\n学业质量标准是学校课程设计、教学、评价和考试的依据。数学学业质量水平一是高中毕业应当达到的要求，也是数学学业水平考试命题的依据。数学高考命题不超过学业质量水平二。数学学业质量水平三为高等学校选拔拔尖创新人才提供参考。",
+      "text_sha256": "de178a41f5c9aac4be0ade81e8a8b68cd5c6de6e7b7a60b42579662c8f73a001"
+    },
+    {
+      "document": "docs/08_实施建议.md",
+      "pdf_pages": [
+        85,
+        86
+      ],
+      "book_pages": [
+        82,
+        83
+      ],
+      "source_sha256": "fc9258bb37ed2e052a4b1be608865a5481f770ae7e28ce536e835d2354353f86",
+      "id": "56d097251ea8515e",
+      "chunk_id": "56d097251ea8515e",
+      "heading": "（二）学业水平考试与高考建议 / 1. 考试理念",
+      "course_type": "general",
+      "kind": "general",
+      "topics": [],
+      "optional": false,
+      "excerpt_span": [
+        0,
+        581
+      ],
+      "text": "### 1. 考试理念\n\n坚持育人导向，推动教学改革。确保命题的政治性、科学性、公平性和规范性；充分发挥考试对教学的正向引导作用；应引导学生德智体美劳全面发展，适应人才培养的不同需要。数学学业水平考试是为了保障实现高中数学教育教学质量的基本要求，数学高考是为高等学校选拔人才提供依据。\n\n依据学业质量，促进素养发展。考试命题应按照学业要求和学业质\n\n量的不同水平，整体考查学生数学学科核心素养的达成程度，促进数学学科核心素养的发展，体现数学的科学价值、应用价值、文化价值和审美价值。\n\n依托课程主线，突出数学本质。考试命题的内容应围绕数学内容主线，突出数学本质。注重考查基础知识、基本技能、基本思想和基本活动经验，注重考查发现和提出问题、分析和解决问题的能力，注重考查对数学与生活和其他学科之间联系的理解，特别关注考查解决实际问题的数学建模能力。\n\n注重思维考查，创新试题形式。考试命题应注重思维能力的考查，强调通性通法，淡化解题技巧，融入数学文化。在注重基础性、应用性和综合性的基础上，创新试题形式。考试命题应关注情境和问题的设计，问题情境的设计应自然、合理，增强试题的探究性、开放性。处理好考试时间和题量的关系，合理设置题量，给学生充足的思考时间；逐步减少选择题、填空题的题量；适度增加试题的思维量；关注内容与难度的分布、数学学科核心素养的比重与水平的分布。",
+      "text_sha256": "bf7ff9b5ae3ca8fa8770e49eff011185f1d48dbcb4ea61c3ba7ed10809156dc3"
+    },
+    {
+      "document": "docs/08_实施建议.md",
+      "pdf_pages": [
+        86
+      ],
+      "book_pages": [
+        83
+      ],
+      "source_sha256": "fc9258bb37ed2e052a4b1be608865a5481f770ae7e28ce536e835d2354353f86",
+      "id": "62e791a94aab0a05",
+      "chunk_id": "62e791a94aab0a05",
+      "heading": "（二）学业水平考试与高考建议 / 2. 考试设计 / （1）设计要素",
+      "course_type": "general",
+      "kind": "general",
+      "topics": [],
+      "optional": false,
+      "excerpt_span": [
+        0,
+        154
+      ],
+      "text": "#### （1）设计要素\n\n考试范围。学业水平考试的内容范围是必修课程内容，高考的内容范围是必修课程内容和选择性必修课程内容。\n\n考试形式。学业水平考试一般采用闭卷笔试形式，在条件具备的情况下，也可采用计算机化考试，适当加入完成课题或论文等形式。高考采用闭卷笔试形式。根据考试形式和考试目的合理安排考试时间。",
+      "text_sha256": "d1446a17218b6592b3c2f0893b36c5cb2434c6cf463f423635dda556d95a5e14"
+    },
+    {
+      "document": "docs/08_实施建议.md",
+      "pdf_pages": [
+        86,
+        87
+      ],
+      "book_pages": [
+        83,
+        84
+      ],
+      "source_sha256": "fc9258bb37ed2e052a4b1be608865a5481f770ae7e28ce536e835d2354353f86",
+      "id": "42bec329d48e7117",
+      "chunk_id": "42bec329d48e7117",
+      "heading": "（二）学业水平考试与高考建议 / 2. 考试设计 / （2）试卷结构",
+      "course_type": "general",
+      "kind": "general",
+      "topics": [],
+      "optional": false,
+      "excerpt_span": [
+        0,
+        316
+      ],
+      "text": "#### （2）试卷结构\n\n内容结构。以高中数学课程内容体系为依托，全面考查数学学科核心素养。考查内容的比例与其在课程标准中各部分课程内容主题所占课时比例大体一致，重点考查函数、几何与代数、概率与统计、数学建模活动与数学探究活动等主线内容及其相互联系。融入数学文化。\n\n题型结构。题型一般包括选择题（单项选择题与多项选择题）、填空题和解答题。根据考试性质、目的和要求，确定合理的题型比例、题量和分值。应有一定数量的实际应用问题，探索结构不良问题、开放性问题等试题形式。学业水平考试的解答题分值占比不少于 40%。\n\n难度结构。考试要涵盖各个难度层次的试题。根据考试性质、目的和要求，合理确定试题难度、整卷易中难试题的比例和难度系数。",
+      "text_sha256": "f10b6be9d0fb99fe90b13cd857e02ee0a8abd3e99e6e33820f782212728dbb4c"
+    },
+    {
+      "document": "docs/08_实施建议.md",
+      "pdf_pages": [
+        87
+      ],
+      "book_pages": [
+        84
+      ],
+      "source_sha256": "fc9258bb37ed2e052a4b1be608865a5481f770ae7e28ce536e835d2354353f86",
+      "id": "cfb9ff3e74ca8efa",
+      "chunk_id": "cfb9ff3e74ca8efa",
+      "heading": "（二）学业水平考试与高考建议 / 2. 考试设计 / （3）命题蓝图",
+      "course_type": "general",
+      "kind": "general",
+      "topics": [],
+      "optional": false,
+      "excerpt_span": [
+        0,
+        160
+      ],
+      "text": "#### （3）命题蓝图\n\n制定命题蓝图时，应依据考试性质、目的和要求，分别按照学业水平考试和高考的要求，整体规划相应试题的命制。\n\n在确定试卷结构的基础上，明确每道试题的测试功能和试题属性。试题属性包括试题考查的数学学科核心素养、学业质量水平、课程内容，也包括试题的情境类别、题型、分值、预设难度系数、预设完成时间等。",
+      "text_sha256": "e357981f1f23ff50559cf145745dac8bbf13b5f143686a2e42c369e9b7daed70"
+    },
+    {
+      "document": "docs/08_实施建议.md",
+      "pdf_pages": [
+        87
+      ],
+      "book_pages": [
+        84
+      ],
+      "source_sha256": "fc9258bb37ed2e052a4b1be608865a5481f770ae7e28ce536e835d2354353f86",
+      "id": "7f12167021f03dd5",
+      "chunk_id": "7f12167021f03dd5",
+      "heading": "（二）学业水平考试与高考建议 / 3. 试题命制 / （1）命题指向",
+      "course_type": "general",
+      "kind": "general",
+      "topics": [],
+      "optional": false,
+      "excerpt_span": [
+        0,
+        89
+      ],
+      "text": "#### （1）命题指向\n\n根据命题蓝图，把试题的考查目标和试题属性具体化，重点围绕情境与问题解决、知识与体系构建、思维与交流表达、态度与价值判断四个方面体现学业质量水平的要求。",
+      "text_sha256": "51516f5ee5e42a43d42a1dbeec324913302c413e927e3f31940ecbe338691957"
+    },
+    {
+      "document": "docs/08_实施建议.md",
+      "pdf_pages": [
+        87,
+        88
+      ],
+      "book_pages": [
+        84,
+        85
+      ],
+      "source_sha256": "fc9258bb37ed2e052a4b1be608865a5481f770ae7e28ce536e835d2354353f86",
+      "id": "684bc63983cac9ba",
+      "chunk_id": "684bc63983cac9ba",
+      "heading": "（二）学业水平考试与高考建议 / 3. 试题命制 / （2）情境设置",
+      "course_type": "general",
+      "kind": "general",
+      "topics": [],
+      "optional": false,
+      "excerpt_span": [
+        0,
+        101
+      ],
+      "text": "#### （2）情境设置\n\n试题情境包括生活情境、数学情境、科技情境、文化情境等。\n\n情境要真实、合理，情境中的问题可以直接或通过假设转化为数学问题；要适当控制阅读信息量和运算复杂性；要避免情境单一化。",
+      "text_sha256": "35c24910d89266ec2fec28bc13ca5f76b37f810754ce70c14ae79c80eb2568cd"
+    },
+    {
+      "document": "docs/08_实施建议.md",
+      "pdf_pages": [
+        88
+      ],
+      "book_pages": [
+        85
+      ],
+      "source_sha256": "fc9258bb37ed2e052a4b1be608865a5481f770ae7e28ce536e835d2354353f86",
+      "id": "c137df8eebe99b02",
+      "chunk_id": "c137df8eebe99b02",
+      "heading": "（二）学业水平考试与高考建议 / 3. 试题命制 / （3）问题设计",
+      "course_type": "general",
+      "kind": "general",
+      "topics": [],
+      "optional": false,
+      "excerpt_span": [
+        0,
+        119
+      ],
+      "text": "#### （3）问题设计\n\n问题与情境要有机结合，问题设计要充分体现数学学科特点，突出数学本质，注重通性通法，淡化解题技巧。问题设计要有利于展现思维过程。同一情境下的问题之间要有层次性和内在逻辑。问题要明确，表述要准确、严密、简洁和规范。",
+      "text_sha256": "257e45a5c4f78914da63881b3cc73f5e6d7fe4c989f7a54533c610ef71f704a3"
+    }
+  ]
+}

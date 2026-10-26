@@ -39,6 +39,13 @@
             || (!type && validId(value?.projectId)));
     }
 
+    function partialPdfCheckpoint(value = state) {
+        const checkpoint = value?.diagnostics?.pdf_partial_checkpoint;
+        return transientPdf(value) && checkpoint?.version === 1
+            && checkpoint.resume_action === 'retry_failed_pages' && checkpoint.preserve_edits === true
+            && validId(value?.taskId) && checkpoint.task_id === value.taskId;
+    }
+
     function useTransientPdf() {
         if (!transientPdf()) return false;
         state.transientPdf = true;
@@ -47,7 +54,7 @@
         ['projectId', 'projectRevision', 'projectRevisionReceipt', 'projectSaveStatus', 'projectError',
             'projectLocalDirty', 'projectSourcePageCount', 'expiresAt', 'lastUsedAt', 'totalBytes', 'page_edits']
             .forEach(key => delete state[key]);
-        state.canResume = false;
+        if (!partialPdfCheckpoint()) state.canResume = false;
         return true;
     }
 
@@ -271,6 +278,24 @@
     }
 
     function mergeCompletion(incoming, options = {}) {
+        if (partialPdfCheckpoint() && options.taskId === state.taskId) {
+            const current = questionsSnapshot();
+            if (incoming.some(question => !validId(question.pdf_source_card_id))) {
+                showToast('补做结果缺少可验证的题卡编号；现有题卡已保留，请重新连接核对。', 'warning');
+                return current;
+            }
+            const seen = new Set(current.map(question => question.pdf_source_card_id).filter(validId));
+            incoming.forEach(question => {
+                const id = question.pdf_source_card_id;
+                // IDs are accepted only under the server's same-task private
+                // checkpoint contract. Existing cards (including edits and
+                // import receipts) always win over later machine copies.
+                if (validId(id) && seen.has(id)) return;
+                current.push(question);
+                if (validId(id)) seen.add(id);
+            });
+            return current;
+        }
         if ((!restored && !validId(state?.projectId)) || !parsedQuestionsData.length) return incoming;
         const current = questionsSnapshot();
         // A normal resume can acknowledge the already saved teacher draft.
@@ -980,6 +1005,7 @@
     async function reconnect() {
         if (validId(state?.projectId)) return reconnectProject();
         if (!state || busy) return;
+        const owner = state, epoch = sessionEpoch;
         busy = true;
         renderRecovery();
         try {
@@ -989,7 +1015,9 @@
             const task = await fetchDocumentImportJson(taskId
                 ? `/api/tasks/${encodeURIComponent(taskId)}/status`
                 : `/api/tasks/by-request/${encodeURIComponent(requestId)}/status`);
+            if (state !== owner || sessionEpoch !== epoch) return;
             const resolvedId = task.task_id || taskId;
+            if (partialPdfCheckpoint() && resolvedId !== taskId) throw new Error('后台返回的任务编号与原补做任务不一致；已有题卡保留。');
             if (!validId(resolvedId) && task.status !== 'cancelled') throw new Error('后台任务尚未登记，请稍后重新连接。');
             window.currentPdfTaskId = resolvedId;
             window.currentDocumentClientRequestId = requestId;
@@ -1002,7 +1030,15 @@
             }
             if (['completed', 'partial', 'error', 'interrupted', 'cancelled'].includes(task.status)) {
                 if (Array.isArray(task.data) && task.data.length) {
-                    const questions = parsedQuestionsData.length ? mergeCompletion(task.data) : task.data;
+                    if (partialPdfCheckpoint()) {
+                        while (parsedQuestionSaveInFlight.size || parsedBatchSaveInFlight) {
+                            const saves = [...parsedQuestionSaveInFlight.values()];
+                            if (parsedBatchSaveInFlight) saves.push(parsedBatchSaveInFlight);
+                            await Promise.allSettled(saves);
+                            if (state !== owner || sessionEpoch !== epoch) return;
+                        }
+                    }
+                    const questions = parsedQuestionsData.length ? mergeCompletion(task.data, {taskId: resolvedId}) : task.data;
                     state.baselineQuestions = clone(task.data);
                     showQuestions(questions);
                 }
@@ -1019,18 +1055,22 @@
             }
             flush();
         } catch (error) {
+            if (state !== owner || sessionEpoch !== epoch) return;
             update({ phase: error.httpStatus === 404 || error.httpStatus === 410 ? 'missing' : 'disconnected', error: error.message });
             showToast(`任务连接尚未恢复：${error.message}。当前校对内容仍保留。`, 'warning');
         } finally {
-            busy = false;
-            renderRecovery();
+            if (state === owner && sessionEpoch === epoch) {busy = false;renderRecovery();}
         }
     }
 
     async function resume() {
-        if (transientPdf()) return;
+        if (transientPdf() && !partialPdfCheckpoint()) return;
         if (!state?.canResume || (!validId(state.taskId) && !validId(state.projectId)) || busy
                 || deletingProjects.has(state.projectId)) return;
+        if (partialPdfCheckpoint() && (parsedQuestionSaveInFlight.size || parsedBatchSaveInFlight)) {
+            showToast('题目正在入库，请等待完成后再补做失败页。', 'info');
+            return;
+        }
         const owner = state, epoch = sessionEpoch;
         flush();
         if (validId(state.projectId) && (!await saveServerNow() || state.projectLocalDirty)) return;
@@ -1046,6 +1086,7 @@
             if (state !== owner || sessionEpoch !== epoch) return;
             if (response.status !== 'success') throw new Error(response.message || '后台未接受继续请求。');
             taskId = response.task_id || response.task?.task_id || taskId;
+            if (partialPdfCheckpoint() && taskId !== owner.taskId) throw new Error('后台返回的任务编号与原补做任务不一致；未连接其他任务。');
             restored = true;
             const generation = beginDocumentImportTask({ skipCancellation: true });
             window.currentPdfTaskId = taskId;
@@ -1065,10 +1106,10 @@
 
     function renderRecovery() {
         let panel = element('documentImportRecoveryPanel');
-        if (transientPdf()) {if (panel) panel.hidden = true;return;}
+        if (transientPdf() && !partialPdfCheckpoint()) {if (panel) panel.hidden = true;return;}
         const sourceResult = state?.sourceAvailable === true
             && ['completed', 'partial', 'error', 'interrupted', 'cancelled'].includes(state.phase);
-        const show = state && (validId(state.projectId) || restored || sourceResult || ['error', 'interrupted', 'partial', 'missing', 'disconnected',
+        const show = state && (partialPdfCheckpoint() || validId(state.projectId) || restored || sourceResult || ['error', 'interrupted', 'partial', 'missing', 'disconnected', 'reconnecting',
             'creation_uncertain', 'cancellation_pending'].includes(state.phase));
         if (!show) { if (panel) panel.hidden = true; return; }
         if (!panel) {
@@ -1109,6 +1150,7 @@
             ai_metadata: '本地题稿已保留，正在匹配题型和教材分类，可继续校对。',
             missing: '暂时找不到后台任务；已保留校对内容，可重新连接。',
             disconnected: '与后台的连接已暂停；任务与校对内容已保留。',
+            reconnecting: '连接暂时中断，正在自动重连原任务；后台状态待确认，校对内容已保留。',
             creating: '已保留上次上传请求，正在查询后台是否已创建任务。',
             creation_uncertain: '上传结果暂未确认，请重新连接查询，避免重复上传。'
         };
@@ -1123,6 +1165,10 @@
             : validId(state.projectId) && !parsedQuestionsData.length && state.page_edits?.length
                 && ['error', 'partial', 'interrupted'].includes(state.phase)
             ? '拆题尚未完成，逐页识别工作稿已保留，可展开校对后重新分析。'
+            : partialPdfCheckpoint() && state.canResume
+            ? '部分页面尚未识别，完整题卡已交付。补做只处理失败页；当前题卡、人工修改与入库状态保留。'
+            : partialPdfCheckpoint() && state.phase === 'completed'
+            ? '补做结果已合并到本次题卡；人工修改、勾选与入库状态已保留。'
             : state.phase === 'completed' && !restored ? '拆卷结果已保留，可下载原文件对照校对。'
             : descriptions[messagePhase] || (['error', 'interrupted', 'partial'].includes(state.phase)
                 ? '拆卷已暂停，已有题卡和校对内容已保留。' : '已恢复上次任务，正在读取处理进度。');
@@ -1170,14 +1216,14 @@
             download.setAttribute('download', '');
             actions.appendChild(download);
         }
-        if (state.canResume) addButton('继续未完成解析', resume);
+        if (state.canResume) addButton(partialPdfCheckpoint() ? '补做失败页' : '继续未完成解析', resume);
         if (validId(state.projectId) && state.projectSaveStatus === 'conflict') {
             addButton('重载服务器稿（本机稿留备份）', () => openProject(state.projectId, {serverOnly: true}));
             addButton('另存为工程副本', forkProject);
         } else if (validId(state.projectId) && state.projectSaveStatus === 'local') {
             addButton('重试保存', saveServerNow);
         }
-        if (projectTaskIsActive() || ['creating', 'creation_uncertain', 'disconnected', 'cancellation_pending', 'running'].includes(state.phase)) {
+        if (projectTaskIsActive() || ['creating', 'creation_uncertain', 'disconnected', 'reconnecting', 'cancellation_pending', 'running'].includes(state.phase)) {
             addButton('请求取消后台任务', () => {
                 window.currentPdfTaskId = state.taskId;
                 window.currentDocumentClientRequestId = state.clientRequestId;

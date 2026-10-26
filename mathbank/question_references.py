@@ -330,7 +330,7 @@ def _has_tables(db):
     return all(inspector.has_table(name) for name in REFERENCE_TABLES)
 
 
-def reference_payloads(db, questions, seq_mapping=None):
+def reference_payloads(db, questions, seq_mapping=None, *, read_snapshot=None):
     """Return {source ID: occurrences} in bulk; never mutate question objects."""
     # sqlite3's legacy mode does not BEGIN for SELECT, even though SQLAlchemy
     # has an autobegin transaction object. Reference rows and window numbers
@@ -338,6 +338,9 @@ def reference_payloads(db, questions, seq_mapping=None):
     # mistaken for the previously bound target.
     connection = db.connection()
     raw = connection.connection.dbapi_connection
+    # Check before the legacy BEGIN below, so it cannot revive a context whose
+    # DBAPI transaction was ended outside Session's transaction management.
+    reuse_snapshot = read_snapshot is not None and read_snapshot.is_current(db)
     if isinstance(raw, sqlite3.Connection) and not raw.in_transaction:
         connection.exec_driver_sql("BEGIN")
     question_map = {_get(question, "id", None): question for question in questions}
@@ -352,11 +355,13 @@ def reference_payloads(db, questions, seq_mapping=None):
     # A caller's display cache may have been read before this snapshot began.
     # Compute the target numbers here rather than trust that external cache.
     sequences = {}
-    missing = target_ids
-    if missing:
-        ranked = db.query(Question.id.label("qid"), func.row_number().over(order_by=Question.id).label("seq")).subquery()
-        for batch in _id_batches(missing):
-            sequences.update({qid: int(seq) for qid, seq in db.query(ranked.c.qid, ranked.c.seq).filter(ranked.c.qid.in_(batch))})
+    if reuse_snapshot and read_snapshot.is_current(db):
+        # Only this live, read-only request context can reuse numbering. Include
+        # the page IDs so the caller need not number the whole library twice.
+        sequences = read_snapshot.sequences(set(result) | target_ids)
+    elif target_ids:
+        from mathbank.question_ordering import sequence_mapping
+        sequences.update(sequence_mapping(db, target_ids))
     parser_cache = {}
     for row in rows:
         source = str(_get(question_map[row.source_question_id], row.field) or "")

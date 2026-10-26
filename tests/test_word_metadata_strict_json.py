@@ -8,7 +8,7 @@ import pytest
 from mathbank.docx_helper import _new_diagnostics
 from mathbank.source_metadata import prepare_word_source_metadata
 from mathbank.source_metadata_request import request_word_source_metadata, SourceMetadataPermanentHTTPError
-from mathbank.source_metadata import SourceMetadataContractError
+from mathbank.source_metadata import SourceMetadataContractError, SourceMetadataNoFallbackError
 from mathbank.task_manager import TaskCancelled
 
 
@@ -82,10 +82,11 @@ def test_word_metadata_keeps_source_and_reviews_non_leaf_or_cross_chapter_knowle
 ])
 def test_ambiguous_nonfinite_truncated_or_wrong_shape_never_adopts_metadata(monkeypatch, transform):
     request, calls, diagnostics, _ = run(monkeypatch, transform)
-    with pytest.raises((ValueError, TypeError)):
+    with pytest.raises((ValueError, TypeError)) as caught:
         request()
     assert len(calls) == 1 and diagnostics["word_source_metadata"]["calls"] == 1
-    assert diagnostics["word_source_metadata"]["status"] == "fallback"
+    expected = "metadata_rejected" if isinstance(caught.value, SourceMetadataNoFallbackError) else "fallback"
+    assert diagnostics["word_source_metadata"]["status"] == expected
 
 
 @pytest.mark.parametrize("finish", ["length", None, "content_filter"])

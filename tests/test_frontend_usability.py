@@ -4,6 +4,8 @@ import subprocess
 from html.parser import HTMLParser
 from pathlib import Path
 
+from frontend_timeout_helpers import FRONTEND_TIMEOUTS
+
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 STATIC_DIR = PROJECT_ROOT / "static"
@@ -1268,7 +1270,7 @@ def test_ai_classification_requires_manual_single_or_multi_choice_confirmation()
     assert 'id="classifyMultiChoiceBtn"' in index_source
     assert 'role="radiogroup"' in index_source
     assert index_source.count("question-type-choice-check") == 2
-    assert "已识别为选择题，请手动确认" in index_source
+    assert "应用全部分类前，请确认单选或多选" in index_source
     assert "应用分类并保存题目" in index_source
     assert '.question-type-choice-button[aria-checked="true"]:hover' in css_source
     assert 'color: #ffffff;' in css_source
@@ -1731,7 +1733,8 @@ def test_bank_browser_uses_detail_first_layout_and_card_based_editor_dialog():
         assert marker in index_source
 
     assert 'id="filterSource"' in index_source
-    assert '<option value="desc" selected>最近更新</option>' in index_source
+    assert '<option value="desc" selected>倒序排列</option>' in index_source
+    assert '<option value="asc">正序排列</option>' in index_source
     assert 'onclick="openNewQuestionEditor()"' in index_source
     assert 'onclick="selectWorkspace(\'import\', \'导入中心\')"' in index_source
     assert 'role="separator"' in index_source
@@ -2953,7 +2956,7 @@ def test_rejoined_pandoc_install_failure_allows_retry_compatibility_and_cancel()
                      source.index("    async function generateAndDownloadWord(payload)")]
     node = shutil.which("node")
     assert node, "Node.js is required for the frontend executable regression"
-    script = r"""
+    script = FRONTEND_TIMEOUTS + r"""
 const assert = require('node:assert/strict');
 let elements, visible, posts;
 global.window = { showToast() {} };

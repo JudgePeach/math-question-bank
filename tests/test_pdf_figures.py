@@ -1,5 +1,7 @@
 """Real PDF crops and stubbed model responses: no network or production data."""
 
+from mathbank.ai_timeouts import DOCUMENT_AI_TIMEOUT_SECONDS
+
 import io
 import json
 import threading
@@ -385,7 +387,7 @@ def test_layout_timeout_retries_once_with_exact_http_budget(tmp_path, monkeypatc
     result = pdf_figures.request_pdf_layout(str(path), "source", {"page_index": 0},
                                          diagnostics=report, check_cancelled=lambda: None)
     assert result["figures"] == [] and result["visual_calls"] == report["visual_calls"] == 2
-    assert all(kw["timeout"] == 600 and kw["retry_connection"] is False for kw in calls)
+    assert all(kw["timeout"] == DOCUMENT_AI_TIMEOUT_SECONDS and kw["retry_connection"] is False for kw in calls)
     assert report["attempts"][0]["status"] == "failed"
 
 

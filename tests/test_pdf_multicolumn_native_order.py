@@ -71,7 +71,16 @@ def test_only_one_inverted_lane_is_insufficient_for_this_multicolumn_guard():
 def test_real_authored_question_table_keeps_its_existing_native_boundary():
     with fitz.open() as document:
         page = columns(document, table=True)
-        assert page.find_tables(use_layout=False).tables
+        # Older PyMuPDF uses the vector-line finder without this optional
+        # layout flag, just as the production guard already supports.
+        try:
+            native_tables = page.find_tables(use_layout=False).tables
+        except TypeError as exc:
+            if "use_layout" not in str(exc):
+                raise
+            native_tables = page.find_tables().tables
+        assert len(native_tables) == 1
+        assert native_tables[0].bbox == pytest.approx((30, 75, 575, 300))
         assert reasons(page, markdown_table()) == []
 
 

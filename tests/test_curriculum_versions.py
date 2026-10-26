@@ -558,6 +558,7 @@ def test_zip_import_preparation_can_overlap_switch_but_backup_and_commit_bind_on
         return {"imported_count": 1, "image_count": 0}
     monkeypatch.setattr(main, "prepare_library_import", prepare)
     monkeypatch.setattr(main, "create_full_backup", backup)
+    monkeypatch.setattr(main, "backup_asset_warnings", lambda _archive: [])
     monkeypatch.setattr(main, "import_library_zip", importer)
     headers = {"X-Local-Token": main.LOCAL_TOKEN}
     def transfer():

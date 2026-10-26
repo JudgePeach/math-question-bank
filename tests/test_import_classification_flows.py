@@ -93,10 +93,10 @@ def test_source_metadata_keeps_original_body_with_one_request(monkeypatch, chapt
 
 
 @pytest.mark.parametrize("knowledge", [None, [], {}, 0, False])
-def test_certified_outside_grade_keeps_its_strict_string_protocol(knowledge):
+def test_certified_outside_grade_invalid_optional_refinement_retains_body_without_guessing(knowledge):
     from mathbank.docx_helper import _new_diagnostics
     from mathbank.source_metadata import (
-        SourceMetadataContractError, apply_source_metadata_response, prepare_word_source_metadata,
+        apply_source_metadata_response, prepare_word_source_metadata,
     )
     source = "九年级数学试卷\n1. 已知一次函数$y=2x+1$，求$x=3$时的函数值。"
     plan = prepare_word_source_metadata(source, _new_diagnostics())
@@ -107,5 +107,10 @@ def test_certified_outside_grade_keeps_its_strict_string_protocol(knowledge):
     valid = apply_source_metadata_response({"items": [row]}, plan, TREE)
     assert valid[0]["category_compulsory"] == "九年级"
     assert valid[0]["content"] == plan["questions"][0]["content"]
-    with pytest.raises(SourceMetadataContractError):
-        apply_source_metadata_response({"items": [{**row, "category_knowledge": knowledge}]}, plan, TREE)
+    result = apply_source_metadata_response({"items": [{**row, "category_knowledge": knowledge}]}, plan, TREE)
+    assert result[0]["content"] == plan["questions"][0]["content"]
+    assert result[0]["category_compulsory"] == result[0]["category_chapter"] == result[0]["category_knowledge"] == ""
+    review = result[0]["classification_review"]
+    assert review["required"] is True
+    assert review["original"]["category_compulsory"] == "九年级"
+    assert review["original"]["category_knowledge"] == knowledge

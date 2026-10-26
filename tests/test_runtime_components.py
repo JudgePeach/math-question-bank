@@ -11,6 +11,9 @@ from pathlib import Path
 import pytest
 
 from mathbank import runtime_components
+from mathbank.processing_timeouts import (
+    RUNTIME_DOWNLOAD_TIMEOUT_SECONDS, RUNTIME_PROBE_TIMEOUT_SECONDS, WORD_CONVERSION_TIMEOUT_SECONDS,
+)
 
 
 def _pandoc_archive(binary_name: str = "pandoc") -> bytes:
@@ -114,6 +117,7 @@ def test_download_resumes_after_incomplete_connection(monkeypatch, tmp_path):
     assert destination.read_bytes() == b"abcdef"
     assert requests[0][0].get("Range") is None
     assert requests[1][0]["Range"] == "bytes=3-"
+    assert [request[1] for request in requests] == [RUNTIME_DOWNLOAD_TIMEOUT_SECONDS] * 2
 
 
 def test_install_falls_back_to_sourceforge_and_keeps_verified_component(monkeypatch, tmp_path):
@@ -359,10 +363,11 @@ def test_strict_probe_preserves_startup_diagnostics(monkeypatch, tmp_path, failu
     binary = tmp_path / "pandoc"
     binary.write_bytes(b"placeholder")
     def run(*_args, **_kwargs):
+        assert _kwargs["timeout"] == RUNTIME_PROBE_TIMEOUT_SECONDS
         if failure == "permission":
             raise PermissionError("access denied")
         if failure == "timeout":
-            raise subprocess.TimeoutExpired([str(binary)], 8, output=b"startup stalled")
+            raise subprocess.TimeoutExpired([str(binary)], RUNTIME_PROBE_TIMEOUT_SECONDS, output=b"startup stalled")
         return subprocess.CompletedProcess([], 23, stdout=b"runtime missing")
     monkeypatch.setattr(runtime_components.subprocess, "run", run)
     assert runtime_components._probe_pandoc(binary) is None
@@ -379,10 +384,11 @@ def test_word_smoke_reports_conversion_errors_and_tolerates_cleanup(monkeypatch,
     monkeypatch.setattr(runtime_components.tempfile, "mkdtemp", lambda **_kwargs: str(temp))
     monkeypatch.setattr(runtime_components, "_append_install_log", lambda _: None)
     def run(args, **_kwargs):
+        assert _kwargs["timeout"] == WORD_CONVERSION_TIMEOUT_SECONDS
         if failure == "exit":
             return subprocess.CompletedProcess(args, 42, stdout=b"", stderr=b"cannot write docx")
         if failure == "timeout":
-            raise subprocess.TimeoutExpired(args, 30, stderr=b"conversion stalled")
+            raise subprocess.TimeoutExpired(args, WORD_CONVERSION_TIMEOUT_SECONDS, stderr=b"conversion stalled")
         with zipfile.ZipFile(args[-1], "w") as docx:
             docx.writestr("word/document.xml", b"<oMath/>" if failure == "cleanup" else b"<document/>")
         return subprocess.CompletedProcess(args, 0, stdout=b"", stderr=b"")

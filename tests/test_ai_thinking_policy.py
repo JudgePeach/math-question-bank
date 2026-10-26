@@ -120,7 +120,7 @@ def test_astra_drops_logprobs_and_preserves_explicit_completion_limit():
 @pytest.mark.parametrize('task', ['solve', 'classify', 'parse', 'paper_selection', 'latex_diagnostic'])
 @pytest.mark.parametrize('enabled', [True, False])
 def test_deepseek_official_and_siliconflow_use_different_switches(task, enabled):
-    actual_enabled = enabled if task == 'solve' else False
+    actual_enabled = enabled if task in {'solve', 'classify'} else False
     for config, switch in [
         ('DEEPSEEK/deepseek-flash', 'thinking'),
         ('DEEPSEEK/deepseek-v4-pro', 'thinking'),
@@ -231,7 +231,7 @@ def test_deepseek_flash_uses_documented_thinking_fields(task):
                'temperature':0.2, 'top_p':0.97, 'presence_penalty':0.2, 'frequency_penalty':0.2}
     original = deepcopy(payload)
     result = apply_model_thinking_policy(payload, provider=provider, task=task, thinking_enabled=True)
-    enabled = task in {'solve', 'draw'}
+    enabled = task in {'solve', 'draw', 'classify'}
     assert result['thinking'] == {'type':'enabled' if enabled else 'disabled'}
     assert 'enable_thinking' not in result and 'thinking_budget' not in result
     if enabled:
@@ -259,7 +259,7 @@ def test_siliconflow_v41_flash_uses_verified_switch_without_v4_effort_or_budget(
                'reasoning_effort':'max', 'thinking_budget':8192}
     original = deepcopy(payload)
     result = apply_model_thinking_policy(payload, provider=provider, task=task, thinking_enabled=enabled)
-    actual_enabled = enabled if task == 'solve' else task == 'draw'
+    actual_enabled = enabled if task in {'solve', 'classify'} else task == 'draw'
     assert result == {'model':provider.model_name, 'max_tokens':16384, 'temperature':0.1,
                       'enable_thinking':actual_enabled}
     assert payload == original

@@ -1,5 +1,7 @@
 """Safety and cost boundaries for optional PDF source suspicion verification."""
 
+from mathbank.ai_timeouts import DOCUMENT_AI_TIMEOUT_SECONDS
+
 from copy import deepcopy
 import json
 from types import SimpleNamespace
@@ -116,7 +118,7 @@ def test_confirmed_only_clear_review_keep_original_evidence_and_text(setup):
     assert setup.diagnostics["source_review_count"] == 1
     assert [item["question_index"] for item in setup.diagnostics["pdf_review_items"]] == [1]
     payload = setup.calls[0][1]
-    assert setup.calls[0][2]["timeout"] == 600
+    assert setup.calls[0][2]["timeout"] == DOCUMENT_AI_TIMEOUT_SECONDS
     assert setup.calls[0][2]["retry_connection"] is False
     assert payload["max_tokens"] == 4096
     assert len([part for part in payload["messages"][0]["content"] if part["type"] == "image_url"]) == 2

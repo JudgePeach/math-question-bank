@@ -102,6 +102,10 @@ class _VerificationError(ValueError):
     """Fixed local validation messages safe for a task report."""
 
 
+class _BatchResponseError(_VerificationError):
+    """An unusable response affects this batch, not independent later batches."""
+
+
 def _fingerprint(value):
     return hashlib.sha256(json.dumps(value, ensure_ascii=False, sort_keys=True,
                                      separators=(',', ':')).encode()).hexdigest()
@@ -380,7 +384,7 @@ def _decisions(raw, batch):
     try:
         parsed = parse_review_response(raw)
     except Exception as exc:
-        raise _VerificationError('核验结果不是有效JSON') from exc
+        raise _BatchResponseError('核验结果不是有效JSON') from exc
     # Some compatible vision endpoints return the requested items as a root
     # array even in JSON-object mode. Only unwrap this structural variation;
     # IDs, source numbers and every accepted item's checks remain mandatory.
@@ -388,12 +392,12 @@ def _decisions(raw, batch):
         parsed = {'items': parsed}
     expected = {item['id']: item for item in batch}
     if not isinstance(parsed, dict) or set(parsed) != {'items'} or not isinstance(parsed['items'], list):
-        raise _VerificationError('核验结果不完整')
+        raise _BatchResponseError('核验结果不完整')
     grouped = {identifier: [] for identifier in expected}
     for item in parsed['items']:
         if (not isinstance(item, dict) or not isinstance(item.get('id'), str)
                 or item['id'] not in expected):
-            raise _VerificationError('核验结果含未知或无法归属的题目ID')
+            raise _BatchResponseError('核验结果含未知或无法归属的题目ID')
         grouped[item['id']].append(item)
     decisions, invalid = {}, []
     for identifier, entries in grouped.items():
@@ -470,7 +474,8 @@ def verify_docx_source_suspicions(questions, diagnostics, source, evidence, *, c
                                  check_cancelled=lambda: None, progress=lambda message: None):
     required = sum(bool((q.get('source_review') or {}).get('required')) for q in questions)
     report = {'status': 'no_candidates', 'calls': 0, 'checked': 0, 'confirmed': 0,
-              'pending': required, 'skipped': 0, 'skipped_reasons': [], 'items': [], 'invalid_items': [], 'usage': {}}
+              'pending': required, 'skipped': 0, 'skipped_reasons': [], 'items': [], 'invalid_items': [],
+              'failed_batches': [], 'usage': {}}
     candidates, report['skipped_reasons'] = _source_candidates(questions, diagnostics, source)
     if not candidates:
         report['skipped'] = required
@@ -557,6 +562,23 @@ def verify_docx_source_suspicions(questions, diagnostics, source, evidence, *, c
                                      'candidate_image_paths': sorted(candidate_image_paths)})
             page_numbers = sorted(set().union(*(set(item['source_pages']) for item in batch)))
             image_items, image_evidence = _batch_image_evidence(batch, candidate_image_paths)
+
+            def check_batch_evidence():
+                # Even a malformed reply must not conceal changed inputs and
+                # allow later requests to continue against stale evidence.
+                check_cancelled()
+                check_render_evidence()
+                if (planned_evidence_hash != _fingerprint(evidence)
+                        or snapshot != _fingerprint({'questions': questions, 'source': source,
+                            'matches': diagnostics.get('source_matches'), 'evidence': evidence,
+                            'candidate_image_paths': sorted(candidate_image_paths)})):
+                    raise _VerificationError('核验期间原文、页面或候选题文发生变化')
+                _page_content(pages, page_numbers)
+                fresh = prepare_candidate_images(image_items, allowed_paths=candidate_image_paths,
+                    uploads_dir=UPLOADS_DIR, test_uploads_dir=TEST_UPLOADS_DIR)
+                if fresh['fingerprint'] != image_evidence['fingerprint']:
+                    raise _VerificationError('核验期间候选图片证据发生变化')
+
             prompt = verification_prompt(batch)
             content = [{'type': 'text', 'text': prompt}, *_page_content(pages, page_numbers), *image_evidence['messages']]
             if sum(len(part.get('text', '')) for part in content) > MAX_CHARS:
@@ -574,28 +596,31 @@ def verify_docx_source_suspicions(questions, diagnostics, source, evidence, *, c
             check_cancelled()
             check_render_evidence()
             if response.status_code != 200:
-                raise ValueError('核验请求未成功')
-            body = response.json()
+                raise _VerificationError(f'核验服务返回HTTP {int(response.status_code)}，已停止后续核验')
+            try:
+                body = response.json()
+            except (ValueError, TypeError) as exc:
+                raise _BatchResponseError('核验结果不是有效JSON') from exc
+            if not isinstance(body, dict):
+                raise _BatchResponseError('核验结果不完整')
+            if body.get('error') or (body.get('status') in {'error', 'failed'} and not body.get('choices')):
+                # Some compatible gateways wrap service errors in HTTP 200.
+                # They must not consume later batches as malformed verdicts.
+                raise _VerificationError('核验服务返回错误信息，已停止后续核验')
             usage = body.get('usage') or {}
             for key in ('prompt_tokens', 'completion_tokens', 'total_tokens'):
-                if type(usage.get(key)) is int and usage[key] >= 0:
+                if isinstance(usage, dict) and type(usage.get(key)) is int and usage[key] >= 0:
                     report['usage'][key] = report['usage'].get(key, 0) + usage[key]
-            choice = body['choices'][0]
-            raw = choice.get('message', {}).get('content')
+            choices = body.get('choices')
+            if (not isinstance(choices, list) or not choices or not isinstance(choices[0], dict)
+                    or not isinstance(choices[0].get('message'), dict)):
+                raise _BatchResponseError('核验结果不完整')
+            choice = choices[0]
+            raw = choice['message'].get('content')
             if choice.get('finish_reason') != 'stop' or not isinstance(raw, str) or not raw.strip() or len(raw) > 24000:
-                raise ValueError('核验结果截断或为空')
+                raise _BatchResponseError('核验结果截断或为空')
             decisions, invalid_items = _decisions(raw, batch)
-            if snapshot != _fingerprint({'questions': questions, 'source': source,
-                                         'matches': diagnostics.get('source_matches'), 'evidence': evidence,
-                                         'candidate_image_paths': sorted(candidate_image_paths)}):
-                raise ValueError('核验期间原文或结果发生变化')
-            check_cancelled()
-            # Check asset hashes again before accepting a model verdict.
-            _page_content(pages, page_numbers)
-            current_images = prepare_candidate_images(image_items, allowed_paths=candidate_image_paths,
-                                                       uploads_dir=UPLOADS_DIR, test_uploads_dir=TEST_UPLOADS_DIR)
-            if current_images['fingerprint'] != image_evidence['fingerprint']:
-                raise _VerificationError('核验期间候选图片证据发生变化')
+            check_batch_evidence()
             # A repair is a new draft, followed by a separate referee call.
             # Both use the same untouched original pages and task snapshot.
             def check_repair_evidence():
@@ -731,7 +756,8 @@ def verify_docx_source_suspicions(questions, diagnostics, source, evidence, *, c
                             remaining.remove(identical[0])
                     staged_diagnostics['unmatched_source'] = remaining
             staged_report['checked'] += len(decisions)
-            staged_report['status'] = ('partial' if staged_report['checked'] else 'failed') if staged_report['invalid_items'] else 'completed'
+            staged_report['status'] = (('partial' if staged_report['checked'] else 'failed')
+                if staged_report['invalid_items'] or staged_report['failed_batches'] else 'completed')
             # Every final candidate (including corrected image bindings) is
             # staged before the last evidence check. No asset reads or model
             # validation may occur inside the following commit block.
@@ -744,12 +770,37 @@ def verify_docx_source_suspicions(questions, diagnostics, source, evidence, *, c
                     diagnostics[key] = staged_diagnostics[key]
             report.clear()
             report.update(staged_report)
+            if repair.get('request_failure'):
+                # Keep the valid first-review verdict and any independently
+                # confirmed earlier repair, then stop later paid batches.
+                raise _VerificationError('自动修正或复核服务请求失败，已停止后续核验')
         except TaskCancelled:
             raise
         except Exception as exc:
+            batch_only = isinstance(exc, _BatchResponseError)
+            if batch_only:
+                try:
+                    check_batch_evidence()
+                except TaskCancelled:
+                    raise
+                except Exception as evidence_error:
+                    # Source/asset changes, unavailable evidence and all
+                    # unexpected preparation errors remain global stop gates.
+                    exc, batch_only = evidence_error, False
             report['status'] = 'partial' if report['checked'] else 'failed'
             detail = str(exc) if isinstance(exc, _VerificationError) else type(exc).__name__
-            report['notes'] = [f'Word原文自动核验未完成（{detail}）；已保留未确认题目，未自动重试。']
+            report.setdefault('notes', []).append(
+                f'Word原文自动核验未完成（{detail}）；已保留未确认题目，未自动重试。')
+            report['failed_batches'].append({'batch': batch_index + 1,
+                'question_indices': [item['question_index'] for item in batch],
+                'requested': report['calls'] > calls_before_batch,
+                'code': 'invalid_batch_response' if batch_only else 'verification_stopped',
+                'reason': detail})
+            if batch_only:
+                # Do not retry this POST or certify any result in this batch.
+                # Later batches have fresh snapshots and retain the existing
+                # document-wide first-review and correction call budgets.
+                continue
             # Stopping after a failure avoids extra requests, but unrequested
             # questions must not be presented as if the model reviewed them.
             first_unrequested = batch_index if report['calls'] == calls_before_batch else batch_index + 1

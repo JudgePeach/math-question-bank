@@ -9,6 +9,7 @@ import pytest
 
 
 SCENARIO = r'''
+from mathbank.ai_timeouts import DOCUMENT_AI_TIMEOUT_SECONDS
 from copy import deepcopy
 import hashlib
 import json
@@ -116,7 +117,7 @@ def post(config, payload, **kwargs):
     assert "answer_markdown" in payload["messages"][0]["content"]
     assert payload["response_format"] == {"type": "json_object"}
     assert payload["temperature"] == 0.2 and payload["max_tokens"] == 65536
-    assert kwargs["timeout"] == 600
+    assert kwargs["timeout"] == DOCUMENT_AI_TIMEOUT_SECONDS
     assert kwargs["retry_connection"] is False and kwargs["allow_redirects"] is False
     assert not payload.get("stream")
     api_calls.append(deepcopy(payload))

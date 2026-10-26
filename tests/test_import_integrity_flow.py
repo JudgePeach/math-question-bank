@@ -1,5 +1,7 @@
 """Word/TeX import boundaries with fake model responses and the isolated test DB."""
 
+from mathbank.ai_timeouts import DOCUMENT_AI_TIMEOUT_SECONDS
+
 import json
 import uuid
 from types import SimpleNamespace
@@ -101,7 +103,7 @@ def import_flow(client, monkeypatch):
                 state=state,
             )
         assert len(sent) == 1, "Import must not silently issue another model request."
-        assert request_options[0]["timeout"] == 600
+        assert request_options[0]["timeout"] == DOCUMENT_AI_TIMEOUT_SECONDS
         if channel == "word":
             assert request_options[0]["retry_connection"] is False
             assert request_options[0]["allow_redirects"] is False

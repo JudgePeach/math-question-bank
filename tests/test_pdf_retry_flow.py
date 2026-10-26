@@ -1,5 +1,7 @@
 """PDF retry routing in an isolated source copy, with no provider networking."""
 
+from mathbank.ai_timeouts import DOCUMENT_AI_TIMEOUT_SECONDS
+
 import json
 from pathlib import Path
 from types import SimpleNamespace
@@ -54,8 +56,11 @@ def test_failed_page_keeps_parallel_success_source_images_and_attempts(monkeypat
     try:
         main.run_pdf_parsing_task(task_id, document(), "retry.pdf", pdf_strategy="layout_aware")
         task = main.DOCUMENT_TASKS.snapshot(task_id)
-        assert task["status"] == "error"
-        assert "第 1 页" in task["error"] and "共尝试 2 次" in task["error"]
+        assert task["status"] == "completed" and task["partial"] is True
+        failed = task["diagnostics"]["pdf_failed_pages"]
+        assert failed[0]["page_number"] == 1 and "共尝试 2 次" in failed[0]["error"]
+        assert task["diagnostics"]["pdf_partial_checkpoint"]["failed_pages"] == [1]
+        assert task["data"] == [], "A lone successful page has no proven interior question boundary"
         assert len(calls[0]) == 2 and len(calls[1]) == 1
         attempts = task["diagnostics"]["pdf_vision"]
         assert attempts["calls"] == 3 and attempts["retries"] == 1
@@ -91,7 +96,7 @@ def test_ordinary_pdf_ocr_uses_same_provider_and_one_retry(monkeypatch, tmp_path
     monkeypatch.setattr(main, "post_chat_completion", post)
     assert main.ocr_pdf_page_image(str(image)) == "1. 正文"
     assert len(calls) == 2 and all(config is provider for config, _kw in calls)
-    assert all(kw["timeout"] == 600 and kw["retry_connection"] is False for _config, kw in calls)
+    assert all(kw["timeout"] == DOCUMENT_AI_TIMEOUT_SECONDS and kw["retry_connection"] is False for _config, kw in calls)
 
 
 def test_removed_task_stops_before_any_paid_page_call(monkeypatch):
@@ -160,7 +165,7 @@ def test_text_split_retry_preserves_prepared_input_without_repeating_page_vision
         task = main.DOCUMENT_TASKS.snapshot(task_id)
         assert len(page_calls) == 1
         assert len(split_calls) == (2 if outcome in ("recovered", "failed") else 1)
-        assert all(kw == {"timeout": 600, "check_status": False, "retry_connection": False,
+        assert all(kw == {"timeout": DOCUMENT_AI_TIMEOUT_SECONDS, "check_status": False, "retry_connection": False,
                           "allow_redirects": False} for _payload, kw in split_calls)
         if len(split_calls) == 2:
             assert split_calls[0][0] == split_calls[1][0]
@@ -171,10 +176,10 @@ def test_text_split_retry_preserves_prepared_input_without_repeating_page_vision
         else:
             assert task["status"] == ("completed" if outcome == "recovered" else "error"), task.get("error")
             assert task["diagnostics"]["pdf_vision"]["calls"] == 1
-            assert task["diagnostics"]["pdf_vision"]["timeout_seconds"] == 600
+            assert task["diagnostics"]["pdf_vision"]["timeout_seconds"] == DOCUMENT_AI_TIMEOUT_SECONDS
             report = task["diagnostics"]["pdf_splitting"]
             assert report["calls"] == len(split_calls) and report["retries"] == len(split_calls) - 1
-            assert report["timeout_seconds"] == 600
+            assert report["timeout_seconds"] == DOCUMENT_AI_TIMEOUT_SECONDS
             assert "private" not in str(report)
             assert task["pdf_source_pages"][0]["origin"] == "joint_vision"
             assert task["pdf_source_pages"][0]["figures"] == []
@@ -189,7 +194,7 @@ def test_text_split_retry_preserves_prepared_input_without_repeating_page_vision
         main.DOCUMENT_TASKS.remove(task_id)
 
 
-def test_regular_word_internal_split_has_600_seconds_without_added_retry(monkeypatch):
+def test_regular_word_internal_split_uses_document_timeout_without_added_retry(monkeypatch):
     import main
     from mathbank.ai_providers import resolve_text_provider
     provider = resolve_text_provider("deepseek-flash", {"DEEPSEEK_API_KEY": "unused"})
@@ -202,5 +207,5 @@ def test_regular_word_internal_split_has_600_seconds_without_added_retry(monkeyp
     monkeypatch.setattr(main, "post_chat_completion", post)
     with pytest.raises(requests.ReadTimeout):
         main.parse_paper_text_internal("1. 题干", False, preserve_source_answers=True)
-    assert len(calls) == 1 and calls[0]["timeout"] == 600
+    assert len(calls) == 1 and calls[0]["timeout"] == DOCUMENT_AI_TIMEOUT_SECONDS
     assert "retry_connection" not in calls[0] and "allow_redirects" not in calls[0]

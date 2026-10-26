@@ -782,7 +782,8 @@ def _existing_question_ids(db, question_ids):
 def select_library_question_ids(db, *, filters=None, active_version="A") -> list[int]:
     """Resolve an explicit stable-ID selection, without loading question bodies."""
     _library_read_snapshot(db, active_version)
-    rows = _library_filtered_query(db, filters).order_by(Question.id).limit(MAX_QUESTIONS + 1).all()
+    from mathbank.question_ordering import sequence_order
+    rows = _library_filtered_query(db, filters).order_by(*sequence_order()).limit(MAX_QUESTIONS + 1).all()
     if len(rows) > MAX_QUESTIONS:
         raise ValueError(f"单次分享最多 {MAX_QUESTIONS} 道题，请缩小筛选范围")
     return [qid for qid, in rows]
@@ -798,6 +799,7 @@ def preview_library_questions(db, *, filters=None, question_ids=None, page=1,
     if question_ids is not None:
         _question_ids(question_ids, allow_empty=True)
     _library_read_snapshot(db, active_version)
+    from mathbank.question_ordering import sequence_order
     missing = []
     if question_ids is not None:
         existing = _existing_question_ids(db, question_ids)
@@ -808,12 +810,12 @@ def preview_library_questions(db, *, filters=None, question_ids=None, page=1,
     else:
         query = _library_filtered_query(db, filters)
         total = query.count()
-        page_ids = [qid for qid, in query.order_by(Question.id).offset((page - 1) * page_size).limit(page_size)]
+        page_ids = [qid for qid, in query.order_by(*sequence_order()).offset((page - 1) * page_size).limit(page_size)]
     result = {"items": [], "total": total, "page": page, "page_size": page_size,
               "total_pages": max(1, (total + page_size - 1) // page_size), "missing_ids": missing}
     if not page_ids:
         return result
-    ranked = db.query(Question.id.label("qid"), func.row_number().over(order_by=Question.id).label("seq_num")).subquery()
+    ranked = db.query(Question.id.label("qid"), func.row_number().over(order_by=sequence_order()).label("seq_num")).subquery()
     rows = db.query(Question.id, ranked.c.seq_num, Question.content, Question.source, Question.question_type,
                     Question.category_compulsory, Question.category_chapter, Question.category_knowledge).join(
                         ranked, ranked.c.qid == Question.id).filter(Question.id.in_(page_ids)).all()
@@ -856,7 +858,8 @@ def export_library_zip(db, output_path: Path, *, uploads_dir: Path,
         query = db.query(Question.id)
         if source_keywords:
             query = query.filter(or_(*(Question.source.contains(value, autoescape=True) for value in source_keywords)))
-        export_ids = [qid for qid, in query.order_by(Question.id).limit(MAX_QUESTIONS + 1)]
+        from mathbank.question_ordering import sequence_order
+        export_ids = [qid for qid, in query.order_by(*sequence_order()).limit(MAX_QUESTIONS + 1)]
     if not export_ids or len(export_ids) > MAX_QUESTIONS:
         raise ValueError("分享包没有题目，或题目数量超过上限")
     validator = _RecordValidator()
@@ -955,6 +958,27 @@ def export_library_zip(db, output_path: Path, *, uploads_dir: Path,
                     Path(temporary).unlink(missing_ok=True)
                 except OSError:
                     pass
+
+
+def _import_image_evidence(item, record, rewritten, replacements):
+    """Rebind an existing literal image quote in the imported copy only."""
+    evidence = item.get("evidence")
+    source_field = item.get("evidence_source")
+    if not isinstance(source_field, str):
+        return evidence
+    field = {"answer_markdown": "answer_markdown", "review_markdown": "review"}.get(source_field)
+    if field is None or not isinstance(evidence, str) or not evidence:
+        return evidence
+    source = record.get(field)
+    if not isinstance(source, str) or evidence not in source:
+        return evidence
+    # Reuse the full-field, literal-aware image scanner. A bare path, an
+    # ungrounded historical note or code-only image text is not rewritten.
+    quoted_assets = set(embedded_question_assets(evidence))
+    if not quoted_assets or not quoted_assets.intersection(embedded_question_assets(source)):
+        return evidence
+    mapped = rewrite_question_asset_paths(evidence, replacements)
+    return mapped if mapped in rewritten.get(field, "") else evidence
 
 
 def _reference_row(record, reference, replacements, id_map):
@@ -1122,7 +1146,9 @@ def import_library_zip(db, archive_path: Path, *, uploads_dir: Path, active_vers
             for position, item in enumerate(record.get("knowledge_points", [])):
                 row = QuestionKnowledgePoint(point_code=points[item["code"]], role=item["role"], status=item["status"], position=item.get("position", position))
                 for field in METADATA_FIELDS:
-                    setattr(row, field, json.dumps(item.get(field), ensure_ascii=False, allow_nan=False))
+                    value = (_import_image_evidence(item, record, values, replacements)
+                             if field == "evidence" else item.get(field))
+                    setattr(row, field, json.dumps(value, ensure_ascii=False, allow_nan=False))
                 question.knowledge_points.append(row)
             # The capability is single-use. Metadata now lives in the ORM's
             # complete JSON values; later reference remapping only needs the

@@ -1,4 +1,6 @@
 """Exercise the actual Word/PDF adapters, with no network or database writes."""
+
+from mathbank.ai_timeouts import DOCUMENT_AI_TIMEOUT_SECONDS
 from copy import deepcopy
 import json
 from types import SimpleNamespace
@@ -37,7 +39,7 @@ def flow(request, monkeypatch):
     def post(provider, payload, **kwargs):
         calls.append(deepcopy(payload))
         timeouts.append(kwargs['timeout'])
-        assert kwargs['timeout'] == 600
+        assert kwargs['timeout'] == DOCUMENT_AI_TIMEOUT_SECONDS
         assert kwargs['retry_connection'] is False
         assert len(calls) <= 7
         value = responses.pop(0)
@@ -67,7 +69,7 @@ def test_confirmed_repair_is_committed_only_after_independent_full_review(flow):
     result = flow.state.questions[0]
     assert report['calls'] == 3 and report['repaired'] == report['confirmed'] == 1
     assert report['repair_calls'] == report['recheck_calls'] == 1
-    assert flow.timeouts == [600, 600, 600]
+    assert flow.timeouts == [DOCUMENT_AI_TIMEOUT_SECONDS, DOCUMENT_AI_TIMEOUT_SECONDS, DOCUMENT_AI_TIMEOUT_SECONDS]
     assert report['usage'] == {'prompt_tokens': 30, 'completion_tokens': 15, 'total_tokens': 45}
     assert result['content'] == original['content'].replace('x^3', 'x^2')
     assert result['answer_markdown'] == original['answer_markdown']

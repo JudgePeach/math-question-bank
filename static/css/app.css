@@ -5784,6 +5784,20 @@ button[aria-disabled="true"]:hover,
 .paper-ai-entry { display: flex; gap: 8px; }
 .paper-ai-entry input { flex: 1; min-width: 0; padding: 8px 12px; }
 .paper-ai-entry button { flex: none; padding: 8px 16px; border-radius: 10px; }
+.paper-ai-options { display: grid; grid-template-columns: minmax(80px,0.45fr) minmax(125px,0.7fr) minmax(150px,1.5fr); gap: 8px; margin-top: 8px; }
+.paper-ai-options label { display: flex; flex-direction: column; gap: 4px; min-width: 0; font-size: 12px; color: var(--text-secondary); }
+.paper-ai-options :is(input,select) { width: 100%; min-height: 40px; min-width: 0; padding: 8px; border-radius: 10px; font-size: 13px; }
+.paper-ai-reference-status { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 6px; font-size: 12px; line-height: 1.5; color: var(--text-secondary); overflow-wrap: anywhere; }
+.paper-ai-reference-status button { min-height: 36px; padding: 5px 9px; }
+.paper-ai-reference-status button[hidden] { display: none; }
+.paper-ai-help { margin-top: 6px; font-size: 12px; line-height: 1.5; color: var(--text-secondary); }
+@media (max-width: 600px) {
+    .paper-ai-options { grid-template-columns: minmax(70px,0.6fr) minmax(120px,1fr); }
+    .paper-ai-reference-field { grid-column: 1 / -1; }
+    .paper-ai-entry { flex-wrap: wrap; }
+    .paper-ai-entry input { flex-basis: 180px; min-height: 44px; }
+    .paper-ai-entry button { min-height: 44px; }
+}
 .paper-studio-body { --paper-library-track: 45fr; --paper-preview-track: 55fr; }
 .paper-question-panel, .paper-preview-column { border-radius: 12px; box-shadow: none; }
 .paper-panel-heading { min-height: 44px; padding: 8px 12px; }

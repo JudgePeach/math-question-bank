@@ -1,4 +1,6 @@
 """Metadata-only fake transport must never replace a saved local PDF body."""
+
+from mathbank.ai_timeouts import DOCUMENT_AI_TIMEOUT_SECONDS
 from concurrent.futures import ThreadPoolExecutor
 from copy import deepcopy
 import hashlib
@@ -124,7 +126,7 @@ def test_metadata_response_keeps_every_body_answer_image_and_review_byte_identic
         assert "<mathbank-math" not in payload["messages"][1]["content"]
         return Response(response_rows(payload))
     result = run(post, draft=draft)
-    assert len(calls) == 1 and all(options["timeout"] == 600 for _payload, options in calls)
+    assert len(calls) == 1 and all(options["timeout"] == DOCUMENT_AI_TIMEOUT_SECONDS for _payload, options in calls)
     assert calls[0][1]["retry_connection"] is False and calls[0][1]["allow_redirects"] is False
     assert all(payload["max_tokens"] <= 3000 for payload, _options in calls)
     assert all(q["category_chapter"] == "3. 函数" for q in result["questions"])

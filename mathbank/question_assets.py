@@ -17,6 +17,10 @@ _IMAGE = re.compile(
     re.IGNORECASE,
 )
 _LOCAL = re.compile(r"^/?static/(?:uploads|test_uploads)/")
+_HTML_IMAGE_TAG = re.compile(r'''<img\b(?:[^>"']|"[^"]*"|'[^']*')*>''', re.IGNORECASE)
+_HTML_IMAGE_ATTRIBUTE = re.compile(
+    r'''(?P<name>[^\s=/>]+)(?:\s*=\s*(?:"(?P<double>[^"]*)"|'(?P<single>[^']*)'|(?P<bare>[^\s>]+)))?''',
+)
 
 
 def markdown_literal_ranges(text: str, *, include_links=True) -> list[tuple[int, int]]:
@@ -256,6 +260,34 @@ def image_reference_spans(text: str, *, local_only=True, tex_comments=True, mark
 
 def embedded_question_assets(*texts: str) -> list[str]:
     return list(dict.fromkeys(path for text in texts for _, _, path in image_reference_spans(text)))
+
+
+def image_search_spans(text: str):
+    """Yield image destination ranges to hide in a search-only text copy.
+
+    Reuse normal image/literal ownership, additionally covering HTML srcset
+    (including srcset-only images). The full srcset value is an attribute, not
+    question text. Asset collection keeps its existing single-src semantics.
+    """
+    value = str(text or "")
+    html_tags = list(_HTML_IMAGE_TAG.finditer(value))
+    spans = {(start, end) for start, end, _ in image_reference_spans(
+        value, local_only=False, tex_comments=False, markdown_mode=True,
+    ) if not any(tag.start() <= start < end <= tag.end() for tag in html_tags)}
+    masked = _markdown_masked_image_source(value, _mask_literals(value, tex_comments=False))
+    for tag in html_tags:
+        if masked[tag.start():tag.start() + 4] != value[tag.start():tag.start() + 4] or _escaped(value, tag.start()):
+            continue
+        # Tokenize every attribute so srcset-looking words inside alt/title
+        # values cannot be mistaken for an actual image URL attribute.
+        for attribute in _HTML_IMAGE_ATTRIBUTE.finditer(value, tag.start() + 4, tag.end() - 1):
+            if attribute["name"].lower() not in {"src", "srcset"}:
+                continue
+            for key in ("double", "single", "bare"):
+                if attribute[key] is not None:
+                    spans.add(attribute.span(key))
+                    break
+    yield from sorted(spans)
 
 
 def without_review_only_assets(references, content: str, answer_markdown: str, review: str) -> list[str]:

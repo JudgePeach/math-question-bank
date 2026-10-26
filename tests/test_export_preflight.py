@@ -215,6 +215,7 @@ def test_pdf_success_exposes_the_durable_snapshot_id(sandbox, monkeypatch):
 def test_bundle_compile_failure_does_not_succeed_with_a_partial_archive(sandbox, monkeypatch):
     run = endpoint("export_paper_bundle", [question(41, "No images.")], sandbox, monkeypatch)
     run.__globals__.update(compile_tex_to_pdf=lambda *_: (None, "isolated compile failure"),
+                           explain_latex_compile_error=lambda *_: {"summary": "隔离编译失败", "fixes": []},
                            create_full_bundle_zip_package=lambda *_, **kw: pytest.fail("no partial bundle"))
     result = run({"questions": [{"id": 41}], "paper_type": "exam"}, db=None)
     assert result.status_code == 400

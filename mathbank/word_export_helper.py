@@ -39,6 +39,7 @@ from mathbank.source_comments import strip_source_attribution_comment
 from mathbank.content_sources import content_source_export_files, content_sources_notice
 from mathbank.word_lists import LatexList, find_latex_lists
 from mathbank.paper_layout import item_solution_space_cm
+from mathbank.processing_timeouts import TIKZ_COMPILE_TIMEOUT_SECONDS, WORD_CONVERSION_TIMEOUT_SECONDS
 
 
 MATH_NS = "http://schemas.openxmlformats.org/officeDocument/2006/math"
@@ -524,7 +525,7 @@ class PandocOmmlConverter:
                     ],
                     stdout=subprocess.PIPE,
                     stderr=subprocess.PIPE,
-                    timeout=45,
+                    timeout=WORD_CONVERSION_TIMEOUT_SECONDS,
                     check=False,
                 )
             except (OSError, subprocess.TimeoutExpired):
@@ -823,7 +824,7 @@ $\displaystyle {prepared_formula}$
                 cwd=temp_path,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT,
-                timeout=30,
+                timeout=TIKZ_COMPILE_TIMEOUT_SECONDS,
                 check=False,
             )
             pdf_path = temp_path / "formula.pdf"
