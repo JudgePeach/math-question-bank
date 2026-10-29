@@ -197,6 +197,8 @@ def test_schema12_full_backup_restore_keeps_catalog_paths_and_evidence(knowledge
         )}
         connection.execute("DELETE FROM question_knowledge_points")
         connection.commit()
+    # Session.close returns connections to the pool; Windows needs handles closed.
+    session.get_bind().dispose()
     safety = restore_full_backup(
         archive, database_path=database, uploads_dir=tmp_path / "uploads",
         metadata_path=tmp_path / "custom_metadata.json", safety_backup_dir=tmp_path / "safety",
@@ -269,6 +271,8 @@ def test_updated_code_can_back_up_and_restore_schema11_without_new_tables(knowle
     archive = _backup_test_database(tmp_path, database)
     counts = verify_full_backup(archive)["database"]["row_counts"]
     assert "knowledge_points" not in counts and counts["question_sub_knowledge"] == 1
+    # Match the stopped-service restore contract, not a pooled open SQLite file.
+    session.get_bind().dispose()
     restore_full_backup(
         archive, database_path=database, uploads_dir=tmp_path / "uploads",
         metadata_path=tmp_path / "custom_metadata.json", safety_backup_dir=tmp_path / "safety",

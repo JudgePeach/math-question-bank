@@ -19,4 +19,15 @@ MathBank 便携包覆盖升级
 
 Windows 10/11 x64 便携包内置完整 Python 与应用本地 VC++ 运行时，无需另行安装。macOS 包不内置 Python，运行前请确认本机已安装 Python 3.10 或更高版本；启动器会自动检测可用 Python 并创建或修复 venv，如未检测到合格版本则提示安装并停止启动。首次创建 venv 或修复环境/依赖变化时需要联网。
 
+Pillow 依赖与可选的 macOS Python 迁移（本次源码更新，未进入现有 V3.0.2 下载包）：
+- 本次不强制更换解释器。Windows 便携包继续使用 Python 3.10；源码/macOS 项目环境使用 Python 3.11 及以上时安装 Pillow 13.0.0，Python 3.10 继续使用 12.3.0，后者的已知图片解码安全问题仍然存在。
+- macOS 启动器保留可用的旧 venv；仅安装新 Python 不会替换它。没有 venv 时，python3 也可能仍指向旧解释器，不能据此认定已完成迁移。
+- 若自行选择迁移，先确认新 Python 支持本机 macOS，保存编辑、完整备份并网页关闭服务；保留原项目目录、配置、图片与 .system_generated/，继续使用原浏览器、原网址和端口。完整备份不包含 .env 或浏览器草稿。
+- 把旧 venv 改为未占用的备份名（例如 venv-before-python-upgrade），在终端进入原项目目录，以新解释器的明确路径重建 venv。示例：
+  "/Library/Frameworks/Python.framework/Versions/3.13/bin/python3.13" -m venv venv
+  上述 3.13 路径须按实际安装情况替换，不要仅使用可能指向旧版的 python3。
+- 联网双击启动题库系统.command，待安装依赖并就绪后，在原项目目录运行：
+  ./venv/bin/python -c 'import sys, PIL; print(sys.version); print(PIL.__version__)'
+  核对 Python 为所选的 3.11 及以上、Pillow 为 13.0.0，并检查题目、图片和草稿，再考虑删除旧环境。失败时关闭服务，保留新环境供排查，将备存旧 venv 恢复原名。仅更换 Python 环境不改变数据库结构；同时回退程序时仍须遵守下述回退规则。
+
 本次数据库兼容升级：首次启动会在结构迁移前创建校验通过的数据库快照，并保留既有教材分类、标签和图片。升级后的数据库不应直接交给旧版本程序；若需回退，请先安全关闭服务，再使用升级前的完整备份恢复，不能只覆盖旧程序文件。

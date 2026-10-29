@@ -118,6 +118,10 @@ def test_report_retention_is_bounded_and_previous_export_snapshot_stays_immutabl
     for number in range(3):
         report, _ = inspect([question(number, "正文")], {"paper": "no images"}, sandbox)
         ids.append(report["id"])
+        # Retention orders by filesystem mtime, not insertion order for ties.
+        # Fast writes may share one timestamp on Windows; make chronology real.
+        timestamp = 1_700_000_000 + number
+        os.utime(sandbox[1] / (report["id"] + ".json"), (timestamp, timestamp))
     assert len(list(sandbox[1].glob("*.json"))) == 2
     with pytest.raises(FileNotFoundError):
         preflight.read_export_preflight(ids[0])

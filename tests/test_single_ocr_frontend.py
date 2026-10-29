@@ -83,7 +83,7 @@ const button=(id,text)=>{
 '''+assertions+r'''
 })().catch(error=>{console.error(error);process.exitCode=1});
 '''
-    result = subprocess.run([node, '-e', script], cwd=ROOT, text=True, capture_output=True)
+    result = subprocess.run([node, "-"], input=script, encoding="utf-8", cwd=ROOT, text=True, capture_output=True)
     assert result.returncode == 0, result.stderr
 
 
@@ -242,7 +242,7 @@ nodes.editQType.value='multi_choice';
 loadToContentEditor('ocr');
 assert.equal(nodes.editQType.value,'multi_choice');
 '''
-    result = subprocess.run([node, '-e', script], cwd=ROOT, text=True, capture_output=True)
+    result = subprocess.run([node, "-"], input=script, encoding="utf-8", cwd=ROOT, text=True, capture_output=True)
     assert result.returncode == 0, result.stderr
 
 

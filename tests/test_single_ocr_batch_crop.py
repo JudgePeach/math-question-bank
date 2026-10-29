@@ -34,7 +34,7 @@ assert.equal(computeCropGridBoxes({...original,right:NaN},'2x2').length,0);
 assert.equal(computeCropGridBoxes({...original,right:10},'1x4').length,0);
 assert.equal(computeCropGridBoxes(original,'unexpected').length,0);
 '''
-    result = subprocess.run([shutil.which('node'), '-e', script], capture_output=True, text=True)
+    result = subprocess.run([shutil.which('node'), "-"], input=script, encoding="utf-8", capture_output=True, text=True)
     assert result.returncode == 0, result.stderr
 
 

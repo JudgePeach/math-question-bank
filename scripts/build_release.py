@@ -359,23 +359,50 @@ def validate_release_source():
 
 
 def validate_target_requirements():
-    """Reject host-dependent requirements in the cross-platform release input."""
-    for requirements_name in ("requirements.txt", "requirements-windows.txt"):
-        requirements_path = Path(BASE_DIR, requirements_name)
-        if not requirements_path.is_file():
-            raise RuntimeError(f"missing target requirements: {requirements_name}")
-        for line_number, raw_line in enumerate(
-            requirements_path.read_text(encoding="utf-8").splitlines(), start=1
-        ):
-            line = raw_line.partition("#")[0].strip().lower()
-            if line and ";" in line and any(
-                marker in line
-                for marker in ("sys_platform", "platform_system", "platform_machine")
-            ):
-                raise RuntimeError(
-                    f"{requirements_name} contains a host-dependent platform marker "
-                    f"at line {line_number}; list target dependencies explicitly"
-                )
+    """Validate explicit CPython 3.10 pins without evaluating host markers.
+
+    The source install supports two reviewed Pillow pins. Windows retains the
+    old pin only for compatibility; this does not remediate its decoder CVEs.
+    Every other pin must match so the independent target lock cannot drift.
+    """
+    pillow_markers = {
+        'pillow==12.3.0; python_version < "3.11"',
+        'pillow==13.0.0; python_version >= "3.11"',
+    }
+
+    def read_pins(name, allowed_markers=()):
+        path = Path(BASE_DIR, name)
+        if not path.is_file():
+            raise RuntimeError(f"missing target requirements: {name}")
+        pins = set()
+        names = set()
+        for number, raw in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+            line = raw.partition("#")[0].strip()
+            if not line:
+                continue
+            if line in pins:
+                raise RuntimeError(f"{name}:{number}: duplicate dependency")
+            if line not in allowed_markers:
+                match = re.fullmatch(r"([A-Za-z0-9][A-Za-z0-9_.-]*)==([A-Za-z0-9][A-Za-z0-9.!+_-]*)", line)
+                if not match:
+                    raise RuntimeError(f"{name}:{number}: require an explicit pin, not host markers or includes")
+                package = re.sub(r"[-_.]+", "-", match.group(1)).lower()
+                if package in names:
+                    raise RuntimeError(f"{name}:{number}: duplicate dependency name")
+                names.add(package)
+            pins.add(line)
+        return pins
+
+    runtime = read_pins("requirements.txt", pillow_markers)
+    if not pillow_markers.issubset(runtime) or any(
+        line.lower().startswith("pillow==") and line not in pillow_markers
+        for line in runtime
+    ):
+        raise RuntimeError("source Pillow pins must match the reviewed Python version policy")
+    expected_windows = (runtime - pillow_markers) | {"pillow==12.3.0"}
+    windows = read_pins("requirements-windows.txt")
+    if windows != expected_windows:
+        raise RuntimeError("Windows CPython 3.10 pins differ from the reviewed runtime target lock")
 
 
 def _remove_release_outputs():

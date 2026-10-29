@@ -4,7 +4,7 @@ import shutil
 import subprocess
 
 ROOT = Path(__file__).resolve().parents[1]
-SOURCE = (ROOT / 'static/js/paper.js').read_text()
+SOURCE = (ROOT / 'static/js/paper.js').read_text(encoding="utf-8")
 
 
 def section(start, end):
@@ -15,7 +15,7 @@ def section(start, end):
 def node(script):
     executable = shutil.which('node')
     assert executable
-    result = subprocess.run([executable, '-'], input=script, text=True, capture_output=True)
+    result = subprocess.run([executable, '-'], input=script, text=True, encoding="utf-8", capture_output=True)
     assert result.returncode == 0, result.stderr
 
 

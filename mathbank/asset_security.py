@@ -434,7 +434,7 @@ def _normalize_raster_image(
             normalized = output.getvalue()
     except InvalidImageError:
         raise
-    except (UnidentifiedImageError, OSError, ValueError, Image.DecompressionBombError) as exc:
+    except (UnidentifiedImageError, OSError, ValueError, SyntaxError, Image.DecompressionBombError) as exc:
         raise InvalidImageError("文件内容不是有效且安全的栅格图片。") from exc
 
     if len(normalized) > max_output_bytes:

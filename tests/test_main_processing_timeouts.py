@@ -1,5 +1,6 @@
 """Real route/helper seams use extended waits and startup honors local overrides."""
 import json
+import os
 from pathlib import Path
 import shutil
 import subprocess
@@ -64,8 +65,16 @@ print('TIMEOUT_POLICY=' + json.dumps([main.get_settings()['request_timeouts'],
     main.CLASSIFICATION_TIMEOUT_SECONDS, REVIEW_TIMEOUT_SECONDS,
     main.request_tikz_completion.__kwdefaults__['timeout']]))
 """
+    # Keep only platform bootstrapping variables, not parent app overrides/API keys.
+    environment = {key: value for key, value in os.environ.items()
+                   if key.upper() in {"SYSTEMROOT", "WINDIR", "PATH", "PATHEXT",
+                                      "TEMP", "TMP", "TMPDIR"}}
+    home = tmp_path / "isolated-home"
+    home.mkdir()
+    environment.update(PYTHONDONTWRITEBYTECODE="1", PYTHONUTF8="1",
+                       HOME=str(home), USERPROFILE=str(home))
     result = subprocess.run([sys.executable, "-B", "-c", script], cwd=app,
-        env={"PYTHONDONTWRITEBYTECODE": "1"}, text=True, capture_output=True, timeout=30)
+        env=environment, text=True, encoding="utf-8", capture_output=True, timeout=30)
     assert result.returncode == 0, result.stderr
     output = next(line.removeprefix("TIMEOUT_POLICY=") for line in result.stdout.splitlines()
                   if line.startswith("TIMEOUT_POLICY="))

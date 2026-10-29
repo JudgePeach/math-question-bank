@@ -350,18 +350,20 @@ def test_windows_io_path_does_not_require_directory_fds_or_no_follow(tmp_path, m
 def test_windows_lock_fallback_is_exercised_without_unconditional_fcntl(setup, monkeypatch):
     store, project_id, _ = setup
     observed = []
-    fake_msvcrt = SimpleNamespace(LK_NBRLCK=10, LK_NBLCK=20,
-                                 locking=lambda fd, mode, size: observed.append((mode, size)))
+    fake_backend = SimpleNamespace(
+        lock=lambda fd, *, shared: observed.append(("lock", shared)),
+        unlock=lambda fd: observed.append(("unlock", None)))
     monkeypatch.setattr(module, "fcntl", None)
-    monkeypatch.setattr(module, "msvcrt", fake_msvcrt)
+    monkeypatch.setattr(module, "_windows_lock", fake_backend)
     assert store.get(project_id)["project_id"] == project_id
-    assert (10, 1) in observed and (20, 1) in observed
+    assert observed == [("lock", True), ("lock", False),
+                        ("unlock", None), ("unlock", None)]
 
 
 def test_missing_platform_file_lock_fails_closed(setup, monkeypatch):
     store, project_id, _ = setup
     monkeypatch.setattr(module, "fcntl", None)
-    monkeypatch.setattr(module, "msvcrt", None)
+    monkeypatch.setattr(module, "_windows_lock", None)
     with pytest.raises(DocumentProjectError):
         store.get(project_id)
 

@@ -5,6 +5,7 @@ import json
 import os
 from pathlib import Path
 import threading
+from types import SimpleNamespace
 
 import pytest
 from starlette.applications import Starlette
@@ -208,7 +209,8 @@ def test_recovery_ancestor_replaced_by_symlink_after_registration_is_rejected(st
     assert list(outside.iterdir()) == []
 
 
-def test_static_image_get_head_cache_and_other_static_files(store):
+@pytest.mark.parametrize("windows_separator", [False, True], ids=["native", "windows-path-seam"])
+def test_static_image_get_head_cache_and_other_static_files(store, monkeypatch, windows_separator):
     uploads, recovery = store
     image, reference = write_image(uploads)
     css = uploads.parent / "app.css"
@@ -216,6 +218,17 @@ def test_static_image_get_head_cache_and_other_static_files(store):
     static = lifecycle.RetainedUploadStaticFiles(
         directory=uploads.parent, uploads_dir=uploads, url_prefix="static/uploads"
     )
+    if windows_separator:
+        # Exercise the actual framework-to-handler boundary on any host. Native
+        # Windows execution is still required to validate the complete OS stack.
+        original_get_path = static.get_path
+        def windows_upload_path(scope):
+            path = original_get_path(scope)
+            return path.replace("/", "\\") if path.startswith("uploads/") else path
+        monkeypatch.setattr(static, "get_path", windows_upload_path)
+        platform_os = dict(vars(os))
+        platform_os["sep"] = "\\"
+        monkeypatch.setattr(lifecycle, "os", SimpleNamespace(**platform_os))
     app = Starlette(routes=[Mount("/static", app=static)])
     with TestClient(app) as client:
         retire(store, reference)

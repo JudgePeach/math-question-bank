@@ -187,9 +187,9 @@ def test_api_saves_image_layout_and_rejects_invalid_update(client, tmp_path, mon
 
 def test_browser_helpers_enable_both_mixed_images():
     root=Path(__file__).resolve().parents[1]
-    api=(root/'static/js/api.js').read_text()
+    api=(root/'static/js/api.js').read_text(encoding="utf-8")
     shared=api[api.index('window.ImageLayoutTools = {'):api.index('const FigureLayoutState = {')]
-    ocr=(root/'static/js/ocr.js').read_text()
+    ocr=(root/'static/js/ocr.js').read_text(encoding="utf-8")
     helpers=ocr[ocr.index('function currentEditorFigureLayout()'):ocr.index('window.applyEditorFigureLayoutPreview =')]
     script='global.window={};\n'+shared+'''\n
 const EDITOR_FIGURE_SIZE_LABELS={auto:'自动',small:'小',medium:'中',large:'大'};
@@ -204,7 +204,7 @@ if(images[0].dataset.editorImageKey!=='a.png') throw Error('missing individual c
 if(images[1].dataset.editorImageKey!=='') throw Error('missing trailing group control');
 if(images[1].style.maxHeight!==window.ImageLayoutTools.sizeDimensions('detached','medium').maxHeight+'px') throw Error('trailing group did not use shared size');
 '''
-    result=subprocess.run([shutil.which('node'),'-e',script],capture_output=True,text=True)
+    result=subprocess.run([shutil.which('node'), "-"], input=script, encoding="utf-8",capture_output=True,text=True)
     assert result.returncode==0,result.stderr
 
 
@@ -218,13 +218,13 @@ def test_math_repair_preserves_individual_image_layout_through_editor_and_paper(
     from lxml import html
 
     root = Path(__file__).resolve().parents[1]
-    api = (root / 'static/js/api.js').read_text()
+    api = (root / 'static/js/api.js').read_text(encoding="utf-8")
     shared = api[api.index('window.ImageLayoutTools = {'):api.index('const FigureLayoutState = {')]
-    editor = (root / 'static/js/editor.js').read_text()
+    editor = (root / 'static/js/editor.js').read_text(encoding="utf-8")
     editor_start = editor.index('function transformFillinMacro(clean)')
     editor_end_marker = 'window.parseMarkdownWithMath = parseMarkdownWithMath;'
     editor_end = editor.index(editor_end_marker, editor_start) + len(editor_end_marker)
-    paper = (root / 'static/js/paper.js').read_text()
+    paper = (root / 'static/js/paper.js').read_text(encoding="utf-8")
     paper_start = paper.index('function shouldPreserveInlinePaperImages(raw)')
     paper_end = paper.index('// Init on DOMContentLoaded', paper_start)
     source = (r'向量 \mathbf{a}。前文111' + '\n\n' + anchored_content
@@ -247,7 +247,7 @@ console.log(JSON.stringify({{
 '''
     node = shutil.which('node')
     assert node, 'Node.js is required for the frontend executable regression'
-    result = subprocess.run([node, '-e', script], cwd=root, capture_output=True, text=True)
+    result = subprocess.run([node, "-"], input=script, encoding="utf-8", cwd=root, capture_output=True, text=True)
     assert result.returncode == 0, result.stderr
     rendered = json.loads(result.stdout)
     for name in ('editor', 'paper'):
