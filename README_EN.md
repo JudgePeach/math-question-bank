@@ -218,6 +218,27 @@ MathBank integrates with [DeepSeek Official Open Platform](https://platform.deep
 
   Overlay upgrades preserve root databases and their WAL/SHM files, `.env`, `data_backup/`, `static/uploads/`, `.system_generated/`, and `venv/`. Never delete the existing installation directory.
 
+### Current Source Pillow Policy & Optional macOS Migration
+
+**This section describes this source update; the linked V3.0.2 official downloads do not contain it.** This update does not require a Python migration on either platform. The Windows portable environment keeps Python 3.10. Source installations and macOS project environments on Python 3.11 or newer use Pillow 13.0.0 with the updated dependency list; Python 3.10 keeps 12.3.0. **The image decoder security issues retained in 12.3.0 remain unresolved, so this is not a fix across every supported environment.** Source/macOS launchers install dependencies when the list changes; install the updated requirements yourself before starting directly from the command line.
+
+The macOS launcher reuses an existing working `venv`; installing a newer Python does not replace it. Without a `venv`, the launcher may still find a `python3` command pointing to the older interpreter first. Python 3.10 users can continue running MathBank. To use Pillow 13, you may **optionally** migrate after checking that the new Python supports your macOS version; this is not required for this update:
+
+1. Save your edits, create a full backup, and stop the service with the webpage power button. Keep the original project directory, `.env`, `data_backup/`, `static/uploads/`, and `.system_generated/`, and continue using the same browser and URL, including its port. Full backups exclude `.env` and browser drafts.
+2. Rename the project's existing `venv` to an unused backup name, such as `venv-before-python-upgrade`. Keep that backup.
+3. In Terminal, enter the original project directory and create its replacement `venv` using the **explicit path to the new interpreter**. Both paths below are examples; replace them with your actual project and installed Python paths rather than using an ambiguous `python3` command:
+   ```bash
+   cd "/path/to/MathBank"
+   "/Library/Frameworks/Python.framework/Versions/3.13/bin/python3.13" -m venv venv
+   ```
+4. With network access available, double-click `启动题库系统.command` in the original directory. Wait for dependency installation and service readiness, then check the actual versions from that directory:
+   ```bash
+   ./venv/bin/python -c 'import sys, PIL; print(sys.version); print(PIL.__version__)'
+   ```
+   Expect your selected Python 3.11 or newer and Pillow 13.0.0. Check questions, images, and the original browser drafts before deciding whether to remove the old environment backup.
+
+If migration fails, stop the service, retain the new environment for diagnosis, and restore the backed-up `venv` to its original name. Changing the Python environment alone does not change the database schema. If you also revert application versions, follow the database rollback rules below.
+
 ### Database Upgrades & Rollback
 
 Supported released versions can be upgraded directly without installing intermediate versions. When the database schema needs migration, the program first creates and verifies a database snapshot in `data_backup/schema_snapshots/`. That automatic snapshot contains **only the database**; create a full backup separately before upgrading to preserve referenced illustrations and custom metadata.

@@ -194,7 +194,7 @@ const scenarios={
     requests.at(-1).resolve({ok:true,json:async()=>({status:'success',questions:[]})});await flush();
   },
 };
-scenarios[process.argv[1]]().catch(error=>{console.error(error);process.exitCode=1;});
+scenarios[process.argv[2]]().catch(error=>{console.error(error);process.exitCode=1;});
 """
     return setup + shipped + checks
 
@@ -211,7 +211,7 @@ def test_markdown_import_runtime(markdown_import_script, scenario):
     if not node:
         pytest.skip("Node is required for the optional JS regression harness")
     result = subprocess.run(
-        [node, "-e", markdown_import_script, scenario],
+        [node, "-", scenario], input=markdown_import_script, encoding="utf-8",
         capture_output=True, text=True, timeout=15,
     )
     assert result.returncode == 0, result.stdout + result.stderr

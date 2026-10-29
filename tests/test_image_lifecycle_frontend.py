@@ -9,9 +9,9 @@ import pytest
 
 
 ROOT = Path(__file__).resolve().parents[1]
-API = (ROOT / 'static/js/api.js').read_text()
-EDITOR = (ROOT / 'static/js/editor.js').read_text()
-IMPORT = (ROOT / 'static/js/import.js').read_text()
+API = (ROOT / 'static/js/api.js').read_text(encoding="utf-8")
+EDITOR = (ROOT / 'static/js/editor.js').read_text(encoding="utf-8")
+IMPORT = (ROOT / 'static/js/import.js').read_text(encoding="utf-8")
 
 
 def section(source, start, end):

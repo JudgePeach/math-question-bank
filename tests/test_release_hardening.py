@@ -273,7 +273,12 @@ def test_cross_platform_requirements_are_locked_and_target_explicit():
         if line.strip() and not line.lstrip().startswith("#")
     ]
     assert package_lines
-    assert all("==" in line and ";" not in line for line in package_lines)
+    pillow_markers = {
+        'pillow==12.3.0; python_version < "3.11"',
+        'pillow==13.0.0; python_version >= "3.11"',
+    }
+    assert pillow_markers.issubset(package_lines)
+    assert all("==" in line and (";" not in line or line in pillow_markers) for line in package_lines)
     assert "colorama==0.4.6" in package_lines
     assert "greenlet==3.5.4" in package_lines
 
@@ -304,8 +309,12 @@ def test_cross_platform_requirements_are_locked_and_target_explicit():
     windows_requirements = (PROJECT_ROOT / "requirements-windows.txt").read_text(
         encoding="utf-8"
     )
-    assert windows_requirements.count("-r requirements.txt") == 1
-    assert "sys_platform" not in windows_requirements
+    windows_lines = {
+        line.strip() for line in windows_requirements.splitlines()
+        if line.strip() and not line.lstrip().startswith("#")
+    }
+    assert all("==" in line and ";" not in line for line in windows_lines)
+    assert windows_lines == (set(package_lines) - pillow_markers) | {"pillow==12.3.0"}
     build_release.validate_target_requirements()
 
 
@@ -1258,3 +1267,26 @@ def test_release_builder_never_runs_during_unit_import(monkeypatch):
     monkeypatch.setattr(build_release, "clean_directories", lambda: pytest.fail("built"))
     assert callable(build_release.main)
     assert shutil.which("definitely-not-a-command") is None
+
+
+@pytest.mark.parametrize("filename,old,new", [
+    ("requirements-windows.txt", "pillow==12.3.0", 'pillow==12.3.0; python_version < "3.11"'),
+    ("requirements-windows.txt", "pillow==12.3.0", "pillow==13.0.0"),
+    ("requirements-windows.txt", "colorama==0.4.6", "colorama==0.4.5"),
+    ("requirements-windows.txt", "pillow==12.3.0", "-r requirements.txt"),
+    ("requirements-windows.txt", "pillow==12.3.0", "pillow==12.3.0\npillow==12.3.0"),
+    ("requirements-windows.txt", "pillow==12.3.0", "pillow==12.3.0\nPillow==12.3.0"),
+    ("requirements.txt", 'pillow==13.0.0; python_version >= "3.11"', "pillow==13.0.0"),
+    ("requirements.txt", "colorama==0.4.6", 'colorama==0.4.6; sys_platform == "win32"'),
+    ("requirements.txt", "colorama==0.4.6", "colorama==0.4.6\ncolorama==0.4.6"),
+])
+def test_target_requirements_fail_closed_on_markers_includes_duplicates_or_drift(tmp_path, monkeypatch, filename, old, new):
+    for name in ("requirements.txt", "requirements-windows.txt"):
+        (tmp_path / name).write_text((PROJECT_ROOT / name).read_text(encoding="utf-8"), encoding="utf-8")
+    path = tmp_path / filename
+    source = path.read_text(encoding="utf-8")
+    assert old in source
+    path.write_text(source.replace(old, new), encoding="utf-8")
+    monkeypatch.setattr(build_release, "BASE_DIR", str(tmp_path))
+    with pytest.raises(RuntimeError):
+        build_release.validate_target_requirements()

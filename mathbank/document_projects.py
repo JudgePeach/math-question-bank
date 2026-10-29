@@ -14,10 +14,6 @@ try:
     import fcntl
 except ImportError:  # Windows
     fcntl = None
-try:
-    import msvcrt
-except ImportError:
-    msvcrt = None
 import hashlib
 import json
 import math
@@ -31,6 +27,10 @@ import time
 import uuid
 
 _WINDOWS = os.name == "nt"
+if _WINDOWS:
+    from mathbank import windows_file_lock as _windows_lock
+else:
+    _windows_lock = None
 _LOCK_WAIT_SECONDS = 5.0
 
 
@@ -145,6 +145,7 @@ class DocumentProjectStore:
         self._safe_directory(directory)
         if path.is_symlink():
             raise ProjectUnsafePath("工程锁文件不能是符号链接。")
+        fd = None
         try:
             fd = os.open(path, os.O_RDWR | os.O_CREAT | getattr(os, "O_NOFOLLOW", 0), 0o600)
             if not stat.S_ISREG(os.fstat(fd).st_mode):
@@ -157,14 +158,10 @@ class DocumentProjectStore:
                 try:
                     if fcntl is not None:
                         fcntl.flock(fd, (fcntl.LOCK_SH if mode == "shared" else fcntl.LOCK_EX) | fcntl.LOCK_NB)
-                    elif msvcrt is not None:
-                        if os.fstat(fd).st_size == 0:
-                            os.write(fd, b"0")
-                        os.lseek(fd, 0, os.SEEK_SET)
-                        try:
-                            msvcrt.locking(fd, msvcrt.LK_NBRLCK if mode == "shared" else msvcrt.LK_NBLCK, 1)
-                        except OSError as exc:
-                            raise BlockingIOError("project lock is busy") from exc
+                    elif _windows_lock is not None:
+                        # Win32 supports a shared lease across separate handles;
+                        # CRT LK_NBRLCK is exclusive despite its misleading name.
+                        _windows_lock.lock(fd, shared=mode == "shared")
                     else:
                         raise DocumentProjectError("当前平台没有可用的工程文件锁。")
                     break
@@ -174,16 +171,24 @@ class DocumentProjectStore:
                     time.sleep(0.005)
             return fd
         except BlockingIOError as exc:
-            os.close(fd)
+            if fd is not None:
+                os.close(fd)
             raise ProjectConflict("工程正在使用，请稍后重试。") from exc
         except OSError as exc:
-            if "fd" in locals():
+            if fd is not None:
                 os.close(fd)
             raise ProjectUnsafePath("工程锁文件不可安全访问。") from exc
         except Exception:
-            if "fd" in locals():
+            if fd is not None:
                 os.close(fd)
             raise
+
+    def _unlock_fd(self, fd):
+        try:
+            if fcntl is None and _windows_lock is not None:
+                _windows_lock.unlock(fd)
+        finally:
+            os.close(fd)
 
     @contextmanager
     def operation(self, project_id):
@@ -203,7 +208,7 @@ class DocumentProjectStore:
         finally:
             leases[project_id][0] -= 1
             if leases[project_id][0] == 0:
-                os.close(leases.pop(project_id)[1])
+                self._unlock_fd(leases.pop(project_id)[1])
 
     @contextmanager
     def _locked(self, project_id, *, deleting=False, wait=False):
@@ -252,11 +257,15 @@ class DocumentProjectStore:
                                          deadline=delete_deadline)
                 yield self._directory(project_id)
         finally:
-            if mutex_fd is not None:
-                os.close(mutex_fd)
-            if lease_fd is not None:
-                os.close(lease_fd)
-            lock.release()
+            try:
+                if mutex_fd is not None:
+                    self._unlock_fd(mutex_fd)
+            finally:
+                try:
+                    if lease_fd is not None:
+                        self._unlock_fd(lease_fd)
+                finally:
+                    lock.release()
 
     def _encode(self, value, limit=None):
         def inspect(item, depth=0):

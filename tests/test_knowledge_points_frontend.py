@@ -21,9 +21,9 @@ def run_js(checks, extra=""):
     node = shutil.which("node")
     assert node, "Node is required for isolated state checks"
     result = subprocess.run(
-        [node, "-e", "const assert=require('node:assert/strict');const window={};\n"
+        [node, "-"], input=("const assert=require('node:assert/strict');const window={};\n"
          + STATE + "\n" + extra + "\n(async()=>{\n" + checks
-         + "\n})().catch(error=>{console.error(error);process.exitCode=1;});"],
+         + "\n})().catch(error=>{console.error(error);process.exitCode=1;});"), encoding="utf-8",
         capture_output=True, text=True, cwd=ROOT,
     )
     assert result.returncode == 0, result.stderr + result.stdout

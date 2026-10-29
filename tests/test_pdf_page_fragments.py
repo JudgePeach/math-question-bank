@@ -212,7 +212,7 @@ def test_nonstandard_warning_text_is_bounded_without_losing_or_certifying_fragme
 
 
 @pytest.mark.parametrize("field,value", [("role","problem"),("edge","continue"),("number","16"),
-    ("number",True),("number",0),("number",10001),("text"," "),("text","x"*50001),("uuid","model-id")])
+    ("number",True),("number",0),("number",10001),("text"," "),pytest.param("text", "x"*50001, id="text-over-50000"),("uuid","model-id")])
 def test_block_schema_types_and_limits(field,value):
     p=packet();p["blocks"][0][field]=value
     with pytest.raises(ValueError):validate_pdf_page_fragments(p,info())

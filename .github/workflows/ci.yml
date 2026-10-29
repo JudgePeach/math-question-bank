@@ -266,3 +266,67 @@ jobs:
         if: runner.os == 'macOS'
         shell: bash
         run: bash -n '启动题库系统.command'
+
+
+  pillow-windows311:
+    name: Pillow 13 application / Windows Python 3.11
+    runs-on: windows-2022
+    timeout-minutes: 45
+    env:
+      PYTHONUTF8: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          check-latest: true
+          cache: pip
+          cache-dependency-path: |
+            requirements.txt
+            requirements-dev.txt
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Install locked application and test dependencies
+        run: python -m pip install --disable-pip-version-check -r requirements-dev.txt
+      - name: Verify actual Windows runtime and native imports
+        shell: python {0}
+        run: |
+          from pathlib import Path
+          import sys
+          import sqlite3
+          import PIL
+          import pymupdf
+          import pdf_inspector
+
+          assert sys.platform == "win32", sys.platform
+          assert sys.version_info[:2] == (3, 11), sys.version
+          assert PIL.__version__ == "13.0.0", PIL.__version__
+          runtime = (sys.version + "\nPillow " + PIL.__version__
+                     + "\nSQLite " + sqlite3.sqlite_version + "\n")
+          print(runtime, end="")
+          Path("runtime-windows311.txt").write_text(runtime, encoding="utf-8")
+      - name: Verify dependency consistency
+        run: python -m pip check
+      - name: Exercise native Windows locks and image decoding
+        shell: pwsh
+        run: |
+          python -m pytest -q tests/test_document_project_windows_locks.py tests/test_asset_lifecycle.py tests/test_asset_security.py tests/test_raster_validation.py tests/test_processing_limits.py --durations=15 --junitxml=focused-windows311.xml | Tee-Object -FilePath focused-windows311.log
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Run complete application regression suite
+        shell: pwsh
+        run: |
+          python -m pytest -q tests/ --durations=25 --junitxml=full-windows311.xml | Tee-Object -FilePath full-windows311.log
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Preserve native Windows diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pillow-windows311-results
+          path: |
+            runtime-windows311.txt
+            focused-windows311.xml
+            focused-windows311.log
+            full-windows311.xml
+            full-windows311.log
+          if-no-files-found: warn

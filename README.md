@@ -217,6 +217,27 @@ flowchart LR
 
   覆盖升级会自动保留根目录数据库及 WAL/SHM、`.env`、`data_backup/`、`static/uploads/`、`.system_generated/` 和 `venv/`。请勿直接删除原项目目录。
 
+### 当前源码的 Pillow 兼容策略与 macOS 可选迁移
+
+**本节说明本次源码更新，尚未进入上方链接的 V3.0.2 正式下载包。** 本次不强制更换 Windows 或 macOS 的 Python：Windows 便携环境继续使用 Python 3.10；源码或 macOS 项目的 `venv` 使用 Python 3.11 及以上时，更新后的依赖清单会安装 Pillow 13.0.0，Python 3.10 则继续使用 12.3.0。**12.3.0 保留的图片解码安全问题尚未消除，不能视为全平台均已修复。** 源码/macOS 双击启动会按依赖清单变化补齐依赖；直接命令行启动前请重新执行依赖安装。
+
+macOS 启动器优先复用可用的原 `venv`；安装新 Python 不会替换它。即使没有 `venv`，启动器也可能先找到仍指向旧版本的 `python3`。仍在使用 Python 3.10 的用户可以继续运行；如希望使用 Pillow 13，可在确认新 Python 支持本机 macOS 后，**自行选择**以下迁移，不必随本次更新一起进行：
+
+1. 保存编辑，创建完整备份，并通过网页电源按钮关闭服务。保留原项目目录、`.env`、`data_backup/`、`static/uploads/` 和 `.system_generated/`，继续使用原浏览器及原网址（含端口）。完整备份不包含 `.env` 或浏览器草稿。
+2. 将原项目中的 `venv` 改名为一个未占用的备份名，例如 `venv-before-python-upgrade`，先不要删除。
+3. 在终端进入原项目，用**新解释器的明确路径**创建同名 `venv`。下面的项目路径和 Python 3.13 路径均为示例，必须按实际安装情况替换；不要只把命令改成 `python3`：
+   ```bash
+   cd "/你的/MathBank目录"
+   "/Library/Frameworks/Python.framework/Versions/3.13/bin/python3.13" -m venv venv
+   ```
+4. 联网双击原目录中的 `启动题库系统.command`，等待依赖安装与服务就绪，再在同一目录核对实际版本：
+   ```bash
+   ./venv/bin/python -c 'import sys, PIL; print(sys.version); print(PIL.__version__)'
+   ```
+   预期所选 Python 为 3.11 及以上、Pillow 为 13.0.0；同时检查题目、图片和原浏览器草稿正常，再决定是否删除旧环境备份。
+
+若迁移失败，先关闭服务，保留新环境供排查，再将备存的旧 `venv` 恢复原名。仅迁移 Python 环境不改变数据库结构；如同时回退程序版本，仍须遵守下面的数据库回退规则。
+
 ### 数据库升级与退回旧版
 
 受支持的正式旧版可直接跨版本升级，无需逐版安装。只有数据库结构需要更新时，程序才会先在 `data_backup/schema_snapshots/` 自动创建并校验旧数据库快照，再执行迁移；**该自动快照仅含数据库文件**，升级前仍应另行创建包含配图与自定义元数据的“完整备份”。

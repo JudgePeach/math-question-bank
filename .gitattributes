@@ -1,2 +1,7 @@
 # cmd.exe batch files must keep Windows line endings on every build host.
 *.bat text eol=crlf
+
+# Source-byte regression contracts use canonical LF bytes on every checkout.
+# Keep their hashes meaningful instead of changing expectations on Windows.
+*.py text eol=lf
+*.js text eol=lf

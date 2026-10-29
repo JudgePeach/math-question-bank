@@ -17,7 +17,7 @@ from mathbank.paper_helper import build_latex_document, clean_content_for_latex
 from mathbank.word_export_helper import build_word_document
 
 
-AUDIT = json.loads((Path(__file__).parent / "fixtures" / "school_math_symbols.json").read_text())
+AUDIT = json.loads((Path(__file__).parent / "fixtures" / "school_math_symbols.json").read_text(encoding="utf-8"))
 FONT_VARIANTS = {"blackboard_mathbbm", "blackboard_mathds"}
 SUPPORTED = [item for item in AUDIT["samples"]
              if item["scope"] != "custom_shorthand" and item["id"] not in FONT_VARIANTS]

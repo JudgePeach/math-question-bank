@@ -503,3 +503,53 @@ def test_cancel_endpoint_does_not_delete_assets_when_worker_wins_race(
         assert deleted == []
     finally:
         main.DOCUMENT_TASKS.remove(task_id)
+
+
+@pytest.mark.parametrize("route", ["/api/upload", "/api/ocr"])
+def test_pillow_syntax_error_is_an_invalid_image_response(client, route):
+    # Cover decoder exception normalization on both supported Pillow pins.
+    with patch("mathbank.asset_security.ImageOps.exif_transpose", side_effect=SyntaxError("bad EXIF")):
+        response = client.post(
+            route, files={"file": ("bad.png", _png_bytes(), "image/png")},
+            headers={"X-Local-Token": LOCAL_TOKEN},
+        )
+    assert response.status_code == 400
+    assert response.json()["status"] == "error"
+    assert "bad EXIF" not in response.json()["message"]
+
+
+def _png_with_exif_chunk(payload):
+    import struct
+    import zlib
+    raw = _png_bytes()
+    chunk = b"eXIf" + payload
+    return (raw[:33] + struct.pack(">I", len(payload)) + chunk
+            + struct.pack(">I", zlib.crc32(chunk) & 0xffffffff) + raw[33:])
+
+
+@pytest.mark.parametrize("route", ["/api/upload", "/api/ocr"])
+@pytest.mark.parametrize("markers", [2, 3, 10])
+def test_malformed_png_exif_is_rejected_before_upload_or_ocr(client, route, markers):
+    from PIL import __version__ as pillow_version
+    if int(pillow_version.split(".")[0]) < 13:
+        pytest.skip("Pillow 12 compatibility fallback still accepts malformed EXIF; not a security fix")
+    raw = _png_with_exif_chunk(b"Exif\0\0" * markers)
+    assert len(raw) < 256
+    response = client.post(
+        route, files={"file": ("bad.png", raw, "image/png")},
+        headers={"X-Local-Token": LOCAL_TOKEN},
+    )
+    assert response.status_code == 400
+    assert response.json()["status"] == "error"
+
+
+def test_valid_png_exif_still_uploads(client, tmp_path):
+    exif = Image.Exif()
+    exif[274] = 6
+    raw = _png_with_exif_chunk(exif.tobytes())
+    with patch("main.UPLOAD_DIR", str(tmp_path)):
+        response = client.post(
+            "/api/upload", files={"file": ("valid.png", raw, "image/png")},
+            headers={"X-Local-Token": LOCAL_TOKEN},
+        )
+    assert response.status_code == 200
