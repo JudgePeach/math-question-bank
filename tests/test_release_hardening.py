@@ -549,6 +549,7 @@ paths = types.ModuleType("mathbank.paths")
 paths.TEMPLATES_DIR = Path(".")
 paths.PROJECT_ROOT = Path(".")
 paths.EXPORT_PREFLIGHTS_DIR = Path(".system_generated/export_preflights")
+paths.LOCAL_CONTENT_SOURCES_PATH = Path(".system_generated/content_sources.local.json")
 sys.modules["mathbank.paths"] = paths
 
 diagnostics = types.ModuleType("mathbank.latex_diagnostics")
