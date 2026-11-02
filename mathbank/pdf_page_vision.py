@@ -147,7 +147,7 @@ def _clean_page_warnings(result: dict) -> list[str]:
 
 
 def _validated_page(result, page_info: dict) -> dict:
-    if (not isinstance(result, dict) or not (_PAGE_FIELDS - {"warnings"}) <= set(result)
+    if (not isinstance(result, dict) or "markdown" not in result
             or set(result) - _PAGE_FIELDS - _PAGE_DIAGNOSTICS):
         raise ValueError("PDF 页面联合识别的页面字段缺失或包含未支持字段。")
     markdown = result["markdown"]
@@ -157,9 +157,23 @@ def _validated_page(result, page_info: dict) -> dict:
         raise ValueError("PDF 页面联合识别正文过长，请缩小识别范围。")
     if _IMAGE_OR_ASSET_PATH.search(markdown):
         raise ValueError("PDF 页面联合识别不能生成图片路径，只能返回插图占位。")
-    if not isinstance(result["page_complete"], bool):
-        raise ValueError("PDF 页面联合识别的完整性标记必须为布尔值。")
     warnings = _clean_page_warnings(result)
+    # These fields describe layout/completeness, not the transcript itself.
+    # Keep independently usable text when a provider omits or mistypes them;
+    # absent geometry is never guessed and an incomplete contract cannot
+    # certify a complete page. Do not mutate the original model response.
+    result = dict(result)
+    incomplete_contract = False
+    for field, label in (("figures", "配图列表"), ("ignored_candidates", "未采用候选列表")):
+        if not isinstance(result.get(field), list):
+            result[field] = []
+            incomplete_contract = True
+            warnings.append(f"{label}未返回或格式不规范，已保留正文，请对照原页核对插图。")
+    if not isinstance(result.get("page_complete"), bool):
+        result["page_complete"] = False
+        warnings.append("页面完整性标记未返回或格式不规范，已保留正文，请对照原页核对是否完整。")
+    if incomplete_contract:
+        result["page_complete"] = False
     try:
         return _validated_layout(result, page_info, markdown, warnings)
     except ValueError as exc:
@@ -357,7 +371,8 @@ def request_pdf_page(
         except (ValueError, OSError):
             pass
     def validate(body):
-        raw = completion_content(body, "PDF 页面联合识别", max_chars=MAX_RESPONSE_CHARS)
+        raw = completion_content(body, "PDF 页面联合识别", max_chars=MAX_RESPONSE_CHARS,
+                                 allow_missing_finish=True)
         try:
             parsed = parse_ai_json(raw)
         except Exception as exc:

@@ -14,6 +14,14 @@ import pytest
 from scripts import local_launcher as launcher
 
 
+@pytest.fixture(autouse=True)
+def isolated_launcher_address(monkeypatch, tmp_path):
+    monkeypatch.delenv("MATHBANK_PORT", raising=False)
+    monkeypatch.setattr(launcher, "ACTIVE_ROOT", tmp_path)
+    monkeypatch.setattr(launcher, "PORT", 8000)
+    monkeypatch.setattr(launcher, "BASE_URL", "http://127.0.0.1:8000")
+
+
 def test_windows_entry_uses_shared_launcher():
     from scripts import windows_launcher
     assert windows_launcher.main is launcher.main
@@ -138,8 +146,10 @@ def test_bootstrap_preflight_runs_without_application_or_database_imports(tmp_pa
     (True, "other/app", False),
 ])
 def test_existing_service_requires_usable_mathbank_page(monkeypatch, ready, repo, expected):
+    identity = {"project_instance_id": launcher.project_instance_id(launcher.ACTIVE_ROOT),
+                "server_instance_id": "synthetic-instance"}
     monkeypatch.setattr(launcher, "read_json", lambda route:
-                        {"repo": repo} if route == "/api/version" else {"ready": ready})
+                        {"repo": repo, **identity} if route == "/api/version" else {"ready": ready, **identity})
     assert launcher.existing_service_ready() is expected
 
 

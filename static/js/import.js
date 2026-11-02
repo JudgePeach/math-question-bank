@@ -3061,11 +3061,16 @@
             return { incomplete, manual, lines, issues };
         }
 
-        function paperSplittingReportSummary(splitting) {
-            if (!splitting || !Number.isSafeInteger(splitting.calls) || splitting.calls < 1) return '';
+        function paperSplittingReportSummary(splitting, validation) {
+            const partialSummary = validation?.partial === true
+                && Number.isSafeInteger(validation.accepted_count) && validation.accepted_count > 0
+                && Number.isSafeInteger(validation.rejected_count) && validation.rejected_count > 0
+                ? `已保留 ${validation.accepted_count} 道有效题目；另有 ${validation.rejected_count} 项题目数据不完整，未生成题卡，请对照原页检查漏题。`
+                : '';
+            if (!splitting || !Number.isSafeInteger(splitting.calls) || splitting.calls < 1) return partialSummary;
             const retries = Number.isSafeInteger(splitting.retries) && splitting.retries >= 0
                 && splitting.retries < splitting.calls ? splitting.retries : null;
-            return `PDF 整卷拆题请求 ${splitting.calls} 次` +
+            return partialSummary + `PDF 整卷拆题请求 ${splitting.calls} 次` +
                 (retries !== null ? `，其中失败后重试 ${retries} 次` : '') +
                 (Number.isSafeInteger(splitting.timeout_seconds) && splitting.timeout_seconds > 0 && splitting.timeout_seconds <= 7200
                     ? `；每次超时设为 ${splitting.timeout_seconds} 秒。` : '。');
@@ -3282,7 +3287,7 @@
             const layoutSummary = pdfLayoutReportSummary(report?.pdf_layout, report);
             const extractionSummary = pdfExtractionReportSummary(report?.pdf_extraction, report?.pdf_vision, report?.pdf_resume, report);
             const splittingSummary = pdfProjectParseReportSummary(report, {includeOcr: !extractionSummary})
-                || ((report?.pdf_project_legacy_parse || report?.pdf_project_parse) ? '' : paperSplittingReportSummary(report?.pdf_splitting));
+                || ((report?.pdf_project_legacy_parse || report?.pdf_project_parse) ? '' : paperSplittingReportSummary(report?.pdf_splitting, report?.pdf_question_validation));
             const verificationSummary = pdfSourceVerificationReportSummary(sourceVerificationForReport(report), report);
             const warnings = pdfLayoutWarnings(report);
             const notes = pdfLayoutNotes(report);
@@ -3296,7 +3301,10 @@
             const reportToggle = document.createElement('summary');
             reportToggle.className = 'cursor-pointer font-semibold';
             const unplacedFigures = Number(report?.pdf_layout?.unmatched_figures || 0);
-            reportToggle.textContent = Number.isSafeInteger(unplacedFigures) && unplacedFigures > 0
+            const rejectedQuestions = report?.pdf_question_validation?.rejected_count;
+            reportToggle.textContent = Number.isSafeInteger(rejectedQuestions) && rejectedQuestions > 0
+                ? `有 ${rejectedQuestions} 项未生成题卡 · 请对照原页检查漏题`
+                : Number.isSafeInteger(unplacedFigures) && unplacedFigures > 0
                 ? `有 ${unplacedFigures} 张配图未自动归位 · 查看提取说明（不影响导入）`
                 : '提取说明与原文对照（可选查看，不影响导入）';
             panel.appendChild(reportToggle);
@@ -3385,7 +3393,7 @@
         function appendSourceIntegrityLog(report) {
             const extractionSummary = pdfExtractionReportSummary(report?.pdf_extraction, report?.pdf_vision, report?.pdf_resume, report);
             const splittingSummary = pdfProjectParseReportSummary(report, {includeOcr: !extractionSummary})
-                || ((report?.pdf_project_legacy_parse || report?.pdf_project_parse) ? '' : paperSplittingReportSummary(report?.pdf_splitting));
+                || ((report?.pdf_project_legacy_parse || report?.pdf_project_parse) ? '' : paperSplittingReportSummary(report?.pdf_splitting, report?.pdf_question_validation));
             if (splittingSummary) appendImportLog(splittingSummary, 'info');
             const verificationSummary = pdfSourceVerificationReportSummary(sourceVerificationForReport(report), report);
             if (verificationSummary) appendImportLog(verificationSummary, 'info');
@@ -5350,7 +5358,7 @@
                         appendImportLog(localDraft ? `本地题稿已保留，可继续校对入库。${task.error || ''}`
                             : `分析失败: ${task.error || '未知错误'}`, localDraft ? 'warning' : 'error');
                         const splittingSummary = pdfProjectParseReportSummary(task.diagnostics)
-                            || ((task.diagnostics?.pdf_project_legacy_parse || task.diagnostics?.pdf_project_parse) ? '' : paperSplittingReportSummary(task.diagnostics?.pdf_splitting));
+                            || ((task.diagnostics?.pdf_project_legacy_parse || task.diagnostics?.pdf_project_parse) ? '' : paperSplittingReportSummary(task.diagnostics?.pdf_splitting, task.diagnostics?.pdf_question_validation));
                         if (splittingSummary) {
                             appendImportLog(splittingSummary, 'info');
                             document.getElementById('importSubLoadingText').textContent =

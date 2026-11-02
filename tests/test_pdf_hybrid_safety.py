@@ -249,8 +249,13 @@ def test_real_plain_native_proof_and_visual_transcript_proof_cannot_exchange_dom
     with pytest.raises(PdfHybridPlanError):require_pdf_snapshot_hybrid_plan(snapshot,task_id='pdf-integrity-test',generation=2)
 
 
-@pytest.mark.parametrize('partial',[False,True])
-def test_pdf_task_completion_executed_tail_preserves_partial_flag_and_notice(partial):
+@pytest.mark.parametrize('hybrid_partial,rejected_count,quarantined', [
+    (False, 0, False), (True, 0, False),
+    (False, 2, False), (True, 2, False), (False, 0, True),
+])
+def test_pdf_task_completion_executed_tail_preserves_partial_flag_and_notice(
+    hybrid_partial, rejected_count, quarantined
+):
     """Execute the actual PDF completion tail without importing app/main/DB.
 
     The HTTP/planner tests above exercise the real request. This isolates the
@@ -261,26 +266,40 @@ def test_pdf_task_completion_executed_tail_preserves_partial_flag_and_notice(par
     from types import SimpleNamespace
     tree=ast.parse((Path(__file__).resolve().parents[1]/'main.py').read_text())
     function=next(n for n in tree.body if isinstance(n,ast.FunctionDef) and n.name=='run_pdf_parsing_task')
-    assigns={target.id:node for node in ast.walk(function) if isinstance(node,ast.Assign)
-             for target in node.targets if isinstance(target,ast.Name) and
-             (target.id=='completion_log' or target.id=='partial' and isinstance(node.value,ast.Call))}
     completion=next(node for node in ast.walk(function) if isinstance(node,ast.Call)
         and isinstance(node.func,ast.Attribute) and node.func.attr=='complete'
         and isinstance(node.func.value,ast.Name) and node.func.value.id=='DOCUMENT_TASKS'
         and any(keyword.arg=='data' and isinstance(keyword.value,ast.Name) and keyword.value.id=='final_questions'
                 for keyword in node.keywords))
-    actual_ast=ast.Module(body=[assigns['partial'],assigns['completion_log'],ast.Expr(value=completion)],type_ignores=[])
+    # Execute the continuous tail, including its input assignments and guards.
+    # Selecting assignments by name loses dependencies and branch ownership.
+    statements=next(node.body for node in ast.walk(function) if isinstance(node,ast.Try)
+        and any(isinstance(statement,ast.Assign) and statement.value is completion
+                for statement in node.body))
+    start=next(index for index,node in enumerate(statements) if isinstance(node,ast.Assign)
+        and any(isinstance(target,ast.Name) and target.id=='rejected_count' for target in node.targets))
+    end=next(index for index,node in enumerate(statements) if isinstance(node,ast.Assign)
+        and node.value is completion)
+    actual_ast=ast.Module(body=statements[start:end+1],type_ignores=[])
     ast.fix_missing_locations(actual_ast)
     captured=[]
     tasks=SimpleNamespace(complete=lambda task_id,**kwargs:captured.append((task_id,kwargs)) or True)
     data=[{'content':'One retained complete question'}]
-    diagnostics={'pdf_hybrid':{'partial':partial,'failed_group_ids':['failed-source-group'] if partial else []}}
+    diagnostics={'pdf_hybrid':{'partial':hybrid_partial,
+        'failed_group_ids':['failed-source-group'] if hybrid_partial else []},
+        'pdf_question_validation':{'rejected_count':rejected_count}}
     namespace={'DOCUMENT_TASKS':tasks,'diagnostics':diagnostics,'task_id':'pdf-ui-completion','final_questions':data,
-               'generate_answers':False,'page_urls':['test-page'],'target_page_indices':[0],'temp_assets':[]}
+               'generate_answers':False,'page_urls':['test-page'],'target_page_indices':[0],'temp_assets':[],
+               'recovery':{'quarantined_ranges':[(1,2)]} if quarantined else None}
     exec(compile(actual_ast,'actual-pdf-completion-tail','exec'),namespace)
     assert len(captured)==1
     kwargs=captured[0][1]
+    partial=hybrid_partial or bool(rejected_count) or quarantined
     assert kwargs['partial'] is partial and kwargs['data'] is data and kwargs['diagnostics'] is diagnostics
-    assert ('仍需校对' in kwargs['log']) is partial
-    assert ('未处理范围已保留' in kwargs['log']) is partial
+    if rejected_count:
+        assert f'{rejected_count} 项' in kwargs['log'] and '核对是否漏题' in kwargs['log']
+        assert '完整题目' not in kwargs['log']
+    else:
+        assert ('仍需校对' in kwargs['log']) is partial
+        assert ('未处理范围已保留' in kwargs['log']) is partial
     assert kwargs['document_type']=='pdf' and kwargs['page_numbers']==[1]

@@ -5,6 +5,8 @@ import contextlib
 import hashlib
 import json
 import os
+import re
+import secrets
 import shutil
 import socket
 import subprocess
@@ -15,11 +17,14 @@ import urllib.request
 import uuid
 from pathlib import Path
 
+from mathbank.paths import PROJECT_ROOT, project_instance_id
 from mathbank.storage_access import StorageAccessError, check_startup_storage
 
-PROJECT_ROOT = Path(__file__).resolve().parents[1]
 PORT = 8000
 BASE_URL = f"http://127.0.0.1:{PORT}"
+ACTIVE_ROOT = PROJECT_ROOT
+MAX_PORT_ATTEMPTS = 20
+UNVERIFIED_PORTS: set[int] = set()
 REPOSITORY = "JudgePeach/math-question-bank"
 IMPORT_CHECK = (
     "import fastapi,uvicorn,sqlalchemy,greenlet,colorama,multipart,dotenv,"
@@ -32,31 +37,192 @@ class LauncherError(RuntimeError):
     pass
 
 
+class PortBusyError(LauncherError):
+    """Only a confirmed bind failure of an exited child permits another try."""
+
+
+def _set_port(port: int) -> None:
+    global PORT, BASE_URL
+    PORT = port
+    BASE_URL = f"http://127.0.0.1:{port}"
+
+
+def _valid_port(value) -> bool:
+    return type(value) is int and 1 <= value <= 65535
+
+
+def configured_port(root: Path) -> tuple[int, bool]:
+    """A remembered port is a preference; an explicit environment port is fixed."""
+    override = os.environ.get("MATHBANK_PORT")
+    if override is not None:
+        if (not 1 <= len(override) <= 5 or not override.isascii()
+                or not override.isdecimal() or not _valid_port(int(override))):
+            raise LauncherError("MATHBANK_PORT 必须是 1 至 65535 的整数。")
+        return int(override), True
+    try:
+        with (root / ".system_generated" / "launcher-settings.json").open(
+            encoding="utf-8-sig"
+        ) as handle:
+            raw = handle.read(8193)
+        if len(raw) > 8192:
+            raise ValueError("oversized settings")
+        settings = json.loads(raw)
+        if not isinstance(settings, dict) or not _valid_port(settings.get("port")):
+            raise ValueError("invalid port")
+        return settings["port"], False
+    except FileNotFoundError:
+        return 8000, False
+    except (OSError, ValueError):
+        print("启动端口记忆不可用，将从 8000 开始检查；原有题库和浏览器数据保持不变。")
+        return 8000, False
+
+
+def remember_port(root: Path, port: int) -> None:
+    """Best-effort atomic cache: a failure must not undo a ready service."""
+    state = root / ".system_generated"
+    temporary = state / f"launcher-settings-{uuid.uuid4().hex}.tmp"
+    try:
+        state.mkdir(parents=True, exist_ok=True)
+        descriptor = os.open(str(temporary), os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
+            json.dump({"port": port}, handle)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temporary, state / "launcher-settings.json")
+    except OSError:
+        print("题库已可用，但未能记住端口；请保留当前访问地址并检查程序目录的写入权限。")
+    finally:
+        with contextlib.suppress(OSError):
+            temporary.unlink(missing_ok=True)
+
+
+def candidate_ports(preferred: int, fixed: bool) -> list[int]:
+    if fixed:
+        return [preferred]
+    return list(dict.fromkeys([preferred, *range(8000, 8000 + MAX_PORT_ATTEMPTS)]))[:MAX_PORT_ATTEMPTS]
+
+
+class _NoRedirect(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, *_args, **_kwargs):
+        return None
+
+
+def read_local(route: str) -> bytes:
+    opener = urllib.request.build_opener(urllib.request.ProxyHandler({}), _NoRedirect())
+    with opener.open(BASE_URL + route, timeout=2) as response:
+        raw = response.read(1024 * 1024 + 1)
+        if len(raw) > 1024 * 1024:
+            raise ValueError("local response too large")
+        return raw
+
+
 def read_json(route: str):
     # Local service requests must not go through a system/network proxy.
-    opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
-    with opener.open(BASE_URL + route, timeout=2) as response:
-        return json.loads(response.read(1024 * 1024))
+    return json.loads(read_local(route))
+
+
+def runtime_is_busy(root: Path) -> bool:
+    """Check the existing database guard; never inspect or control old PIDs."""
+    if not (root / ".system_generated" / "runtime.lock").exists():
+        return False
+    try:
+        with launcher_lock(root / ".system_generated", timeout=0, filename="runtime.lock"):
+            return False
+    except (LauncherError, OSError):
+        return True
+
+
+def _legacy_service_matches(version: dict) -> bool:
+    """Reuse an older server only with this directory's held lock and token.
+
+    No token is sent to the probed service, logged, or changed. An unverified
+    old MathBank remains a conflict; it must not cause a second server start.
+    """
+    if not runtime_is_busy(ACTIVE_ROOT):
+        return False
+    try:
+        # Optional positive evidence for pre-project-ID servers only. A copied
+        # local token plus a busy lock alone cannot locate the current library.
+        # Never read/use the PID, nor require this record for newer servers.
+        with (ACTIVE_ROOT / ".system_generated" / "server-state.json").open(encoding="utf-8") as handle:
+            raw = handle.read(8193)
+        if len(raw) > 8192:
+            return False
+        state = json.loads(raw)
+        launch_id = state.get("launch_id") if isinstance(state, dict) else None
+        if (not isinstance(launch_id, str) or not re.fullmatch(r"[0-9a-f]{32}", launch_id)
+                or launch_id != version.get("server_instance_id")):
+            return False
+        with (ACTIVE_ROOT / ".system_generated" / "local_token").open(encoding="utf-8") as handle:
+            expected = handle.read(4097).strip()
+        if not 16 <= len(expected) <= 4096:
+            return False
+        html = read_local("/").decode("utf-8")
+        match = re.search(r'window\.__localToken\s*=\s*("(?:[^"\\]|\\.)*")\s*;', html)
+        return bool(match and secrets.compare_digest(json.loads(match[1]).encode("utf-8"), expected.encode("utf-8")))
+    except (OSError, ValueError):
+        return False
 
 
 def existing_service_ready() -> bool:
     try:
         version = read_json("/api/version")
+        if not isinstance(version, dict) or version.get("repo") != REPOSITORY:
+            return False
+        legacy = "project_instance_id" not in version
+        if legacy:
+            if not _legacy_service_matches(version):
+                UNVERIFIED_PORTS.add(PORT)
+                return False
+        elif version["project_instance_id"] != project_instance_id(ACTIVE_ROOT):
+            if (not isinstance(version["project_instance_id"], str)
+                    or not re.fullmatch(r"[0-9a-f]{64}", version["project_instance_id"])):
+                UNVERIFIED_PORTS.add(PORT)
+            return False
+        UNVERIFIED_PORTS.add(PORT)
         health = read_json("/healthz")
-        return (
-            isinstance(version, dict) and version.get("repo") == REPOSITORY
-            and isinstance(health, dict) and health.get("ready") is True
+        ready = (
+            isinstance(health, dict) and health.get("ready") is True
+            and (legacy or health.get("project_instance_id") == version["project_instance_id"])
+            and isinstance(version.get("server_instance_id"), str)
+            and bool(version["server_instance_id"])
+            and health.get("server_instance_id") == version["server_instance_id"]
         )
+        if ready:
+            UNVERIFIED_PORTS.discard(PORT)
+        return ready
     except (OSError, ValueError):
         return False
 
 
+def confirm_port_change(previous: int, proposed: int) -> None:
+    print(f"端口 {previous} 被其他应用占用。可改用 http://127.0.0.1:{proposed}。")
+    print(f"草稿、选题篮和未保存的卷面信息仍保留在原地址 http://127.0.0.1:{previous}；换端口不会自动搬迁。")
+    if not sys.stdin or not sys.stdin.isatty():
+        raise LauncherError(
+            "请在终端中运行启动器并确认换端口；也可通过 MATHBANK_PORT 指定端口。当前未更换地址。"
+        )
+    try:
+        answer = input("确认切换并记住这个端口？输入 y 确认，其他输入取消：").strip().lower()
+    except EOFError:
+        answer = ""
+    if answer not in {"y", "yes"}:
+        raise LauncherError("已取消换端口，未启动新的题库服务。")
+
+
 def port_in_use() -> bool:
     try:
-        with socket.create_connection(("127.0.0.1", PORT), timeout=0.5):
-            return True
-    except OSError:
+        # Match Uvicorn's bind semantics: POSIX permits restarting after
+        # TIME_WAIT. Windows must keep exclusive ownership (no SO_REUSEADDR).
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
+            if os.name != "nt":
+                probe.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            elif hasattr(socket, "SO_EXCLUSIVEADDRUSE"):
+                probe.setsockopt(socket.SOL_SOCKET, socket.SO_EXCLUSIVEADDRUSE, 1)
+            probe.bind(("127.0.0.1", PORT))
         return False
+    except OSError:
+        return True
 
 
 def open_browser() -> None:
@@ -72,10 +238,10 @@ def open_browser() -> None:
 
 
 @contextlib.contextmanager
-def launcher_lock(state_dir: Path, timeout: float = 60):
+def launcher_lock(state_dir: Path, timeout: float = 60, *, filename="launcher.lock"):
     """Serialize double clicks; the file itself is never treated as stale state."""
     state_dir.mkdir(parents=True, exist_ok=True)
-    with (state_dir / "launcher.lock").open("a+b") as handle:
+    with (state_dir / filename).open("a+b") as handle:
         handle.seek(0, os.SEEK_END)
         if handle.tell() == 0:
             handle.write(b"0")
@@ -229,36 +395,92 @@ def start_server(root: Path, python: Path) -> None:
             (state_dir / "probe.log").write_text(detail, encoding="utf-8")
         print(detail)
         print(f"详细日志：{log}")
+        log_text = ""
         with contextlib.suppress(OSError):
-            print("\n".join(log.read_text(encoding="utf-8", errors="replace").splitlines()[-80:]))
+            log_text = log.read_text(encoding="utf-8", errors="replace")
+            print("\n".join(log_text.splitlines()[-80:]))
+        poll = getattr(child, "poll", None)
+        exited = callable(poll) and poll() not in (None, 0)
+        if exited and re.search(r"\[Errno (?:48|98|10048)\].*(?:address|bind)", log_text, re.I):
+            raise PortBusyError(f"端口 {PORT} 在启动时被其他应用占用。")
         raise LauncherError("题库尚未启动成功，请根据上面的具体错误处理后重试。")
     # No auto-stop on timeout: a slow server can finish and be opened next time.
     with contextlib.suppress(OSError):
         (state_dir / "probe.log").unlink(missing_ok=True)
-    print("题库已就绪。")
+    remember_port(root, PORT)
+    print(f"题库已就绪：{BASE_URL}")
     open_browser()
 
 
 def run_launcher(root: Path = PROJECT_ROOT) -> None:
+    global ACTIVE_ROOT
+    root = Path(root).resolve()
+    ACTIVE_ROOT = root
+    UNVERIFIED_PORTS.clear()
+    preferred, fixed = configured_port(root)
+    _set_port(preferred)
     if existing_service_ready():
-        print("题库已经在运行，正在打开网页。如刚更新了程序，请先在网页关闭服务再启动。")
+        print(f"题库已经在运行：{BASE_URL}，正在打开网页。如刚更新了程序，请先在网页关闭服务再启动。")
         open_browser()
         return
     _check_startup_storage(root)
     with launcher_lock(root / ".system_generated"):
-        if existing_service_ready():
-            open_browser()
-            return
+        ports = candidate_ports(preferred, fixed)
+        # Find an existing copy before choosing an unused port. This also
+        # recovers a missing port cache without consulting old PID records.
+        for port in ports:
+            _set_port(port)
+            if existing_service_ready():
+                remember_port(root, port)
+                print(f"题库已经在运行：{BASE_URL}。如刚更新程序，请先在原网页关闭服务再启动。")
+                open_browser()
+                return
+        if runtime_is_busy(root):
+            raise LauncherError(
+                "本目录的题库仍在启动、运行或关闭中；未启动第二份服务。"
+                "如刚更新程序，请先在原题库网页正常关闭服务，再重新启动。"
+            )
+        if preferred in UNVERIFIED_PORTS:
+            raise LauncherError(
+                f"端口 {preferred} 上的题库服务尚未就绪或无法确认归属，未启动第二份服务。"
+                "如刚更新程序，请先在原题库网页正常关闭服务，再重新启动。"
+            )
+        _set_port(preferred)
+        unavailable = set()
         if port_in_use():
-            raise LauncherError("端口 8000 已被占用，或题库尚未就绪；请稍后重试，或关闭占用该端口的程序。")
+            unavailable.add(preferred)
+            _choose_another_port(ports, unavailable, preferred)
         python, backup = prepare_python(root)
         ensure_dependencies(root, python)
-        start_server(root, python)
+        while True:
+            if runtime_is_busy(root):
+                raise LauncherError("本目录已有题库服务正在运行或启动，未启动第二份服务。请从原网页继续操作。")
+            try:
+                start_server(root, python)
+                break
+            except PortBusyError:
+                previous = PORT
+                unavailable.add(previous)
+                _choose_another_port(ports, unavailable, previous)
         if backup:
             try:
                 shutil.rmtree(backup)
             except OSError:
                 print(f"旧 Python 环境备份保留在：{backup}")
+
+
+def _choose_another_port(ports: list[int], unavailable: set[int], previous: int) -> None:
+    for port in ports:
+        if port in unavailable:
+            continue
+        _set_port(port)
+        if not port_in_use():
+            confirm_port_change(previous, port)
+            return
+        unavailable.add(port)
+    raise LauncherError(
+        f"端口 {previous} 不可用，候选端口已用尽。请先关闭占用应用，或通过 MATHBANK_PORT 指定其他端口。"
+    )
 
 
 def _check_startup_storage(root: Path) -> None:

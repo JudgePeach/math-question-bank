@@ -127,6 +127,12 @@ tests/artifacts/*
 /scripts/knowledge_backfill.py
 /scripts/knowledge_backfill_apply.py
 /scripts/question_exchange.py
+/scripts/zhixue_archive_preview.py
+/scripts/zhixue_formula_check.js
+/mathbank/zhixue_archive_conversion.py
+/tests/test_zhixue_archive_preview.py
+/tests/test_zhixue_archive_conversion.py
+/tests/test_zhixue_render_contract.py
 /scripts/resources/
 /tests/test_association_batch.py
 /tests/test_backfill_question_references.py

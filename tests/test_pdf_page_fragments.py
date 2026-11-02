@@ -190,7 +190,8 @@ def test_server_marker_cannot_be_hidden_across_two_blocks():
 
 
 @pytest.mark.parametrize("field,value", [("schema","v1"),("blocks",[]),("blocks",[block()]*(MAX_BLOCKS+1)),
-    ("page_complete","false"),("markdown","duplicate source")])
+    ("page_complete","false"),("page_complete","true"),("page_complete",0),("page_complete",1),
+    ("page_complete",None),("page_complete",[]),("page_complete",{}),("markdown","duplicate source")])
 def test_strict_envelope_and_resource_limits(field,value):
     p=packet();p[field]=value
     with pytest.raises(ValueError):validate_pdf_page_fragments(p,info())

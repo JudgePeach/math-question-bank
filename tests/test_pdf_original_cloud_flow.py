@@ -138,6 +138,20 @@ for question in parsed_questions:
         annotate_ai_knowledge_points(question, knowledge_catalog)
 ''', "")
     elif node.name == "run_pdf_parsing_task":
+        # Reviewed 2026-10-28: accept usable cards from a complete PDF reply,
+        # and label discarded invalid entries as partial instead of losing
+        # the entire batch. No new route or provider request is introduced.
+        _replace_statement_block(node, '''
+rejected_count = diagnostics.get("pdf_question_validation", {}).get("rejected_count", 0)
+partial = bool(diagnostics.get("pdf_hybrid", {}).get("partial") or rejected_count)
+''', '''
+partial = bool(diagnostics.get("pdf_hybrid", {}).get("partial"))
+''')
+        _replace_statement_block(node, '''
+if rejected_count:
+    completion_log = (f"PDF 已保留 {len(final_questions)} 道可用题目；模型返回的 {rejected_count} 项因题干或答案格式无效未接收，"
+                      "请对照原 PDF 页面核对是否漏题。")
+''', "")
         # Reviewed 2026-10-26: partial delivery requires at least one successful
         # page; an entirely failed OCR batch retains the original error path.
         _replace_statement_block(node, '''
@@ -224,12 +238,20 @@ MODULE_HASHES = {
 # Keep the upstream module hash above as the original provenance baseline.
 PDF_PAGE_DIAGNOSTICS_SHA256 = "7c29d3028404dc62237c1c35ebf7f1fdecd6cc9b18b5598d29c9f77716b79f51"
 
+# Reviewed 2026-10-28: usable page/region text survives malformed or missing
+# auxiliary layout fields. Missing finish metadata is accepted only after
+# content validation; explicit truncation and region identities remain strict.
+PDF_AUXILIARY_TOLERANCE_SHA256 = {
+    "pdf_page_vision.py": "e813c4aa0f241575554cbe8dd2825ccedf7ce38fd8dfb48bf0215d98e3bf8ffd",
+    "pdf_region_vision.py": "f8ab5a99ece470c50b98a53ba5c9946cebd4b0dd457e3ee3028eabccbfeb770b",
+}
+
 
 @pytest.mark.parametrize("filename", MODULE_HASHES)
 def test_cloud_pdf_modules_match_original_bytes(filename):
     content = (ROOT / "mathbank" / filename).read_bytes()
-    if filename == "pdf_page_vision.py":
-        assert hashlib.sha256(content).hexdigest() == PDF_PAGE_DIAGNOSTICS_SHA256
+    if filename in PDF_AUXILIARY_TOLERANCE_SHA256:
+        assert hashlib.sha256(content).hexdigest() == PDF_AUXILIARY_TOLERANCE_SHA256[filename]
         return
     if filename == "pdf_vision_request.py":
         # The single-image/new callers may request one attempt; old PDF callers

@@ -27,7 +27,13 @@ INTERNAL_TOOL_MODULE_PATHS = tuple(
     f"{package}/{name}.py"
     for package in ("mathbank", "scripts")
     for name in INTERNAL_TOOL_MODULE_NAMES
-) + ("scripts/difficulty_classify.py", "scripts/backfill_question_references.py")
+) + (
+    "scripts/difficulty_classify.py",
+    "scripts/backfill_question_references.py",
+    "mathbank/zhixue_archive_conversion.py",
+    "scripts/zhixue_archive_preview.py",
+    "scripts/zhixue_formula_check.js",
+)
 NON_RUNTIME_RELEASE_SCRIPT_PATHS = (
     "scripts/migrate_word_math_private_chars.py",
     "scripts/build_release.py",
@@ -53,6 +59,13 @@ INTERNAL_TOOL_FORBIDDEN_MEMBERS = (
     "Scripts/Backfill_Question_References.py",
     "tests/test_backfill_question_references.py",
     "tests/test_question_references_exchange.py",
+    "tests/test_zhixue_archive_preview.py",
+    "tests/test_zhixue_archive_conversion.py",
+    "tests/test_zhixue_render_contract.py",
+    "MathBank/Zhixue_Archive_Conversion.py",
+    "Scripts/Zhixue_Archive_Preview.py",
+    "Scripts/Zhixue_Formula_Check.js",
+    "scripts/zhixue_formula_check.js/",
 )
 
 
@@ -673,6 +686,8 @@ def test_release_copy_excludes_internal_tools_and_preserves_runtime_imports(
         "scripts/vendor/question_exchange.py",
         "scripts/vendor/difficulty_classify.py",
         "scripts/vendor/backfill_question_references.py",
+        "mathbank/vendor/zhixue_archive_conversion.py",
+        "scripts/vendor/zhixue_formula_check.js",
         "templates/template.tex",
     ):
         path = source / relative_path
@@ -741,6 +756,8 @@ def test_release_copy_excludes_internal_tools_and_preserves_runtime_imports(
         "scripts/vendor/question_exchange.py",
         "scripts/vendor/difficulty_classify.py",
         "scripts/vendor/backfill_question_references.py",
+        "mathbank/vendor/zhixue_archive_conversion.py",
+        "scripts/vendor/zhixue_formula_check.js",
         "templates/template.tex",
         *("mathbank/resources/curriculums/" + version + ".json" for version in ("A", "B", "S", "H")),
         *(name.replace(".", "/") + ".py" for name in safe_modules),
@@ -1226,7 +1243,7 @@ def test_launchers_use_shared_environment_and_startup_flow():
     assert "find_supported_python" in mac
     assert "MATHBANK_NO_PAUSE" in windows
     assert "MATHBANK_NO_PAUSE" in mac
-    assert "Path(__file__).resolve().parents[1]" in shared
+    assert "from mathbank.paths import PROJECT_ROOT" in shared
     assert "ProxyHandler({})" in shared
     assert "MATHBANK_LAUNCH_ID" in shared
     for source in (mac, windows, shared):

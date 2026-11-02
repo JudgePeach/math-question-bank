@@ -881,6 +881,21 @@ const pdfScenarios = {
     for (const timeout_seconds of [null,'600',NaN,Infinity,-1,0,0.5,true,7201]) {
       assert.equal(paperSplittingReportSummary({calls:1,retries:0,timeout_seconds}).includes('超时设为'),false);
     }
+    const validation={received_count:5,accepted_count:2,rejected_count:3,partial:true,
+      rejected_items:[{index:2,reason:'missing_content'},{index:3,reason:'invalid_answer'},{index:4,reason:'invalid_question'}]};
+    renderSourceIntegrityReport({...diagnostics,pdf_question_validation:validation});
+    const partialPanel=document.getElementById('parsedSourceIntegrityReport');
+    assert.ok(partialPanel.querySelector('summary').textContent.includes('3 项未生成题卡'));
+    const partialText=partialPanel.querySelector('.pdf-splitting-summary').textContent;
+    assert.ok(partialText.includes('已保留 2 道有效题目'));
+    assert.ok(partialText.includes('3 项题目数据不完整'));
+    assert.ok(partialText.includes('对照原页检查漏题'));
+    assert.ok(partialText.includes('请求 2 次'));
+    assert.equal(parsedQuestionNeedsSourceReview(0),false,'batch partial must not gate valid cards');
+    assert.ok(paperSplittingReportSummary(null,validation).includes('3 项题目数据不完整'));
+    for (const rejected_count of [null,'3',NaN,Infinity,-1,0,0.5,true]) {
+      assert.equal(paperSplittingReportSummary(null,{...validation,rejected_count}),'');
+    }
     const generation=beginDocumentImportTask();
     pollPdfTaskStatus('split-failed',generation);
     [...intervals.values()][0]();

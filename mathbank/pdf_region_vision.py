@@ -23,7 +23,7 @@ from mathbank.ai_providers import apply_model_thinking_policy, apply_structured_
 from mathbank.pdf_figures import MAX_FIGURES_PER_PAGE, MAX_SOURCE_CHARS, describe_figure_slots
 from mathbank.pdf_layout import normalize_model_bbox
 from mathbank.pdf_page_vision import (
-    MAX_OUTPUT_TOKENS, MAX_RESPONSE_CHARS, _PAGE_FIELDS, _SLOT_LABEL, _finite_number,
+    MAX_OUTPUT_TOKENS, MAX_RESPONSE_CHARS, _SLOT_LABEL, _finite_number,
     _no_cancel, _prompt_page_info, _require_fields, _validated_page,
 )
 from mathbank.pdf_vision_request import completion_content, request_pdf_vision
@@ -156,19 +156,24 @@ def _merged_result(parsed, page_info: dict, regions: list[dict], pieces: list[di
     original_candidates = {candidate["id"]: candidate for candidate in page_info.get("candidates", [])}
     results = {}
     for value in returned:
-        fields = {"id", *_PAGE_FIELDS} if include_figures else {"id", "markdown"}
-        _require_fields(value, fields, "区域")
+        if include_figures:
+            if not isinstance(value, dict) or "id" not in value:
+                raise ValueError("PDF 局部识别的区域字段缺失或无效。")
+        else:
+            _require_fields(value, {"id", "markdown"}, "区域")
         identifier = value["id"]
         if not isinstance(identifier, str) or identifier not in known or identifier in results:
             raise ValueError("PDF 局部识别返回了重复或未知区域。")
-        data = {key: value[key] for key in _PAGE_FIELDS} if include_figures else {
+        # The shared page validator tolerates missing auxiliary layout fields;
+        # region identity and complete coverage remain strict here.
+        data = {key: item for key, item in value.items() if key != "id"} if include_figures else {
             "markdown": value["markdown"], "figures": [], "ignored_candidates": [],
             "page_complete": True, "warnings": [],
         }
         region = known[identifier]
         invalid_local_slots = set()
         raw_boxes = {}
-        if include_figures and isinstance(data["figures"], list):
+        if include_figures and isinstance(data.get("figures"), list):
             converted = []
             for figure in data["figures"]:
                 if isinstance(figure, dict):
@@ -289,7 +294,8 @@ def request_pdf_regions(
         except (ValueError, OSError):
             pass
     def validate(body):
-        raw = completion_content(body, "PDF 局部识别", max_chars=MAX_RESPONSE_CHARS)
+        raw = completion_content(body, "PDF 局部识别", max_chars=MAX_RESPONSE_CHARS,
+                                 allow_missing_finish=True)
         try:
             parsed = parse_ai_json(raw)
         except Exception as exc:

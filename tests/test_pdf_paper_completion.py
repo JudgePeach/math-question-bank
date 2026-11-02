@@ -71,6 +71,56 @@ def test_invalid_first_result_usage_stays_known_but_metadata_is_from_success():
     assert diagnostics["finish_reason"] == "stop"
 
 
+def test_pdf_keeps_valid_questions_from_complete_reply_without_retry_or_content_diagnostics():
+    good = {"content": "完整题干 $x=1$。\n![原图](/static/uploads/example.png)",
+            "answer_markdown": "[EXTRACTED_ORIGINAL]原答案 $1$。", "source_review": {"required": False}}
+    rows = [deepcopy(good), {"content": "  "}, "private invalid item",
+            {"content": "private rejected body", "answer_markdown": {"private": "invalid answer"}},
+            {"content": "另一道完整题。", "answer_markdown": None}]
+    calls, diagnostics = [], {}
+    def post(*_a, **_kw):
+        calls.append(1)
+        return response(questions=rows)
+    result = split(post, diagnostics=diagnostics)
+    assert calls == [1]
+    assert result[0]["content"] == good["content"]
+    assert result[0]["answer_markdown"] == good["answer_markdown"]
+    assert "source_review" not in result[0]
+    assert result[1]["content"] == "另一道完整题。" and result[1]["answer_markdown"] == ""
+    assert diagnostics["pdf_question_validation"] == {
+        "received_count": 5, "accepted_count": 2, "rejected_count": 3, "partial": True,
+        "rejected_items": [{"index": 2, "reason": "missing_content"},
+                           {"index": 3, "reason": "invalid_question"},
+                           {"index": 4, "reason": "invalid_answer"}],
+    }
+    assert "private" not in str(diagnostics) and good["content"] not in str(diagnostics)
+    assert diagnostics["pdf_splitting"]["calls"] == 1 and diagnostics["pdf_splitting"]["retries"] == 0
+
+
+@pytest.mark.parametrize("bad", [None, "invalid", {"content": ""},
+                                 {"content": "题干", "answer_markdown": 3}])
+def test_other_paper_callers_remain_strict_when_one_question_is_invalid(bad):
+    with pytest.raises(ValueError):
+        paper_parse.parse_paper_completion(response(questions=[{"content": "有效题干"}, bad]).json())
+
+
+def test_pdf_rejects_all_invalid_questions_without_manufacturing_a_card():
+    diagnostics = {}
+    with pytest.raises(ValueError, match="均缺少有效题干或答案格式无效"):
+        paper_parse.parse_paper_completion(response(questions=[None, {"content": ""},
+            {"content": "题干", "answer_markdown": []}]).json(),
+            diagnostics=diagnostics, allow_partial_questions=True)
+    assert diagnostics["pdf_question_validation"]["accepted_count"] == 0
+    assert diagnostics["pdf_question_validation"]["rejected_count"] == 3
+
+
+@pytest.mark.parametrize("finish", ["length", "content_filter", "error"])
+def test_partial_question_acceptance_never_relaxes_completion_boundary(finish):
+    with pytest.raises(ValueError):
+        paper_parse.parse_paper_completion(response(finish=finish,
+            questions=[{"content": "完整题干"}, None]).json(), allow_partial_questions=True)
+
+
 @pytest.mark.parametrize("status", [307, 308, 400, 401, 403, 404])
 def test_permanent_http_error_does_not_retry_or_read_body(status):
     calls, diagnostics = [], {}

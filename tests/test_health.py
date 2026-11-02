@@ -209,3 +209,8 @@ def test_healthz_endpoint_is_lightweight_and_ready(client, monkeypatch):
     assert response.status_code == 200, response.text
     assert response.json()["status"] == "ready"
     assert response.json()["server_instance_id"] == SERVER_INSTANCE_ID
+    from mathbank.paths import project_instance_id
+    version = client.get("/api/version").json()
+    assert response.json()["project_instance_id"] == project_instance_id()
+    assert version["project_instance_id"] == response.json()["project_instance_id"]
+    assert version["server_instance_id"] == SERVER_INSTANCE_ID

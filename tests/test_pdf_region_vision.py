@@ -188,7 +188,7 @@ def test_region_abcd_figures_bind_by_slots_not_candidate_order(setup):
     assert data["markdown"] in result["markdown"]
 
 
-@pytest.mark.parametrize("malformation", ["missing", "duplicate", "unknown", "extra", "not_list", "not_object", "bad_id"])
+@pytest.mark.parametrize("malformation", ["missing", "duplicate", "unknown", "extra", "not_list", "not_object", "bad_id", "missing_id"])
 def test_region_envelope_must_be_complete_and_unique(setup, malformation):
     data = deepcopy(setup.data)
     if malformation == "missing": data["regions"].pop()
@@ -198,9 +198,38 @@ def test_region_envelope_must_be_complete_and_unique(setup, malformation):
     elif malformation == "not_list": data["regions"] = {}
     elif malformation == "not_object": data = [data]
     elif malformation == "bad_id": data["regions"][0]["id"] = []
+    elif malformation == "missing_id": del data["regions"][0]["id"]
     with pytest.raises(ValueError):
         call(setup, data)
     assert len(setup.calls) == 2
+
+
+@pytest.mark.parametrize("field", ["figures", "ignored_candidates", "page_complete"])
+@pytest.mark.parametrize("malformed", [False, True])
+def test_region_auxiliary_contract_errors_keep_all_native_and_transcribed_text(setup, field, malformed):
+    data = deepcopy(setup.data)
+    if malformed:
+        data["regions"][0][field] = "not a layout value"
+    else:
+        del data["regions"][0][field]
+    result = call(setup, data)
+    assert result["markdown"] == "\n\n".join(
+        piece["text"] if "text" in piece else next(
+            region["markdown"] for region in setup.data["regions"] if region["id"] == piece["region_id"])
+        for piece in setup.plan["pieces"])
+    assert result["layout"]["page_complete"] is False
+    assert len(result["layout"]["figures"]) == (1 if field == "figures" else 2)
+    assert result["layout"]["notes"] and len(setup.calls) == 1
+
+
+def test_minimal_region_contract_keeps_source_order_without_inventing_geometry(setup):
+    data = {"regions": [{"id": region["id"], "markdown": region["markdown"]}
+                        for region in setup.data["regions"]]}
+    result = call(setup, data)
+    assert result["markdown"].startswith(setup.plan["pieces"][0]["text"])
+    assert result["markdown"].endswith(setup.plan["pieces"][-1]["text"])
+    assert result["layout"]["figures"] == [] and result["layout"]["page_complete"] is False
+    assert result["layout"]["notes"] and len(setup.calls) == 1
 
 
 @pytest.mark.parametrize("text", ["", "   ", None, 4, "![image](/static/uploads/model.png)", "<img src='bad'>", "file:///private/secret"])
@@ -279,12 +308,31 @@ def test_invalid_local_plan_rejected_before_model_call(setup, change):
     assert not setup.calls
 
 
-@pytest.mark.parametrize("finish", ["length", "content_filter", "tool_calls", None])
+@pytest.mark.parametrize("finish", ["length", "content_filter", "tool_calls", "unknown"])
 def test_truncation_rejected_even_with_complete_json(setup, finish):
     setup.response["choices"][0]["finish_reason"] = finish
     with pytest.raises(ValueError, match="未正常结束|截断|过滤"):
         call(setup)
     assert len(setup.calls) == (1 if finish == "content_filter" else 2)
+
+
+@pytest.mark.parametrize("absent", [False, True])
+def test_missing_finish_marker_allows_complete_region_json_with_exact_ids(setup, absent):
+    choice = setup.response["choices"][0]
+    if absent:
+        del choice["finish_reason"]
+    else:
+        choice["finish_reason"] = None
+    result = call(setup)
+    assert len(result["layout"]["figures"]) == 2 and len(setup.calls) == 1
+
+
+def test_missing_finish_marker_still_rejects_incomplete_region_json(setup):
+    setup.response["choices"][0].update(finish_reason=None,
+        message={"content": '{"regions":[{"id":"r1","markdown":"incomplete'})
+    with pytest.raises(ValueError, match="无法解析"):
+        call(setup)
+    assert len(setup.calls) == 2
 
 
 @pytest.mark.parametrize("before_post", [True, False])

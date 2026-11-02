@@ -851,6 +851,53 @@ def test_word_export_api_rejects_empty_paper(client):
     assert "卷面为空" in response.json()["message"]
 
 
+@pytest.mark.parametrize("single_docx, include_answers", [(False, False), (True, False), (True, True)])
+def test_word_export_api_keeps_answer_images_out_of_questions(
+    client, db_session, tmp_path, monkeypatch, single_docx, include_answers,
+):
+    import main
+    from mathbank.database import Question
+
+    Image.new("RGB", (120, 80), "red").save(tmp_path / "answer-only.png")
+    monkeypatch.setattr(main, "UPLOAD_DIR", str(tmp_path))
+    question = Question(
+        content="完成证明。", question_type="detailed_answer",
+        answer_markdown="![](/static/uploads/answer-only.png)",
+    )
+    question.image_paths = ["/static/uploads/answer-only.png"]
+    db_session.add(question)
+    db_session.commit()
+    response = client.post("/api/paper/export/word", json={
+        "title": "图片答案接口回归", "paper_type": "exam",
+        "as_single_docx": single_docx, "include_answers": include_answers,
+        "questions": [{"id": question.id, "score": 12}],
+    }, headers={"X-Local-Token": LOCAL_TOKEN})
+    assert response.status_code == 200
+    assert response.headers["X-Word-Missing-Images"] == "0"
+    if single_docx:
+        documents = [(response.content, include_answers)]
+    else:
+        with zipfile.ZipFile(io.BytesIO(response.content)) as package:
+            documents = [(package.read("图片答案接口回归.docx"), False),
+                         (package.read("图片答案接口回归_含答案与解析.docx"), True)]
+    ns = {"w": word_export_helper.WORD_NS,
+          "a": "http://schemas.openxmlformats.org/drawingml/2006/main"}
+    for data, has_answers in documents:
+        root = etree.fromstring(_document_xml(data))
+        in_answers = False
+        drawings = []
+        for block in root.find("w:body", ns):
+            if "参考答案与解析" in "".join(block.xpath(".//w:t/text()", namespaces=ns)):
+                in_answers = True
+            for drawing in block.xpath(".//a:blip", namespaces=ns):
+                assert in_answers, "Answer image appeared before the answer appendix"
+                drawings.append(drawing)
+        assert len(drawings) == int(has_answers)
+        with zipfile.ZipFile(io.BytesIO(data)) as package:
+            media = [name for name in package.namelist() if name.startswith("word/media/")]
+            assert len(media) == int(has_answers)
+
+
 def test_pandoc_runtime_status_api_reports_existing_install(client, monkeypatch):
     monkeypatch.setattr(
         "main.pandoc_status",

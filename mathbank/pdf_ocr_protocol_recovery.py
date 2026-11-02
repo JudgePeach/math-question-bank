@@ -106,6 +106,7 @@ def _packet(record, stage, entry, checkpoint, page_index, pixels, page_info):
         raise ValueError("not_diagnostic_compatibility")
     diagnostics = set(parsed) - _PAGE_FIELDS
     if (not _PAGE_FIELDS <= set(parsed) or not diagnostics
+            or type(parsed["page_complete"]) is not bool
             or diagnostics - {"WARN", "review_required"}
             or ("WARN" in parsed and (not isinstance(parsed["WARN"], str)
                 or not parsed["WARN"].strip() or len(parsed["WARN"]) > MAX_REASON_CHARS))

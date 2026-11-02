@@ -11,7 +11,7 @@ import json
 from pathlib import Path
 from urllib.parse import urlsplit
 
-from mathbank.paths import PROJECT_ROOT
+from mathbank.paths import LOCAL_CONTENT_SOURCES_PATH, PROJECT_ROOT
 
 
 CONTENT_SOURCES_PATH = PROJECT_ROOT / "mathbank" / "resources" / "content_sources.json"
@@ -84,12 +84,29 @@ def validate_content_sources(catalog: object) -> dict:
     return json.loads(encoded)
 
 
-def load_content_sources(path: Path | None = None) -> dict:
-    path = Path(path) if path is not None else CONTENT_SOURCES_PATH
-    raw = path.read_bytes()
+def _read_content_sources(path: Path) -> dict:
+    with path.open("rb") as handle:
+        raw = handle.read(MAX_CATALOG_BYTES + 1)
     if len(raw) > MAX_CATALOG_BYTES:
         raise ValueError("资料来源总表过大")
     return validate_content_sources(json.loads(raw.decode("utf-8")))
+
+
+def load_content_sources(path: Path | None = None) -> dict:
+    """Load one explicit catalog, or public credits plus optional local credits.
+
+    Local entries accompany this installation's exports, never replace public
+    IDs or the public title/scope. Invalid local credits fail explicitly rather
+    than silently disappearing from an exported provenance snapshot.
+    """
+    if path is not None:
+        return _read_content_sources(Path(path))
+    public = _read_content_sources(CONTENT_SOURCES_PATH)
+    try:
+        local = _read_content_sources(LOCAL_CONTENT_SOURCES_PATH)
+    except FileNotFoundError:
+        return public
+    return validate_content_sources({**public, "sources": public["sources"] + local["sources"]})
 
 
 def content_sources_json_bytes(catalog: dict | None = None) -> bytes:

@@ -91,7 +91,8 @@ def request_pdf_paper_completion(
             on_completion(body)
             check_cancelled()
         questions = (completion_parser(body, attempt_metadata) if completion_parser is not None
-                     else parse_paper_completion(body, raw_markdown=raw_markdown, diagnostics=attempt_metadata))
+                     else parse_paper_completion(body, raw_markdown=raw_markdown, diagnostics=attempt_metadata,
+                                                 allow_partial_questions=True))
         return {"questions": questions, "parse_diagnostics": attempt_metadata}
 
     def run(request_post):
@@ -137,11 +138,14 @@ def parse_paper_completion(
     *,
     raw_markdown: str = "",
     diagnostics: dict[str, Any] | None = None,
+    allow_partial_questions: bool = False,
 ) -> list[dict[str, Any]]:
     """Validate completion boundaries before accepting any question candidates.
 
     Keep only bounded, content-free response metadata in task diagnostics.
     A syntactically valid but truncated JSON object is still incomplete.
+    PDF callers may retain individually usable cards from a complete reply;
+    rejected entries remain explicit diagnostics, never inferred question text.
     """
     report = diagnostics if diagnostics is not None else {}
     choices = response.get("choices") if isinstance(response, dict) else None
@@ -176,15 +180,27 @@ def parse_paper_completion(
             questions = next((value for value in parsed.values() if isinstance(value, list)), [parsed])
     else:
         questions = parsed
-    if not isinstance(questions, list) or not questions or not all(isinstance(q, dict) for q in questions):
+    if not isinstance(questions, list) or not questions:
         raise ValueError("AI 未返回有效的题目对象列表。")
+    if not allow_partial_questions and not all(isinstance(q, dict) for q in questions):
+        raise ValueError("AI 未返回有效的题目对象列表。")
+    accepted, rejected = [], []
     for index, question in enumerate(questions, start=1):
-        if not isinstance(question.get("content"), str) or not question["content"].strip():
-            raise ValueError(f"AI 返回的第 {index} 题缺少有效题干，已停止导入以避免静默漏题。")
+        reason, message = None, None
+        if not isinstance(question, dict):
+            reason, message = "invalid_question", "AI 未返回有效的题目对象列表。"
+        elif not isinstance(question.get("content"), str) or not question["content"].strip():
+            reason = "missing_content"
+            message = f"AI 返回的第 {index} 题缺少有效题干，已停止导入以避免静默漏题。"
+        elif question.get("answer_markdown") is not None and not isinstance(question.get("answer_markdown", ""), str):
+            reason, message = "invalid_answer", f"AI 返回的第 {index} 题答案格式无效。"
+        if reason:
+            if not allow_partial_questions:
+                raise ValueError(message)
+            rejected.append({"index": index, "reason": reason})
+            continue
         if question.get("answer_markdown") is None:
             question["answer_markdown"] = ""
-        elif not isinstance(question.get("answer_markdown", ""), str):
-            raise ValueError(f"AI 返回的第 {index} 题答案格式无效。")
         if not isinstance(question.get("referenced_images"), list):
             question["referenced_images"] = []
         else:
@@ -199,7 +215,15 @@ def parse_paper_completion(
             question["source"] = ""
         # The model cannot assert that a source check or teacher review passed.
         question.pop("source_review", None)
-    return questions
+        accepted.append(question)
+    if allow_partial_questions:
+        report["pdf_question_validation"] = {
+            "received_count": len(questions), "accepted_count": len(accepted),
+            "rejected_count": len(rejected), "partial": bool(rejected), "rejected_items": rejected,
+        }
+    if not accepted:
+        raise ValueError("AI 返回的题目均缺少有效题干或答案格式无效，未接收无效题目。")
+    return accepted
 
 
 def finalize_source_answers(questions: list[dict[str, Any]], source: str) -> None:

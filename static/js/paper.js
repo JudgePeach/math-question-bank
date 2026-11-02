@@ -4322,7 +4322,7 @@
                         window.PaperStore.questionsMap[qObj.id] = qObj;
                         window.PaperStore.cart.push({
                             id: qObj.id,
-                            score: item.score || 5
+                            score: item.score ?? 5
                         });
                     });
                 }

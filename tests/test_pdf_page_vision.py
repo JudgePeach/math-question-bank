@@ -264,7 +264,7 @@ def test_no_figure_page_returns_transcript_without_placeholder(setup):
     assert result["layout"]["page_complete"] is True
 
 
-@pytest.mark.parametrize("finish", ["length", "max_tokens", "content_filter", "tool_calls", None])
+@pytest.mark.parametrize("finish", ["length", "max_tokens", "content_filter", "tool_calls", "unknown"])
 def test_truncated_or_unknown_completion_is_rejected_even_with_valid_json(setup, finish):
     setup.response["choices"][0]["finish_reason"] = finish
     with pytest.raises(ValueError, match="未正常结束|截断|过滤"):
@@ -272,8 +272,28 @@ def test_truncated_or_unknown_completion_is_rejected_even_with_valid_json(setup,
     assert len(setup.calls) == (1 if finish == "content_filter" else 2)
 
 
+@pytest.mark.parametrize("absent", [False, True])
+def test_missing_finish_marker_accepts_only_an_otherwise_valid_complete_response(setup, absent):
+    choice = setup.response["choices"][0]
+    if absent:
+        del choice["finish_reason"]
+    else:
+        choice["finish_reason"] = None
+    result = call(setup)
+    assert result["markdown"] == page_result()["markdown"]
+    assert len(result["layout"]["figures"]) == 1 and len(setup.calls) == 1
+
+
+def test_missing_finish_marker_does_not_accept_truncated_json(setup):
+    setup.response["choices"][0].update(finish_reason=None,
+        message={"content": '{"markdown":"1. incomplete'})
+    with pytest.raises(ValueError, match="无法解析"):
+        call(setup)
+    assert len(setup.calls) == 2
+
+
 @pytest.mark.parametrize("field,value", [
-    ("markdown", ""), ("markdown", 2), ("page_complete", "true"),
+    ("markdown", ""), ("markdown", 2),
 ])
 def test_invalid_transcript_or_envelope_is_not_accepted(setup, field, value):
     data = page_result()
@@ -281,6 +301,44 @@ def test_invalid_transcript_or_envelope_is_not_accepted(setup, field, value):
     with pytest.raises(ValueError):
         call(setup, data)
     assert len(setup.calls) == 2
+
+
+@pytest.mark.parametrize("field", ["figures", "ignored_candidates", "page_complete"])
+def test_missing_auxiliary_page_fields_preserve_text_without_certifying_completeness(setup, field):
+    data = page_result()
+    del data[field]
+    original = deepcopy(data)
+    result = call(setup, data)
+    assert result["markdown"] == data["markdown"]
+    assert result["layout"]["page_complete"] is False
+    assert len(result["layout"]["figures"]) == (0 if field == "figures" else 1)
+    assert result["layout"]["notes"]
+    assert data == original and len(setup.calls) == 1
+
+
+@pytest.mark.parametrize("field,value", [
+    ("page_complete", "true"), ("page_complete", 1), ("page_complete", None),
+    ("figures", None), ("figures", {}), ("figures", "not geometry"),
+    ("ignored_candidates", None), ("ignored_candidates", {}), ("ignored_candidates", "none"),
+])
+def test_invalid_auxiliary_page_fields_are_advisory_and_do_not_trigger_reocr(setup, field, value):
+    data = page_result()
+    data[field] = value
+    result = call(setup, data)
+    assert result["markdown"] == data["markdown"]
+    assert result["layout"]["page_complete"] is False
+    assert len(result["layout"]["figures"]) == (0 if field == "figures" else 1)
+    assert result["layout"]["notes"] and len(setup.calls) == 1
+
+
+def test_complete_json_with_only_safe_markdown_keeps_placeholders_without_guessing_images(setup):
+    data = {"markdown": page_result()["markdown"]}
+    result = call(setup, data)
+    assert result["markdown"] == data["markdown"]
+    assert result["layout"]["figures"] == []
+    assert result["layout"]["ignored_candidates"] == []
+    assert result["layout"]["page_complete"] is False
+    assert result["layout"]["notes"] and len(setup.calls) == 1
 
 
 @pytest.mark.parametrize("warnings", ["warning", None, {}, [None], [""],
@@ -480,7 +538,7 @@ def test_candidate_physical_order_does_not_reorder_abcd_slot_bindings(setup):
     "unknown_slot", "duplicate_slot", "duplicate_placeholder", "invalid_placeholder",
     "unknown_candidate", "duplicate_candidate", "candidate_type", "unknown_figure_field",
     "missing_figure_field", "review_type", "reason_type", "too_many_figures", "figures_type",
-    "ignored_type", "ignored_unknown_field", "ignored_unknown_id", "ignored_bad_reason",
+    "ignored_unknown_field", "ignored_unknown_id", "ignored_bad_reason",
     "ignored_duplicate", "both_used_and_ignored",
 ])
 def test_invalid_figure_contract_preserves_transcript_for_manual_review(setup, change):
@@ -499,7 +557,6 @@ def test_invalid_figure_contract_preserves_transcript_for_manual_review(setup, c
     elif change == "reason_type": figure["review_reason"] = {}
     elif change == "too_many_figures": data["figures"] *= 33
     elif change == "figures_type": data["figures"] = None
-    elif change == "ignored_type": data["ignored_candidates"] = {}
     elif change == "ignored_unknown_field": data["ignored_candidates"] = [{"id": "p3_raster_001", "reason": "formula", "path": "bad"}]
     elif change == "ignored_unknown_id": data["ignored_candidates"] = [{"id": "unknown", "reason": "formula"}]
     elif change == "ignored_bad_reason": data["ignored_candidates"] = [{"id": "p3_raster_001", "reason": "guess"}]

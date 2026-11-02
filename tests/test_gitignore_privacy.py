@@ -164,6 +164,12 @@ def test_internal_tools_are_limited_to_the_declared_paths(ignored_paths):
         "scripts/backfill_question_references.py",
         "scripts/difficulty_classify.py",
         "scripts/migrate_word_math_private_chars.py",
+        "mathbank/zhixue_archive_conversion.py",
+        "scripts/zhixue_archive_preview.py",
+        "scripts/zhixue_formula_check.js",
+        "tests/test_zhixue_archive_preview.py",
+        "tests/test_zhixue_archive_conversion.py",
+        "tests/test_zhixue_render_contract.py",
         "scripts/resources/nested/protocol.json",
         "tests/test_backfill_question_references.py",
         "tests/test_question_references_exchange.py",
@@ -174,6 +180,8 @@ def test_internal_tools_are_limited_to_the_declared_paths(ignored_paths):
         "mathbank/resources/question_exchange.json",
         "mathbank/runtime/question_exchange.py",
         "tests/fixtures/question_exchange/example.json",
+        "mathbank/vendor/zhixue_archive_conversion.py",
+        "scripts/vendor/zhixue_formula_check.js",
     ]
     result = ignored_paths([*private, *public])
     assert all(result.get(path, False) for path in private)

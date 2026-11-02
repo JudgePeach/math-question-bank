@@ -870,8 +870,11 @@ def get_seq_mapping(db: Session, question_ids=None):
 
 @app.get("/healthz", include_in_schema=False)
 def healthz():
+    from mathbank.paths import project_instance_id
+
     report = readiness_report(engine)
     report["server_instance_id"] = SERVER_INSTANCE_ID
+    report["project_instance_id"] = project_instance_id()
     report["pdf_inspector_version"] = get_pdf_inspector_version()
     return JSONResponse(report, status_code=200 if report["ready"] else 503)
 
@@ -1941,12 +1944,14 @@ def parse_version_tuple(v_str: str):
 def get_version_info():
     """Return local version info."""
     from mathbank import __version__, GITHUB_REPO
+    from mathbank.paths import project_instance_id
     is_git_repo = (PROJECT_ROOT / ".git").exists()
     return {
         "current_version": __version__,
         "repo": GITHUB_REPO,
         "is_git_repo": is_git_repo,
         "server_instance_id": SERVER_INSTANCE_ID,
+        "project_instance_id": project_instance_id(),
     }
 
 @app.get("/api/version/check-update")
@@ -6979,11 +6984,15 @@ def run_pdf_parsing_task(
                             quarantined_ranges=uncertain)
             diagnostics["pdf_partial_checkpoint"] = checkpoint_summary(recovery)
             DOCUMENT_TASKS.update(task_id, pdf_resume_state=recovery)
-        partial = bool(diagnostics.get("pdf_hybrid", {}).get("partial"))
+        rejected_count = diagnostics.get("pdf_question_validation", {}).get("rejected_count", 0)
+        partial = bool(diagnostics.get("pdf_hybrid", {}).get("partial") or rejected_count)
         if recovery is not None and recovery.get("quarantined_ranges"):
             partial = True
         completion_log = (f"PDF 已保留 {len(final_questions)} 道完整题目；部分疑点题组仍需校对，未处理范围已保留，可展开原文与未匹配题段核对。"
                           if partial else "拆分完成，可选择题目导入；原文和配图说明可按需展开查看。")
+        if rejected_count:
+            completion_log = (f"PDF 已保留 {len(final_questions)} 道可用题目；模型返回的 {rejected_count} 项因题干或答案格式无效未接收，"
+                              "请对照原 PDF 页面核对是否漏题。")
         completed = DOCUMENT_TASKS.complete(
             task_id,
             log=completion_log,

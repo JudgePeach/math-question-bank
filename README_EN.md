@@ -101,6 +101,7 @@ flowchart LR
 - **Edit Protection During Recognition**: If you edit a question while OCR is running, your current text is kept and the OCR result waits for you to click **Load recognition result (载入识别结果)**. Late replies or manual crops from an outdated question state are rejected.
 - **Partial-Failure Retention & Reconnection**:
   * **PDF Partial Results**: When some PDF pages fail recognition, independently complete questions are retained while missing pages and cross-page fragments await explicit completion in the current page (reusing successful pages, not persisted across refreshes or restarts; if all selected pages fail, an error is reported directly).
+  * **PDF Parsing Tolerance (3.0.3 Source)**: Usable page text is retained when auxiliary figure fields are malformed, with a prompt to check the original page and add missing figures. If some question entries are invalid, valid cards are retained and the result explicitly reports partial success and the rejected count. Explicitly truncated responses and results with no valid questions still fail. This improvement is not included in the V3.0.2 official downloads linked below.
   * **Batch Import & Word Review**: Batch import saves eligible questions first and keeps the remaining cards with per-question reasons. A malformed Word review batch does not stop later independent batches; verified Word bodies are not regenerated from scratch due to minor metadata errors (source-ID conflicts still stop processing).
   * **Network Reconnection**: Temporary disconnects trigger backoff polling of the original task without re-uploading files or resending model requests.
 
@@ -125,7 +126,7 @@ flowchart LR
 
 ## 🚀 Quick Start
 
-**Official release (verified 2026-10-27)**: The current source version is **3.0.2**. [**V3.0.2**](https://github.com/JudgePeach/math-question-bank/releases/tag/V3.0.2) was officially released on **October 26, 2026**, including the Agent reading, AI selection, classification review, import, and export improvements described above. Download the actual ZIP assets for your platform from that release. Source commits, local builds, and official releases remain separate steps.
+**Version and downloads (verified 2026-11-02)**: The current source version is **3.0.3**, with launcher port coordination, PDF parsing tolerance, Word/PDF image export and saved-paper zero-score fixes, plus Pillow and Windows compatibility improvements. The latest official download remains [**V3.0.2**](https://github.com/JudgePeach/math-question-bank/releases/tag/V3.0.2), published on **October 26, 2026**, and does not include these updates. Download the actual ZIP assets for your platform from the release. Source commits, local builds, and official releases remain separate steps.
 
 ### 📦 Option 1: Download Portable Package (Recommended for Teachers)
 
@@ -156,6 +157,8 @@ Both launchers check Python and required packages, and open an already-running M
    * **Mac Users**: Double-click **`启动题库系统.command`**
    * **Windows Users**: Double-click **`启动题库系统.bat`**
    * **CLI Start**: Run `python -m uvicorn main:app --reload`, open browser at `http://127.0.0.1:8000`
+
+   **New in the 3.0.3 source, not in the V3.0.2 official downloads**: The launchers default to port 8000 and reuse a running service from this project directory. If an older service remains after an update, they open it or ask you to close it normally from its original page before restarting. If another application occupies the port, the launcher suggests an available port and switches and remembers it only after an explicit `y`; later launches prefer that address. `MATHBANK_PORT` can select a fixed port; direct Uvicorn commands still require `--port`. Browser drafts, the question basket, and unsaved paper information are stored separately for each address. Changing ports does not migrate them; the originals remain in the original browser and address. Save your work before switching.
 
 > [!TIP]
 > **PDF & Word Smart Parsing Recommendations**:
@@ -208,6 +211,8 @@ MathBank integrates with [DeepSeek Official Open Platform](https://platform.deep
   ```
   Databases (`*.db`), API keys (`.env`), custom configurations (`data_backup/`), and illustrations (`static/uploads/`) are Git-ignored. Database migrations run automatically on startup when needed; verify the displayed version in Settings after restarting.
 
+  In the 3.0.3 source, credits and processing records for personal import batches stay in the local `.system_generated/content_sources.local.json`, excluded from Git and application packages. Public resources retain general upstream credits and licenses; local backups, library shares, and paper exports still include the local credits to preserve provenance.
+
 - **Method B: Portable Package Overwrite Upgrade**
   1. **Create a verified full backup** first (see **Full Backup and Restore** below).
   2. **Shut down safely** using the power button in the top-right of the web page, and wait until the page confirms the service has stopped. Never overwrite files while the backend is running.
@@ -220,7 +225,7 @@ MathBank integrates with [DeepSeek Official Open Platform](https://platform.deep
 
 ### Current Source Pillow Policy & Optional macOS Migration
 
-**This section describes this source update; the linked V3.0.2 official downloads do not contain it.** This update does not require a Python migration on either platform. The Windows portable environment keeps Python 3.10. Source installations and macOS project environments on Python 3.11 or newer use Pillow 13.0.0 with the updated dependency list; Python 3.10 keeps 12.3.0. **The image decoder security issues retained in 12.3.0 remain unresolved, so this is not a fix across every supported environment.** Source/macOS launchers install dependencies when the list changes; install the updated requirements yourself before starting directly from the command line.
+**This section describes the 3.0.3 source policy; the linked V3.0.2 official downloads do not contain it.** This update does not require a Python migration on either platform. The Windows portable environment keeps Python 3.10. Source installations and macOS project environments on Python 3.11 or newer use Pillow 13.0.0 with the updated dependency list; Python 3.10 keeps 12.3.0. **The image decoder security issues retained in 12.3.0 remain unresolved, so this is not a fix across every supported environment.** Source/macOS launchers install dependencies when the list changes; install the updated requirements yourself before starting directly from the command line.
 
 The macOS launcher reuses an existing working `venv`; installing a newer Python does not replace it. Without a `venv`, the launcher may still find a `python3` command pointing to the older interpreter first. Python 3.10 users can continue running MathBank. To use Pillow 13, you may **optionally** migrate after checking that the new Python supports your macOS version; this is not required for this update:
 

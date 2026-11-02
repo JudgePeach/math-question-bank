@@ -120,6 +120,29 @@ def test_recovery_is_narrower_than_general_text_retention(case, change):
     assert report['new_calls'] == 0
 
 
+@pytest.mark.parametrize('complete', ['true', 0, 1, None, [], {}],
+    ids=['true-string', 'zero', 'one', 'null', 'list', 'object'])
+def test_non_boolean_completeness_never_becomes_a_compatible_archive(case, complete):
+    packet = deepcopy(case.packet)
+    packet['page_complete'] = complete
+    case.archive(packet)
+    pages, report = case.restore()
+    assert pages == {} and report['has_compatible_archive_pages'] == []
+    assert report['pending_pages'][0]['page_number'] == 7
+    assert report['new_calls'] == 0
+
+
+@pytest.mark.parametrize('complete', [False, True])
+def test_archive_validation_preserves_boolean_completeness(case, complete):
+    packet = deepcopy(case.packet)
+    packet['page_complete'] = complete
+    case.archive(packet)
+    pages, report = case.restore()
+    assert set(pages) == {6}
+    assert pages[6]['joint']['layout']['page_complete'] is complete
+    assert report['new_calls'] == 0
+
+
 @pytest.mark.parametrize('kind', ['length', 'missing_finish', 'truncated', 'duplicate', 'prose', 'nan'])
 def test_incomplete_or_non_strict_json_never_recovers(case, kind):
     raw = json.dumps(case.packet, ensure_ascii=False)

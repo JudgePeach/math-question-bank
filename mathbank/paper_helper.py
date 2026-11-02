@@ -12,7 +12,7 @@ from .export_preflight import assert_tex_image_files
 from .fillin import normalize_fillin_math_wrappers
 from .paper_layout import item_solution_space_cm
 from .content_locks import _reference_literal_ranges
-from .question_assets import markdown_literal_ranges
+from .question_assets import image_reference_spans, markdown_literal_ranges
 from .math_markdown import _replace_delimited_math, _replace_latex_environments
 
 import hashlib
@@ -246,12 +246,27 @@ def _split_export_image_anchors(text: str) -> tuple[str, str]:
         for index in range(start, end):
             if not chars[index].isspace():
                 chars[index] = "X"
+    # The shared anchor splitter only needs image boundaries. Mask each full
+    # link at the same source offsets so ')' in a title cannot truncate it or
+    # expose literal environment commands from its alt/title to the splitter.
+    for match in _MARKDOWN_IMAGE_RE.finditer(text):
+        if chars[match.start()] == "!":
+            start, end = match.span()
+            chars[start:end] = "![](" + "X" * (end - start - 5) + ")"
     scan = "".join(chars)
     _, tail = split_image_anchors(scan)
     if not tail:
         return text, ""
     start = len(scan.rstrip()) - len(tail)
     return text[:start].rstrip(), text[start:].strip()
+
+
+def _export_image_layouts(value, content: str) -> dict:
+    """Normalize against real paths without title/angle syntax in the copy."""
+    canonical = _MARKDOWN_IMAGE_RE.sub(
+        lambda match: "![](" + match.group("path") + ")", content,
+    )
+    return normalize_image_layouts(value, canonical)
 
 
 def _place_export_choice_paren(text: str, visual_tokens: set[str], *, append: bool) -> str:
@@ -359,7 +374,9 @@ def format_stem_paragraphs(stem_text: str) -> str:
     return "\n\n".join(paragraphs)
 
 _MARKDOWN_IMAGE_RE = re.compile(
-    r'!\[.*?\]\((?:/static/uploads/|static/uploads/|/uploads/|uploads/)?([^)]+)\)'
+    r'!\[(?:\\.|[^\]\\])*\]\([ \t]*(?P<angle><)?'
+    r'(?P<path>(?(angle)[^>\n]+|[^\s)]+))(?(angle)>)'
+    r'''(?:[ \t]+(?:"(?:\\.|[^"\\\n])*"|'(?:\\.|[^'\\\n])*'|\((?:\\.|[^)\\\n])*\)))?[ \t]*\)'''
 )
 
 
@@ -398,9 +415,9 @@ def _inline_tikz_sources(content: str, assets: list, legacy_code: str) -> dict[s
     # Only infer it when there is exactly one distinct rendered TikZ image.
     if not assets and legacy_code:
         candidates = {
-            _tikz_image_key(path)
-            for path in _MARKDOWN_IMAGE_RE.findall(content)
-            if os.path.basename(path).startswith("tikz_")
+            _tikz_image_key(match.group("path"))
+            for match in _MARKDOWN_IMAGE_RE.finditer(content)
+            if os.path.basename(match.group("path")).startswith("tikz_")
         }
         if len(candidates) == 1:
             sources[candidates.pop()] = legacy_code
@@ -408,7 +425,8 @@ def _inline_tikz_sources(content: str, assets: list, legacy_code: str) -> dict[s
 
 
 def _image_is_inside_table_environment(content: str, position: int) -> bool:
-    prefix = content[:position]
+    # Alt/title text is metadata, including any literal TeX commands in it.
+    prefix = _MARKDOWN_IMAGE_RE.sub("", content[:position])
     table_environments = (
         "tabular",
         "tabular*",
@@ -426,7 +444,7 @@ def _image_is_inside_table_environment(content: str, position: int) -> bool:
 
 
 def _image_is_inside_choices_environment(content: str, position: int) -> bool:
-    prefix = content[:position]
+    prefix = _MARKDOWN_IMAGE_RE.sub("", content[:position])
     return prefix.rfind(r"\begin{choices}") > prefix.rfind(r"\end{choices}")
 
 
@@ -642,9 +660,8 @@ def clean_content_for_latex(
     # Restore source/TikZ only after prose/table/choice transformations. A '%'
     # inside a drawing or literal example must never swallow following code.
     
-    # If TikZ code is present in text, remove ANY markdown image tags ![](...) to avoid duplicate image rendering
-    if visual_tokens and not preserve_image_positions:
-        text = re.sub(r'!\[.*?\]\([^)]+\)', '', text)
+    # A standalone drawing does not own unrelated raster images. Only an
+    # explicit path/source association below may replace a preview with TikZ.
 
     # Four image-only options form one compact row. Mark only complete groups;
     # prose, multi-image options and authored choices/image settings keep their layout.
@@ -656,7 +673,7 @@ def clean_content_for_latex(
         parts = re.split(r"\\item\b", match.group(1))
         image_matches = [_MARKDOWN_IMAGE_RE.fullmatch(part.strip()) for part in parts[1:]]
         if len(parts) == 5 and not parts[0].strip() and all(image_matches) and not any(
-            (image_layouts or {}).get(image_key(image[1])) for image in image_matches
+            (image_layouts or {}).get(image_key(image.group("path"))) for image in image_matches
         ):
             replacement = r"\begin{choices}[columns=4,label-pos=left]" + match.group(1) + r"\end{choices}"
             start = match.start() + choice_offset
@@ -669,7 +686,7 @@ def clean_content_for_latex(
 
     # Convert Markdown images ![](/static/uploads/xxx.png) or ![](uploads/xxx.png) to \includegraphics{...}
     def replace_img(match):
-        img_path = match.group(1)
+        img_path = match.group("path")
         base_name = os.path.basename(img_path)
         inside_table = _image_is_inside_table_environment(text, match.start())
         inside_choices = _image_is_inside_choices_environment(text, match.start())
@@ -936,11 +953,15 @@ def build_latex_document(
     lines.append(r"\usepackage{array,booktabs,tabularx,longtable,multirow,makecell,diagbox,colortbl,tabularray,threeparttable}")
     lines.append(r"\UseTblrLibrary{booktabs}")
     lines.append(r"\usepackage{tkz-euclide}")
-    # Editable drawings were compiled in the workbench with these libraries.
+    # Editable question and answer drawings use the workbench's libraries.
     # Keep them available when exporting their source instead of the preview PNG.
     if any(
         q.get("content_tikz_assets") or q.get("tikz_code")
         or r"\begin{tikzpicture}" in str(q.get("content") or "")
+        or (include_answers and (
+            q.get("answer_tikz_assets")
+            or r"\begin{tikzpicture}" in str(q.get("answer_markdown") or "")
+        ))
         for q in (item.get("question", {}) for item in questions_data)
     ):
         lines.append(r"\usepackage{pgfplots}")
@@ -1144,7 +1165,7 @@ def build_latex_document(
             anchored_raw, detached_raw = _split_export_image_anchors(raw_content)
             cleaned_raw = anchored_raw
             figure_specs = []
-            img_matches = _MARKDOWN_IMAGE_RE.findall(detached_raw)
+            img_matches = [match.group("path") for match in _MARKDOWN_IMAGE_RE.finditer(detached_raw)]
             sources = _inline_tikz_sources(raw_content, content_tikz_assets, str(q.get("tikz_code") or "").strip())
             seen_figures = set()
             for img_path in img_matches:
@@ -1175,7 +1196,7 @@ def build_latex_document(
                 cleaned_raw,
                 q_type=q_type,
                 preserve_image_positions=preserve_inline_images,
-                image_layouts=normalize_image_layouts(q.get("image_layouts", {}), cleaned_raw),
+                image_layouts=_export_image_layouts(q.get("image_layouts", {}), cleaned_raw),
                 tikz_sources=(
                     _inline_tikz_sources(
                         raw_content, content_tikz_assets, str(q.get("tikz_code") or "").strip()
@@ -1358,7 +1379,13 @@ def build_latex_document(
                     if question_id is not None:
                         lines.append(rf"\typeout{{MathBank-Question-Start: {question_id} {question_number} answer_markdown}}")
                     lines.append(r"\begin{solution}")
-                    lines.append(clean_content_for_latex(ans_text))
+                    answer_assets = q.get("answer_tikz_assets", [])
+                    if not isinstance(answer_assets, list):
+                        answer_assets = []
+                    lines.append(clean_content_for_latex(
+                        ans_text,
+                        tikz_sources=_inline_tikz_sources(ans_text, answer_assets, ""),
+                    ))
                     lines.append(r"\end{solution}")
             if question_id is not None:
                 lines.append(rf"\typeout{{MathBank-Question-Finish: {question_id}}}")
@@ -1402,8 +1429,7 @@ def collect_referenced_images(
         
         # Also parse content for Markdown image paths
         content = q.get("content", "") + " " + q.get("answer_markdown", "")
-        found = re.findall(r'!\[.*?\]\((?:/static/uploads/|static/uploads/|/uploads/|uploads/)?([^)]+)\)', content)
-        for fname in found:
+        for _, _, fname in image_reference_spans(content, local_only=False):
             add_reference(fname)
 
     return image_paths
@@ -1635,7 +1661,7 @@ def extract_figures_for_answer_sheet(content: str) -> str:
     for t in tikz_blocks:
         figs.append(t)
     # 2. Markdown image ![...](path)
-    img_matches = re.findall(r'!\[.*?\]\((?:/static/uploads/|static/uploads/|/uploads/|uploads/)?([^)]+)\)', content)
+    img_matches = [match.group("path") for match in _MARKDOWN_IMAGE_RE.finditer(content)]
     for img_name in img_matches:
         base_n = os.path.basename(img_name)
         if tikz_blocks and base_n.startswith("tikz_"):

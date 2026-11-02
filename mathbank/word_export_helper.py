@@ -38,6 +38,7 @@ from mathbank.markdown_tables import find_markdown_tables, normalize_table_cell_
 from mathbank.source_comments import strip_source_attribution_comment
 from mathbank.content_sources import content_source_export_files, content_sources_notice
 from mathbank.word_lists import LatexList, find_latex_lists
+from mathbank.question_assets import image_reference_spans
 from mathbank.paper_layout import item_solution_space_cm
 from mathbank.processing_timeouts import TIKZ_COMPILE_TIMEOUT_SECONDS, WORD_CONVERSION_TIMEOUT_SECONDS
 
@@ -62,7 +63,11 @@ from .image_layout import (
     DETACHED_FIGURE_SIZE_CM, TABLE_IMAGE_MAX_HEIGHT_CM, COMPACT_CHOICE_IMAGE_SIZE_CM,
 )
 
-IMAGE_PATTERN = re.compile(r"!\[.*?\]\(([^)]+)\)")
+IMAGE_PATTERN = re.compile(
+    r"!\[(?:\\.|[^\]\\])*\]\(\s*(?P<angle><)?"
+    r"(?P<path>(?(angle)[^>\n]+|[^\s)]+))(?(angle)>)"
+    r"(?:[ \t]+[^)\n]*)?\s*\)"
+)
 CHOICES_PATTERN = re.compile(
     r"\\begin\{choices\}([\s\S]*?)\\end\{choices\}", re.IGNORECASE
 )
@@ -163,6 +168,7 @@ class PreparedQuestion:
     choices: list[str]
     answer: str
     images: list[Path]
+    answer_images: list[Path]
     solution_space: float
 
 
@@ -996,8 +1002,8 @@ class WordExamBuilder:
         original_alignment = paragraph.alignment
         for match in IMAGE_PATTERN.finditer(text or ""):
             add_text((text or "")[cursor:match.start()])
-            image_path = image_by_name.get(Path(match.group(1)).name)
-            layout = (image_layouts or {}).get(image_key(match.group(1)))
+            image_path = image_by_name.get(Path(match.group("path")).name)
+            layout = (image_layouts or {}).get(image_key(match.group("path")))
             width, height = max_image_width, 2.8 if max_image_height is None else max_image_height
             if layout:
                 if paragraph.runs:
@@ -1021,7 +1027,7 @@ class WordExamBuilder:
             else:
                 self.diagnostics.missing_images += 1
                 self.diagnostics.warnings.append(
-                    f"插图无法写入：{Path(match.group(1)).name}"
+                    f"插图无法写入：{Path(match.group('path')).name}"
                 )
             cursor = match.end()
             if layout and (text or "")[cursor:].strip():
@@ -1283,17 +1289,17 @@ class WordExamBuilder:
         image_layouts = normalize_image_layouts(item.question.get("image_layouts", {}), item.question.get("content", ""))
         preserve_inline_images = bool(IMAGE_PATTERN.search(item.stem))
         stem_image_names = {
-            Path(match.group(1)).name
+            Path(match.group("path")).name
             for match in IMAGE_PATTERN.finditer(item.stem)
         }
         choice_image_names = {
-            Path(match.group(1)).name
+            Path(match.group("path")).name
             for choice in item.choices for match in IMAGE_PATTERN.finditer(choice)
         }
         anchored_names = stem_image_names | choice_image_names
         inline_images = [path for path in usable_images if path.name in stem_image_names]
         _, tail = split_image_anchors(item.question.get('content', ''))
-        tail_names = {Path(m[1]).name for m in IMAGE_PATTERN.finditer(tail)}
+        tail_names = {Path(m.group("path")).name for m in IMAGE_PATTERN.finditer(tail)}
         detached_images = [path for path in usable_images if path.name not in anchored_names or path.name in tail_names]
         if len(detached_images) > 1 and align == "right":
             align = "center"
@@ -1556,7 +1562,7 @@ class WordExamBuilder:
         compact_images = len(choices) == 4 and all(
             IMAGE_PATTERN.fullmatch(value.strip()) for value in choices
         ) and not any(
-            (image_layouts or {}).get(image_key(match.group(1)))
+            (image_layouts or {}).get(image_key(match.group("path")))
             for value in choices for match in IMAGE_PATTERN.finditer(value)
         )
         rows = (len(choices) + columns - 1) // columns
@@ -1835,7 +1841,7 @@ class WordExamBuilder:
             _set_run_font(run, BODY_FONT_SIZE, bold=True)
             if item.answer.strip():
                 self._add_content_blocks(
-                    p, item.answer, images=item.images,
+                    p, item.answer, images=item.answer_images,
                     image_layouts=item.question.get("image_layouts"),
                 )
             else:
@@ -1964,14 +1970,8 @@ def _split_table_cells(row: str) -> list[str]:
     return cells
 
 
-def _resolve_image_paths(question: dict, uploads_dir: str | Path | None) -> list[Path]:
+def _resolve_image_paths(values: Iterable[str], uploads_dir: str | Path | None) -> list[Path]:
     root = Path(uploads_dir) if uploads_dir else None
-    values: list[str] = []
-    stored = question.get("image_paths", [])
-    if isinstance(stored, list):
-        values.extend(str(item) for item in stored)
-    values.extend(IMAGE_PATTERN.findall(question.get("content", "") or ""))
-    values.extend(IMAGE_PATTERN.findall(question.get("answer_markdown", "") or ""))
     paths: list[Path] = []
     seen: set[str] = set()
     for value in values:
@@ -2005,11 +2005,28 @@ def _prepare_question(item: dict, uploads_dir: str | Path | None) -> PreparedQue
         stem = "\n".join(stem_lines).strip()
     stem = re.sub(r"\\begin\{tikzpicture\}[\s\S]*?\\end\{tikzpicture\}", "", stem).strip()
     answer = question.get("answer_markdown", "") or ""
-    answer_tables = find_markdown_tables(answer)
-    answer_clean = IMAGE_PATTERN.sub(
-        lambda image: image.group(0) if any(table.start <= image.start() < table.end
-                                          for table in answer_tables) else "", answer)
-    answer_clean = re.sub(r"\\begin\{tikzpicture\}[\s\S]*?\\end\{tikzpicture\}", "", answer_clean).strip()
+    answer_clean = re.sub(r"\\begin\{tikzpicture\}[\s\S]*?\\end\{tikzpicture\}", "", answer).strip()
+    content_images = [match.group("path") for match in IMAGE_PATTERN.finditer(question["content"])]
+    answer_images = [match.group("path") for match in IMAGE_PATTERN.finditer(answer_clean)]
+    # image_paths also contains answer assets. Only unreferenced legacy assets
+    # may fall back to detached question figures; answer-only assets must not.
+    content_image_names = {Path(path).name for _, _, path in image_reference_spans(
+        question["content"], local_only=False)}
+    answer_image_names = {Path(path).name for _, _, path in image_reference_spans(
+        answer, local_only=False)}
+    answer_assets = question.get("answer_tikz_assets", [])
+    if isinstance(answer_assets, list):
+        answer_image_names.update(
+            Path(str(asset["image_path"])).name for asset in answer_assets
+            if isinstance(asset, dict) and asset.get("image_path")
+        )
+    answer_only_names = answer_image_names - content_image_names
+    stored = question.get("image_paths", [])
+    question_images = []
+    if isinstance(stored, list):
+        question_images.extend(str(value) for value in stored
+                               if Path(str(value)).name not in answer_only_names)
+    question_images.extend(content_images)
     solution_space = item_solution_space_cm(item, question)
     return PreparedQuestion(
         question=question,
@@ -2017,7 +2034,8 @@ def _prepare_question(item: dict, uploads_dir: str | Path | None) -> PreparedQue
         stem=stem,
         choices=choices,
         answer=answer_clean,
-        images=_resolve_image_paths(question, uploads_dir),
+        images=_resolve_image_paths(question_images, uploads_dir),
+        answer_images=_resolve_image_paths(answer_images, uploads_dir),
         solution_space=solution_space,
     )
 

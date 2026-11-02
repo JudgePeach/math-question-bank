@@ -154,7 +154,8 @@ def validate_pdf_page_fragments(result, page_info):
     )
     if (not isinstance(result, dict)
             or set(result) != _FIELDS | (set(result) & {"WARN", "review_required"})
-            or result.get("schema") != SCHEMA):
+            or result.get("schema") != SCHEMA
+            or type(result["page_complete"]) is not bool):
         raise ValueError("PDF 首轮片段协议字段或版本无效。")
     info = _prompt_page_info(page_info)
     warnings = _metadata_notes(result, info["page_index"])
