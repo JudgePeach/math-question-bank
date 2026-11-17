@@ -25,8 +25,7 @@ from mathbank.pdf_native_math_quality import (
 ])
 def test_retained_quality_component_detects_missing_slots_without_rewriting(source):
     before = str(source)
-    # The component remains testable even though the restored upstream
-    # inspector deliberately does not install this experimental quality gate.
+    # Check the probe separately from the active, page-level decision.
     visible = helper._native_diagnostic_text(script_markup_probe(source))
     assert native_math_layout_reasons(visible)
     assert source == before
@@ -87,7 +86,6 @@ def test_geometry_wrapper_accepts_retained_html_script_and_protects_literal_meta
     assert helper._native_script_geometry_reasons('代码 `L 2` 与文字 L²。',page) == []
 
 
-@experimental_pdf_only
 def test_new_native_gate_routes_only_damaged_page_and_retains_original_bytes(monkeypatch):
     good='1．已知 y=x²+2x，求最小值。'
     bad='2．已知 b<sub>n+1</sub> = b<sub>n</sub> + ，求通项。'

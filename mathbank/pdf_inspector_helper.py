@@ -10,6 +10,8 @@ from collections import Counter
 from importlib.metadata import PackageNotFoundError, version as package_version
 from typing import Any, Dict, List, Optional
 
+from .pdf_native_math_quality import native_math_layout_reasons, script_markup_probe
+
 try:
     import pdf_inspector
     _PDF_INSPECTOR_AVAILABLE = True
@@ -349,6 +351,11 @@ def native_text_quality_reasons(markdown: str) -> list[str]:
     if _NON_LAYOUT_CONTROL.search(raw):
         reasons.append("原生文字含非排版控制字符，需对照原页识别。")
     text = _native_diagnostic_text(raw)
+    # Read actual script tags only in the diagnostic copy. In the active
+    # route a missing term must trigger vision even if the extractor itself
+    # accepted the text layer; keep the original page result unchanged.
+    math_probe = _native_diagnostic_text(script_markup_probe(raw), preserve_content_boundaries=True)
+    reasons.extend(native_math_layout_reasons(math_probe))
     if _PRIVATE_OR_MISSING_GLYPH.search(text):
         reasons.append("原生文字含缺字或未解码的私用字体符号。")
     if _has_local_brace_components(text):
