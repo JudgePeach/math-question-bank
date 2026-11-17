@@ -225,7 +225,10 @@ MathBank integrates with [DeepSeek Official Open Platform](https://platform.deep
   2. **Shut down safely** using the power button in the top-right of the web page, and wait until the page confirms the service has stopped. Never overwrite files while the backend is running.
   3. **Extract to a temporary folder**: Extract the new ZIP into a **separate temporary directory**, not directly into the existing installation.
   4. **Windows**: Rename the existing installation's `python` folder to an unused backup name such as `python-before-upgrade`. Copy the entire contents of the extracted folder into the existing installation and replace matching files. Keep the old runtime until the new launcher works.
-  5. **macOS**: In Terminal, type `/usr/bin/ditto ` and drag in the newly extracted folder. Type a space, drag in the existing MathBank folder, and press Return after checking that the new folder comes first. `ditto` replaces matching application files and preserves local files absent from the archive.
+  5. **macOS: copy in two passes using Finder**. Press `Command + Shift + .` to show hidden files in the newly extracted folder, then follow these steps.
+     - **First pass**: Copy everything except `static` from the extracted folder into the existing MathBank folder. Replace matching application files.
+     - **Second pass**: Open both `static` folders. Copy everything except `uploads` from the new `static` into the existing `static` and replace matching application files. **Leave the existing `static/uploads` untouched.** Keep the existing `static` folder in place.
+     - **Terminal fallback**: Run `/usr/bin/ditto "newly extracted folder" "existing MathBank folder"` with the actual paths. You can drag the folders into Terminal to insert the paths. Put the newly extracted folder first.
   6. **Relaunch**: Double-click the new launcher, open the same address in the same browser, and check the version and a few saved questions. If the old version is still running, stop it via the webpage power button and launch again.
 
   Overlay upgrades preserve root databases and their WAL/SHM files, `.env`, `data_backup/`, `static/uploads/`, `.system_generated/`, and `venv/`. Never delete the existing installation directory.
