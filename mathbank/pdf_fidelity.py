@@ -1,9 +1,10 @@
 """Local guards for source material that the PDF split model must not rewrite."""
 
-from collections import Counter
+from collections import Counter, defaultdict
 import re
+import unicodedata
 
-from mathbank.content_locks import _formulas, _is_escaped, _source_parts, markdown_literal_ranges
+from mathbank.content_locks import _NUMBER, _formulas, _is_escaped, _source_parts, markdown_literal_ranges
 
 _FRAC = re.compile(r"\\(?:dfrac|tfrac|frac)(?![A-Za-z])[ \t]*")
 _HAN = re.compile(r"[\u3400-\u9fff]")
@@ -242,6 +243,50 @@ def protect_choice_grids(layout, document, *, crop, check_cancelled):
         layout["page_texts"][index] = text
 
 
+def _choice_stem_identity(value):
+    stem = re.split(r"\\begin\{choices\}|(?m:^[ \t]*A[.．、])", value, maxsplit=1)[0].strip()
+    start = _NUMBER.match(stem)
+    if start:
+        stem = stem[start.end():]
+    stem = unicodedata.normalize("NFKC", stem)
+    stem = re.sub(r"\\(?:left|right)(?![A-Za-z])", "", stem)
+    stem = re.sub(r"\\(?:dfrac|tfrac)(?![A-Za-z])", lambda _m: r"\frac", stem)
+    stem = re.sub(r"\\(?:[,;!:]|quad(?![A-Za-z])|qquad(?![A-Za-z]))", "", stem)
+    stem = re.sub(r"\\([lg])eqslant(?![A-Za-z])", r"\\\1eq", stem)
+    stem = re.sub(r"\\mid(?![A-Za-z])", "|", stem)
+    return re.sub(r"\s+", "", stem).rstrip("。.")
+
+
+def restore_dropped_choice_blocks(questions, parts):
+    """Restore the complete four-option source block, for an exact unique stem."""
+    candidates = defaultdict(list)
+    all_stems = Counter()
+    for part in parts:
+        stem = _choice_stem_identity(part.text)
+        if not stem:
+            continue
+        all_stems[stem] += 1
+        match = _CHOICE_ENV.search(part.text)
+        bounds = _choices(part.text) if match else None
+        if (part.number is not None and bounds
+                and all(part.text[a:b].strip() for a, b in bounds)):
+            candidates[stem].append(match[0])
+    output = [(q, _choice_stem_identity(q.get("content") or "")) for q in questions]
+    output_counts = Counter(stem for _, stem in output)
+    restored = 0
+    for question, stem in output:
+        if len(stem) < 12 or all_stems[stem] != 1 or output_counts[stem] != 1:
+            continue
+        blocks = candidates.get(stem, [])
+        content = question.get("content") or ""
+        if (len(blocks) != 1 or question.get("question_type") not in {"single_choice", "multi_choice", "multiple_choice"}
+                or re.search(r"\\(?:begin\{choices\}|item\b)|(?m:^[ \t]*[A-D][.．、])", content)):
+            continue
+        question["content"] = content.rstrip() + "\n\n" + blocks[0]
+        restored += 1
+    return restored
+
+
 def enforce_source_fields(questions, source, layout):
     """Use uniquely associated explicit source answer blocks and table crops."""
     report = {"answer_blocks_restored": 0, "choice_tables_restored": 0}
@@ -284,4 +329,7 @@ def enforce_source_fields(questions, source, layout):
         if updated is not None and updated != value:
             question["content"]=updated
             report["choice_tables_restored"] += 1
+    blocks_added = restore_dropped_choice_blocks(questions, [part for part, _ in annotated.values()])
+    if blocks_added:
+        report["choice_blocks_restored"] = blocks_added
     return report

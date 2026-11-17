@@ -99,3 +99,21 @@ def test_proven_graph_unit_can_extend_the_side_without_consuming_prose():
     evidence = {"figures": [graph], "large_components": 1,
                 "text_rows": [(104, 286, 823, 300)], "significant_components": [graph["core_bbox"]]}
     assert _clean_local_graph_frame(evidence, old, allow_relocation=False) == graph
+
+
+def test_dropped_choice_set_is_restored_only_with_exact_unique_stem():
+    stem = r"已知半径为 1，所求为 $x+\dfrac{1}{a_n}$"
+    options = (
+        r"\begin{choices}" "\n" r"\item $1$" "\n" r"\item $2$" "\n"
+        r"\item $3$" "\n" r"\item $\dfrac{8\pi}{3}$" "\n" r"\end{choices}"
+    )
+    source = "7. " + stem + "\n" + options
+    candidate = {"question_type": "single_choice", "content": stem.replace(r"\dfrac", r"\frac")}
+    other = {"question_type": "single_choice", "content": candidate["content"].replace("半径为 1", "半径为 2")}
+    report = enforce_source_fields([candidate, other], source, {"pages": []})
+    assert report["choice_blocks_restored"] == 1 and candidate["content"].endswith(options)
+    assert r"\begin{choices}" not in other["content"]
+    # A second source stem with a different option set is ambiguous.
+    duplicate = source + "\n\n" + "8. " + stem + "\n" + options.replace(r"\dfrac{8\pi}{3}", r"\dfrac{9\pi}{3}")
+    candidate["content"] = stem
+    assert not enforce_source_fields([candidate], duplicate, {"pages": []}).get("choice_blocks_restored")
