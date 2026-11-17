@@ -129,14 +129,14 @@ flowchart LR
 
 ## 🚀 Quick Start
 
-**Version and downloads (verified 2026-11-17)**: Source version **3.1.0** adds PDF import recovery and optional MinerU figure localization, TikZ geometry checks, include/exclude keyword filters, and confirmation for repeated ZIP imports. It also improves Word equations and lists. The latest official GitHub portable download is [**V3.0.3**](https://github.com/JudgePeach/math-question-bank/releases/tag/V3.0.3), published on **November 3, 2026** (China Standard Time).
+**Version and downloads (verified 2026-11-17)**: Source version **3.1.0** adds PDF import recovery and optional MinerU figure localization, TikZ geometry checks, include/exclude keyword filters, and confirmation for repeated ZIP imports. It also improves Word equations and lists. The latest official GitHub portable download is [**V3.1.0**](https://github.com/JudgePeach/math-question-bank/releases/tag/V3.1.0), published on **November 17, 2026** (China Standard Time).
 
 ### 📦 Option 1: Download Portable Package (Recommended for Teachers)
 
-If you are unfamiliar with command line or Python environments, open the [**V3.0.3 release page**](https://github.com/JudgePeach/math-question-bank/releases/tag/V3.0.3), choose the ZIP asset for your platform under Assets, and **extract the complete archive**:
+If you are unfamiliar with command line or Python environments, open the [**V3.1.0 release page**](https://github.com/JudgePeach/math-question-bank/releases/tag/V3.1.0), choose the ZIP asset for your platform under Assets, and **extract the complete archive**:
 
-* **Windows Users**: Use Windows 10/11 x64 and download [`MathBank-Windows-x64.zip`](https://github.com/JudgePeach/math-question-bank/releases/download/V3.0.3/MathBank-Windows-x64.zip) (includes complete Python 3.10 and app-local VC++ runtimes; no separate installation required), extract it, and double-click **`启动题库系统.bat`**.
-* **macOS Users**: Download [`MathBank-macOS.zip`](https://github.com/JudgePeach/math-question-bank/releases/download/V3.0.3/MathBank-macOS.zip). **The macOS package does not include Python, so confirm that Python 3.10 or newer is installed on your Mac before launching MathBank.** Keep network access enabled when the launcher first creates or repairs the isolated `venv`, then double-click **`启动题库系统.command`**.
+* **Windows Users**: Use Windows 10/11 x64 and download [`MathBank-Windows-x64.zip`](https://github.com/JudgePeach/math-question-bank/releases/download/V3.1.0/MathBank-Windows-x64.zip) (includes complete Python 3.10 and app-local VC++ runtimes; no separate installation required), extract it, and double-click **`启动题库系统.bat`**.
+* **macOS Users**: Download [`MathBank-macOS.zip`](https://github.com/JudgePeach/math-question-bank/releases/download/V3.1.0/MathBank-macOS.zip). **The macOS package does not include Python, so confirm that Python 3.10 or newer is installed on your Mac before launching MathBank.** Keep network access enabled when the launcher first creates or repairs the isolated `venv`, then double-click **`启动题库系统.command`**.
 
 Both launchers check Python and required packages, and open an already-running MathBank service directly without restarting it. Port conflicts and startup failures display the specific error and service log.
 
@@ -187,7 +187,7 @@ MathBank integrates with [DeepSeek Official Open Platform](https://platform.deep
 
 ### 3. 🎨 TikZ Geometry Diagram Redrawing Model (`PREFER_DRAW_MODEL`)
 * Choose the drawing model separately; redrawing from a reference image requires vision support on that endpoint.
-* The current source checkout can compute common planar constructions locally. It can also check supplied conditions in three dimensions before projecting a single box, convex prism, or convex pyramid and drawing hidden edges. Use the compiled preview to check labels, connections, and the problem conditions.
+* The current source checkout can compute common planar constructions locally. It can also check supplied conditions in three dimensions before projecting a single box, convex prism, or convex pyramid and drawing hidden edges. Source on main after the V3.1.0 portable release uses visible and hidden edges and left-to-right point order from the reference to select a view and separate nearly overlapping projections. Use the compiled preview to check labels, connections, and the problem conditions.
 * Spatial right-angle marks follow the projection. When the problem explicitly identifies a named circumcircle, the preview checks whether the identifiable vector circle goes through the stated vertices. Inspect the preview when the circle could not be checked.
 * Test with a few representative geometry diagrams first. Single-question OCR includes automatic preview verification and source-crop fallback when TikZ is enabled.
 

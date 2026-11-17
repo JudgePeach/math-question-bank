@@ -13,6 +13,7 @@ from mathbank.tikz_geometry_protocol import (
 
 Vec = tuple[float, float, float]
 _PLAN_FIELDS = {"mathbank_geometry", "points", "solid", "draw", "checks", "view"}
+_REFERENCE_FIELDS = {"reference_right_angles", "reference_left_to_right", "reference_edge_visibility"}
 _VIEWS = {
     "front_right": (4, -7, 5), "front_left": (-4, -7, 5),
     "back_right": (4, 7, 5), "back_left": (-4, 7, 5),
@@ -289,6 +290,7 @@ class Projection:
     camera: Vec
     right: Vec
     vertical: Vec
+    mirrored: bool = False
 
     @classmethod
     def from_view(cls, direction):
@@ -299,26 +301,98 @@ class Projection:
     def point(self, point):
         return _dot(point, self.right), _dot(point, self.vertical)
 
+    def mirror(self):
+        return Projection(self.camera, _scale(self.right, -1), self.vertical, not self.mirrored)
+
 
 def _bounds(projected):
     xs, ys = zip(*projected)
     return min(xs), min(ys), max(max(xs)-min(xs), max(ys)-min(ys))
 
 
-def _projection(points, view):
+def _point_segment_distance(p, a, b):
+    direction = _sub(b, a)
+    square = _dot(direction, direction)
+    t = min(1., max(0., _dot(_sub(p, a), direction)/square)) if square > 0 else 0.
+    return math.dist(p, _add(a, _scale(direction, t)))
+
+
+def _reference_order(plan, points):
+    order = plan.get("reference_left_to_right", [])
+    _require(isinstance(order, list) and len(order) <= 8, "参考图左右点序格式无效。")
+    pairs = []
+    for row in order:
+        a, b = _row(row, (2,))
+        _point(points, a)
+        _point(points, b)
+        _require(a != b and (a, b) not in pairs, "参考图左右点序有重复或重合点。")
+        pairs.append((a, b))
+    return pairs
+
+
+def _reference_edges(plan, faces, points):
+    rows = plan.get("reference_edge_visibility", [])
+    # An eight-sided prism has 24 shell edges; a complete transcription is
+    # welcome and does not need to be arbitrarily dropped to a short list.
+    _require(isinstance(rows, list) and len(rows) <= 24, "参考图棱线的虚实提示格式无效。")
+    owners = {}
+    for index, face in enumerate(faces):
+        for a, b in _cycle(face.vertices):
+            owners.setdefault(frozenset((a, b)), []).append(index)
+    hints = {}
+    for row in rows:
+        a, b, style = _row(row, (3,))
+        _point(points, a)
+        _point(points, b)
+        key = frozenset((a, b))
+        _require(a != b and style in ("solid", "dashed"), "参考图棱线的虚实提示无效。")
+        if key in owners:
+            _require(key not in hints, "参考图棱线的虚实提示重复。")
+            hints[key] = (owners[key], style == "solid")
+    return list(hints.values())
+
+
+def _projection(points, view, faces, segments, order, edge_hints, eps):
     _require(isinstance(view, str) and (view == "auto" or view in _VIEWS), "空间投影视角不受支持。")
-    directions = _VIEWS.values() if view == "auto" else [_VIEWS[view]]
-    world = list(points.values())
+    directions = list(_VIEWS) if view == "auto" or edge_hints else [view]
+    names = list(points)
+    nonincident = [(p, a, b) for a, b, _ in segments for p in names
+                   if _point_segment_distance(points[p], points[a], points[b]) > eps]
     scores = []
+    def facing(camera):
+        return tuple(_dot(face.normal, camera) > _TOL for face in faces)
+
+    def score(projection, yaw, is_preferred, visible_faces):
+        xy = {name: projection.point(point) for name, point in points.items()}
+        _, _, span = _bounds(xy.values())
+        if span <= eps:
+            return
+        spacing = min(math.dist(xy[a], xy[b]) for i, a in enumerate(names) for b in names[i+1:])
+        if spacing < .008*span:
+            return
+        clearance = min((_point_segment_distance((*xy[p], 0), (*xy[a], 0), (*xy[b], 0))
+                         for p, a, b in nonincident), default=spacing)
+        # Keep the requested camera if it already prints clearly. A modest
+        # yaw is enough to separate overlapping projected edges in most cases.
+        quality = min(.035, spacing/span, clearance/span)
+        matches = sum(xy[b][0]-xy[a][0] >= .008*span for a, b in order)
+        edge_matches = sum(any(visible_faces[i] for i in owners) == visible for owners, visible in edge_hints)
+        scores.append(((edge_matches, matches, quality, is_preferred, not projection.mirrored, -abs(yaw)), projection))
+
     for direction in directions:
-        projection = Projection.from_view(direction)
-        projected = [projection.point(p) for p in world]
-        _, _, span = _bounds(projected)
-        spacing = min(math.dist(p, q) for i, p in enumerate(projected) for q in projected[i+1:])
-        scores.append((spacing/span if span else 0, projection))
+        x, y, z = _VIEWS[direction]
+        visible_faces = facing(Projection.from_view((x, y, z)).camera)
+        for yaw in (0, -8, 8, -16, 16, -24, 24):
+            c, s = math.cos(math.radians(yaw)), math.sin(math.radians(yaw))
+            projection = Projection.from_view((c*x-s*y, s*x+c*y, z))
+            if facing(projection.camera) != visible_faces:
+                continue
+            score(projection, yaw, direction == view, visible_faces)
+            if order:
+                score(projection.mirror(), yaw, direction == view, visible_faces)
+    _require(bool(scores), "当前视角有无法分开的投影点，请调整绘图视向。")
     score, chosen = max(scores, key=lambda item: item[0])
-    _require(score >= .008, "选定视角下多个点重叠，请调整视角或使用原图。")
-    return chosen
+    return chosen, score[:2] == (len(edge_hints), len(order))
 
 
 def _clip_positive(interval, left, right):
@@ -344,7 +418,10 @@ def _front_faces(points, faces, projection):
     for face in faces:
         if _dot(face.normal, projection.camera) > _TOL:
             vertices = tuple(points[name] for name in face.vertices)
-            result.append(FrontFace(tuple(projection.point(p) for p in vertices), face.normal, vertices[0]))
+            outline = tuple(projection.point(p) for p in vertices)
+            # Clipping assumes a counterclockwise outline even when the
+            # paper-side orientation is mirrored to match the reference.
+            result.append(FrontFace(outline[::-1] if projection.mirrored else outline, face.normal, vertices[0]))
     return result
 
 
@@ -499,7 +576,7 @@ def _placed_labels(points, segments, preferences):
 
 
 def render_spatial_plan(plan, sources, *, has_reference=False):
-    _require(set(plan) - {"reference_right_angles"} == _PLAN_FIELDS, "立体几何计划字段不符。")
+    _require(set(plan) - _REFERENCE_FIELDS == _PLAN_FIELDS, "立体几何计划字段不符。")
     _require(isinstance(plan["points"], list) and 4 <= len(plan["points"]) <= 24
              and isinstance(plan["draw"], list) and len(plan["draw"]) <= 48
              and isinstance(plan["checks"], list) and 1 <= len(plan["checks"]) <= 32,
@@ -541,12 +618,17 @@ def render_spatial_plan(plan, sources, *, has_reference=False):
             continue
         _require(_matches(points, op, args, eps), f"空间几何方案未满足条件「{evidence}」。")
 
-    projection = _projection(points, plan["view"])
+    projection, respects_reference = _projection(
+        points, plan["view"], faces, segments, _reference_order(plan, points),
+        _reference_edges(plan, faces, points), eps,
+    )
     projected = {name: projection.point(p) for name, p in points.items()}
     low_x, low_y, span = _bounds(projected.values())
     unit = 6.5/span
     display = {name: ((x-low_x)*unit, (y-low_y)*unit) for name, (x, y) in projected.items()}
     code = [r"\begin{tikzpicture}[line width=.6pt]"]
+    if not respects_reference:
+        code.append("% 参考图的左右点序或棱线虚实提示无法全部同时保留，请核对视向。")
     for name, (x, y) in display.items():
         code.append(rf"\coordinate ({name}) at ({x:.9f},{y:.9f});")
     front = _front_faces(points, faces, projection)

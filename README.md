@@ -128,14 +128,14 @@ flowchart LR
 
 ## 🚀 快速开始
 
-**版本与下载（2026-11-17 核对）**：当前源码版本为 **3.1.0**，新增了 PDF 拆题恢复和可选 MinerU 配图定位、TikZ 几何验算、包含与排除关键词筛选、ZIP 重复导入确认，并改进了 Word 公式与列表导出。GitHub 最新正式便携包为北京时间 **2026 年 11 月 3 日**发布的 [**V3.0.3**](https://github.com/JudgePeach/math-question-bank/releases/tag/V3.0.3)。
+**版本与下载（2026-11-17 核对）**：当前源码版本为 **3.1.0**，新增了 PDF 拆题恢复和可选 MinerU 配图定位、TikZ 几何验算、包含与排除关键词筛选、ZIP 重复导入确认，并改进了 Word 公式与列表导出。GitHub 最新正式便携包为北京时间 **2026 年 11 月 17 日**发布的 [**V3.1.0**](https://github.com/JudgePeach/math-question-bank/releases/tag/V3.1.0)。
 
 ### 📦 方式一：下载便携包（推荐一线教师使用）
 
-如果您不熟悉命令行或 Python 环境，请直接前往 [**V3.0.3 发布页面**](https://github.com/JudgePeach/math-question-bank/releases/tag/V3.0.3)，在 Assets 中下载对应系统的 ZIP 附件并**完整解压**：
+如果您不熟悉命令行或 Python 环境，请直接前往 [**V3.1.0 发布页面**](https://github.com/JudgePeach/math-question-bank/releases/tag/V3.1.0)，在 Assets 中下载对应系统的 ZIP 附件并**完整解压**：
 
-* **Windows 用户**：使用 Windows 10/11 x64，下载 [`MathBank-Windows-x64.zip`](https://github.com/JudgePeach/math-question-bank/releases/download/V3.0.3/MathBank-Windows-x64.zip)（内置完整 Python 3.10 与应用本地 VC++ 运行时，无需另行安装），完整解压后双击 **`启动题库系统.bat`**。
-* **macOS 用户**：下载 [`MathBank-macOS.zip`](https://github.com/JudgePeach/math-question-bank/releases/download/V3.0.3/MathBank-macOS.zip)。**macOS 包不内置 Python，运行前请先确认本机已安装 Python 3.10 或更高版本**。首次准备或修复项目隔离环境 `venv` 时需保持联网，随后双击 **`启动题库系统.command`**。
+* **Windows 用户**：使用 Windows 10/11 x64，下载 [`MathBank-Windows-x64.zip`](https://github.com/JudgePeach/math-question-bank/releases/download/V3.1.0/MathBank-Windows-x64.zip)（内置完整 Python 3.10 与应用本地 VC++ 运行时，无需另行安装），完整解压后双击 **`启动题库系统.bat`**。
+* **macOS 用户**：下载 [`MathBank-macOS.zip`](https://github.com/JudgePeach/math-question-bank/releases/download/V3.1.0/MathBank-macOS.zip)。**macOS 包不内置 Python，运行前请先确认本机已安装 Python 3.10 或更高版本**。首次准备或修复项目隔离环境 `venv` 时需保持联网，随后双击 **`启动题库系统.command`**。
 
 两个启动器会自动检查 Python 与依赖；若题库服务已在运行，会直接打开网页，无需先关闭再重开。端口冲突或启动失败时会直接显示具体原因与服务日志。
 
@@ -186,7 +186,7 @@ flowchart LR
 
 ### 3. 🎨 TikZ 几何绘图模型（`PREFER_DRAW_MODEL`）
 * 为几何绘图任务单独选择模型；带参考图片重绘时，所选型号与接口同样需要支持图像输入。
-* 当前源码版可在本地计算常见平面构造。绘制单个长方体、凸棱柱、凸棱锥时，也可先按三维坐标检查题设，再投影并处理遮挡虚线。生成后请在编译预览中核对标签、连线和题设条件。
+* 当前源码版可在本地计算常见平面构造。绘制单个长方体、凸棱柱、凸棱锥时，也可先按三维坐标检查题设，再投影并处理遮挡虚线。新于 V3.1.0 便携包的主分支源码会根据参考图的棱线虚实和左右点序选择视角，并避让投影近重合。生成后请在编译预览中核对标签、连线和题设条件。
 * 三维直角标记可随图投影。题干明确给出具名外接圆时，预览会在能识别的编译后矢量图中检查实际圆是否经过题设顶点。显示「圆的几何条件待核对」时，请查看预览确认。
 * 建议先用少量代表性几何图检查编译结果与原图是否一致。单题 OCR 开启 TikZ 后具备自动视觉核验与原图回退保护，详见上方工作流说明。
 
