@@ -6281,6 +6281,7 @@ def run_pdf_parsing_task(
     pdf_verify_suspicions: bool = True,
     resume_state=None,
     split_retry=None,
+    mineru_source=None,
 ):
     """PDF parsing with bounded OCR concurrency and cooperative cancellation."""
 
@@ -6306,6 +6307,14 @@ def run_pdf_parsing_task(
     retry_material = None
     review_preview_published = False
     vision_lock = threading.Lock()
+    if mineru_source is not None:
+        from mathbank.pdf_mineru_source import MineruPDFSource
+
+        if (not isinstance(mineru_source, MineruPDFSource)
+                or mineru_source.source_sha256 != hashlib.sha256(file_bytes).hexdigest()
+                or pdf_strategy != "layout_aware"):
+            DOCUMENT_TASKS.fail(task_id, "MinerU 结果未绑定到当前原件及智能图文任务。", document_type="pdf")
+            return
 
     def check_pdf_cancelled():
         DOCUMENT_TASKS.check_cancelled(task_id)
@@ -6510,12 +6519,18 @@ def run_pdf_parsing_task(
         # Work from physical PDF rows, never from a scrambled Markdown table.
         # Planning is local and conservative; only a validated plan changes the
         # paid request. A failed paid regional request is never retried as a page.
+        mineru_pending = {
+            index: item for index in pages_requiring_ocr
+            if mineru_source is not None and (item := mineru_source.page(target_page_indices[index]))
+        }
         regional_plans: dict[int, dict] = copy.deepcopy((recovery or {}).get("regional_plans") or {})
         if pdf_strategy != "force_ocr" and pages_requiring_ocr:
             from mathbank.pdf_native_regions import plan_pdf_regions
             with fitz.open(stream=file_bytes, filetype="pdf") as document:
                 for local_idx in pages_requiring_ocr:
                     DOCUMENT_TASKS.check_cancelled(task_id)
+                    if local_idx in mineru_pending:
+                        continue
                     page_num = target_page_indices[local_idx]
                     info = page_layout_infos.get(page_num)
                     if info is None:
@@ -6564,7 +6579,8 @@ def run_pdf_parsing_task(
                     if local_idx not in ocr_indices:
                         continue
                     details = {}
-                    if pdf_strategy == "layout_aware" and local_idx not in regional_plans:
+                    if (pdf_strategy == "layout_aware" and local_idx not in regional_plans
+                            and local_idx not in mineru_pending):
                         try:
                             details = render_pdf_detail_views(
                                 page, page_index=page_num, output_dir=Path(TMP_UPLOAD_DIR),
@@ -6602,6 +6618,7 @@ def run_pdf_parsing_task(
             extraction_pages.append({
                 "page_number": page_num + 1,
                 "mode": ("furniture_only" if local_idx in furniture_pages else
+                         "mineru_candidate" if local_idx in mineru_pending else
                          "reused_transcription" if recovery is not None and local_idx in all_ocr_indices
                          and local_idx not in pages_requiring_ocr else
                          ("regional" if plan else "full_vision") if local_idx in pages_requiring_ocr else "native"),
@@ -6680,6 +6697,20 @@ def run_pdf_parsing_task(
                 acquired = False
                 permit = None
                 try:
+                    if local_idx in mineru_pending:
+                        from mathbank.pdf_page_vision import _prompt_page_info, _validated_page
+
+                        try:
+                            check_request_cancelled()
+                            alternate = _validated_page(mineru_pending[local_idx], _prompt_page_info(page_info))
+                            if alternate["layout"]["page_complete"]:
+                                # Importable blocks are not proof that the
+                                # service transcribed the whole page correctly.
+                                alternate["layout"]["page_complete"] = False
+                                alternate.update(visual_calls=0, used_mineru=True)
+                                return local_idx, alternate["markdown"], None, alternate
+                        except ValueError:
+                            pass  # The original DeepSeek route remains available.
                     input_bytes = Path(image_path).stat().st_size + details.get("total_png_bytes", 0)
                     if local_idx in regional_plans:
                         input_bytes = max(input_bytes, 24 * 1024 * 1024)
@@ -6809,6 +6840,13 @@ def run_pdf_parsing_task(
                     _delete_task_temp_assets(temp_assets)
                 return
         tmp_pdf_path.unlink(missing_ok=True)
+        if mineru_source is not None:
+            used = sorted(index + 1 for index, item in joint_page_results.items() if item.get("used_mineru"))
+            diagnostics["pdf_mineru_trial"] = {
+                "bundle_sha256": mineru_source.bundle_sha256,
+                "candidate_pages": sorted(target_page_indices[index] + 1 for index in mineru_pending),
+                "used_pages": used,
+            }
         if recovery is not None:
             recovery.update(phase="split_started", failed_pages=[])
             diagnostics.pop("pdf_failed_pages", None)
@@ -6888,6 +6926,7 @@ def run_pdf_parsing_task(
                 page = next((item for item in (layout_result or {}).get("pages", [])
                              if item["page_index"] == page_num), {})
                 origin = ("furniture_only" if local_idx in furniture_pages else
+                          "mineru_vision" if joint_page_results.get(page_num, {}).get("used_mineru") else
                           "regional_vision" if local_idx in regional_plans else
                           "joint_vision" if page_num in joint_page_results else
                           "ocr" if local_idx in all_ocr_indices else
