@@ -230,7 +230,7 @@ def test_local_guard_created_group_child_overlap_keeps_both_assets_and_source(tm
             {"bbox": [650, 150, 850, 350], "candidate_ids": [], "anchor_before": "Refer to the diagram.",
              "anchor_after": "Find the answer.", "review_required": False},
         ]}
-    def guard(_path, box):
+    def guard(_path, box, **_kwargs):
         return {"bbox": [100, 100, 900, 500] if box[0] == 100 else box,
                 "changed": box[0] == 100, "warnings": [], "notes": []}
     monkeypatch.setattr(pdf_raster_guard, "guard_raster_figure_bbox", guard)
@@ -259,7 +259,7 @@ def test_component_completion_expands_only_its_proven_side_and_keeps_review(tmp_
     raw = layout({})
     info = {"candidates": [], "page_index": 0, "width": 400, "height": 500, "full_page_image": True}
     padded = pdf_figures._validate_layout(raw, info)[0][0]["bbox"]
-    def guard(_path, box):
+    def guard(_path, box, **_kwargs):
         assert box == [100, 100, 500, 500]
         return {"bbox": [completed_left, 100, 500, 500], "changed": True,
                 "method": "bounded_component_completion", "component_completion": {"side": "left"},

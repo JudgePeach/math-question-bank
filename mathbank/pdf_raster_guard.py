@@ -218,10 +218,15 @@ def _page_evidence(path: str, mtime_ns: int, file_size: int):
     if len(large) > MAX_LINE_COMPONENTS:
         raise _EvidenceLimit("大图形候选过多，无法可靠确定独立图形")
     figures = []
+    isolated_graphs = []
     line_components = []
     for component in large:
         box = component["bbox"]
-        if any(_intersection(box, row) > 0 for row in text_rows) or _is_regular_grid(mask, box):
+        overlaps = [row for row in text_rows if _intersection(box, row) > 0]
+        # A long row of axis tick labels can look like prose. It must lie
+        # fully inside the independently detected line component.
+        interior = len(overlaps) <= 2 and all(_contains(box, row) for row in overlaps)
+        if not interior or _is_regular_grid(mask, box):
             continue
         # A short label can already be connected to a graph's strokes, or lie
         # inside its core rectangle. Keep this independently filtered line
@@ -241,20 +246,31 @@ def _page_evidence(path: str, mtime_ns: int, file_size: int):
                     and not _contains(box, label)
                     and not any(_intersection(label, row) > 0 for row in text_rows)):
                 labels.append(label)
-        if not 2 <= len(labels) <= 24:
+        axis_labels = (bool(overlaps) and max(row[3] for row in overlaps) - min(row[1] for row in overlaps)
+                       <= letter_height * 2.2)
+        if axis_labels:
+            # At labelled ticks, thin detached digits/signs can protrude on
+            # the sides. Tighten the rule above and below to exclude captions
+            # and prose immediately before or after the figure.
+            labels = [label for label in labels
+                      if label[1] >= box[1] - 4 and label[3] <= box[3] + 4]
+        if len(labels) > 24 or (len(labels) < 2 and not axis_labels):
             continue
         evidence = box
         for label in labels:
             evidence = _union(evidence, label)
         evidence = (max(0, evidence[0] - 2), max(0, evidence[1] - 2),
                     min(size[0], evidence[2] + 2), min(size[1], evidence[3] + 2))
-        if any(_intersection(evidence, row) > 0 for row in text_rows):
+        if any(_intersection(evidence, row) > 0 and row not in overlaps for row in text_rows):
             continue
         normalized = [evidence[0] * 1000 / size[0], evidence[1] * 1000 / size[1],
                       evidence[2] * 1000 / size[0], evidence[3] * 1000 / size[1]]
-        figures.append({"bbox": tuple(normalized), "labels": len(labels),
-                        "core_bbox": tuple([box[0] * 1000 / size[0], box[1] * 1000 / size[1],
-                                            box[2] * 1000 / size[0], box[3] * 1000 / size[1]])})
+        graph = {"bbox": tuple(normalized), "labels": len(labels),
+                 "core_bbox": tuple([box[0] * 1000 / size[0], box[1] * 1000 / size[1],
+                                     box[2] * 1000 / size[0], box[3] * 1000 / size[1]])}
+        isolated_graphs.append(graph)
+        if not overlaps and len(labels) >= 2:
+            figures.append(graph)
     if time.monotonic() > deadline:
         raise _EvidenceLimit("本地图形分析达到时间上限")
     significant = tuple(
@@ -269,7 +285,7 @@ def _page_evidence(path: str, mtime_ns: int, file_size: int):
                         "runs": tuple(component["runs"])}
         for component in components if "runs" in component
     }
-    return {"figures": tuple(figures), "text_rows": tuple(tuple([row[0] * 1000 / size[0], row[1] * 1000 / size[1],
+    return {"figures": tuple(figures), "isolated_graphs": tuple(isolated_graphs), "text_rows": tuple(tuple([row[0] * 1000 / size[0], row[1] * 1000 / size[1],
              row[2] * 1000 / size[0], row[3] * 1000 / size[1]]) for row in text_rows),
             "significant_components": significant,
             "components": len(components), "large_components": len(large), "analysis_size": size,
@@ -402,7 +418,36 @@ def _complete_single_component_edge(evidence: dict, original, deadline: float) -
 
 
 
-def guard_raster_figure_bbox(image_path: str, bbox) -> dict:
+def _clean_local_graph_frame(evidence, original, *, allow_relocation):
+    graphs = evidence.get("isolated_graphs", evidence["figures"])
+    if len(graphs) != 1 or evidence["large_components"] != 1:
+        return None
+    figure = graphs[0]
+    frame, core = figure["bbox"], figure["core_bbox"]
+    part = _intersection(frame, original) / _area(frame)
+    close = (part >= .65 and _intersection(original, core) / _area(core) >= .70
+             and _area(original) <= _area(frame) * 3)
+    relocate = allow_relocation and _text_only_frame(evidence, original)
+    if not close and not relocate:
+        return None
+    if any(_intersection(frame, row) > 0 and not _contains(core, row) for row in evidence["text_rows"]):
+        return None
+    neighbor_text = any(_intersection(original, row) > 0 and not _contains(core, row) for row in evidence["text_rows"])
+    cut_ink = not _contains(original, frame)
+    if not (neighbor_text or cut_ink):
+        return None
+    if not relocate and (
+            any(abs(frame[i] - original[i]) > 100 for i in range(4))
+            or max(original[0] - frame[0], original[1] - frame[1],
+                   frame[2] - original[2], frame[3] - original[3]) > 35):
+        return None
+    if any(_intersection(original, item) > 0 and not _contains(frame, item)
+           for item in evidence["significant_components"]):
+        return None
+    return figure
+
+
+def guard_raster_figure_bbox(image_path: str, bbox, *, improve_local_frame=False, allow_relocation=False) -> dict:
     """Correct an XY/YX swap only with unique complete local graphic evidence."""
     original = _box(bbox)
     result = {"bbox": list(original) if original else bbox, "model_bbox": list(original) if original else bbox,
@@ -425,6 +470,13 @@ def guard_raster_figure_bbox(image_path: str, bbox) -> dict:
     result.update(component_count=evidence["components"], figure_candidates=len(evidence["figures"]),
                   analysis_size=list(evidence["analysis_size"]))
     figures = evidence["figures"]
+    local = _clean_local_graph_frame(evidence, original, allow_relocation=allow_relocation) if improve_local_frame else None
+    if local:
+        frame = [round(value, 4) for value in local["bbox"]]
+        result.update(bbox=frame, changed=True, status="corrected", method="isolated_graph",
+                      evidence_bbox=frame, label_components=local["labels"],
+                      notes=["已按原页唯一线图与短标注重框，排除相邻正文。"])
+        return result
     if not figures:
         # Inapplicability is not evidence of an incorrect crop. Unlabelled
         # partitions, tables and photos can be valid illustrations. Only a

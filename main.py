@@ -6286,6 +6286,7 @@ def run_pdf_parsing_task(
 
     from contextlib import closing
 
+    from mathbank.pdf_fidelity import clean_empty_fraction_wrappers, enforce_source_fields, protect_choice_grids
     from mathbank.pdf_request_pipeline import iter_pdf_page_requests
     from mathbank.pdf_vision_request import PDFVisionRequestError
     from mathbank.pdf_partial import (SCHEMA as PDF_PARTIAL_SCHEMA, source_binding,
@@ -6721,6 +6722,12 @@ def run_pdf_parsing_task(
                         page_errors.append({"page_number": real_page_num, "error": error})
                     else:
                         processed_text = process_ocr_illustrations(text)
+                        processed_text, wrappers, empty = clean_empty_fraction_wrappers(processed_text)
+                        if wrappers or empty:
+                            diagnostics.setdefault("pdf_fraction_evidence", []).append({
+                                "page_number": target_page_indices[local_idx]+1,
+                                "redundant_wrappers_removed": wrappers, "unresolved_denominators": empty,
+                            })
                         real_page_num = target_page_indices[local_idx] + 1
                         if joint is not None:
                             joint_page_results[real_page_num - 1] = joint
@@ -6829,6 +6836,17 @@ def run_pdf_parsing_task(
                 precomputed_page_infos=page_layout_infos,
                 vision_semaphore=PDF_OCR_SEMAPHORE,
             )
+            from mathbank.pdf_layout import crop_pdf_figure
+
+            def crop_choice_grid(page, box, figure_id):
+                path = crop_pdf_figure(page, box, Path(TMP_UPLOAD_DIR), f"/{UPLOAD_DIR_REL}/tmp",
+                                       f"pdf_figure_{task_id}_{page.number}_{figure_id}")
+                register_figure_asset(path)
+                return path
+
+            with fitz.open(stream=file_bytes, filetype="pdf") as source_pdf:
+                protect_choice_grids(layout_result, source_pdf, crop=crop_choice_grid,
+                                     check_cancelled=check_pdf_cancelled)
             ocr_results = layout_result["page_texts"]
             diagnostics["pdf_layout"] = layout_result["diagnostics"]
             diagnostics["pdf_layout"]["joint_visual_calls"] = sum(item.get("visual_calls", 1) for item in joint_page_results.values())
@@ -7003,6 +7021,7 @@ def run_pdf_parsing_task(
                     elif candidate.get("source_review"):
                         parsed_questions[index]["source_review"] = candidate["source_review"]
             finalize_source_answers(parsed_questions, source_content)
+            diagnostics["pdf_source_field_protection"] = enforce_source_fields(parsed_questions, source_content, layout_result)
             apply_pdf_layout_reviews(parsed_questions, layout_result, diagnostics)
             isolate_shared_pdf_figures(
                 parsed_questions, layout_result, output_dir=Path(TMP_UPLOAD_DIR),
@@ -7019,6 +7038,18 @@ def run_pdf_parsing_task(
             None if layout_result is not None else ocr_results,
             preserved_indices=pdf_preserved_indices,
         )
+        for question in final_questions:
+            for field in ("content", "answer_markdown"):
+                text = question.get(field)
+                if not text:
+                    continue
+                question[field], _, unresolved = clean_empty_fraction_wrappers(text)
+                if unresolved:
+                    review = question.setdefault("source_review", {})
+                    review["required"] = True
+                    hint = "公式存在无法从已有内容恢复的空分母，请对照原页核对。"
+                    if hint not in review.setdefault("reasons", []):
+                        review["reasons"].append(hint)
         if layout_result is not None:
             from mathbank.pdf_symbol_risks import annotate_pdf_symbol_risks
             annotate_pdf_symbol_risks(final_questions, diagnostics)
@@ -7069,6 +7100,12 @@ def run_pdf_parsing_task(
                     "pending": diagnostics.get("source_review_count", 0),
                     "skipped": 0, "usage": {},
                 }
+        if layout_result is not None and diagnostics.get("pdf_source_verification", {}).get("checked"):
+            # Verification may offer a repair, but cannot replace physically
+            # bound option tables or already acquired printed answer blocks.
+            enforced = enforce_source_fields(final_questions, source_content, layout_result)
+            if any(enforced.values()):
+                diagnostics["pdf_source_fields_reapplied"] = enforced
         make_source_review_advisory(final_questions, diagnostics)
         DOCUMENT_TASKS.check_cancelled(task_id)
         if recovery is not None:

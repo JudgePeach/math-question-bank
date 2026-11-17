@@ -912,6 +912,11 @@ def _has_math_formula_loss(
     text = _native_diagnostic_text(source, preserve_content_boundaries=True)
 
     # 1. 特征 A: 连续连写的空选择题选项 (如 A. B. C. D. 之间无实质表达式)
+    # A narrow false-table signature: three floating labels in one cell,
+    # then the last label alone in a row whose remaining cells are empty.
+    if re.search(r"(?m)^\|[^|\n]*\bA[.．]\s*B[.．]\s*C[.．]\s*\|", text) and re.search(
+            r"(?m)^\|\s*D[.．]\s*\|[| \t]*$", text):
+        return True
     if re.search(r"\bA\.\s*B\.\s*C\.\s*D\.", text):
         return True
     if re.search(r"\bA\.\s*[\n\r]+\s*B\.\s*[\n\r]+\s*C\.\s*[\n\r]+\s*D\.", text):

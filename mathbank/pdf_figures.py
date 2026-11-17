@@ -529,9 +529,15 @@ def enrich_pdf_with_figures(
                 report["pages_checked"] += 1
                 for figure in figures:
                     check_cancelled()
-                    if info.get("full_page_image") and not figure.get("native_box"):
+                    slot = next((slot for slot in info["figure_slots"] if slot["id"] == figure.get("slot_id")), None)
+                    graph_caption = bool(slot and re.search(r"(?:图象|图像|如图所示)", source[max(0, slot["start"]-100):slot["start"]]))
+                    if not figure.get("native_box") and (info.get("full_page_image") or graph_caption):
                         from mathbank.pdf_raster_guard import guard_raster_figure_bbox
-                        guarded = guard_raster_figure_bbox(page_images[local_index], figure["model_bbox"])
+
+                        guarded = guard_raster_figure_bbox(
+                            page_images[local_index], figure["model_bbox"], improve_local_frame=True,
+                            allow_relocation=graph_caption and len(info["figure_slots"]) == 1,
+                        )
                         check_cancelled()
                         figure["raster_guard"] = {
                             key: value for key, value in guarded.items() if key not in {"warnings", "notes"}

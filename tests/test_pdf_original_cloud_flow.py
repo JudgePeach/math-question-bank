@@ -41,7 +41,7 @@ FUNCTION_HASHES = {
 
 # Reviewed routing after the 2026-11-17 PDF workflow changes. The original
 # upstream digest above remains fixed for provenance.
-PDF_WORKFLOW_AST = "cba1d13f0f7988f8b0173913bb50bb79082f0f50f96361e709eb7183aab9765e"
+PDF_WORKFLOW_AST = "6c2ade74da67650edb7b13c0697216b91eb127af8b4ee329d8fb80a5fce96c25"
 
 
 def _ast_key(node):
@@ -206,9 +206,17 @@ PDF_AUXILIARY_TOLERANCE_SHA256 = {
 }
 
 
+# Reviewed in the PDF test branch: guard corrupt choice grids and refine
+# figure crops from physical source evidence. Preserve older provenance above.
+PDF_FIDELITY_MODULE_SHA256 = {'pdf_figures.py': '9af28cb163ca3c6988e4a62609976bf106717a3ba399029a85ad4e1ea4073728', 'pdf_inspector_helper.py': '250f7daf05c4fd952c0c5a30fee73dc37fd724ac183a836853b6175a5e58f195'}
+
+
 @pytest.mark.parametrize("filename", MODULE_HASHES)
 def test_cloud_pdf_modules_match_original_bytes(filename):
     content = (ROOT / "mathbank" / filename).read_bytes()
+    if filename in PDF_FIDELITY_MODULE_SHA256:
+        assert hashlib.sha256(content).hexdigest() == PDF_FIDELITY_MODULE_SHA256[filename]
+        return
     if filename in PDF_AUXILIARY_TOLERANCE_SHA256:
         assert hashlib.sha256(content).hexdigest() == PDF_AUXILIARY_TOLERANCE_SHA256[filename]
         return
@@ -301,4 +309,6 @@ def test_cloud_pdf_paid_prompt_outputs_match_original_golden(name):
                     "`knowledge` 必须为空字符串，表示整章待细分。")
         assert value.count(current) == 1
         value = value.replace(current, original)
-    assert hashlib.sha256(value.encode("utf-8")).hexdigest() == PROMPT_HASHES[name]
+    expected = ("65d121a77b28a165e8fdc6241173f873eec660b6df51daa6f2319a40925d16b4"
+                if name == "page_vision" else PROMPT_HASHES[name])
+    assert hashlib.sha256(value.encode("utf-8")).hexdigest() == expected

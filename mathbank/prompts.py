@@ -120,6 +120,9 @@ def build_pdf_page_vision_prompt(page_info: dict) -> str:
         '"ignored_candidates":[{"id":"候选ID","reason":"formula|table_border|decoration|page_background"}],'
         '"page_complete":true,"warnings":[]}。'
         "markdown中的每道选择题必须逐题保留完整choices环境及所有选项，不能只输出(A)/(B)等裸标号。"
+        "表格若属于一个选项，必须完整转录到该选项内，保留每行每列、数值和正负号；无法辨清时在该选项内保留原表格截图占位。"
+        "遇到【答案】和【解析】分列的原卷，按原页分别照录两个标题和其下内容，即使答案栏与解析有矛盾也保留。"
+        "分式的分子和分母都要完整核对；不得在已完整的分式外再套一层没有分母的分式。"
         "JSON字符串中的换行与LaTeX反斜杠必须正确转义，不返回Python字典或未加引号的字段名。"
         "每幅真正插图在正文/对应选项/对应单元格中放一个唯一占位，再在figures中引用相同slot，"
         "同页不复用slot；没有原图号时按阅读顺序编号。四图选项必须保持A/B/C/D对应，"
@@ -135,6 +138,8 @@ def build_pdf_page_vision_prompt(page_info: dict) -> str:
         "对于矢量图、没有原生候选或需要合并多个区域的图，bbox仍须提供完整坐标。"
         "若一张候选位图包含相邻图(1)/图(2)，优先完整保留为同一图簇，不能为拆分而裁掉图注。"
         "候选仅用于定位提示，公式、底纹和表格边框不是插图；不能因为没有候选就遗漏矢量图。"
+        "凡正文或解析提到图，先定位包含坐标轴、曲线和单位的独立墨迹，再就着该图紧框。"
+        "不要裁到接在图后面的结论、题干或另一道题的答案框。"
         "已转为可编辑tabular的表格不再重复截图。所有候选应通过candidate_ids或ignored_candidates解释。"
         "无独立配图时figures为空，不能把整页当成图。不能确定的图仍保留完整区域并标明review_required，"
         "不能完整转录时page_complete=false，warnings给具体原因。\n"

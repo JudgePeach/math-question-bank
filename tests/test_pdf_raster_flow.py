@@ -41,7 +41,7 @@ def test_scanned_box_is_checked_before_crop_and_warning_stays_on_own_question(tm
     raw_bbox, corrected = [801, 698, 928, 915], [690, 790, 930, 940]
     guard_warning = guard_mode == "suspect"
     calls, cropped, assets = [], [], []
-    def guard(path, bbox):
+    def guard(path, bbox, **_kwargs):
         calls.append((path, bbox))
         return {"bbox": corrected, "changed": guard_mode == "corrected", "status": guard_mode,
                 "warnings": ["图形边界仍有歧义，请核对裁剪。"] if guard_warning else [],
