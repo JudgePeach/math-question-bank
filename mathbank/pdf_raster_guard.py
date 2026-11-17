@@ -340,7 +340,7 @@ def _cuts_component(evidence: dict, bbox) -> bool:
     return False
 
 
-def _text_only_frame(evidence: dict, bbox) -> bool:
+def _text_only_frame(evidence: dict, bbox, *, minimum_fraction=.90, minimum_rows=1) -> bool:
     """Recognize a crop dominated by paragraph ink, not a labelled diagram."""
     if any(_contains(bbox, component) for component in evidence["significant_components"]):
         return False
@@ -348,12 +348,15 @@ def _text_only_frame(evidence: dict, bbox) -> bool:
     if total < 8:
         return False
     covered = 0
+    rows = 0
     for row in evidence["text_rows"]:
         intersection = (max(bbox[0], row[0]), max(bbox[1], row[1]),
                         min(bbox[2], row[2]), min(bbox[3], row[3]))
         if _area(intersection) > 0:
-            covered += _frame_ink(evidence, intersection)
-    return covered >= total * 0.90
+            ink = _frame_ink(evidence, intersection)
+            covered += ink
+            rows += ink >= max(12, total * .10)
+    return rows >= minimum_rows and covered >= total * minimum_fraction
 
 
 def _complete_single_component_edge(evidence: dict, original, deadline: float) -> dict | None:
@@ -449,7 +452,10 @@ def _clean_local_graph_frame(evidence, original, *, allow_relocation):
     part = _intersection(frame, original) / _area(frame)
     close = (part >= .65 and _intersection(original, core) / _area(core) >= .70
              and _area(original) <= _area(frame) * 3)
-    relocate = allow_relocation and _text_only_frame(evidence, original)
+    # A named graph slot plus a unique local graph permits recovery from
+    # an unrelated answer crop only if several sizeable prose rows dominate.
+    relocate = allow_relocation and _text_only_frame(
+        evidence, original, minimum_fraction=.80, minimum_rows=3)
     if not close and not relocate:
         return None
     if any(_intersection(frame, row) > 0 and not _contains(core, row) for row in evidence["text_rows"]):
