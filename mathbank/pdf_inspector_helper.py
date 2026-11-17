@@ -10,7 +10,9 @@ from collections import Counter
 from importlib.metadata import PackageNotFoundError, version as package_version
 from typing import Any, Dict, List, Optional
 
-from .pdf_native_math_quality import native_math_layout_reasons, script_markup_probe
+from .pdf_native_math_quality import (
+    native_math_layout_reasons, native_script_geometry_reasons, script_markup_probe,
+)
 
 try:
     import pdf_inspector
@@ -775,6 +777,19 @@ def _native_paint_visibility_reasons(markdown: str, page=None, *, evidence: list
     return []
 
 
+def _native_script_geometry_reasons(markdown, page):
+    if len(markdown) > 60_000:
+        return []
+    try:
+        visible = _native_diagnostic_text(script_markup_probe(markdown), preserve_content_boundaries=True)
+        if not re.search(r"[A-Za-z\U0001d400-\U0001d7cb]\s+\d{1,2}(?!\d)", visible):
+            return []
+        page_dict = page.get_text("dict", flags=fitz.TEXTFLAGS_DICT & ~fitz.TEXT_PRESERVE_IMAGES)
+        return native_script_geometry_reasons(visible, page_dict)
+    except (AttributeError, TypeError, ValueError, RuntimeError):
+        return []
+
+
 def _native_position_quality_reasons(markdown: str, page_index: int, pdf_path: str | None, *, page=None,
                                      paint_evidence: list[str] | None = None) -> list[str]:
     brace_fallback = _native_brace_geometry_reasons(markdown)
@@ -787,6 +802,7 @@ def _native_position_quality_reasons(markdown: str, page_index: int, pdf_path: s
     try:
         if page is not None:
             reasons = _native_brace_geometry_reasons(markdown, page)
+            reasons.extend(_native_script_geometry_reasons(markdown, page))
             if has_table:
                 reasons.extend(_native_table_position_reasons(markdown, page))
             reasons.extend(_native_paint_visibility_reasons(markdown, page, evidence=paint_evidence))
@@ -977,6 +993,7 @@ def _extract_fitz_pages(
                 text = page.get_text("text").strip()
                 quality_reasons = native_text_quality_reasons(text)
                 quality_reasons.extend(_native_brace_geometry_reasons(text, page))
+                quality_reasons.extend(_native_script_geometry_reasons(text, page))
                 quality_reasons.extend(_native_paint_visibility_reasons(text, page))
                 if len(text) < 30 and not quality_reasons:
                     quality_reasons.append("原生文字过少，需通过原页识别。")
@@ -1069,6 +1086,7 @@ def _repair_native_pages(file_bytes: bytes, pages: List[Dict[str, Any]], *, docu
                     visible_reasons = _native_paint_visibility_reasons(
                         markdown, document[index], evidence=(paint_evidence or {}).get(index))
                     remaining.extend(visible_reasons)
+                    remaining.extend(_native_script_geometry_reasons(markdown, document[index]))
                     for reason in visible_reasons:
                         if reason not in page.setdefault("quality_reasons", []):
                             page["quality_reasons"].append(reason)

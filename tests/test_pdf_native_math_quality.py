@@ -3,7 +3,6 @@ from types import SimpleNamespace
 
 import pytest
 
-from pdf_feature_contract import experimental_pdf_only
 from mathbank import pdf_inspector_helper as helper
 from mathbank.pdf_native_math_quality import (
     native_math_layout_reasons, native_script_geometry_reasons, script_markup_probe,
@@ -78,11 +77,11 @@ def test_complete_equivalent_script_encodings_match_proved_pdf_geometry(source):
     assert native_script_geometry_reasons(source,power_geometry()) == []
 
 
-@experimental_pdf_only
 def test_geometry_wrapper_accepts_retained_html_script_and_protects_literal_metadata():
-    page=SimpleNamespace(get_text=lambda *args:power_geometry())
+    page=SimpleNamespace(get_text=lambda *args, **kwargs:power_geometry())
     assert helper._native_script_geometry_reasons('<span>L</span><sup>2</sup> + L²',page) == []
     assert helper._native_script_geometry_reasons("L <sup class='math'>2</sup> + L²",page) == []
+    assert helper._native_script_geometry_reasons("L² + L 2", page)
     assert helper._native_script_geometry_reasons('代码 `L 2` 与文字 L²。',page) == []
 
 

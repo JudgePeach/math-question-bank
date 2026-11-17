@@ -208,7 +208,7 @@ PDF_AUXILIARY_TOLERANCE_SHA256 = {
 
 # Reviewed in the PDF test branch: guard corrupt choice grids and refine
 # figure crops from physical source evidence. Preserve older provenance above.
-PDF_FIDELITY_MODULE_SHA256 = {'pdf_figures.py': '9af28cb163ca3c6988e4a62609976bf106717a3ba399029a85ad4e1ea4073728', 'pdf_inspector_helper.py': '82853f0e5012b7963578615df73ae01b112d7483b283c39822f54ed2ab7499cb'}
+PDF_FIDELITY_MODULE_SHA256 = {'pdf_figures.py': '9af28cb163ca3c6988e4a62609976bf106717a3ba399029a85ad4e1ea4073728', 'pdf_inspector_helper.py': '73f30b1dc0f51f6cdc8767f0cf5cebb764b3822f449327c1fa46fa404987da94'}
 
 
 @pytest.mark.parametrize("filename", MODULE_HASHES)
