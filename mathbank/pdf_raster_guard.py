@@ -467,7 +467,7 @@ def _clean_local_graph_frame(evidence, original, *, allow_relocation):
     if not relocate and (
             any(abs(frame[i] - original[i]) > 100 for i in range(4))
             or max(original[0] - frame[0], original[1] - frame[1],
-                   frame[2] - original[2], frame[3] - original[3]) > 35):
+                   frame[2] - original[2], frame[3] - original[3]) > 45):
         return None
     if any(_intersection(original, item) > 0 and not _contains(frame, item)
            for item in evidence["significant_components"]):

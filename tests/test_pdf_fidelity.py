@@ -89,3 +89,13 @@ def test_right_axis_unit_keeps_adjacent_glyph_but_not_prose_below():
     assert _right_label_continuation(near, [*near, continuation, unrelated], core, 14) == [
         *near, continuation,
     ]
+
+
+def test_proven_graph_unit_can_extend_the_side_without_consuming_prose():
+    from mathbank.pdf_raster_guard import _clean_local_graph_frame
+
+    graph = {"bbox": (389, 194, 635, 274), "labels": 6, "core_bbox": (391, 200, 589, 272)}
+    old = (393, 206, 598, 313)
+    evidence = {"figures": [graph], "large_components": 1,
+                "text_rows": [(104, 286, 823, 300)], "significant_components": [graph["core_bbox"]]}
+    assert _clean_local_graph_frame(evidence, old, allow_relocation=False) == graph
