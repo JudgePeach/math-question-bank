@@ -35,6 +35,7 @@ assert Path(engine.url.database).resolve() == ROOT / "math_question_bank.db"
 assert not (ROOT / ".env").exists()
 assert main.PDF_CLOUD_ONLY is True
 STRATEGY = os.environ["MATHBANK_ISOLATED_PDF_STRATEGY"]
+RETRY = os.environ.get("MATHBANK_ISOLATED_PDF_RETRY", "")
 CURRICULUM = {"必修二": {"9. 统计": ["9.2 用样本估计总体"]}}
 main.METADATA_CACHE = {"curriculum_version": "A", "curriculum": CURRICULUM}
 main.schedule_database_export = lambda *_a, **_k: None
@@ -121,6 +122,11 @@ def post(config, payload, **kwargs):
     assert kwargs["retry_connection"] is False and kwargs["allow_redirects"] is False
     assert not payload.get("stream")
     api_calls.append(deepcopy(payload))
+    if RETRY and len(api_calls) <= 2:
+        reply = Reply()
+        reply.status_code = 401 if RETRY == "permanent" else 503
+        reply.headers = {"Retry-After": "0"}
+        return reply
     return Reply()
 main.post_chat_completion = post
 
@@ -148,14 +154,14 @@ projects.create = forbidden
 projects.save_draft = forbidden
 projects.sync_task = forbidden
 
-def settled(client, task_id):
+def settled(client, task_id, expected="completed"):
     until = time.monotonic() + 20
     while time.monotonic() < until:
         reply = client.get(f"/api/tasks/{task_id}/status")
         assert reply.status_code == 200, reply.text
         state = reply.json()
         if state.get("status") in {"completed", "error", "cancelled"}:
-            assert state["status"] == "completed", state
+            assert state["status"] == expected, state
             with main.DOCUMENT_TASKS._lock:
                 record = main.DOCUMENT_TASKS._records[task_id]
                 if record.future is None:
@@ -172,6 +178,39 @@ with TestClient(main.app) as client:
     assert upload.status_code == 200, upload.text
     assert "project_id" not in upload.json() and not upload.json().get("reused_project")
     task_id = upload.json()["task_id"]
+    if RETRY:
+        failed = settled(client, task_id, "error")
+        assert len(ocr_calls) == 1
+        assert "pdf_split_resume_state" not in failed
+        if RETRY == "permanent":
+            assert len(api_calls) == 1 and not failed["can_resume"]
+            assert client.post(f"/api/tasks/{task_id}/resume").status_code == 409
+            print("PDF_RETRY_BLOCKED=permanent")
+        else:
+            assert len(api_calls) == 2 and failed["can_resume"]
+            assert failed["resume_action"] == "retry_split"
+            if RETRY == "changed_asset":
+                asset = ROOT / failed["page_images"][0].lstrip("/")
+                asset.write_bytes(asset.read_bytes() + b"changed")
+            resumed = client.post(f"/api/tasks/{task_id}/resume")
+            assert resumed.status_code == 200 and resumed.json()["task_id"] == task_id
+            if RETRY == "changed_asset":
+                invalid = settled(client, task_id, "error")
+                assert len(ocr_calls) == 1 and len(api_calls) == 2 and not invalid["can_resume"]
+                print("PDF_RETRY_BLOCKED=changed_asset")
+            else:
+                task = settled(client, task_id)
+                assert len(ocr_calls) == 1 and len(api_calls) == 3
+                assert api_calls[0] == api_calls[1] == api_calls[2]
+                assert [row["content"] for row in task["data"]] == [row["content"] for row in cloud_questions]
+                assert all("API原答案" in row["answer_markdown"] for row in task["data"])
+                assert task["page_images"] == failed["page_images"]
+                assert task["diagnostics"]["pdf_splitting"]["calls"] == 1
+                assert task["diagnostics"]["pdf_splitting"]["max_attempts"] == 1
+                assert not task["can_resume"] and not list(task_store.root.iterdir())
+                print("PDF_RETRY_OK=1")
+        main.DOCUMENT_TASKS.shutdown()
+        raise SystemExit(0)
     task = settled(client, task_id)
     assert len(ocr_calls) == len(api_calls) == 1, (ocr_calls, api_calls)
     assert ocr_calls[0]["strategy"] == STRATEGY
@@ -221,8 +260,7 @@ main.DOCUMENT_TASKS.shutdown()
 '''
 
 
-@pytest.mark.parametrize("strategy", ["force_ocr", "layout_aware"])
-def test_original_cloud_pdf_upload_uses_api_bodies_without_local_draft(tmp_path, strategy):
+def run_cloud_upload(tmp_path, strategy, retry=""):
     root = Path(__file__).resolve().parents[1]
     workspace = tmp_path / "source-only-cloud-workspace"
     workspace.mkdir()
@@ -234,10 +272,27 @@ def test_original_cloud_pdf_upload_uses_api_bodies_without_local_draft(tmp_path,
     (workspace / "static").mkdir()
     runner = workspace / "isolated_cloud_upload.py"
     runner.write_text(SCENARIO, encoding="utf-8")
-    environment = dict(os.environ, PYTHONPATH=str(workspace), MATHBANK_ISOLATED_PDF_STRATEGY=strategy)
+    environment = dict(os.environ, PYTHONPATH=str(workspace), MATHBANK_ISOLATED_PDF_STRATEGY=strategy,
+                       MATHBANK_ISOLATED_PDF_RETRY=retry)
     result = subprocess.run([sys.executable, str(runner)], cwd=workspace, env=environment,
                             capture_output=True, text=True, timeout=60)
     assert result.returncode == 0, result.stdout[-7000:] + "\n" + result.stderr[-7000:]
-    assert '"api_full_body_calls": 1' in result.stdout
-    assert '"persistent_task_files": 0' in result.stdout
-    assert '"old_project_unchanged": true' in result.stdout
+    return result.stdout
+
+
+@pytest.mark.parametrize("strategy", ["force_ocr", "layout_aware"])
+def test_original_cloud_pdf_upload_uses_api_bodies_without_local_draft(tmp_path, strategy):
+    output = run_cloud_upload(tmp_path, strategy)
+    assert '"api_full_body_calls": 1' in output
+    assert '"persistent_task_files": 0' in output
+    assert '"old_project_unchanged": true' in output
+
+
+@pytest.mark.parametrize("strategy,retry,receipt", [
+    ("force_ocr", "transient", "PDF_RETRY_OK=1"),
+    ("layout_aware", "transient", "PDF_RETRY_OK=1"),
+    ("layout_aware", "permanent", "PDF_RETRY_BLOCKED=permanent"),
+    ("layout_aware", "changed_asset", "PDF_RETRY_BLOCKED=changed_asset"),
+])
+def test_same_task_split_retry_requires_retryable_failure_and_unchanged_assets(tmp_path, strategy, retry, receipt):
+    assert receipt in run_cloud_upload(tmp_path, strategy, retry)

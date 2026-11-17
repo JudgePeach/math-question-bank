@@ -5183,9 +5183,14 @@
             identity.intervalId = setInterval(() => {
                 if (!isCurrentDocumentPoll(identity) || identity.pending || Date.now() < identity.nextPollAt) return;
                 identity.pending = true;
-                fetchDocumentImportJson(`/api/tasks/${encodeURIComponent(taskId)}/status`)
+                const previewOption = identity.previewedPdfReview ? '?include_pdf_preview=false' : '';
+                fetchDocumentImportJson(`/api/tasks/${encodeURIComponent(taskId)}/status${previewOption}`)
                 .then(async task => {
                     if (!isCurrentDocumentPoll(identity)) return;
+                    if (identity.previewedPdfReview && ['completed', 'partial'].includes(task.status)
+                            && window.activePdfCropSession && !window.activePdfCropSession.closed) {
+                        return;  // Keep the crop's original field and generation until it closes.
+                    }
                     if (identity.failures > 0) {
                         appendImportLog('已重新连接原任务，继续读取进度。', 'info');
                         document.getElementById('importLoadingText').textContent = task.log || '已重新连接，正在读取任务进度';
@@ -5194,8 +5199,8 @@
                     identity.nextPollAt = 0;
                     window.MathBankDocumentImportSession?.update({
                         taskId, phase: task.status, documentType: task.document_type,
-                        canResume: task.can_resume === true, diagnostics: task.diagnostics || null,
-                        error: task.error || '', log: task.log || '', sourceAvailable: task.source_available === true,
+                        canResume: task.can_resume === true, resumeAction: task.resume_action,
+                        diagnostics: task.diagnostics || null, error: task.error || '', log: task.log || '', sourceAvailable: task.source_available === true,
                         projectId: task.project_id, projectRevision: task.project_revision,
                         projectRevisionReceipt: task.project_revision_receipt,
                         expiresAt: task.expires_at, partial: task.partial === true
@@ -5252,14 +5257,17 @@
                         window.pdfPageImages = task.page_images;
                         window.pdfPageNumbers = Array.isArray(task.page_numbers) ? task.page_numbers : [];
                     }
+                    if (task.pdf_review_preview === true && window.MathBankDocumentImportSession?.previewPdfReview?.(task)) {
+                        identity.previewedPdfReview = true;
+                    }
                     if (task.document_type === 'pdf' || task.diagnostics?.pdf_figure_review) {
                         parsedSourceReviewReport = task.diagnostics || null;
                         renderPdfFigureReviewPanel(task.diagnostics || null);
                     }
                     
                     if (task.status === 'completed' || task.status === 'partial') {
-                        if (task.diagnostics?.pdf_partial_checkpoint?.version === 1
-                                && task.diagnostics.pdf_partial_checkpoint.task_id === taskId) {
+                        if (identity.previewedPdfReview || (task.diagnostics?.pdf_partial_checkpoint?.version === 1
+                                && task.diagnostics.pdf_partial_checkpoint.task_id === taskId)) {
                             // New saves may start while an earlier group is
                             // settling. Drain every current group; after the
                             // empty check merging stays synchronous so no new
@@ -5272,6 +5280,10 @@
                             }
                         }
                         if (!finishDocumentPoll(identity)) return;
+                        const activeField = identity.previewedPdfReview && document.activeElement;
+                        const fieldSelector = activeField?.matches?.('.card-content-textarea') ? '.card-content-textarea'
+                            : activeField?.matches?.('.card-answer-textarea') ? '.card-answer-textarea' : '';
+                        const focusedCardId = fieldSelector && activeField.closest('[id^="parsed-card-"]')?.id;
                         const workingCopyRestore = task.diagnostics?.pdf_draft_restore?.working_copy === true;
                         const questions = window.MathBankDocumentImportSession?.mergeCompletion(task.data || [], {workingCopyRestore, taskId}) || task.data || [];
                         replaceParsedQuestions(questions, {saveDraft: !workingCopyRestore && questions.length > 0});
@@ -5321,6 +5333,12 @@
                         
                         document.getElementById('importLoadingState').classList.add('hidden');
                         document.getElementById('parsedQuestionsWrapper').classList.remove('hidden');
+                        if (focusedCardId) {
+                            const field = document.getElementById(focusedCardId)?.querySelector(fieldSelector);
+                            field?.focus({preventScroll: true});
+                            field?.setSelectionRange(activeField.selectionStart, activeField.selectionEnd,
+                                activeField.selectionDirection);
+                        }
                         
                         if (['pdf', 'docx'].includes(task.document_type) && task.generate_answers === true
                                 && !window.MathBankDocumentImportSession?.isRestored()) {
@@ -7068,6 +7086,10 @@
         }
 
         function saveParsedQuestion(index) {
+            if (window.MathBankDocumentImportSession?.pdfReviewInProgress?.()) {
+                showToast('题卡正在核验，可先校对，核验结束后入库。', 'info');
+                return Promise.resolve(false);
+            }
             const q = parsedQuestionsData[index];
             if (!q) return Promise.resolve(true);
             const options = arguments.length > 1 && arguments[1] ? arguments[1] : {};
@@ -7508,6 +7530,10 @@
         }
 
         function saveAllParsedQuestions() {
+            if (window.MathBankDocumentImportSession?.pdfReviewInProgress?.()) {
+                showToast('题卡正在核验，可先校对，核验结束后入库。', 'info');
+                return Promise.resolve(false);
+            }
             if (parsedBatchSaveInFlight) return parsedBatchSaveInFlight;
             if (parsedQuestionSaveInFlight.size > 0) {
                 showToast('仍有单题正在入库，请等待完成后再启动批量导入。', 'info');

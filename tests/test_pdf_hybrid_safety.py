@@ -290,6 +290,7 @@ def test_pdf_task_completion_executed_tail_preserves_partial_flag_and_notice(
         'pdf_question_validation':{'rejected_count':rejected_count}}
     namespace={'DOCUMENT_TASKS':tasks,'diagnostics':diagnostics,'task_id':'pdf-ui-completion','final_questions':data,
                'generate_answers':False,'page_urls':['test-page'],'target_page_indices':[0],'temp_assets':[],
+               'review_preview_published':False,
                'recovery':{'quarantined_ranges':[(1,2)]} if quarantined else None}
     exec(compile(actual_ast,'actual-pdf-completion-tail','exec'),namespace)
     assert len(captured)==1

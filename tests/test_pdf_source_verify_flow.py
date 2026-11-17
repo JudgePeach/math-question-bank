@@ -122,3 +122,43 @@ def test_source_verifier_only_runs_when_enabled_and_pending_after_final_text(mon
             assert task["data"][0]["source_review"]["required"] is True
     finally:
         main.DOCUMENT_TASKS.remove(task_id)
+
+
+def test_cancel_during_pdf_verification_keeps_published_cards_and_navigation(monkeypatch):
+    from pathlib import Path
+
+    import main
+    from mathbank import pdf_source_verify
+
+    source = "1. 求 $x+1$ 的值。"
+    monkeypatch.setattr(main, "inspect_and_extract_pdf", lambda *a, **k: {
+        "pdf_type": "text_based",
+        "pages": [{"page_index": 0, "markdown": source, "needs_ocr": False}],
+    })
+    monkeypatch.setattr(main, "parse_paper_text_internal", lambda *a, **k: [{
+        "content": "求 $x-1$ 的值。", "answer_markdown": "原答 $2$。",
+    }])
+
+    def verify(questions, diagnostics, urls, numbers, **kwargs):
+        task = main.get_pdf_task_status(task_id)
+        assert task["status"] == "source_verification" and task["pdf_review_preview"]
+        assert task["data"][0]["pdf_review_card_id"] == f"{task_id}-0"
+        assert "data" not in main.get_pdf_task_status(task_id, include_pdf_preview=False)
+        assert task["page_images"] == urls and task["page_numbers"] == numbers == [1]
+        questions[0]["content"] = "尚未发布的候选"
+        assert main.get_pdf_task_status(task_id)["data"][0]["content"] == "求 $x-1$ 的值。"
+        assert main.cancel_pdf_task(task_id)["task_status"] == "cancelled"
+        kwargs["check_cancelled"]()
+        pytest.fail("Cancellation must stop verification")
+
+    monkeypatch.setattr(pdf_source_verify, "verify_pdf_source_suspicions", verify)
+    task_id = str(uuid.uuid4())
+    main.DOCUMENT_TASKS.create(task_id, document_type="pdf", temp_assets=[])
+    try:
+        main.run_pdf_parsing_task(task_id, pdf_bytes(), "test.pdf", pdf_strategy="layout_aware")
+        task = main.get_pdf_task_status(task_id)
+        assert task["status"] == "cancelled", task
+        assert task["data"][0]["content"] == "求 $x-1$ 的值。"
+        assert all((Path(main.PROJECT_ROOT) / url.lstrip("/")).is_file() for url in task["page_images"])
+    finally:
+        main.DOCUMENT_TASKS.remove(task_id)

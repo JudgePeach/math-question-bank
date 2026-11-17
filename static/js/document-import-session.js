@@ -46,6 +46,15 @@
             && validId(value?.taskId) && checkpoint.task_id === value.taskId;
     }
 
+    function pdfSplitCanRetry(value = state) {
+        return transientPdf(value) && value?.resumeAction === 'retry_split' && validId(value.taskId);
+    }
+
+    function pdfReviewInProgress(value = state) {
+        return transientPdf(value) && value?.phase === 'source_verification'
+            && value.pdfReviewTaskId === value.taskId;
+    }
+
     function useTransientPdf() {
         if (!transientPdf()) return false;
         state.transientPdf = true;
@@ -54,7 +63,7 @@
         ['projectId', 'projectRevision', 'projectRevisionReceipt', 'projectSaveStatus', 'projectError',
             'projectLocalDirty', 'projectSourcePageCount', 'expiresAt', 'lastUsedAt', 'totalBytes', 'page_edits']
             .forEach(key => delete state[key]);
-        if (!partialPdfCheckpoint()) state.canResume = false;
+        if (!partialPdfCheckpoint() && !pdfSplitCanRetry()) state.canResume = false;
         return true;
     }
 
@@ -277,7 +286,40 @@
         return result;
     }
 
+    const verificationFields = ['content', 'answer_markdown', 'image_paths'];
+
     function mergeCompletion(incoming, options = {}) {
+        if (state?.pdfReviewTaskId && state.pdfReviewTaskId === options.taskId) {
+            const current = questionsSnapshot();
+            const baseline = new Map(state.pdfReviewBaseline.map(item => [item.pdf_review_card_id, item]));
+            const reviewed = new Map(incoming.map(item => [item.pdf_review_card_id, item]));
+            if (reviewed.size !== incoming.length || reviewed.size !== baseline.size
+                    || [...baseline.keys()].some(id => !reviewed.has(id))) {
+                showToast('核验结果无法对应当前题卡，已保留校对内容。', 'warning');
+                return current;
+            }
+            return current.map(item => {
+                const original = baseline.get(item.pdf_review_card_id);
+                const checked = reviewed.get(item.pdf_review_card_id);
+                if (!original || !checked) return item;
+                const edited = item.document_import_source_edited === true
+                    || correctionSnapshot(item) !== correctionSnapshot(original);
+                const fixedFields = verificationFields.filter(field =>
+                    JSON.stringify(original[field]) !== JSON.stringify(checked[field]));
+                const corrected = fixedFields.some(field =>
+                    JSON.stringify(item[field]) !== JSON.stringify(checked[field]));
+                if (edited || item.saved_id || item.savedSnapshot || item.saved) {
+                    if (corrected) {
+                        item.project_incoming_candidate = {...clone(checked), pdf_source_verification: fixedFields};
+                    } else if (!edited) {
+                        if (checked.source_review) item.source_review = clone(checked.source_review);
+                        else delete item.source_review;
+                    }
+                    return item;
+                }
+                return {...checked, document_import_selected: item.document_import_selected};
+            });
+        }
         if (partialPdfCheckpoint() && options.taskId === state.taskId) {
             const current = questionsSnapshot();
             if (incoming.some(question => !validId(question.pdf_source_card_id))) {
@@ -359,6 +401,20 @@
         return result;
     }
 
+    function previewPdfReview(task) {
+        if (!transientPdf() || task.pdf_review_preview !== true || task.status !== 'source_verification'
+                || !validId(task.task_id) || state.taskId !== task.task_id || state.pdfReviewTaskId
+                || !Array.isArray(task.data) || !task.data.length
+                || task.data.some((item, index) => item.pdf_review_card_id !== `${task.task_id}-${index}`)) return false;
+        state.pdfReviewTaskId = task.task_id;
+        state.pdfReviewBaseline = clone(task.data);
+        state.acceptedDiagnostics = clone(task.diagnostics);
+        showQuestions(task.data);
+        element('importLoadingState')?.classList.add('hidden');
+        renderRecovery();
+        return true;
+    }
+
     function previewLocalDraft(task) {
         if (!validId(state?.projectId) || task.project_id !== state.projectId || !validId(task.task_id)
                 || state.taskId !== task.task_id || state.localDraftPreviewTaskId === task.task_id
@@ -396,7 +452,9 @@
         panel.className = 'document-project-candidate rounded-lg border border-indigo-200 px-3 py-2 text-[11px] text-slate-600';
         const summary = document.createElement('summary');summary.className = 'cursor-pointer font-semibold';
         const metadataOnly = candidate.metadata_only === true;
-        summary.textContent = metadataOnly ? '分类建议 · 当前人工稿已保留' : '新分析结果候选 · 当前人工稿已保留';panel.appendChild(summary);
+        summary.textContent = candidate.pdf_source_verification ? '原页核验建议 · 当前校对稿已保留'
+            : metadataOnly ? '分类建议 · 当前人工稿已保留' : '新分析结果候选 · 当前人工稿已保留';
+        panel.appendChild(summary);
         const content = document.createElement('pre');content.className = 'whitespace-pre-wrap break-words max-h-60 overflow-auto my-2';
         content.textContent = (metadataOnly ? '' : String(candidate.content || '') + '\n\n答案与解析：\n' + String(candidate.answer_markdown || '') + '\n\n') +
             '分类建议：' + [candidate.category_compulsory, candidate.category_chapter, candidate.category_knowledge].filter(Boolean).join(' / ')
@@ -407,7 +465,8 @@
             if (typeof blockImportResetWhileSaving === 'function' && blockImportResetWhileSaving()) return;
             const next = questionsSnapshot();
             const onlyMetadata = candidate.metadata_only === true;
-            const adopted = {...clone(onlyMetadata ? next[index] : candidate), document_import_selected: question.document_import_selected,
+            const verification = Array.isArray(candidate.pdf_source_verification);
+            const adopted = {...clone(onlyMetadata || verification ? next[index] : candidate), document_import_selected: question.document_import_selected,
                 document_import_fields_saved: true};
             adopted.knowledge_points = mergeKnowledgePointSuggestions(next[index].knowledge_points, candidate.knowledge_points);
             if (candidate.knowledge_point_warnings) adopted.knowledge_point_warnings = clone(candidate.knowledge_point_warnings);
@@ -419,6 +478,18 @@
                 } else if (adopted.classification_review) {
                     adopted.classification_review = {...adopted.classification_review, required: false,
                         reason_codes: [], message: '分类已匹配。', confirmed_by: 'metadata'};
+                }
+                delete adopted.project_incoming_candidate;
+            }
+            if (verification) {
+                candidate.pdf_source_verification.filter(field => verificationFields.includes(field)).forEach(field => {
+                    if (candidate[field] === undefined) delete adopted[field];
+                    else adopted[field] = clone(candidate[field]);
+                });
+                if (sourceSnapshot(adopted) === sourceSnapshot(candidate)) {
+                    if (candidate.source_review) adopted.source_review = clone(candidate.source_review);
+                    else delete adopted.source_review;
+                    delete adopted.document_import_source_edited;
                 }
                 delete adopted.project_incoming_candidate;
             }
@@ -1022,7 +1093,8 @@
             window.currentPdfTaskId = resolvedId;
             window.currentDocumentClientRequestId = requestId;
             update({ taskId: resolvedId, phase: task.status, documentType: task.document_type,
-                canResume: task.can_resume === true, error: task.error || '', diagnostics: task.diagnostics || state.diagnostics,
+                canResume: task.can_resume === true, resumeAction: task.resume_action,
+                error: task.error || '', diagnostics: task.diagnostics || state.diagnostics,
                 sourceAvailable: task.source_available === true });
             if (Array.isArray(task.page_images) && task.page_images.length) {
                 window.pdfPageImages = task.page_images;
@@ -1030,7 +1102,7 @@
             }
             if (['completed', 'partial', 'error', 'interrupted', 'cancelled'].includes(task.status)) {
                 if (Array.isArray(task.data) && task.data.length) {
-                    if (partialPdfCheckpoint()) {
+                    if (partialPdfCheckpoint() || state.pdfReviewTaskId === resolvedId) {
                         while (parsedQuestionSaveInFlight.size || parsedBatchSaveInFlight) {
                             const saves = [...parsedQuestionSaveInFlight.values()];
                             if (parsedBatchSaveInFlight) saves.push(parsedBatchSaveInFlight);
@@ -1064,7 +1136,7 @@
     }
 
     async function resume() {
-        if (transientPdf() && !partialPdfCheckpoint()) return;
+        if (transientPdf() && !partialPdfCheckpoint() && !pdfSplitCanRetry()) return;
         if (!state?.canResume || (!validId(state.taskId) && !validId(state.projectId)) || busy
                 || deletingProjects.has(state.projectId)) return;
         if (partialPdfCheckpoint() && (parsedQuestionSaveInFlight.size || parsedBatchSaveInFlight)) {
@@ -1086,8 +1158,10 @@
             if (state !== owner || sessionEpoch !== epoch) return;
             if (response.status !== 'success') throw new Error(response.message || '后台未接受继续请求。');
             taskId = response.task_id || response.task?.task_id || taskId;
-            if (partialPdfCheckpoint() && taskId !== owner.taskId) throw new Error('后台返回的任务编号与原补做任务不一致；未连接其他任务。');
-            restored = true;
+            if ((partialPdfCheckpoint() || pdfSplitCanRetry()) && taskId !== owner.taskId) {
+                throw new Error('后台返回的任务编号与原任务不一致。');
+            }
+            restored = !pdfSplitCanRetry() || partialPdfCheckpoint();
             const generation = beginDocumentImportTask({ skipCancellation: true });
             window.currentPdfTaskId = taskId;
             window.currentDocumentClientRequestId = state.clientRequestId;
@@ -1106,10 +1180,13 @@
 
     function renderRecovery() {
         let panel = element('documentImportRecoveryPanel');
-        if (transientPdf() && !partialPdfCheckpoint()) {if (panel) panel.hidden = true;return;}
+        if (transientPdf() && !partialPdfCheckpoint() && !pdfSplitCanRetry() && !pdfReviewInProgress()) {
+            if (panel) panel.hidden = true;
+            return;
+        }
         const sourceResult = state?.sourceAvailable === true
             && ['completed', 'partial', 'error', 'interrupted', 'cancelled'].includes(state.phase);
-        const show = state && (partialPdfCheckpoint() || validId(state.projectId) || restored || sourceResult || ['error', 'interrupted', 'partial', 'missing', 'disconnected', 'reconnecting',
+        const show = state && (partialPdfCheckpoint() || pdfSplitCanRetry() || pdfReviewInProgress() || validId(state.projectId) || restored || sourceResult || ['error', 'interrupted', 'partial', 'missing', 'disconnected', 'reconnecting',
             'creation_uncertain', 'cancellation_pending'].includes(state.phase));
         if (!show) { if (panel) panel.hidden = true; return; }
         if (!panel) {
@@ -1133,7 +1210,7 @@
         const messagePhase = projectTaskIsActive()
             ? (['local_draft', 'ai_metadata'].includes(state.phase) ? state.phase : 'project_running') : state.phase;
         const renderKey = JSON.stringify([messagePhase, state.error, state.projectId, state.taskId, state.clientRequestId,
-            state.projectSaveStatus, state.projectError, state.canResume, validId(state.projectId) ? true : state.sourceAvailable, restored, busy,
+            state.projectSaveStatus, state.projectError, state.canResume, state.resumeAction, pdfReviewInProgress(), validId(state.projectId) ? true : state.sourceAvailable, restored, busy,
             expiryText(state), state.totalBytes, deletingProjects.has(state.projectId), !parsedQuestionsData.length && Boolean(state.page_edits?.length),
             structureReview.incomplete ? structureReview.lines : false, structureReview.summary || '', sourcePersisted, sourcePageCount]);
         if (panel.dataset.renderKey === renderKey) return;
@@ -1165,6 +1242,10 @@
             : validId(state.projectId) && !parsedQuestionsData.length && state.page_edits?.length
                 && ['error', 'partial', 'interrupted'].includes(state.phase)
             ? '拆题尚未完成，逐页识别工作稿已保留，可展开校对后重新分析。'
+            : pdfReviewInProgress()
+            ? '题卡可以开始校对。原页核验结束后可入库。'
+            : pdfSplitCanRetry() && state.canResume
+            ? '逐页识图已完成。重试将从拆题继续。'
             : partialPdfCheckpoint() && state.canResume
             ? '部分页面尚未识别，完整题卡已交付。补做只处理失败页；当前题卡、人工修改与入库状态保留。'
             : partialPdfCheckpoint() && state.phase === 'completed'
@@ -1216,14 +1297,15 @@
             download.setAttribute('download', '');
             actions.appendChild(download);
         }
-        if (state.canResume) addButton(partialPdfCheckpoint() ? '补做失败页' : '继续未完成解析', resume);
+        if (state.canResume) addButton(pdfSplitCanRetry() ? '重试拆题'
+            : partialPdfCheckpoint() ? '补做失败页' : '继续未完成解析', resume);
         if (validId(state.projectId) && state.projectSaveStatus === 'conflict') {
             addButton('重载服务器稿（本机稿留备份）', () => openProject(state.projectId, {serverOnly: true}));
             addButton('另存为工程副本', forkProject);
         } else if (validId(state.projectId) && state.projectSaveStatus === 'local') {
             addButton('重试保存', saveServerNow);
         }
-        if (projectTaskIsActive() || ['creating', 'creation_uncertain', 'disconnected', 'reconnecting', 'cancellation_pending', 'running'].includes(state.phase)) {
+        if (pdfReviewInProgress() || projectTaskIsActive() || ['creating', 'creation_uncertain', 'disconnected', 'reconnecting', 'cancellation_pending', 'running'].includes(state.phase)) {
             addButton('请求取消后台任务', () => {
                 window.currentPdfTaskId = state.taskId;
                 window.currentDocumentClientRequestId = state.clientRequestId;
@@ -1267,7 +1349,7 @@
         if (state && (state.taskId || state.clientRequestId)) reconnect();
     }
 
-    window.MathBankDocumentImportSession = { begin, update, completed, mergeCompletion, previewLocalDraft,
+    window.MathBankDocumentImportSession = { begin, update, completed, mergeCompletion, previewLocalDraft, previewPdfReview, pdfReviewInProgress,
         saveSoon, flush, clear, prepareNewImport: clear, reconnect, resume, refreshCatalogs, isRestored: () => restored, isProject: () => validId(state?.projectId), getProjectId: () => state?.projectId || null,
         refreshProjects, openProject, deleteProject, saveServerNow, forkProject, analyzeProject, prepareQuestionImport, renderCandidate };
     document.addEventListener('input', event => {

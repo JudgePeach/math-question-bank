@@ -6,10 +6,10 @@ teacher-entered titles and cooperative cancellation are removed from a copy
 before comparing its AST with that baseline.  Every other statement remains
 covered; uploads and transient storage also have real isolated HTTP tests.
 
-The explicitly authorized cloud-PDF partial/retry addition has its own fixed
-canonical AST below. Other processing functions retain upstream AST checks;
-ordinary successful upload and partial/cancel/retry behavior have isolated
-mock HTTP regressions. No expected hash is computed from current source.
+The reviewed cloud-PDF coordinator includes partial-page recovery, bounded
+preparation overlap, same-task split retry, and preview during source review.
+The frozen source anchors and prompts still cover upstream provenance. The
+isolated HTTP and browser tests cover the observable behavior.
 """
 import ast
 from copy import deepcopy
@@ -39,11 +39,9 @@ FUNCTION_HASHES = {
         "a6af08897a22cd9107c84dbbc872baebf0c41e697f4fd963f2e58b8a4d6f20e1"),
 }
 
-# Reviewed 2026-10-25: page-error-only exact-source drafts and an in-process,
-# same-task explicit retry checkpoint and bounded configurable OCR capacity;
-# no project mode/persistent PDF draft. Default total remains four.
-# The original upstream hash above stays recorded for provenance.
-PDF_PARTIAL_CANONICAL_AST = "ff39f0fa3871a8fb89039a6514d69ef2c004d9098fe80f9595bc746d6176d23a"
+# Reviewed routing after the 2026-11-17 PDF workflow changes. The original
+# upstream digest above remains fixed for provenance.
+PDF_WORKFLOW_AST = "cba1d13f0f7988f8b0173913bb50bb79082f0f50f96361e709eb7183aab9765e"
 
 
 def _ast_key(node):
@@ -115,6 +113,17 @@ def _replace_statement_block(node, current, original, *, count=1):
 def _upstream_function_copy(node):
     node = deepcopy(node)
     if node.name == "parse_paper_text_internal":
+        parameters = zip(node.args.kwonlyargs, node.args.kw_defaults)
+        pairs = [(arg, value) for arg, value in parameters if arg.arg == "pdf_max_attempts"]
+        assert len(pairs) == 1 and _ast_key(pairs[0][1]) == _ast_key(ast.Constant(value=2))
+        node.args.kwonlyargs.remove(pairs[0][0])
+        node.args.kw_defaults.remove(pairs[0][1])
+        calls = [node for node in ast.walk(node) if isinstance(node, ast.Call)
+                 and isinstance(node.func, ast.Name) and node.func.id == "request_pdf_paper_completion"]
+        assert len(calls) == 1
+        limits = [item for item in calls[0].keywords if item.arg == "max_attempts"]
+        assert len(limits) == 1 and isinstance(limits[0].value, ast.Name) and limits[0].value.id == "pdf_max_attempts"
+        calls[0].keywords.remove(limits[0])
         _replace_statement_block(node, '''
 curriculum = copy.deepcopy(get_current_curriculum())
 knowledge_catalog = copy.deepcopy(load_ai_knowledge_catalog())
@@ -137,57 +146,6 @@ for question in parsed_questions:
     if "knowledge_points" in question:
         annotate_ai_knowledge_points(question, knowledge_catalog)
 ''', "")
-    elif node.name == "run_pdf_parsing_task":
-        # Reviewed 2026-10-28: accept usable cards from a complete PDF reply,
-        # and label discarded invalid entries as partial instead of losing
-        # the entire batch. No new route or provider request is introduced.
-        _replace_statement_block(node, '''
-rejected_count = diagnostics.get("pdf_question_validation", {}).get("rejected_count", 0)
-partial = bool(diagnostics.get("pdf_hybrid", {}).get("partial") or rejected_count)
-''', '''
-partial = bool(diagnostics.get("pdf_hybrid", {}).get("partial"))
-''')
-        _replace_statement_block(node, '''
-if rejected_count:
-    completion_log = (f"PDF 已保留 {len(final_questions)} 道可用题目；模型返回的 {rejected_count} 项因题干或答案格式无效未接收，"
-                      "请对照原 PDF 页面核对是否漏题。")
-''', "")
-        # Reviewed 2026-10-26: partial delivery requires at least one successful
-        # page; an entirely failed OCR batch retains the original error path.
-        _replace_statement_block(node, '''
-if not any(text is not None for text in ocr_results):
-    raise ValueError(
-        "全部选中页面识别未完成，未执行拆题: "
-        + diagnostics["pdf_failed_pages"][0]["error"]
-    )
-''', "")
-        _replace_statement_block(node, '''
-task = DOCUMENT_TASKS.snapshot(task_id) or {}
-options = (task.get("document_input") or {}).get("options") or {}
-paper_title = str(options.get("paper_title") or "").strip()
-if not paper_title:
-    paper_title = extract_title_from_latex(full_latex_content) or os.path.splitext(filename)[0]
-''', '''
-paper_title = os.path.splitext(filename)[0]
-auto_title = extract_title_from_latex(full_latex_content)
-if auto_title:
-    paper_title = auto_title
-''')
-        loops = [item for item in ast.walk(node) if isinstance(item, ast.For)
-                 and isinstance(item.iter, ast.Call) and isinstance(item.iter.func, ast.Name)
-                 and item.iter.func.id == "iter_completed_futures"]
-        assert len(loops) == 1
-        assert _ast_key(loops[0].iter) == _ast_key(ast.parse(
-            "iter_completed_futures(futures, check_pdf_cancelled)", mode="eval").body)
-        loops[0].iter = ast.parse("concurrent.futures.as_completed(futures)", mode="eval").body
-        _replace_statement_block(node,
-            "cancelled = DOCUMENT_TASKS.is_cancelled(task_id) or not DOCUMENT_TASKS.exists(task_id)",
-            "cancelled = DOCUMENT_TASKS.is_cancelled(task_id)")
-        log = " 道完整题目；部分疑点题组仍需校对，未处理范围已保留，可展开原文与未匹配题段核对。"
-        old = " 道完整题目；部分疑点题组未完成，原文与未匹配题段可展开核对。"
-        literals = [item for item in ast.walk(node) if isinstance(item, ast.Constant) and item.value == log]
-        assert len(literals) == 1
-        literals[0].value = old
     return node
 
 
@@ -201,7 +159,7 @@ def test_cloud_pdf_functions_allow_only_reviewed_increments_over_original_ast(fu
     if function == "parse_page_range":
         assert hashlib.sha256(ast.get_source_segment(source, node).encode()).hexdigest() == original_source
     canonical = _upstream_function_copy(node)
-    expected_ast = PDF_PARTIAL_CANONICAL_AST if function == "run_pdf_parsing_task" else original_ast
+    expected_ast = PDF_WORKFLOW_AST if function == "run_pdf_parsing_task" else original_ast
     assert hashlib.sha256(_ast_key(canonical).encode()).hexdigest() == expected_ast
 
 
@@ -221,7 +179,8 @@ def test_original_processor_has_no_new_local_draft_or_parallel_rules():
     # forcing every plan to full-body API would be another behavioral change.
     assert 'pdf_plan["mode"] in {"hybrid", "whole_metadata"}' in body
     assert 'max_workers=min(len(pages_requiring_ocr), PDF_OCR_CAPACITY.total)' in body
-    assert 'PDF_OCR_CAPACITY.page_slot(input_bytes, check_cancelled=check_pdf_cancelled)' in body
+    assert "iter_pdf_page_requests(" in body
+    assert "PDF_OCR_CAPACITY.page_slot(input_bytes, check_cancelled=check_request_cancelled)" in body
 
 
 MODULE_HASHES = {
