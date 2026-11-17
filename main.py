@@ -11,7 +11,7 @@ import re
 import signal
 import datetime
 import threading
-from functools import wraps
+from functools import partial, wraps
 import tempfile
 import shutil
 import requests
@@ -1632,6 +1632,8 @@ def ai_solve(
 
 @app.get("/api/settings")
 def get_settings():
+    from mathbank.mineru_api import MINERU_API_DOCS, MINERU_HOMEPAGE, mineru_api_token, mineru_pdf_figures_enabled
+
     ds_key = os.getenv("DEEPSEEK_API_KEY", "")
     sf_key = os.getenv("SILICONFLOW_API_KEY", "")
     ali_key = os.getenv("ALI_BAILIAN_API_KEY", "")
@@ -1676,6 +1678,10 @@ def get_settings():
         
     return {
         "deepseek_key": masked_ds,
+        "mineru_api_token": "••••••••" if mineru_api_token() else "",
+        "mineru_pdf_figures": mineru_pdf_figures_enabled(),
+        "mineru_homepage": MINERU_HOMEPAGE,
+        "mineru_api_docs": MINERU_API_DOCS,
         "siliconflow_key": masked_sf,
         "ali_bailian_key": masked_ali,
         "zhongzhan_gpt_key": masked_zz_gpt,
@@ -1719,8 +1725,24 @@ def save_settings(
     prefer_parse_model: str = Form("deepseek-flash"),
     prefer_classify_model: str = Form("deepseek-flash"),
     prefer_draw_model: str = Form("Qwen/Qwen3-VL-32B-Instruct"),
-    classify_quality: Optional[str] = Form(None)
+    classify_quality: Optional[str] = Form(None),
+    mineru_api_token_value: Optional[str] = Form(None, alias="mineru_api_token"),
+    mineru_pdf_figures: Optional[bool] = Form(None),
 ):
+    from mathbank.mineru_api import MineruAPIError, mineru_api_token, mineru_pdf_figures_enabled, validate_mineru_api_token
+
+    mineru_updates = {}
+    try:
+        if isinstance(mineru_api_token_value, str) or type(mineru_pdf_figures) is bool:
+            token = mineru_api_token()
+            if isinstance(mineru_api_token_value, str) and mineru_api_token_value != "••••••••":
+                token = validate_mineru_api_token(mineru_api_token_value)
+            enabled = mineru_pdf_figures if type(mineru_pdf_figures) is bool else mineru_pdf_figures_enabled()
+            if enabled and not token:
+                raise MineruAPIError("请先填写 MinerU API Token 再开启 PDF 配图定位。")
+            mineru_updates = {"MINERU_API_TOKEN": token, "MINERU_PDF_FIGURES": str(enabled).lower()}
+    except MineruAPIError as exc:
+        return JSONResponse(content={"status": "error", "message": str(exc)}, status_code=400)
     try:
         selected_quality = resolve_classification_policy(
             mode=classify_quality if isinstance(classify_quality, str) else None).mode
@@ -1794,6 +1816,8 @@ def save_settings(
         
         for line in env_lines:
             line_strip = line.strip()
+            if line_strip.removeprefix("export ").partition("=")[0].strip() in mineru_updates:
+                continue
             # Skip old Pix2Text settings to clean .env
             if line_strip.startswith("PIX2TEXT_API_KEY=") or line_strip.startswith("PIX2TEXT_SERVER_TYPE="):
                 continue
@@ -1893,8 +1917,13 @@ def save_settings(
         if not keys_replaced["PREFER_DRAW_MODEL"]:
             new_lines.append(f"PREFER_DRAW_MODEL={prefer_draw_model}\n")
             
+        if mineru_updates:
+            if new_lines and not new_lines[-1].endswith("\n"):
+                new_lines[-1] += "\n"
+            new_lines.extend(f"{key}={value}\n" for key, value in mineru_updates.items())
         write_private_text_atomic(ENV_FILE, "".join(new_lines))
-            
+        os.environ.update(mineru_updates)
+
         # Clean current process env
         os.environ.pop("PIX2TEXT_API_KEY", None)
         os.environ.pop("PIX2TEXT_SERVER_TYPE", None)
@@ -4975,10 +5004,11 @@ def parse_paper_text_internal(
     check_cancelled=lambda: None,
     report_attempt=lambda _event: None,
     connection_retry: bool = True,
+    model_config: str = "",
 ) -> list:
     """内部通用函数：调用选定的 LLM 接口，将 LaTeX 试卷内容解析拆分为结构化 JSON 卡片"""
     check_cancelled()
-    parse_model = os.getenv("PREFER_PARSE_MODEL") or os.getenv("DEEPSEEK_PARSE_MODEL", "deepseek-flash")
+    parse_model = model_config or os.getenv("PREFER_PARSE_MODEL") or os.getenv("DEEPSEEK_PARSE_MODEL", "deepseek-flash")
     provider = resolve_text_provider(parse_model)
     api_key = provider.api_key
     api_base = provider.api_base
@@ -6282,12 +6312,18 @@ def run_pdf_parsing_task(
     resume_state=None,
     split_retry=None,
     mineru_source=None,
+    mineru_figures_only=False,
+    whole_page_ocr_dpi=150,
+    pdf_mineru_figures="system",
+    pdf_ocr_engine="existing",
+    pdf_parse_model="",
 ):
     """PDF parsing with bounded OCR concurrency and cooperative cancellation."""
 
     from contextlib import closing
 
     from mathbank.pdf_fidelity import clean_empty_fraction_wrappers, enforce_source_fields, protect_choice_grids
+    from mathbank.mineru_api import mineru_api_token, mineru_pdf_figures_enabled
     from mathbank.pdf_request_pipeline import iter_pdf_page_requests
     from mathbank.pdf_vision_request import PDFVisionRequestError
     from mathbank.pdf_partial import (SCHEMA as PDF_PARTIAL_SCHEMA, source_binding,
@@ -6307,7 +6343,18 @@ def run_pdf_parsing_task(
     retry_material = None
     review_preview_published = False
     vision_lock = threading.Lock()
-    if mineru_source is not None:
+    use_mineru_ocr = pdf_strategy == "layout_aware" and pdf_ocr_engine == "mineru"
+    mineru_api_enabled = pdf_strategy == "layout_aware" and mineru_source is None and (
+        use_mineru_ocr or pdf_mineru_figures == "mineru"
+        or (pdf_mineru_figures == "system" and mineru_pdf_figures_enabled())
+    )
+    mineru_token = mineru_api_token() if mineru_api_enabled else ""
+    if recovery is not None:
+        whole_page_ocr_dpi = recovery.get("whole_page_ocr_dpi", whole_page_ocr_dpi)
+    if type(whole_page_ocr_dpi) is not int or whole_page_ocr_dpi not in {150, 300}:
+        DOCUMENT_TASKS.fail(task_id, "整页识图分辨率无效。", document_type="pdf")
+        return
+    if mineru_source is not None or mineru_figures_only:
         from mathbank.pdf_mineru_source import MineruPDFSource
 
         if (not isinstance(mineru_source, MineruPDFSource)
@@ -6320,6 +6367,27 @@ def run_pdf_parsing_task(
         DOCUMENT_TASKS.check_cancelled(task_id)
         if not DOCUMENT_TASKS.exists(task_id):
             raise TaskCancelled("PDF 任务已移除。")
+
+    def fetch_mineru_source(message):
+        from mathbank.mineru_api import request_mineru_pdf_figures
+
+        if not mineru_token:
+            diagnostics["pdf_mineru_api"] = {
+                "status": "fallback", "message": "MinerU API Token 未配置，已沿用现行 PDF 流程。",
+            }
+            return None
+        DOCUMENT_TASKS.update(task_id, log=message)
+        try:
+            result = request_mineru_pdf_figures(file_bytes, mineru_token, check_cancelled=check_pdf_cancelled)
+        except TaskCancelled:
+            raise
+        except ValueError as exc:
+            diagnostics["pdf_mineru_api"] = {
+                "status": "fallback", "message": f"{exc} 已沿用现行 PDF 流程。",
+            }
+            return None
+        diagnostics["pdf_mineru_api"] = {"status": "ready"}
+        return result
 
     def report_pdf_attempt(event):
         check_pdf_cancelled()
@@ -6392,6 +6460,7 @@ def run_pdf_parsing_task(
 
     def prepare_for_splitting():
         nonlocal temp_assets, diagnostics, target_page_indices, ocr_results, layout_result, source_pages
+        nonlocal mineru_source, mineru_figures_only
         DOCUMENT_TASKS.check_cancelled(task_id)
         if resume_state is not None:
             original_input = (DOCUMENT_TASKS.snapshot(task_id) or {}).get("document_input") or {}
@@ -6516,12 +6585,16 @@ def run_pdf_parsing_task(
             diagnostics["pdf_partial_recovery"] = {"reused_pages": sum(text is not None for text in cached_texts),
                 "requested_pages": [target_page_indices[index] + 1 for index in pages_requiring_ocr]}
 
+        if use_mineru_ocr and mineru_api_enabled and pages_requiring_ocr and recovery is None:
+            mineru_source = fetch_mineru_source("正在使用 MinerU 转录需要识图的 PDF 页面…")
+
         # Work from physical PDF rows, never from a scrambled Markdown table.
         # Planning is local and conservative; only a validated plan changes the
         # paid request. A failed paid regional request is never retried as a page.
         mineru_pending = {
             index: item for index in pages_requiring_ocr
-            if mineru_source is not None and (item := mineru_source.page(target_page_indices[index]))
+            if mineru_source is not None and not mineru_figures_only
+            and (item := mineru_source.page(target_page_indices[index]))
         }
         regional_plans: dict[int, dict] = copy.deepcopy((recovery or {}).get("regional_plans") or {})
         if pdf_strategy != "force_ocr" and pages_requiring_ocr:
@@ -6543,14 +6616,41 @@ def run_pdf_parsing_task(
         # The task thread owns PyMuPDF. Workers only see registered paths,
         # immutable page evidence and the existing shared HTTP permits.
         detail_results: dict[int, dict] = {}
+        full_ocr_300 = set()
+        full_ocr_300_fallback = []
         ocr_indices = set(pages_requiring_ocr)
 
-        def register_detail_asset(path):
+        def register_vision_asset(path):
             if path not in temp_assets:
                 temp_assets.append(path)
             if not DOCUMENT_TASKS.add_temp_asset(task_id, path):
                 raise TaskCancelled("PDF 任务已移除。")
             check_pdf_cancelled()
+
+        def prepare_full_ocr_300(page, page_num):
+            # Render from the same physical page as the 150 DPI navigation image.
+            pixel_rect = (page.rect * fitz.Matrix(300 / 72, 300 / 72)).irect
+            if pixel_rect.width * pixel_rect.height > LIMITS.image_pixels:
+                return None
+            path = None
+            created = False
+            try:
+                data = page.get_pixmap(dpi=300, alpha=False).tobytes("png")
+                if len(data) > 20 * 1024 * 1024:  # Existing PDF checkpoint PNG bound.
+                    return None
+                path = Path(TMP_UPLOAD_DIR) / f"pdf_ocr300_{task_id}_{page_num}_{uuid.uuid4().hex}.png"
+                with path.open("xb") as handle:
+                    created = True
+                    handle.write(data)
+                url = f"/{UPLOAD_DIR_REL}/tmp/{path.name}"
+                register_vision_asset(url)
+                return str(path), {"url": url, "dpi": 300, "sha256": hashlib.sha256(data).hexdigest()}
+            except TaskCancelled:
+                raise
+            except (OSError, ValueError, RuntimeError):
+                if created:
+                    path.unlink(missing_ok=True)
+                return None
 
         def prepared_pages():
             from mathbank.pdf_vision_details import render_pdf_detail_views
@@ -6579,13 +6679,23 @@ def run_pdf_parsing_task(
                     if local_idx not in ocr_indices:
                         continue
                     details = {}
+                    whole_page_input = None
                     if (pdf_strategy == "layout_aware" and local_idx not in regional_plans
                             and local_idx not in mineru_pending):
+                        if whole_page_ocr_dpi == 300:
+                            whole_page_input = prepare_full_ocr_300(page, page_num)
+                            if whole_page_input:
+                                full_ocr_300.add(page_num + 1)
+                            else:
+                                full_ocr_300_fallback.append(page_num + 1)
+                        if whole_page_input:
+                            yield local_idx, image_path, page_layout_infos.get(page_num), details, whole_page_input
+                            continue
                         try:
                             details = render_pdf_detail_views(
                                 page, page_index=page_num, output_dir=Path(TMP_UPLOAD_DIR),
                                 asset_prefix=f"pdf_detail_{task_id}_{page_num}",
-                                url_prefix=f"/{UPLOAD_DIR_REL}/tmp", register_asset=register_detail_asset,
+                                url_prefix=f"/{UPLOAD_DIR_REL}/tmp", register_asset=register_vision_asset,
                                 check_cancelled=check_pdf_cancelled, byte_budget=detail_bytes_remaining,
                             )
                         except TaskCancelled:
@@ -6595,9 +6705,17 @@ def run_pdf_parsing_task(
                                        "notes": ["本页高清辅助视图无法准备，继续使用整页识图。"]}
                         detail_results[local_idx] = details
                         detail_bytes_remaining -= details["total_png_bytes"]
-                    yield local_idx, image_path, page_layout_infos.get(page_num), details
+                    yield local_idx, image_path, page_layout_infos.get(page_num), details, whole_page_input
 
         def report_detail_preparation():
+            if whole_page_ocr_dpi == 300:
+                diagnostics["pdf_whole_page_ocr"] = {
+                    "requested_dpi": 300, "navigation_dpi": 150,
+                    "prepared_pages": sorted(full_ocr_300),
+                    "used_pages": sorted(page + 1 for page, joint in joint_page_results.items()
+                                         if joint.get("whole_page_ocr_input")),
+                    "fallback_pages": list(full_ocr_300_fallback),
+                }
             if not detail_results:
                 return
             diagnostics["pdf_detail_views"] = {
@@ -6693,7 +6811,8 @@ def run_pdf_parsing_task(
             )
 
             def ocr_worker(job, check_request_cancelled):
-                local_idx, image_path, page_info, details = job
+                local_idx, image_path, page_info, details, whole_page_input = job
+                ocr_path = whole_page_input[0] if whole_page_input else image_path
                 acquired = False
                 permit = None
                 try:
@@ -6711,7 +6830,7 @@ def run_pdf_parsing_task(
                                 return local_idx, alternate["markdown"], None, alternate
                         except ValueError:
                             pass  # The original DeepSeek route remains available.
-                    input_bytes = Path(image_path).stat().st_size + details.get("total_png_bytes", 0)
+                    input_bytes = Path(ocr_path).stat().st_size + details.get("total_png_bytes", 0)
                     if local_idx in regional_plans:
                         input_bytes = max(input_bytes, 24 * 1024 * 1024)
                     permit = PDF_OCR_CAPACITY.page_slot(input_bytes, check_cancelled=check_request_cancelled)
@@ -6734,11 +6853,13 @@ def run_pdf_parsing_task(
                         detail_kwargs = ({"detail_views": details["views"]}
                                          if details.get("views") else {})
                         joint = request_pdf_page(
-                            image_path, page_info,
+                            ocr_path, page_info,
                             check_cancelled=check_request_cancelled, report_attempt=report_pdf_attempt,
                             **detail_kwargs,
                             include_transcription_evidence=True,
                         )
+                        if whole_page_input:
+                            joint["whole_page_ocr_input"] = whole_page_input[1]
                         raw_text = joint["markdown"]
                     else:
                         raw_text = ocr_pdf_page_image(image_path, check_cancelled=check_request_cancelled,
@@ -6822,6 +6943,7 @@ def run_pdf_parsing_task(
                     "binding": source_binding(original_input), "source_sha256": hashlib.sha256(file_bytes).hexdigest(),
                     "phase": "page_retry", "failed_pages": [item["page_number"] for item in diagnostics["pdf_failed_pages"]],
                     "page_indices": list(target_page_indices), "page_texts": list(ocr_results),
+                    "whole_page_ocr_dpi": whole_page_ocr_dpi,
                     "page_text_hashes": [hashlib.sha256(text.encode("utf-8")).hexdigest() if text is not None else None
                                          for text in ocr_results],
                     "joint_page_results": copy.deepcopy(joint_page_results),
@@ -6840,7 +6962,7 @@ def run_pdf_parsing_task(
                     _delete_task_temp_assets(temp_assets)
                 return
         tmp_pdf_path.unlink(missing_ok=True)
-        if mineru_source is not None:
+        if mineru_source is not None and not mineru_figures_only:
             used = sorted(index + 1 for index, item in joint_page_results.items() if item.get("used_mineru"))
             diagnostics["pdf_mineru_trial"] = {
                 "bundle_sha256": mineru_source.bundle_sha256,
@@ -6873,6 +6995,19 @@ def run_pdf_parsing_task(
             }
         DOCUMENT_TASKS.check_cancelled(task_id)
         if pdf_strategy == "layout_aware":
+            if mineru_api_enabled and not use_mineru_ocr:
+                from mathbank.pdf_figures import describe_figure_slots
+
+                can_locate = any(
+                    len(describe_figure_slots(ocr_results[index] or "", page_num)) == 1
+                    for index, page_num in enumerate(target_page_indices)
+                )
+                diagnostics["pdf_mineru_api"] = {"status": "no_eligible_slot"}
+                if can_locate:
+                    mineru_source = fetch_mineru_source(
+                        "正在向 MinerU 请求 PDF 配图位置，题文与原答案沿用已完成的转录…")
+                    mineru_figures_only = mineru_source is not None
+
             def report_layout_progress(local_index, message):
                 check_pdf_cancelled()
                 DOCUMENT_TASKS.update(
@@ -6893,7 +7028,16 @@ def run_pdf_parsing_task(
                 precomputed_layouts={index: item["layout"] for index, item in joint_page_results.items()},
                 precomputed_page_infos=page_layout_infos,
                 vision_semaphore=PDF_OCR_SEMAPHORE,
+                mineru_figure_source=mineru_source if mineru_figures_only or use_mineru_ocr else None,
             )
+            if "pdf_mineru_api" in diagnostics:
+                diagnostics["pdf_mineru_api"]["used_figures"] = sum(
+                    1 for page in layout_result["pages"] for figure in page["figures"]
+                    if figure.get("mineru_crop") and figure.get("attached")
+                )
+                message = diagnostics["pdf_mineru_api"].get("message")
+                if message:
+                    layout_result["diagnostics"]["notes"].append(message)
             from mathbank.pdf_layout import crop_pdf_figure
 
             def crop_choice_grid(page, box, figure_id):
@@ -7043,7 +7187,8 @@ def run_pdf_parsing_task(
             return parse_paper_text_internal(
                 locked_source, False, diagnostics=diagnostics, pdf_retry=True,
                 preserve_source_answers=preserve_source_answers, pdf_max_attempts=max_attempts,
-                check_cancelled=check_pdf_cancelled, report_attempt=report_pdf_split_attempt)
+                check_cancelled=check_pdf_cancelled, report_attempt=report_pdf_split_attempt,
+                **({"model_config": pdf_parse_model} if pdf_parse_model else {}))
 
         pdf_preserved_indices = frozenset()
         if layout_result is not None:
@@ -7058,7 +7203,7 @@ def run_pdf_parsing_task(
                     transcript_normalizer=process_ocr_illustrations, figure_assets=source_assets)
                 diagnostics["pdf_hybrid"] = pdf_hybrid_plan_diagnostics(pdf_plan)
                 if pdf_plan["mode"] in {"hybrid", "whole_metadata"}:
-                    parse_model = os.getenv("PREFER_PARSE_MODEL") or os.getenv("DEEPSEEK_PARSE_MODEL", "deepseek-flash")
+                    parse_model = pdf_parse_model or os.getenv("PREFER_PARSE_MODEL") or os.getenv("DEEPSEEK_PARSE_MODEL", "deepseek-flash")
                     hybrid_result = request_pdf_hybrid(pdf_plan, get_current_curriculum(),
                         provider=resolve_text_provider(parse_model), post=post_chat_completion, diagnostics=diagnostics,
                         normalize_fillin=normalize_fillin_macro, task_id=task_id, generation=0,
@@ -7331,6 +7476,17 @@ def _queue_document_upload(content, filename, document_type, client_request_id, 
                 **({"project_id":project_id,"project_revision":0,"expires_at":project["expires_at"]} if project_id else {})}
 
 
+PDF_MINERU_FIGURE_MODES = frozenset({"system", "mineru", "existing"})
+PDF_OCR_ENGINES = frozenset({"existing", "mineru"})
+PDF_OPTIONAL_SETTINGS = frozenset({"whole_page_ocr_dpi", "pdf_mineru_figures", "pdf_ocr_engine", "pdf_parse_model"})
+
+
+def _valid_pdf_split_model(value):
+    return isinstance(value, str) and (not value or bool(re.fullmatch(
+        r"(?:DEEPSEEK|SILICONFLOW|BAILIAN|ZHONGZHAN_GPT|ZHONGZHAN_CLAUDE)/[A-Za-z0-9_.:/()\-]{1,160}", value
+    )))
+
+
 @app.post("/api/upload/pdf-task")
 def upload_pdf_task(
     file: UploadFile = File(...),
@@ -7340,11 +7496,26 @@ def upload_pdf_task(
     pdf_verify_suspicions: bool = Form(True),
     client_request_id: str = Form(""),
     paper_title: str = Form(""),
+    whole_page_ocr_dpi: int = Form(150),
+    pdf_mineru_figures: str = Form("system"),
+    pdf_ocr_engine: str = Form("existing"),
+    pdf_parse_model: str = Form(""),
 ):
     try:
+        from mathbank.mineru_api import mineru_api_token
+
         client_request_id = _document_request_id(client_request_id)
         if pdf_strategy not in PDF_STRATEGIES:
             return JSONResponse(content={"status": "error", "message": "不支持的 PDF 解析策略。"}, status_code=400)
+        if (whole_page_ocr_dpi not in {150, 300} or pdf_mineru_figures not in PDF_MINERU_FIGURE_MODES
+                or pdf_ocr_engine not in PDF_OCR_ENGINES or not _valid_pdf_split_model(pdf_parse_model)):
+            raise HTTPException(status_code=400, detail="PDF 识图分辨率、配图方式、转录方式或拆题模型无效。")
+        if pdf_strategy != "layout_aware":
+            whole_page_ocr_dpi, pdf_mineru_figures, pdf_ocr_engine = 150, "system", "existing"
+        if (pdf_mineru_figures == "mineru" or pdf_ocr_engine == "mineru") and not mineru_api_token():
+            raise HTTPException(status_code=400, detail="请在 API 设置中填写 MinerU API Token。")
+        if pdf_parse_model and not resolve_text_provider(pdf_parse_model).api_key:
+            raise HTTPException(status_code=400, detail="所选拆题 API 尚未配置凭证，请检查 API 设置。")
         generate_answers_bool = generate_answers.lower() in ("true", "1", "yes")
         
         # 验证文件扩展名
@@ -7373,9 +7544,19 @@ def upload_pdf_task(
             generate_answers=generate_answers_bool, page_range=page_range, pdf_strategy=pdf_strategy,
             pdf_verify_suspicions=bool(pdf_verify_suspicions) if pdf_strategy == "layout_aware" else False,
             paper_title=paper_title.strip())
+        visual_options = {}
+        if whole_page_ocr_dpi != 150:
+            visual_options["whole_page_ocr_dpi"] = whole_page_ocr_dpi
+        if pdf_mineru_figures != "system":
+            visual_options["pdf_mineru_figures"] = pdf_mineru_figures
+        if pdf_ocr_engine != "existing":
+            visual_options["pdf_ocr_engine"] = pdf_ocr_engine
+        if pdf_parse_model:
+            visual_options["pdf_parse_model"] = pdf_parse_model
+        options.update(visual_options)
+        worker = partial(run_pdf_parsing_task, **visual_options) if visual_options else run_pdf_parsing_task
         return _queue_document_upload(content, filename, "pdf", client_request_id, options,
-            run_pdf_parsing_task, (generate_answers_bool, page_range, pdf_strategy,
-                                   options["pdf_verify_suspicions"]))
+            worker, (generate_answers_bool, page_range, pdf_strategy, options["pdf_verify_suspicions"]))
     except HTTPException:
         raise
     except Exception as e:
@@ -7820,13 +8001,19 @@ def resume_document_task(task_id: str):
     option_names = ({"generate_answers", "page_range", "pdf_strategy", "pdf_verify_suspicions", "paper_title"}
                     if source.get("document_type") == "pdf" else
                     {"generate_answers", "docx_verify_suspicions", "paper_title"})
+    optional = PDF_OPTIONAL_SETTINGS if source.get("document_type") == "pdf" else frozenset()
     if (source.get("document_type") not in {"pdf", "docx"} or not isinstance(options, dict)
-            or set(options) != option_names or not isinstance(source.get("filename"), str)):
+            or set(options) - optional != option_names or not isinstance(source.get("filename"), str)):
         raise HTTPException(status_code=409, detail="原文档解析设置不完整，请重新上传。")
     if (type(options.get("generate_answers")) is not bool or not isinstance(options.get("paper_title"), str)
             or (source["document_type"] == "pdf" and (
                 type(options.get("pdf_verify_suspicions")) is not bool
                 or options.get("pdf_strategy") not in PDF_STRATEGIES
+                or type(options.get("whole_page_ocr_dpi", 150)) is not int
+                or options.get("whole_page_ocr_dpi", 150) not in {150, 300}
+                or options.get("pdf_mineru_figures", "system") not in PDF_MINERU_FIGURE_MODES
+                or options.get("pdf_ocr_engine", "existing") not in PDF_OCR_ENGINES
+                or not _valid_pdf_split_model(options.get("pdf_parse_model", ""))
                 or (options.get("page_range") is not None and not isinstance(options["page_range"], str))))
             or (source["document_type"] == "docx" and type(options.get("docx_verify_suspicions")) is not bool)):
         raise HTTPException(status_code=409, detail="原文档解析设置无效，请重新上传。")
@@ -7902,7 +8089,7 @@ def _dispatch_document_project(project_id, analyze=False):
         if state and url not in state.get("assets", {}):
             path = resolve_upload_asset(url, uploads_dir=UPLOAD_DIR,
                 url_prefix=UPLOAD_DIR_REL, require_file=False)
-            if path.name.startswith(("pdf_page_", "pdf_detail_")) and not path.is_file():
+            if path.name.startswith(("pdf_page_", "pdf_detail_", "pdf_ocr300_")) and not path.is_file():
                 # Failed registration of an obsolete navigation/detail cache
                 # is not part of the sealed source and can be rendered anew.
                 continue
@@ -7941,7 +8128,8 @@ def _dispatch_document_project(project_id, analyze=False):
             DOCUMENT_TASKS.submit(task_id,run_pdf_parsing_task,task_id,content,metadata["filename"],
                 generate_answers=options.get("generate_answers",False),page_range=options.get("page_range"),
                 pdf_strategy=options.get("pdf_strategy","layout_aware"),
-                pdf_verify_suspicions=options.get("pdf_verify_suspicions",True),resume_state=state)
+                pdf_verify_suspicions=options.get("pdf_verify_suspicions",True),resume_state=state,
+                **{key: value for key, value in options.items() if key in PDF_OPTIONAL_SETTINGS})
         except TaskQueueFull as exc:
             DOCUMENT_TASKS.fail(task_id,"当前任务较多，工程已保留，请稍后继续。")
             raise HTTPException(429,str(exc)) from exc
@@ -7974,7 +8162,7 @@ def _release_document_project_assets(urls):
             path = resolve_upload_asset(url,uploads_dir=UPLOAD_DIR,url_prefix=UPLOAD_DIR_REL,require_file=False)
             if path.parent != Path(TMP_UPLOAD_DIR).resolve() or path in referenced:
                 continue
-            if path.name.startswith(("pdf_page_","pdf_detail_")) and path.is_file() and not path.is_symlink():
+            if path.name.startswith(("pdf_page_","pdf_detail_","pdf_ocr300_")) and path.is_file() and not path.is_symlink():
                 path.unlink()
                 deleted += 1
             else:

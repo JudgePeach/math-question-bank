@@ -3585,9 +3585,17 @@
             const note = document.getElementById('pdfVerifySuspicionsNote');
             const enabled = selectedPdfStrategy() === 'layout_aware';
             if (checkbox) checkbox.disabled = !enabled;
+            document.getElementById('pdfVisualOptions')?.classList.toggle('hidden', !enabled);
+            const figureChoice = document.getElementById('pdfMineruFigures');
+            if (figureChoice) figureChoice.disabled = !enabled || document.getElementById('pdfOcrEngine')?.value === 'mineru';
             if (note) note.textContent = enabled
                 ? '对照原页核对疑点，保留待核对说明；题文可在本地校对后入库。'
                 : '仅智能图文提取模式可用；当前模式不额外调用模型核验疑点。';
+        }
+
+        function updatePdfParseModelOption() {
+            const provider = document.getElementById('pdfParseProvider')?.value;
+            document.getElementById('pdfParseModelOption')?.classList.toggle('hidden', !provider);
         }
 
         function originalPdfPageNumber(pageIndex) {
@@ -4671,6 +4679,15 @@
                 }
             }
 
+            const pdfParseProvider = document.getElementById('pdfParseProvider')?.value || '';
+            const pdfParseModelInput = document.getElementById('pdfParseModel');
+            const pdfParseModel = (pdfParseModelInput?.value || '').trim();
+            if (window.currentPdfFile && pdfParseProvider && !pdfParseModel) {
+                showToast('请填写所选拆题 API 的模型名。', 'warning');
+                pdfParseModelInput?.focus();
+                return;
+            }
+
             // Keep the previous project's draft before clearing its cards.
             window.MathBankDocumentImportSession?.prepareNewImport?.();
             // One generation owns task creation, polling and terminal UI. A
@@ -4798,8 +4815,18 @@
                     pdfFormData.append('page_range', pageRange);
                 }
 
-                pdfFormData.append('pdf_strategy', selectedPdfStrategy());
+                const strategy = selectedPdfStrategy();
+                pdfFormData.append('pdf_strategy', strategy);
                 pdfFormData.append('pdf_verify_suspicions', selectedPdfSourceVerification() ? 'true' : 'false');
+                if (strategy === 'layout_aware') {
+                    const engine = document.getElementById('pdfOcrEngine')?.value;
+                    pdfFormData.append('pdf_ocr_engine', engine || 'existing');
+                    if (engine !== 'mineru') {
+                        pdfFormData.append('pdf_mineru_figures', document.getElementById('pdfMineruFigures')?.value || 'system');
+                    }
+                    pdfFormData.append('whole_page_ocr_dpi', document.getElementById('pdfWholePageOcrDpi')?.value || '150');
+                }
+                if (pdfParseProvider) pdfFormData.append('pdf_parse_model', `${pdfParseProvider}/${pdfParseModel}`);
 
                 fetch('/api/upload/pdf-task', {
                     method: 'POST',

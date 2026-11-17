@@ -1551,6 +1551,10 @@
                     document.getElementById('settingsDeepseekKey').value = settings.deepseek_key || '';
                     document.getElementById('settingsSiliconflowKey').value = settings.siliconflow_key || '';
                     document.getElementById('settingsAliBailianKey').value = settings.ali_bailian_key || '';
+                    const mineruToken = document.getElementById('settingsMineruToken');
+                    if (mineruToken) mineruToken.value = settings.mineru_api_token || '';
+                    const mineruFigures = document.getElementById('settingsMineruPdfFigures');
+                    if (mineruFigures) mineruFigures.checked = settings.mineru_pdf_figures === true;
                     
                     document.getElementById('settingsZhongzhanGptKey').value = settings.zhongzhan_gpt_key || '';
                     document.getElementById('settingsZhongzhanGptBaseUrl').value = settings.zhongzhan_gpt_base_url || '';
@@ -1779,6 +1783,11 @@
             formData.append('deepseek_key', key);
             formData.append('siliconflow_key', siliconflowKey);
             formData.append('ali_bailian_key', aliBailianKey);
+            const mineruToken = document.getElementById('settingsMineruToken');
+            const mineruFigures = document.getElementById('settingsMineruPdfFigures');
+            // A single space distinguishes a cleared token from an omitted form field.
+            if (mineruToken) formData.append('mineru_api_token', mineruToken.value || ' ');
+            if (mineruFigures) formData.append('mineru_pdf_figures', String(mineruFigures.checked));
             
             formData.append('zhongzhan_gpt_key', zhongzhanGptKey);
             formData.append('zhongzhan_gpt_base_url', zhongzhanGptBaseUrl);

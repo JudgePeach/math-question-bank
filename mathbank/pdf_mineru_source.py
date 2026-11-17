@@ -9,15 +9,15 @@ from html import unescape
 from io import BytesIO
 import hashlib
 import json
-import math
 from pathlib import PurePosixPath
 import re
 from zipfile import BadZipFile, ZipFile
 
 from mathbank.pdf_fidelity import find_choice_grids
 
-_MAX_ARCHIVE_BYTES = 64 * 1024 * 1024
-_MAX_DOCUMENT_BYTES = 32 * 1024 * 1024
+MAX_MINERU_BUNDLE_BYTES = 64 * 1024 * 1024
+MAX_MINERU_DOCUMENT_BYTES = 32 * 1024 * 1024
+MAX_MINERU_DOCUMENT_PAGES = 80
 _MAX_LIST_BYTES = 8 * 1024 * 1024
 _MAX_TEXT = 45_000
 _MAX_BLOCKS = 12_000
@@ -36,9 +36,13 @@ class MineruPDFSource:
     source_sha256: str
     bundle_sha256: str
     _pages: dict = field(repr=False)
+    _single_images: dict = field(default_factory=dict, repr=False)
 
     def page(self, index):
         return self._pages.get(index)
+
+    def single_image_box(self, index):
+        return self._single_images.get(index)
 
     def __bool__(self):
         return bool(self._pages)
@@ -72,7 +76,7 @@ def _same_pixels(before, after):
 
 def _box(value):
     if (not isinstance(value, list) or len(value) != 4
-            or any(type(x) not in (int, float) or not math.isfinite(x) or not 0 <= x <= 1000 for x in value)
+            or any(type(x) not in (int, float) or not 0 <= x <= 1000 for x in value)
             or value[0] >= value[2] or value[1] >= value[3]
             or (value[2]-value[0])*(value[3]-value[1]) > 450_000):
         raise ValueError("MinerU 图表未提供有效的原页坐标。")
@@ -163,36 +167,44 @@ def _page_candidate(rows, page):
 def load_mineru_pdf_source(original, bundle, *, check_cancelled=lambda: None):
     """Bind indexed OCR blocks to the upload by matching per-page PDF pixels."""
     if type(original) is not bytes or type(bundle) is not bytes or not (
-            0 < len(original) <= _MAX_DOCUMENT_BYTES and 0 < len(bundle) <= _MAX_ARCHIVE_BYTES):
+            0 < len(original) <= MAX_MINERU_DOCUMENT_BYTES and 0 < len(bundle) <= MAX_MINERU_BUNDLE_BYTES):
         raise ValueError("MinerU 文档或结果包大小无效。")
     import pymupdf as fitz
     try:
         with ZipFile(BytesIO(bundle)) as archive:
-            source_pdf = _member(archive, "_origin.pdf", _MAX_DOCUMENT_BYTES)
+            source_pdf = _member(archive, "_origin.pdf", MAX_MINERU_DOCUMENT_BYTES)
             blocks = json.loads(_member(archive, "_content_list.json", _MAX_LIST_BYTES))
         if not isinstance(blocks, list) or not 0 < len(blocks) <= _MAX_BLOCKS:
             raise ValueError("MinerU 内容列表无效。")
         grouped = defaultdict(list)
         with fitz.open(stream=original, filetype="pdf") as source, fitz.open(stream=source_pdf, filetype="pdf") as converted:
-            if len(source) != len(converted) or not 0 < len(source) <= 80:
+            if len(source) != len(converted) or not 0 < len(source) <= MAX_MINERU_DOCUMENT_PAGES:
                 raise ValueError("MinerU 结果页数与本地 PDF 不一致。")
             for row in blocks:
                 index = row.get("page_idx") if isinstance(row, dict) else None
                 if type(index) is not int or not 0 <= index < len(source):
                     raise ValueError("MinerU 结果含无效物理页码。")
                 grouped[index].append(row)
-            pages = {}
-            for index in grouped:
+            pages, single_images = {}, {}
+            for index, rows in grouped.items():
                 check_cancelled()
                 page = source[index]
                 if not _same_pixels(page, converted[index]):
                     raise ValueError("MinerU 返回的原件像素与本地 PDF 不一致。")
+                images = [row for row in rows if row.get("type") == "image"]
+                if len(images) == 1:
+                    try:
+                        single_images[index] = tuple(_box(images[0].get("bbox")))
+                    except ValueError:
+                        pass  # This page cannot supply a competing crop.
                 try:
-                    candidate = _page_candidate(grouped[index], page)
+                    candidate = _page_candidate(rows, page)
                 except (TypeError, ValueError, RuntimeError):
                     continue
                 if candidate:
                     pages[index] = candidate
     except (BadZipFile, KeyError, OSError, RuntimeError) as exc:
         raise ValueError("无法安全读取 MinerU 结果包。") from exc
-    return MineruPDFSource(hashlib.sha256(original).hexdigest(), hashlib.sha256(bundle).hexdigest(),pages)
+    return MineruPDFSource(
+        hashlib.sha256(original).hexdigest(), hashlib.sha256(bundle).hexdigest(), pages, single_images,
+    )

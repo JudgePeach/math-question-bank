@@ -41,7 +41,7 @@ FUNCTION_HASHES = {
 
 # Reviewed routing after the 2026-11-17 PDF workflow changes. The original
 # upstream digest above remains fixed for provenance.
-PDF_WORKFLOW_AST = "0590113dc04667fb6cf8562bd75327911663f436d47b3ab2d2cb89840352b831"
+PDF_WORKFLOW_AST = "eac2053aa39419305dd9f1e42e738dad102d8e07c2a44364a7989b689710d8c3"
 
 
 def _ast_key(node):
@@ -113,6 +113,14 @@ def _replace_statement_block(node, current, original, *, count=1):
 def _upstream_function_copy(node):
     node = deepcopy(node)
     if node.name == "parse_paper_text_internal":
+        model_config = [(arg, value) for arg, value in zip(node.args.kwonlyargs, node.args.kw_defaults)
+                        if arg.arg == "model_config"]
+        assert len(model_config) == 1 and _ast_key(model_config[0][1]) == _ast_key(ast.Constant(value=""))
+        node.args.kwonlyargs.remove(model_config[0][0])
+        node.args.kw_defaults.remove(model_config[0][1])
+        _replace_statement_block(node,
+            'parse_model = model_config or os.getenv("PREFER_PARSE_MODEL") or os.getenv("DEEPSEEK_PARSE_MODEL", "deepseek-flash")',
+            'parse_model = os.getenv("PREFER_PARSE_MODEL") or os.getenv("DEEPSEEK_PARSE_MODEL", "deepseek-flash")')
         parameters = zip(node.args.kwonlyargs, node.args.kw_defaults)
         pairs = [(arg, value) for arg, value in parameters if arg.arg == "pdf_max_attempts"]
         assert len(pairs) == 1 and _ast_key(pairs[0][1]) == _ast_key(ast.Constant(value=2))
@@ -208,7 +216,7 @@ PDF_AUXILIARY_TOLERANCE_SHA256 = {
 
 # Reviewed in the PDF test branch: guard corrupt choice grids and refine
 # figure crops from physical source evidence. Preserve older provenance above.
-PDF_FIDELITY_MODULE_SHA256 = {'pdf_figures.py': '9af28cb163ca3c6988e4a62609976bf106717a3ba399029a85ad4e1ea4073728', 'pdf_inspector_helper.py': '73f30b1dc0f51f6cdc8767f0cf5cebb764b3822f449327c1fa46fa404987da94'}
+PDF_FIDELITY_MODULE_SHA256 = {'pdf_figures.py': '0040446c7e9e3f0d3c2a52090041e7bbc038635c480e13f7def10fa933fc1c5a', 'pdf_inspector_helper.py': '73f30b1dc0f51f6cdc8767f0cf5cebb764b3822f449327c1fa46fa404987da94'}
 
 
 @pytest.mark.parametrize("filename", MODULE_HASHES)

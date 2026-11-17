@@ -26,6 +26,7 @@ from mathbank.task_manager import TaskCancelled
 SCHEMA = "mathbank.pdf-checkpoint-transcription-witness.v1"
 _NAV = re.compile(r"pdf_page_([A-Za-z0-9_-]+)_([0-9]+)\.png")
 _DETAIL = re.compile(r"pdf_detail_([A-Za-z0-9_-]+)_([0-9]+)_(p[0-9]+_d[12])_[0-9a-f]{32}\.png")
+_OCR_300 = re.compile(r"pdf_ocr300_([A-Za-z0-9_-]+)_([0-9]+)_[0-9a-f]{32}\.png")
 _SHA = re.compile(r"[0-9a-f]{64}")
 _DETAIL_FIELDS = {"id", "page_index", "bbox", "actualdpi", "width", "height", "sha256"}
 
@@ -159,7 +160,26 @@ def _original_inputs(state, joint, index, resolve_asset, check_cancelled):
         if any(detail_input.get(key) != metadata[key] for key in
                ("detail_count", "detail_total_pixels", "detail_total_png_bytes")):
             raise _SkipPage("original_detail_evidence_changed")
-    return image, receipt["sha256"], details
+    whole_page_input = joint.get("whole_page_ocr_input")
+    if whole_page_input is None:
+        return image, receipt["sha256"], details
+    if (status != "none" or not isinstance(whole_page_input, dict)
+            or set(whole_page_input) != {"url", "dpi", "sha256"}
+            or whole_page_input["dpi"] != 300 or not isinstance(whole_page_input["url"], str)):
+        raise _SkipPage("original_high_dpi_input_invalid")
+
+    high_url = whole_page_input["url"]
+    high_identity = _OCR_300.fullmatch(PurePosixPath(high_url).name)
+    nav_identity = _NAV.fullmatch(PurePosixPath(image_url).name)
+    if not high_identity or high_identity.groups() != nav_identity.groups() or high_url not in assets:
+        raise _SkipPage("original_high_dpi_input_invalid")
+    high_path = resolve_asset(high_url)
+    high_data = _png(high_path)
+    digest = hashlib.sha256(high_data).hexdigest()
+    if (high_path.parent != image.parent or whole_page_input["sha256"] != digest
+            or assets[high_url] != {"size": len(high_data), "sha256": digest}):
+        raise _SkipPage("original_high_dpi_input_changed")
+    return high_path, digest, []
 
 
 def restore_project_pdf_transcription_witnesses(

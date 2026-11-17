@@ -170,6 +170,8 @@ Both launchers check Python and required packages, and open an already-running M
 
 ## 🔑 API Configuration & LLM Selection Guide
 
+The source build can use a MinerU precision API token from **System Settings → API** to prioritize PDF figure locations. Smart PDF import offers per-file choices for MinerU OCR, figure localization and whole-page OCR resolution, plus the API and model used for question splitting. The default is the existing native and visual extraction path. The optional 300 DPI input applies to whole-page model OCR; figure checks still use the 150 DPI page and crops come from the original PDF. Eligible tasks send the original PDF to MinerU when enabled. See the local source build for availability. [MinerU website](https://mineru.net/) · [Precision API documentation](https://mineru.net/apiManage/docs)
+
 Whether running from source or portable packages, AI tasks rely on external APIs. After launching, click the **Settings (Gear Icon)** button in the top right corner of the web interface to save API keys and configure the provider and model separately for solving, paper parsing, classification, OCR, and drawing:
 
 ### 1. 🤖 Text Task Models (Solving / Parsing / Classification)

@@ -430,6 +430,47 @@ def _request_independent_layouts(
     return results, errors, reports
 
 
+def _mineru_graph_crop(source, page_index, image_path, initial_guard):
+    """Prefer the MinerU frame when original-page evidence binds it to the same graph."""
+    if source is None:
+        return None
+    evidence_bbox = initial_guard.get("evidence_bbox")
+    has_graph = initial_guard.get("method") == "isolated_graph" or initial_guard.get("figure_candidates") == 1
+    has_original_proof = bool(evidence_bbox and has_graph)
+    if not has_original_proof and (
+        initial_guard["status"] not in {"suspect", "not_applicable"}
+        or initial_guard.get("figure_candidates") != 0
+    ):
+        return None
+    alternate = source.single_image_box(page_index)
+    if alternate is None:
+        return None
+    if has_original_proof:
+        overlap = max(0, min(evidence_bbox[2], alternate[2]) - max(evidence_bbox[0], alternate[0])) * max(
+            0, min(evidence_bbox[3], alternate[3]) - max(evidence_bbox[1], alternate[1]),
+        )
+        smaller = min((box[2] - box[0]) * (box[3] - box[1]) for box in (evidence_bbox, alternate))
+        if overlap < 0.5 * smaller:
+            return None
+    from mathbank.pdf_raster_guard import guard_raster_figure_bbox
+
+    candidate = guard_raster_figure_bbox(image_path, alternate, improve_local_frame=True)
+    independently_isolated = candidate["method"] == "isolated_graph"
+    if candidate["warnings"]:
+        return None
+    if not has_original_proof:
+        # The caller has exactly one graph slot and the bound bundle exactly
+        # one image. A missing/incorrect original frame is no identification
+        # evidence; require the MinerU frame to prove the only isolated graph.
+        return candidate if independently_isolated else None
+    confirmed = independently_isolated or (
+        candidate["status"] == "verified" and candidate.get("figure_candidates") == 1
+    )
+    if not confirmed or max(abs(a - b) for a, b in zip(candidate["bbox"], evidence_bbox)) > 5:
+        return None
+    return candidate
+
+
 def enrich_pdf_with_figures(
     file_bytes: bytes, page_indices: list[int], page_images: list[str],
     page_urls: list[str], page_texts: list[str], ocr_page_indices: set[int], *,
@@ -440,10 +481,18 @@ def enrich_pdf_with_figures(
     precomputed_layouts: dict[int, dict] | None = None,
     precomputed_page_infos: dict[int, dict] | None = None,
     vision_semaphore=None,
+    mineru_figure_source=None,
 ) -> dict:
     """Enrich each page independently and preserve evidence on any failure."""
     import pymupdf as fitz
 
+    if mineru_figure_source is not None:
+        from hashlib import sha256
+        from mathbank.pdf_mineru_source import MineruPDFSource
+
+        if (not isinstance(mineru_figure_source, MineruPDFSource)
+                or mineru_figure_source.source_sha256 != sha256(file_bytes).hexdigest()):
+            raise ValueError("MinerU 图框未绑定到当前 PDF 原件。")
     texts = list(page_texts)
     report = {"pages_checked": 0, "figures_extracted": 0, "figures_attached": 0,
               "unmatched_figures": 0, "visual_calls": 0, "skipped_pages": 0,
@@ -538,6 +587,20 @@ def enrich_pdf_with_figures(
                             page_images[local_index], figure["model_bbox"], improve_local_frame=True,
                             allow_relocation=graph_caption and len(info["figure_slots"]) == 1,
                         )
+                        check_cancelled()
+                        if graph_caption and len(figures) == len(info["figure_slots"]) == 1:
+                            replacement = _mineru_graph_crop(
+                                mineru_figure_source, page_index, page_images[local_index], guarded,
+                            )
+                            if replacement is not None:
+                                figure["mineru_crop"] = {
+                                    "bundle_sha256": mineru_figure_source.bundle_sha256,
+                                    "candidate_bbox": replacement["model_bbox"],
+                                    "original_guard": guarded,
+                                }
+                                page_notes.append("已优先采用通过原页证据校验的 MinerU 图框，从本地原 PDF 回裁。")
+                                figure["bbox"] = replacement["bbox"]
+                                guarded = replacement
                         check_cancelled()
                         figure["raster_guard"] = {
                             key: value for key, value in guarded.items() if key not in {"warnings", "notes"}

@@ -1463,6 +1463,21 @@
                                     <input type="text" id="settingsZhongzhanClaudeBaseUrl" placeholder="https://api.openai.com/v1"
                                            class="glass-input w-full px-3 py-2.5 rounded-xl text-xs font-mono">
                                 </div>
+                                <div class="space-y-2">
+                                    <div class="flex items-center justify-between gap-2">
+                                        <label for="settingsMineruToken" class="text-[11px] font-semibold text-slate-500">MinerU API Token</label>
+                                        <a href="https://mineru.net/" target="_blank" rel="noopener noreferrer" class="text-brand-500 hover:underline text-[10px]">MinerU 官网</a>
+                                    </div>
+                                    <input type="password" id="settingsMineruToken" placeholder="填写精准解析 API Token"
+                                           autocomplete="off" class="glass-input w-full px-3 py-2.5 rounded-xl text-xs font-mono">
+                                    <label for="settingsMineruPdfFigures" class="flex items-start gap-2 text-[11px] text-slate-600 dark:text-slate-300">
+                                        <input type="checkbox" id="settingsMineruPdfFigures" class="mt-0.5">
+                                        <span>PDF 配图优先用 MinerU</span>
+                                    </label>
+                                    <p class="text-[10px] text-slate-500">开启后，需要定位配图的智能图文任务会把原 PDF 送往 MinerU。
+                                        <a href="https://mineru.net/apiManage/docs" target="_blank" rel="noopener noreferrer" class="text-brand-500 hover:underline">API 文档</a>
+                                    </p>
+                                </div>
                             </div>
                         </div>
 
@@ -2210,7 +2225,49 @@
                                 <span class="text-[10px] text-slate-500 mt-1 leading-normal">对所选页面逐页识别文字与公式；配图需手动补充。</span>
                             </label>
                         </div>
-                        <p class="text-[10px] text-slate-500 leading-normal">智能模式沿用已配置的识图模型核对配图，可能产生额外调用与等待。结果仍需对照原卷审查。</p>
+                        <div id="pdfVisualOptions" class="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                            <label class="block space-y-1 text-[11px] font-semibold text-slate-600">
+                                <span>转录方式</span>
+                                <select id="pdfOcrEngine" onchange="updatePdfVerificationOption()" class="glass-select w-full rounded-lg px-2 py-1.5 text-xs">
+                                    <option value="existing">现行转录（默认）</option>
+                                    <option value="mineru">MinerU 先 OCR</option>
+                                </select>
+                            </label>
+                            <label class="block space-y-1 text-[11px] font-semibold text-slate-600">
+                                <span>配图定位</span>
+                                <select id="pdfMineruFigures" class="glass-select w-full rounded-lg px-2 py-1.5 text-xs">
+                                    <option value="system">跟随 API 设置</option>
+                                    <option value="mineru">本次优先 MinerU</option>
+                                    <option value="existing">本次使用现有定位</option>
+                                </select>
+                            </label>
+                            <label class="block space-y-1 text-[11px] font-semibold text-slate-600">
+                                <span>整页模型识图</span>
+                                <select id="pdfWholePageOcrDpi" class="glass-select w-full rounded-lg px-2 py-1.5 text-xs">
+                                    <option value="150">150 DPI ＋ 高清辅助图（默认）</option>
+                                    <option value="300">单张 300 DPI</option>
+                                </select>
+                            </label>
+                            <p class="self-end text-[10px] text-slate-500 leading-normal">MinerU OCR 处理需要识图的页面，并提供图位。单张 300 DPI 只用于现有模型的整页识图，配图仍按原页校验。</p>
+                        </div>
+                        <div class="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                            <label class="block space-y-1 text-[11px] font-semibold text-slate-600">
+                                <span>拆题 API</span>
+                                <select id="pdfParseProvider" onchange="updatePdfParseModelOption()" class="glass-select w-full rounded-lg px-2 py-1.5 text-xs">
+                                    <option value="">跟随系统拆题模型</option>
+                                    <option value="DEEPSEEK">DeepSeek</option>
+                                    <option value="SILICONFLOW">硅基流动</option>
+                                    <option value="BAILIAN">阿里百炼</option>
+                                    <option value="ZHONGZHAN_GPT">中转站 A</option>
+                                    <option value="ZHONGZHAN_CLAUDE">中转站 B</option>
+                                </select>
+                            </label>
+                            <label id="pdfParseModelOption" class="hidden block space-y-1 text-[11px] font-semibold text-slate-600">
+                                <span>拆题模型名</span>
+                                <input id="pdfParseModel" type="text" maxlength="160" placeholder="填所选 API 的模型 ID"
+                                       class="glass-input w-full rounded-lg px-2 py-1.5 text-xs font-mono">
+                            </label>
+                        </div>
                         <label class="flex items-start gap-2 text-xs text-slate-700 cursor-pointer">
                             <input type="checkbox" id="pdfVerifySuspicions" checked class="mt-0.5 h-4 w-4 rounded border-slate-300 text-brand-600 focus:ring-brand-500">
                             <span><span class="font-semibold">自动核对疑点</span><span id="pdfVerifySuspicionsNote" class="block mt-1 text-[10px] text-slate-500 leading-normal">对照原页核对疑点，保留待核对说明；题文可在本地校对后入库。</span></span>

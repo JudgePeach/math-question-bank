@@ -268,3 +268,29 @@ def test_fake_physical_page_outside_original_pdf_is_ineligible(setup):
     setup.save(state)
     witnesses, report = restore(setup)
     assert witnesses == {} and report["reason"] == "sealed_checkpoint_missing"
+
+
+def test_separate_300_dpi_input_restores_the_actual_vision_file(setup):
+    url, digest = setup.asset("pdf_ocr300_original-task_1_" + "b" * 32 + ".png", (80, 120), "black")
+    state = deepcopy(setup.state)
+    state["pages"]["1"]["joint"]["whole_page_ocr_input"] = {"url": url, "dpi": 300, "sha256": digest}
+    setup.save(state)
+    witnesses, report = restore(setup)
+    assert report["restored_pages"] == [1, 2]
+    assert Path(url).name in witnesses[1].payload
+    assert Path(setup.images[1]).name not in witnesses[1].payload
+
+
+@pytest.mark.parametrize("task,page,expected_reason", [
+    ("original-task", 1, "original_high_dpi_input_changed"),
+    ("original-task", 0, "original_high_dpi_input_invalid"),
+    ("another-task", 1, "original_high_dpi_input_invalid"),
+])
+def test_high_dpi_evidence_rejects_another_hash_page_or_task(setup, task, page, expected_reason):
+    url, _ = setup.asset(f"pdf_ocr300_{task}_{page}_" + "c" * 32 + ".png", (80, 120))
+    state = deepcopy(setup.state)
+    state["pages"]["1"]["joint"]["whole_page_ocr_input"] = {"url": url, "dpi": 300, "sha256": "f" * 64}
+    setup.save(state)
+    witnesses, report = restore(setup)
+    assert set(witnesses) == {0}
+    assert report["skipped_pages"] == [{"page_number": 2, "reason": expected_reason}]
