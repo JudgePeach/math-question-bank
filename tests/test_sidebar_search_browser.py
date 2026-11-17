@@ -66,7 +66,7 @@ def search_browser(tmp_path_factory):
                 pytest.fail((root / "server.log").read_text())
             browser.command("open", url)
             browser.command("set", "viewport", "1600", "1100")
-            browser.command("wait", "--fn", "typeof setupSidebarSearch === 'function' && typeof selectWorkspace === 'function'")
+            browser.command("wait", "--fn", "document.body.dataset.workspace === 'dashboard'")
             pid_file = Path.home() / ".agent-browser" / f"{browser.session}.pid"
             owned_pids.add(int(pid_file.read_text().strip()))
             processes = _processes()
@@ -223,3 +223,119 @@ def test_real_sidebar_search_debounce_ime_actions_and_unsaved_editor(search_brow
     assert result["typing"] == result["afterComposition"] == 1
     assert result["duringComposition"] == result["draftDatabaseRequests"] == 0
     assert result["staleResponseIgnored"] and result["unsavedPreserved"] and result["cartPreserved"]
+
+
+def test_keyword_rules_work_across_bank_and_drafts_on_desktop_and_mobile(search_browser, tmp_path):
+    browser = search_browser
+    browser.command("reload")
+    browser.command("wait", "--fn", "typeof selectWorkspace === 'function' && document.readyState === 'complete'")
+    browser.evaluate(r"""
+    (async () => {
+        selectWorkspace('bank');
+        const records = [
+            {content: '组合筛选示例 函数', source: '新卷', answer_markdown: '换元'},
+            {content: '组合筛选示例 函数', source: '旧卷', answer_markdown: '换元'},
+            {content: '组合筛选示例 函数', source: '新卷', answer_markdown: '数形结合'},
+        ];
+        for (const record of records) {
+            const form = new FormData();
+            Object.entries({...record, question_type: 'detailed_answer', difficulty: 'medium'})
+                .forEach(([key, value]) => form.set(key, value));
+            const response = await fetch('/api/questions', {method: 'POST', body: form});
+            if (!response.ok) throw Error(await response.text());
+        }
+        setLocalStorageDrafts(records.map((record, index) => ({...record, id: 'draft-' + (index + 1),
+            question_type: 'detailed_answer'})));
+        updateDraftCountBadge();
+        return true;
+    })()
+    """)
+    browser.command("fill", "#searchInput", "组合筛选示例")
+    browser.command("press", "Enter")
+    browser.command("wait", "--fn", "questionResultSummary.textContent === '共 3 道题'")
+    list_geometry = "document.getElementById('sidebarSection').getBoundingClientRect().toJSON()"
+    before = browser.evaluate(list_geometry)
+    browser.command("click", ".bank-filter-toggle")
+    assert browser.evaluate(list_geometry) == before
+    browser.command("select", "#filterCompulsory", "必修一")
+    browser.command("select", "#filterChapter", "2. 一元二次函数、方程和不等式")
+    browser.command("select", "#filterKnowledge", "2.3 二次函数与一元二次方程、不等式")
+    assert browser.evaluate(r"""
+        (() => {
+            const scroll = document.querySelector('#bankFilterFields .question-filter-scroll');
+            return scroll.scrollWidth <= scroll.clientWidth && getComputedStyle(scroll).overflowX === 'hidden';
+        })()
+    """)
+    browser.command("click", "#clearBankFiltersBtn")
+    browser.command("wait", "--fn", "questionResultSummary.textContent === '共 3 道题'")
+    browser.command("click", "#toggleFilterSourceBtn")
+    browser.command("wait", "--fn", "!document.getElementById('filterSourceSuggestions').classList.contains('hidden')")
+    browser.command("find", "text", "新卷", "click", "--exact")
+    browser.command("wait", "--fn", "filterSource.value === '新卷' && questionResultSummary.textContent === '共 2 道题'")
+    browser.command("click", "#clearBankFiltersBtn")
+    browser.command("wait", "--fn", "questionResultSummary.textContent === '共 3 道题'")
+    for index, field, operator, keyword in [
+        (1, "answer_markdown", "include", "换元"),
+        (2, "source", "exclude", "旧卷"),
+    ]:
+        row = f"#bankSearchRules > :nth-child({index})"
+        browser.command("click", "#addBankSearchRuleBtn")
+        assert browser.evaluate("document.activeElement.matches('#bankSearchRules input')")
+        browser.command("select", row + " [data-rule-field]", field)
+        browser.command("select", row + " [data-rule-operator]", operator)
+        browser.command("fill", row + " input", keyword)
+        browser.command("press", "Enter")
+        browser.command("wait", "--fn", f"questionResultSummary.textContent === '共 {3-index} 道题'")
+    assert browser.evaluate("!bankFilterConditions.hidden && !!document.querySelector('.bank-keyword-rule.is-exclusion')")
+    browser.command("screenshot", str(tmp_path / "bank-keyword-filters-desktop.png"))
+    rule_geometry = r"""
+    (() => {
+        const row = document.querySelector('#bankSearchRules > :last-child');
+        const [field, , keyword, remove] = [...row.children].map(node => node.getBoundingClientRect().toJSON());
+        const panel = document.getElementById('bankFilterFields').getBoundingClientRect().toJSON();
+        return {field, keyword, remove, panel, viewport: innerWidth, pageWidth: document.documentElement.scrollWidth};
+    })()
+    """
+    browser.command("set", "viewport", "1200", "900")
+    wide = browser.evaluate(rule_geometry)
+    assert wide["keyword"]["top"] < wide["field"]["bottom"], wide
+    browser.command("focus", "#resizer-1")
+    for _ in range(6):
+        browser.command("press", "ArrowLeft")
+    compact = browser.evaluate(rule_geometry)
+    assert compact["viewport"] == wide["viewport"] and compact["panel"]["width"] < wide["panel"]["width"], compact
+    assert compact["keyword"]["top"] > compact["field"]["bottom"], compact
+    assert compact["keyword"]["width"] >= 150 and compact["remove"]["right"] <= compact["panel"]["right"], compact
+    keyword_selector = "#bankSearchRules > :last-child input"
+    browser.command("fill", keyword_selector, "不存在的来源")
+    browser.command("press", "Enter")
+    browser.command("wait", "--fn", "questionResultSummary.textContent === '共 2 道题'")
+    browser.command("fill", keyword_selector, "旧卷")
+    browser.command("press", "Enter")
+    browser.command("wait", "--fn", "questionResultSummary.textContent === '共 1 道题'")
+    browser.command("focus", "#resizer-1")
+    browser.command("press", "Home")
+    wide = browser.evaluate(rule_geometry)
+    assert wide["keyword"]["top"] < wide["field"]["bottom"], wide
+    browser.command("set", "viewport", "375", "812")
+    layout = browser.evaluate(rule_geometry)
+    field, keyword, remove = (layout[key] for key in ("field", "keyword", "remove"))
+    assert keyword["top"] > field["bottom"] and keyword["right"] <= remove["left"], layout
+    assert remove["width"] >= 44 and remove["height"] >= 44, layout
+    assert remove["right"] <= layout["viewport"] and layout["pageWidth"] <= layout["viewport"], layout
+    browser.command("screenshot", str(tmp_path / "bank-keyword-filters-mobile.png"))
+    before = browser.evaluate(list_geometry)
+    browser.command("press", "Escape")
+    assert browser.evaluate("bankFilterFields.hidden && document.activeElement.matches('.bank-filter-toggle')")
+    assert browser.evaluate(list_geometry) == before
+    assert browser.evaluate("!bankFilterConditions.hidden && bankFilterConditions.children.length === 2")
+    browser.command("click", "#sidebarTab-drafts")
+    assert browser.evaluate("questionResultSummary.textContent === '共 1 道题'")
+    browser.command("click", "#bankFilterConditions .is-exclusion")
+    assert browser.evaluate("questionResultSummary.textContent === '共 2 道题' && bankSearchRules.children.length === 1")
+    browser.command("click", ".bank-filter-toggle")
+    browser.command("click", "#clearBankFiltersBtn")
+    assert browser.evaluate(r"""
+        questionResultSummary.textContent === '共 3 道题' && bankSearchRules.children.length === 0
+        && bankFilterConditions.hidden && searchInput.value === '组合筛选示例'
+    """)

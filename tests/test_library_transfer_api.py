@@ -131,10 +131,11 @@ def _export(api, keywords=None):
     return response.content
 
 
-def _import(api, data, filename="MathBank.zip"):
+def _import(api, data, filename="MathBank.zip", *, confirm=None):
+    fields = {"confirm_repeat_sha256": confirm} if confirm is not None else None
     return api.client.post(
         "/api/library-transfer/import", headers=api.headers,
-        files={"file": (filename, data, "application/zip")},
+        files={"file": (filename, data, "application/zip")}, data=fields,
     )
 
 
@@ -369,7 +370,13 @@ def test_import_appends_new_ids_repeatedly_preserves_content_and_verifiable_back
     original_reference = "/static/uploads/figure.png"
     imported_references = set()
     for previous_count in (1, 2):
-        response = _import(api, archive)
+        confirmation = None
+        if previous_count == 2:
+            repeat = _import(api, archive)
+            assert repeat.status_code == 409 and repeat.json()["code"] == "repeat_import"
+            confirmation = repeat.json()["archive_sha256"]
+            assert _question_count(api) == 2
+        response = _import(api, archive, confirm=confirmation)
         assert response.status_code == 200, response.text
         result = response.json()
         assert result["status"] == "success"
@@ -378,6 +385,7 @@ def test_import_appends_new_ids_repeatedly_preserves_content_and_verifiable_back
         assert backup_path.parent == api.backups / "snapshots"
         manifest = verify_full_backup(backup_path)
         assert manifest["database"]["row_counts"]["questions"] == previous_count
+        assert manifest["database"]["row_counts"]["library_import_receipts"] == previous_count - 1
         assert manifest["metadata_included"] is True
         assert manifest["upload_file_count"] == previous_count
         with api.sessions() as session:
@@ -400,6 +408,18 @@ def test_import_appends_new_ids_repeatedly_preserves_content_and_verifiable_back
         assert (api.uploads / "figure.png").read_bytes() == source_bytes
     assert len(list((api.backups / "snapshots").glob("*.zip"))) == 2
     assert not list((api.generated / "library_transfer").iterdir())
+
+
+def test_repacked_zip_with_same_questions_is_a_distinct_archive(transfer_api):
+    api = transfer_api
+    _seed(api, with_image=False)
+    archive = _export(api)
+    assert _import(api, archive).status_code == 200
+    repacked = io.BytesIO(archive)
+    with zipfile.ZipFile(repacked, "a") as package:
+        package.comment = b"different archive bytes, same questions"
+    assert _import(api, repacked.getvalue()).status_code == 200
+    assert _question_count(api) == 3
 
 
 def _malformed_package(archive, kind):

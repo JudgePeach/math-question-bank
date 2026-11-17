@@ -18,11 +18,13 @@ import sqlite3
 import stat
 import tempfile
 import threading
+from typing import TextIO
 import uuid
 import zipfile
 import zlib
 
 from sqlalchemy import func, null, or_
+from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.orm import selectinload
 
 from mathbank import __version__
@@ -35,7 +37,7 @@ from mathbank.asset_security import (
     fsync_writable_file, replace_file_atomic, resolve_upload_asset,
 )
 from mathbank.database import (
-    KnowledgePoint, KnowledgePointCurriculum, Question, QuestionCurriculum,
+    KnowledgePoint, KnowledgePointCurriculum, LibraryImportReceipt, Question, QuestionCurriculum,
     QuestionKnowledgePoint, QuestionReference, QuestionSourceLabel,
 )
 from mathbank.curriculums import CURRICULUM_NAMES
@@ -137,6 +139,7 @@ class _PreparedImportState:
     archive_path: Path
     archive_sha256: str
     package: dict
+    rows: TextIO
     consumed: bool = False
 
 
@@ -151,6 +154,14 @@ class PreparedLibraryImport:
 
     def __init__(self):
         raise TypeError("请通过 prepare_library_import 准备分享包")
+
+    @property
+    def archive_sha256(self):
+        with _PREPARED_IMPORT_LOCK:
+            state = _PREPARED_IMPORTS.get(self)
+            if state is None:
+                raise ValueError("分享包预检已失效，请重新准备")
+            return state.archive_sha256
 
     @property
     def summary(self):
@@ -191,10 +202,13 @@ def prepare_library_import(archive_path: Path, *, workspace_dir=None, progress=N
         package = _read_package(archive_path, stage_dir=Path(staging.name), progress=progress)
         if _archive_sha256(archive_path) != before:
             raise ValueError("分享包在预检期间发生变化，请重新选择文件")
-        prepared = object.__new__(PreparedLibraryImport)
-        with _PREPARED_IMPORT_LOCK:
-            _PREPARED_IMPORTS[prepared] = _PreparedImportState(archive_path, before, package)
-        yield prepared
+        with tempfile.TemporaryFile(mode="w+t", encoding="utf-8", dir=staging.name) as rows:
+            _prepare_import_rows(package, Path(staging.name), rows, progress)
+            rows.seek(0)
+            prepared = object.__new__(PreparedLibraryImport)
+            with _PREPARED_IMPORT_LOCK:
+                _PREPARED_IMPORTS[prepared] = _PreparedImportState(archive_path, before, package, rows)
+            yield prepared
     finally:
         if prepared is not None:
             with _PREPARED_IMPORT_LOCK:
@@ -214,7 +228,7 @@ def _consume_prepared_import(prepared, archive_path):
         state.consumed = True
     if Path(archive_path).resolve() != state.archive_path or _archive_sha256(archive_path) != state.archive_sha256:
         raise ValueError("分享包在预检后发生变化，请重新准备")
-    return state.package
+    return state
 
 
 def _json(value):
@@ -684,7 +698,7 @@ def _read_package(archive_path, *, stage_dir=None, progress=None):
             checked += 1
             _progress(progress, "validating", checked, len(infos))
             assets = []
-            for index, (name, item) in enumerate(listed.items()):
+            for name, item in listed.items():
                 if name == "questions.json" or name in _CONTENT_SOURCE_MEMBERS:
                     continue
                 raw = _read_member(archive, name, MAX_NORMALIZED_IMAGE_BYTES)
@@ -694,8 +708,9 @@ def _read_package(archive_path, *, stage_dir=None, progress=None):
                 extension = PurePosixPath(name).suffix.lower()
                 asset = dict(item, extension=extension)
                 if stage_dir is not None:
-                    staged = Path(stage_dir) / f"{index:06d}{extension}"
-                    staged.write_bytes(raw)
+                    staged = Path(stage_dir) / ("shared_" + uuid.uuid4().hex + extension)
+                    with staged.open("xb") as output:
+                        output.write(raw)
                     asset["staged"] = staged
                 assets.append(asset)
                 del raw
@@ -913,6 +928,8 @@ def export_library_zip(db, output_path: Path, *, uploads_dir: Path,
                 _progress(progress, "packaging", packaged, package_total)
             for index, reference in enumerate(sorted(asset_paths), 1):
                 path = resolve_upload_asset(reference, uploads_dir=uploads_dir, url_prefix=UPLOAD_PREFIX, require_file=False)
+                from mathbank.tiered_storage import hydrate
+                hydrate(path)
                 if not path.is_file() or path.stat().st_size > MAX_NORMALIZED_IMAGE_BYTES:
                     raise ValueError(f"导出图片不存在或超过安全大小：{reference}")
                 data = path.read_bytes()
@@ -981,10 +998,10 @@ def _import_image_evidence(item, record, rewritten, replacements):
     return mapped if mapped in rewritten.get(field, "") else evidence
 
 
-def _reference_row(record, reference, replacements, id_map):
+def _prepare_reference_row(record, reference, replacements, rewritten_fields):
     row = {key: reference.get(key, "") for key in _REFERENCE_FIELDS}
     source = record[row["field"]]
-    rewritten = rewrite_question_asset_paths(source, replacements)
+    rewritten = rewritten_fields[row["field"]]
     start, end = row["start"], row["end"]
     for left, right, path in image_reference_spans(source):
         if path not in replacements:
@@ -997,11 +1014,51 @@ def _reference_row(record, reference, replacements, id_map):
     row.update(start=start, end=end)
     if row["field_sha256"] == text_sha256(source):
         row.update(field_sha256=text_sha256(rewritten), prefix=rewritten[max(0, start - 24):start], suffix=rewritten[end:end + 24])
-    old_target = reference.get("target_question_id")
-    row["target_question_id"] = id_map.get(old_target)
-    if old_target is not None and old_target not in id_map:
-        row.update(resolution_state="unresolved", reason="target_outside_share")
+    row["target_question_id"] = reference.get("target_question_id")
     return row
+
+
+def _prepare_import_rows(package, staged_uploads, rows, progress):
+    """Stage bounded batches of database-independent data before taking app locks."""
+    from mathbank.question_duplicate_service import fingerprint_for_question, prepare_fingerprint_values
+
+    replacements = {}
+    for asset in package["assets"]:
+        destination = UPLOAD_PREFIX + "/" + asset["staged"].name
+        replacements[asset["path"]] = destination
+        replacements[asset["path"].lstrip("/")] = destination
+    for record in package["records"]:
+        for reference in _asset_references(record):
+            replacements[reference] = replacements[_canonical_path(reference)]
+    image_keys = {image_key(old): image_key(new) for old, new in replacements.items()}
+
+    total = len(package["records"])
+    _progress(progress, "fingerprinting", 0, total)
+    for index, record in enumerate(package["records"], 1):
+        values = {field: record.get(field, "") for field in _TEXT_FIELDS}
+        for field in ("content", "answer_markdown", "review"):
+            values[field] = rewrite_question_asset_paths(values[field], replacements)
+        values.update(
+            image_paths=[replacements[_canonical_path(path)] for path in record.get("image_paths", [])],
+            tikz_reference_image_path=replacements.get(record.get("tikz_reference_image_path", ""), ""),
+            content_tikz_assets=rewrite_structured_asset_paths(record.get("content_tikz_assets", []), replacements),
+            answer_tikz_assets=rewrite_structured_asset_paths(record.get("answer_tikz_assets", []), replacements),
+            image_layouts=rewrite_image_layout_paths(record.get("image_layouts", {}), replacements, image_keys=image_keys),
+        )
+        # The staged files have their final basenames, so the stored revision
+        # hash sees exactly the same text and pixels as after installation.
+        fingerprint = fingerprint_for_question(Question(**values), uploads_dir=staged_uploads, url_prefix=UPLOAD_PREFIX)
+        point_metadata = []
+        for item in record.get("knowledge_points", []):
+            metadata = {field: item.get(field) for field in METADATA_FIELDS}
+            metadata["evidence"] = _import_image_evidence(item, record, values, replacements)
+            point_metadata.append({field: json.dumps(value, ensure_ascii=False, allow_nan=False)
+                                   for field, value in metadata.items()})
+        references = [_prepare_reference_row(record, reference, replacements, values)
+                      for reference in record.get("question_references", [])]
+        rows.write(_json([record["id"], values, point_metadata, references,
+                          prepare_fingerprint_values(fingerprint)]).decode("utf-8") + "\n")
+        _progress(progress, "fingerprinting", index, total)
 
 
 def _import_points(db, definitions):
@@ -1044,16 +1101,16 @@ def import_library_zip(db, archive_path: Path, *, uploads_dir: Path, active_vers
         with prepare_library_import(archive_path, progress=progress) as prepared:
             return import_library_zip(db, archive_path, uploads_dir=uploads_dir,
                                       active_version=active_version, prepared=prepared, progress=progress)
-    package = _consume_prepared_import(prepared, archive_path)
+    prepared_state = _consume_prepared_import(prepared, archive_path)
+    package = prepared_state.package
     installed, committed, commit_attempted = [], False, False
     import_database, id_map = None, {}
     try:
-        replacements = {}
         _progress(progress, "installing", 0, len(package["assets"]))
         for index, asset in enumerate(package["assets"], 1):
             # Every import uses independent names, including repeated imports
             # of exactly the same package. Exclusive creation closes races.
-            destination = uploads_dir / ("shared_" + uuid.uuid4().hex + asset["extension"])
+            destination = uploads_dir / asset["staged"].name
             with destination.open("xb") as target:
                 installed.append(destination)
                 digest, copied = hashlib.sha256(), 0
@@ -1068,55 +1125,48 @@ def import_library_zip(db, archive_path: Path, *, uploads_dir: Path, active_vers
                     raise ValueError("预检图片在导入前发生变化，请重新准备分享包")
                 target.flush()
                 os.fsync(target.fileno())
-            rewritten = UPLOAD_PREFIX + "/" + destination.name
-            replacements[asset["path"]] = rewritten
-            replacements[asset["path"].lstrip("/")] = rewritten
             _progress(progress, "installing", index, len(package["assets"]))
-        for record in package["records"]:
-            for reference in _asset_references(record):
-                replacements[reference] = replacements[_canonical_path(reference)]
-        image_keys = {image_key(old): image_key(new) for old, new in replacements.items()}
         connection = db.connection()
         raw = connection.connection.dbapi_connection
         import_database = _sqlite_import_database(raw)
         if isinstance(raw, sqlite3.Connection) and not raw.in_transaction:
             connection.exec_driver_sql("BEGIN IMMEDIATE")
         points = _import_points(db, package["definitions"])
-        from mathbank.question_duplicate_service import fingerprint_for_question, upsert_question_fingerprints
+        from mathbank.question_duplicate_service import upsert_prepared_fingerprints
+        from mathbank.question_ordering import next_append_order
+
+        # Reserve consecutive positions in the transaction that owns the write
+        # lock, rather than finding MAX(display_order) for every insert.
+        first_order = next_append_order(connection)
         groups, id_map, batch = {}, {}, []
         def flush_batch():
             if not batch:
                 return
             db.flush()
-            for question, source_record in batch:
-                id_map[source_record["id"]] = question.id
-            upsert_question_fingerprints(db, (
-                (question, fingerprint_for_question(question, uploads_dir=uploads_dir, url_prefix=UPLOAD_PREFIX))
-                for question, _ in batch
-            ), batch_size=128)
+            for question, source_id, _ in batch:
+                id_map[source_id] = question.id
+            upsert_prepared_fingerprints(db, (
+                (question.id, fingerprint) for question, _, fingerprint in batch
+            ))
             # These new rows are already flushed in the still-open
             # transaction. References use stable IDs below, so retaining all
             # ORM annotation graphs until commit would only raise RAM usage.
-            for question, _ in batch:
+            for question, _, _ in batch:
                 db.expunge(question)
             batch.clear()
         _progress(progress, "writing", 0, len(package["records"]))
-        for index, record in enumerate(package["records"], 1):
-            values = {field: record.get(field, "") for field in _TEXT_FIELDS}
-            for field in ("content", "answer_markdown", "review"):
-                values[field] = rewrite_question_asset_paths(values[field], replacements)
+        for index, (record, line) in enumerate(zip(package["records"], prepared_state.rows, strict=True), 1):
+            source_id, values, point_metadata, references, fingerprint = json.loads(line)
+            if source_id != record["id"]:
+                raise ValueError("分享包预处理题目顺序不一致，请重新准备")
             old_group = values["association_group_id"]
             values["association_group_id"] = groups.setdefault(old_group, uuid.uuid4().hex) if old_group else ""
             # ORM client defaults replace Python None on INSERT. Explicit SQL
             # NULL preserves historical textbook locations in both mirrors.
             question = Question(**{field: null() if field in _NULLABLE_LOCATION_FIELDS and value is None else value
                                    for field, value in values.items()})
-            question.image_paths = [replacements[_canonical_path(path)] for path in record.get("image_paths", [])]
-            question.tikz_reference_image_path = replacements.get(record.get("tikz_reference_image_path", ""), "")
-            question.content_tikz_assets = rewrite_structured_asset_paths(record.get("content_tikz_assets", []), replacements)
-            question.answer_tikz_assets = rewrite_structured_asset_paths(record.get("answer_tikz_assets", []), replacements)
-            question.image_layouts = rewrite_image_layout_paths(record.get("image_layouts", {}), replacements,
-                                                               image_keys=image_keys)
+            if first_order is not None:
+                question.display_order = first_order + index - 1
             question.figure_align = record.get("figure_align", "right")
             question.figure_size = record.get("figure_size", "auto")
             question.figure_align_custom = record.get("figure_align_custom", False)
@@ -1143,20 +1193,18 @@ def import_library_zip(db, archive_path: Path, *, uploads_dir: Path, active_vers
                 active = QuestionCurriculum(version_code=active_version, compulsory="", chapter="", knowledge="")
                 question.curriculum_mappings.append(active)
             question.category_compulsory, question.category_chapter, question.category_knowledge = active.compulsory, active.chapter, active.knowledge
-            for position, item in enumerate(record.get("knowledge_points", [])):
-                row = QuestionKnowledgePoint(point_code=points[item["code"]], role=item["role"], status=item["status"], position=item.get("position", position))
-                for field in METADATA_FIELDS:
-                    value = (_import_image_evidence(item, record, values, replacements)
-                             if field == "evidence" else item.get(field))
-                    setattr(row, field, json.dumps(value, ensure_ascii=False, allow_nan=False))
+            for position, (item, metadata) in enumerate(zip(record.get("knowledge_points", []), point_metadata, strict=True)):
+                row = QuestionKnowledgePoint(point_code=points[item["code"]], role=item["role"],
+                                             status=item["status"], position=item.get("position", position), **metadata)
                 question.knowledge_points.append(row)
             # The capability is single-use. Metadata now lives in the ORM's
             # complete JSON values; later reference remapping only needs the
             # record's authored text. Drop this private duplicate tree, while
             # retaining the original archive and the separate point catalog.
             record.pop("knowledge_points", None)
+            record["question_references"] = references
             db.add(question)
-            batch.append((question, record))
+            batch.append((question, source_id, fingerprint))
             # All rows still belong to one transaction. Flush bounded groups
             # so ORM relationship bookkeeping is not repeated for every row.
             if index % 128 == 0:
@@ -1168,10 +1216,20 @@ def import_library_zip(db, archive_path: Path, *, uploads_dir: Path, active_vers
             for label in record.get("source_labels", []):
                 db.add(QuestionSourceLabel(question_id=question_id, **label))
             for reference in record.get("question_references", []):
-                db.add(QuestionReference(source_question_id=question_id, **_reference_row(record, reference, replacements, id_map)))
-        # Each batch already computed and stored the same complete index. This
-        # final progress checkpoint confirms all indexes before the one commit.
-        _progress(progress, "fingerprinting", len(id_map), len(package["records"]))
+                old_target = reference["target_question_id"]
+                reference["target_question_id"] = id_map.get(old_target)
+                if old_target is not None and old_target not in id_map:
+                    reference.update(resolution_state="unresolved", reason="target_outside_share")
+                db.add(QuestionReference(source_question_id=question_id, **reference))
+        receipt = sqlite_insert(LibraryImportReceipt).values(
+            archive_sha256=prepared_state.archive_sha256,
+            imported_at=datetime.now(timezone.utc).replace(tzinfo=None),
+            question_count=len(id_map),
+        )
+        db.execute(receipt.on_conflict_do_update(index_elements=["archive_sha256"], set_={
+            "imported_at": receipt.excluded.imported_at,
+            "question_count": receipt.excluded.question_count,
+        }))
         result = {"imported_count": len(id_map), "image_count": len(package["assets"]), "id_map": id_map}
         _progress(progress, "committing", 0, 1)
         commit_attempted = True

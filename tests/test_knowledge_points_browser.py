@@ -456,6 +456,7 @@ def test_paper_point_get_and_ai_payload_match_and_keep_cart(browser, filter_exam
         browser.settle()
         browser.command("click", "#togglePaperAiBtn")
         browser.command("wait", "--fn", "!document.getElementById('paperAiDetails').hidden")
+        assert browser.evaluate("document.getElementById('paperAdvancedFilters').hidden")
         browser.command("scrollintoview", "#paperAiPromptInput")
         browser.command("fill", "#paperAiPromptInput", "按当前知识点条件选题")
         browser.command("scrollintoview", 'button[onclick="triggerAiPaperSelect()"]')
@@ -469,6 +470,7 @@ def test_paper_point_get_and_ai_payload_match_and_keep_cart(browser, filter_exam
         assert browser.evaluate("PaperStore.cart.map(item=>item.id)") == cart
         capture(browser,"paper-point-filters-and-cart")
         browser.command("set", "viewport", "375", "812")
+        browser.command("click", "#togglePaperFilterBtn")
         browser.command("scrollintoview", "#paperKnowledgePointPicker")
         browser.settle()
         open_picker(browser,"#paperKnowledgePointPicker")

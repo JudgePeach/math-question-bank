@@ -907,7 +907,7 @@ def test_clear_and_session_reset_entries_block_while_save_is_in_flight():
     assert clear_source.index(guard_call) < clear_source.index("EditorState.reset()")
 
     guarded_import_functions = (
-        ("function startNewQuestionWithoutPrompt()", "function switchSidebarTab", "EditorState.reset()"),
+        ("function startNewQuestionWithoutPrompt()", "function switchWorkflowTab", "EditorState.reset()"),
         ("function startNewQuestion()", "function refreshRelatedDropdown", "EditorState.reset()"),
     )
     for start_marker, end_marker, mutation_marker in guarded_import_functions:
@@ -1041,7 +1041,7 @@ def test_duplicate_checks_are_click_triggered_snapshot_bound_and_explicitly_over
     assert "if (outcome.invalid) return false" in single_source
 
     batch_start = import_source.index("function saveAllParsedQuestions()")
-    batch_end = import_source.index("// SIDEBAR QUESTION SOURCE", batch_start)
+    batch_end = import_source.index("// LaTeX TITLE AUTO-EXTRACTION HELPERS", batch_start)
     batch_source = import_source[batch_start:batch_end]
     assert batch_source.index("precheckParsedQuestionDuplicates") < batch_source.index(
         "runParsedSavePool"

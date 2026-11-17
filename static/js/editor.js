@@ -1,4 +1,5 @@
 // Sidebar Pagination & Sorting Global State
+let activeSidebarTab = 'bank'; // 'bank' or 'drafts'
 let currentBankPage = 1;
 let currentDraftPage = 1;
 const PAGE_LIMIT = 20;
@@ -35,6 +36,193 @@ function scheduleSidebarSearch() {
     invalidatePendingBankQuestions();
     currentBankPage = currentDraftPage = 1;
     sidebarSearchTimer = setTimeout(runSidebarSearchImmediately, SIDEBAR_SEARCH_DELAY_MS);
+}
+
+function bindQuestionSearchInput(input, onChange, onSuspend) {
+    let composing = false;
+    function refresh() {
+        onChange(!input.value.trim());
+    }
+    input.addEventListener('compositionstart', () => {
+        composing = true;
+        onSuspend();
+    });
+    input.addEventListener('compositionend', () => {
+        composing = false;
+        refresh();
+    });
+    input.addEventListener('input', event => {
+        if (composing || event.isComposing) {
+            onSuspend();
+            return;
+        }
+        refresh();
+    });
+    input.addEventListener('keydown', event => {
+        if (event.key !== 'Enter' || composing || event.isComposing || event.keyCode === 229) return;
+        event.preventDefault();
+        onChange(true);
+    });
+}
+
+function suspendSidebarSearch() {
+    cancelPendingSidebarSearch();
+    invalidatePendingBankQuestions();
+}
+
+function runSidebarSearchChange(immediate) {
+    if (immediate) runSidebarSearchImmediately();
+    else scheduleSidebarSearch();
+}
+
+function bindSidebarSearchInput(input) {
+    bindQuestionSearchInput(input, runSidebarSearchChange, suspendSidebarSearch);
+}
+
+function setupBankSearchControls() {
+    const input = document.getElementById('searchInput');
+    if (input) bindSidebarSearchInput(input);
+    for (const id of ['filterType', 'filterDifficulty', 'filterSort']) {
+        document.getElementById(id)?.addEventListener('change', runSidebarSearchImmediately);
+    }
+}
+
+function switchSidebarTab(tab) {
+    activeSidebarTab = tab;
+
+    const bankBtn = document.getElementById('sidebarTab-bank');
+    const draftsBtn = document.getElementById('sidebarTab-drafts');
+
+    if (tab === 'bank') {
+        bankBtn.classList.add('active');
+        draftsBtn.classList.remove('active-green');
+
+        loadQuestions();
+    } else {
+        draftsBtn.classList.add('active-green');
+        bankBtn.classList.remove('active');
+
+        loadDrafts();
+    }
+}
+
+const MAX_QUESTION_SEARCH_RULES = 8;
+
+function fitQuestionFilterPopover(panelId, workspaceId, listSelector) {
+    const panel = document.getElementById(panelId);
+    if (!panel || panel.hidden || !panel.getClientRects().length) return;
+    const viewport = window.visualViewport;
+    const workspaceBottom = document.getElementById(workspaceId).getBoundingClientRect().bottom;
+    const bottom = Math.min(workspaceBottom, viewport ? viewport.offsetTop + viewport.height : innerHeight);
+    const {left, top} = panel.getBoundingClientRect();
+    const libraryRight = document.querySelector(listSelector).getBoundingClientRect().right;
+    panel.style.setProperty('--question-filter-available-width', `${Math.max(0, libraryRight - left)}px`);
+    panel.style.setProperty('--question-filter-available-height', `${Math.max(0, bottom - top - 8)}px`);
+}
+
+function bindQuestionFilterPopover(panelId, keepOpenWithin, close, fit) {
+    const isOpen = () => {
+        const panel = document.getElementById(panelId);
+        return panel && !panel.hidden && panel.getClientRects().length;
+    };
+    document.addEventListener('pointerdown', event => {
+        if (isOpen() && event.target instanceof Element && !event.target.closest(keepOpenWithin)) close(false);
+    });
+    document.addEventListener('keydown', event => {
+        if (event.key !== 'Escape' || event.isComposing || event.defaultPrevented || !isOpen()) return;
+        event.preventDefault();
+        close(true);
+    });
+    window.addEventListener('resize', fit);
+    window.visualViewport?.addEventListener('resize', fit);
+    window.visualViewport?.addEventListener('scroll', fit);
+}
+
+function createQuestionFilterChip(title, remove, exclude = false) {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'bank-filter-condition';
+    if (exclude) button.classList.add('is-exclusion');
+    button.setAttribute('aria-label', '移除筛选条件 ' + title);
+    button.setAttribute('data-tooltip', title);
+    const label = document.createElement('span');
+    label.className = 'bank-filter-condition-text';
+    label.textContent = title;
+    const close = document.createElement('span');
+    close.className = 'bank-filter-condition-remove';
+    close.textContent = '×';
+    close.setAttribute('aria-hidden', 'true');
+    button.append(label, close);
+    button.addEventListener('click', remove);
+    return button;
+}
+
+function readQuestionSearchRows(host) {
+    return Array.from(host?.children || [], row => {
+        const field = row.querySelector('[data-rule-field]');
+        return {
+            row, label: field.selectedOptions[0].textContent,
+            field: field.value, operator: row.querySelector('[data-rule-operator]').value,
+            keyword: row.querySelector('input').value
+        };
+    });
+}
+
+function getBankSearchRules() {
+    return readQuestionSearchRows(document.getElementById('bankSearchRules'))
+        .map(rule => ({...rule, keyword: rule.keyword.trim()})).filter(rule => rule.keyword);
+}
+
+function updateQuestionSearchRuleControls(host, addButton, limitMessage) {
+    const full = host.children.length >= MAX_QUESTION_SEARCH_RULES;
+    addButton.disabled = full;
+    limitMessage.hidden = !full;
+    Array.from(host.children).forEach((row, index) => row.setAttribute('aria-label', `关键词条件 ${index + 1}`));
+}
+
+function appendQuestionSearchRuleRow(host, rule, onChange, onSuspend, remove) {
+    const row = document.getElementById('questionSearchRuleTemplate').content.firstElementChild.cloneNode(true);
+    const input = row.querySelector('input');
+    const operator = row.querySelector('[data-rule-operator]');
+    row.querySelector('[data-rule-field]').value = rule.field;
+    operator.value = rule.operator;
+    input.value = rule.keyword;
+    row.classList.toggle('is-exclusion', operator.value === 'exclude');
+    bindQuestionSearchInput(input, immediate => onChange(immediate, true), onSuspend);
+    row.addEventListener('change', event => {
+        if (event.target.tagName !== 'SELECT') return;
+        row.classList.toggle('is-exclusion', operator.value === 'exclude');
+        onChange(true, Boolean(input.value.trim()));
+    });
+    row.querySelector('button').addEventListener('click', () => remove(row));
+    host.append(row);
+    return input;
+}
+
+function updateBankSearchRuleControls() {
+    updateQuestionSearchRuleControls(document.getElementById('bankSearchRules'),
+        document.getElementById('addBankSearchRuleBtn'), document.getElementById('bankSearchRuleLimit'));
+}
+
+function removeBankSearchRule(row) {
+    const adjacent = row.nextElementSibling || row.previousElementSibling;
+    const isOpen = !document.getElementById('bankFilterFields').hidden;
+    row.remove();
+    updateBankSearchRuleControls();
+    runSidebarSearchImmediately();
+    const target = isOpen ? adjacent?.querySelector('input') || document.getElementById('addBankSearchRuleBtn')
+        : document.querySelector('.bank-filter-toggle');
+    target?.focus();
+}
+
+function addBankSearchRule() {
+    const host = document.getElementById('bankSearchRules');
+    if (host.children.length >= MAX_QUESTION_SEARCH_RULES) return;
+    const input = appendQuestionSearchRuleRow(host, {field:'all', operator:'include', keyword:''},
+        (immediate, reload) => { if (reload) runSidebarSearchChange(immediate); },
+        suspendSidebarSearch, removeBankSearchRule);
+    updateBankSearchRuleControls();
+    input.focus();
 }
 
 // A subdivision always carries its complete curriculum path. Legacy category
@@ -824,8 +1012,7 @@ function renderBankKnowledgePointConditions() {
     if (f.knowledge_point_codes.length) host.append(knowledgePointNode('span',
         (f.knowledge_point_mode === 'all' ? '同时包含全部' : '包含任意一个') + ' · '
         + (f.knowledge_point_role === 'all' ? '含辅助' : '主要考查'),'mb-kp-info'));
-    const filters = document.getElementById('bankFilterFields');
-    host.hidden = Boolean(filters?.classList.contains('is-open')) || !host.childNodes.length;
+    host.hidden = !host.childNodes.length;
 }
 window.onEditorKnowledgePointChange = () => {
     renderKnowledgePointPicker('edit');
@@ -1367,26 +1554,132 @@ window.visualViewport?.addEventListener('scroll', repositionKnowledgePointPicker
             hint.classList.toggle('is-complete', missing.length === 0);
         }
         window.refreshEditorFeedback = refreshEditorFeedback;
-        function renderBankFilterConditions(selected, subdivisions, open) {
+        // ==========================================
+        // SIDEBAR QUESTION SOURCE AUTOCOMPLETE FILTER
+        // ==========================================
+        function setupSourceFilterAutocomplete() {
+            const sourceInput = document.getElementById('filterSource');
+            const suggestionsDiv = document.getElementById('filterSourceSuggestions');
+            const toggleBtn = document.getElementById('toggleFilterSourceBtn');
+            const clearBtn = document.getElementById('clearFilterSourceBtn');
+            const chevronIcon = document.getElementById('chevronFilterSourceIcon');
+
+            if (!sourceInput || !suggestionsDiv) return;
+
+            let allSourcesList = [];
+
+            function fetchSources(callback) {
+                fetch('/api/sources')
+                    .then(r => r.json())
+                    .then(sources => {
+                        allSourcesList = sources;
+                        if (callback) callback(sources);
+                    })
+                    .catch(err => {
+                        console.error('Failed to fetch sources:', err);
+                    });
+            }
+
+            function renderSuggestions(list) {
+                suggestionsDiv.innerHTML = '';
+                if (list.length === 0) {
+                    suggestionsDiv.innerHTML = '<div class="px-3 py-2 text-[10px] text-slate-400 italic text-center select-none">无匹配来源</div>';
+                    suggestionsDiv.classList.remove('hidden');
+                    chevronIcon.classList.add('rotate-180');
+                    return;
+                }
+
+                list.forEach(src => {
+                    const item = document.createElement('div');
+                    item.className = "px-3 py-2 hover:bg-slate-50 text-xs text-slate-700 cursor-pointer select-none truncate font-medium transition-colors border-b border-slate-100/50 last:border-b-0";
+                    item.textContent = src;
+                    item.addEventListener('click', () => {
+                        sourceInput.value = src;
+                        suggestionsDiv.classList.add('hidden');
+                        chevronIcon.classList.remove('rotate-180');
+                        updateClearButtonVisibility();
+                        runSidebarSearchImmediately();
+                    });
+                    suggestionsDiv.appendChild(item);
+                });
+                suggestionsDiv.classList.remove('hidden');
+                chevronIcon.classList.add('rotate-180');
+            }
+
+            function updateClearButtonVisibility() {
+                if (sourceInput.value.trim() !== '') {
+                    clearBtn.classList.remove('hidden');
+                } else {
+                    clearBtn.classList.add('hidden');
+                }
+            }
+
+            sourceInput.addEventListener('focus', () => {
+                fetchSources(sources => {
+                    const val = sourceInput.value.trim().toLowerCase();
+                    if (val === '') {
+                        renderSuggestions(sources);
+                    } else {
+                        const filtered = sources.filter(s => s.toLowerCase().includes(val));
+                        renderSuggestions(filtered);
+                    }
+                });
+            });
+
+            sourceInput.addEventListener('input', () => {
+                updateClearButtonVisibility();
+                const val = sourceInput.value.trim().toLowerCase();
+                if (val === '') {
+                    renderSuggestions(allSourcesList);
+                } else {
+                    const filtered = allSourcesList.filter(s => s.toLowerCase().includes(val));
+                    renderSuggestions(filtered);
+                }
+            });
+
+            sourceInput.addEventListener('change', runSidebarSearchImmediately);
+
+            sourceInput.addEventListener('keydown', (e) => {
+                if (e.key === 'Enter') {
+                    suggestionsDiv.classList.add('hidden');
+                    chevronIcon.classList.remove('rotate-180');
+                    runSidebarSearchImmediately();
+                }
+            });
+
+            toggleBtn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                if (!suggestionsDiv.classList.contains('hidden')) {
+                    suggestionsDiv.classList.add('hidden');
+                    chevronIcon.classList.remove('rotate-180');
+                } else {
+                    sourceInput.focus();
+                }
+            });
+
+            clearBtn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                sourceInput.value = '';
+                updateClearButtonVisibility();
+                suggestionsDiv.classList.add('hidden');
+                chevronIcon.classList.remove('rotate-180');
+                runSidebarSearchImmediately();
+            });
+
+            document.addEventListener('click', (e) => {
+                if (!e.target.closest('#filterSourceContainer')) {
+                    suggestionsDiv.classList.add('hidden');
+                    chevronIcon.classList.remove('rotate-180');
+                }
+            });
+        }
+
+        function renderBankFilterConditions(selected, subdivisions, searchRules) {
             const host = document.getElementById('bankFilterConditions');
             if (!host) return;
             host.replaceChildren();
-            function appendCondition(title, remove) {
-                const button = document.createElement('button');
-                button.type = 'button';
-                button.className = 'bank-filter-condition';
-                button.setAttribute('aria-label', '移除筛选条件 ' + title);
-                button.setAttribute('data-tooltip', title);
-                const label = document.createElement('span');
-                label.className = 'bank-filter-condition-text';
-                label.textContent = title;
-                const close = document.createElement('span');
-                close.className = 'bank-filter-condition-remove';
-                close.textContent = '×';
-                close.setAttribute('aria-hidden', 'true');
-                button.append(label, close);
-                button.addEventListener('click', remove);
-                host.append(button);
+            function appendCondition(title, remove, exclude = false) {
+                host.append(createQuestionFilterChip(title, remove, exclude));
             }
             selected.forEach(input => {
                 const title = input.tagName === 'SELECT' ? input.selectedOptions[0]?.textContent || input.value : input.value;
@@ -1403,25 +1696,32 @@ window.visualViewport?.addEventListener('scroll', repositionKnowledgePointPicker
                 renderSubKnowledgeOptions('filter', getFilterSubKnowledge().filter(item => JSON.stringify(item) !== signature));
                 reloadBankKnowledgePointFilters();
             }));
-            host.hidden = open || !host.childNodes.length;
+            searchRules.forEach(({row, label, operator, keyword}) => {
+                const exclude = operator === 'exclude';
+                appendCondition(`${label}${exclude ? '排除' : '包含'}「${keyword}」`, () => removeBankSearchRule(row), exclude);
+            });
+            host.hidden = !host.childNodes.length;
         }
         function updateBankFilterSummary() {
-            const button = document.querySelector('.bank-filter-toggle');
+            const label = document.getElementById('bankFilterToggleText');
             const clear = document.getElementById('clearBankFiltersBtn');
-            if (!button || !clear) return;
+            if (!label || !clear) return;
             const selected = ['filterCompulsory', 'filterChapter', 'filterKnowledge', 'filterType', 'filterDifficulty', 'filterSource']
                 .map(id => document.getElementById(id)).filter(element => element && element.value);
             const subdivisions = getFilterSubKnowledge();
+            const searchRules = getBankSearchRules();
             const pointFilter = KnowledgePointState.filter('bank');
-            const count = selected.length + (subdivisions.length ? 1 : 0)
+            const count = selected.length + searchRules.length + (subdivisions.length ? 1 : 0)
                 + (pointFilter.knowledge_point_codes.length || pointFilter.knowledge_point_unlabeled ? 1 : 0);
-            const open = Boolean(document.getElementById('bankFilterFields')?.classList.contains('is-open'));
-            button.textContent = count ? `筛选 (${count})` : '筛选';
-            button.setAttribute('data-tooltip', [...selected.map(element => element.tagName === 'SELECT' ? element.selectedOptions[0]?.textContent : element.value), ...subdivisions.map(subKnowledgePathLabel)].join(' / ') || '按学段、章节、小节、细分知识点等条件筛选');
+            label.textContent = count ? `筛选 (${count})` : '筛选';
+            if (count === 0 && document.activeElement === clear) {
+                document.getElementById('bankFilterFields').focus({preventScroll: true});
+            }
             clear.hidden = count === 0;
-            renderBankFilterConditions(selected, subdivisions, open);
+            renderBankFilterConditions(selected, subdivisions, searchRules);
             renderBankKnowledgePointConditions();
-            document.getElementById('bankWorkspaceSection')?.classList.toggle('bank-has-filter-summary', !open && count > 0);
+            document.getElementById('bankWorkspaceSection')?.classList.toggle('bank-has-filter-summary', count > 0);
+            fitBankFilterPopover();
         }
         function clearBankFilters() {
             KnowledgePointState.setFilter('bank', {knowledge_point_codes: [], knowledge_point_mode:'any',
@@ -1432,6 +1732,8 @@ window.visualViewport?.addEventListener('scroll', repositionKnowledgePointPicker
                 if (element) element.value = '';
             });
             document.getElementById('clearFilterSourceBtn')?.classList.add('hidden');
+            document.getElementById('bankSearchRules').replaceChildren();
+            updateBankSearchRuleControls();
             renderSubKnowledgeOptions('filter', []);
             const mode = document.getElementById('filterSubKnowledgeMode');
             if (mode) mode.value = 'any';
@@ -1443,15 +1745,35 @@ window.visualViewport?.addEventListener('scroll', repositionKnowledgePointPicker
             }
         }
         window.clearBankFilters = clearBankFilters;
-        function toggleBankFilters(button) {
-            const fields = document.getElementById('bankFilterFields');
-            const open = fields.classList.toggle('is-open');
-            button.setAttribute('aria-expanded', String(open));
-            document.getElementById('bankWorkspaceSection').classList.toggle('bank-filters-open', open);
-            updateBankFilterSummary();
+        function fitBankFilterPopover() {
+            fitQuestionFilterPopover('bankFilterFields', 'bankWorkspaceSection', '#sidebarSection');
         }
+        function setBankFiltersOpen(open, restoreFocus = false) {
+            const panel = document.getElementById('bankFilterFields');
+            const button = document.querySelector('.bank-filter-toggle');
+            if (!panel || panel.hidden === !open) return;
+            panel.hidden = !open;
+            button.setAttribute('aria-expanded', String(open));
+            if (open) {
+                fitBankFilterPopover();
+                panel.focus({preventScroll: true});
+            } else {
+                const picker = knowledgePointViews.get('bank');
+                if (picker?.open) setKnowledgePointPickerOpen(picker, false);
+                if (restoreFocus) button.focus({preventScroll: true});
+            }
+        }
+        function toggleBankFilters() {
+            const open = document.getElementById('bankFilterFields').hidden;
+            setBankFiltersOpen(open, !open);
+        }
+        window.closeBankFilterPopover = (restoreFocus = true) => setBankFiltersOpen(false, restoreFocus);
+        bindQuestionFilterPopover('bankFilterFields',
+            '#bankFilterFields, .bank-filter-toggle, .bank-filter-toolbar, #sidebarTopPanel, #mb-kp-picker-bank',
+            restoreFocus => setBankFiltersOpen(false, restoreFocus), fitBankFilterPopover);
         function showBankDetail() {
-            if (!window.matchMedia('(max-width: 960px)').matches || (window.PaperStore && window.PaperStore.activeWorkspace !== 'bank')) return;
+            if (!window.matchMedia('(max-width: 960px)').matches || document.body.dataset.workspace !== 'bank') return;
+            setBankFiltersOpen(false);
             document.getElementById('bankWorkspaceSection').classList.add('bank-detail-open');
             const back = document.querySelector('.bank-detail-back');
             if (back) back.focus({preventScroll: true});
@@ -1462,6 +1784,16 @@ window.visualViewport?.addEventListener('scroll', repositionKnowledgePointPicker
         window.toggleBankFilters = toggleBankFilters;
         window.showBankDetail = showBankDetail;
         window.closeBankDetail = closeBankDetail;
+
+        document.addEventListener('DOMContentLoaded', () => {
+            setupBankSearchControls();
+            setupSourceFilterAutocomplete();
+            initResizers();
+            setupRealtimePreviews();
+            backupEditorState(null, null);
+            updateDraftCountBadge();
+            loadQuestions();
+        }, { once: true });
         document.addEventListener('input', event => {
             if (event.target.closest && event.target.closest('#editorSection')) refreshEditorFeedback();
         });
@@ -1926,6 +2258,23 @@ window.visualViewport?.addEventListener('scroll', repositionKnowledgePointPicker
                 });
             }
             
+            const searchRules = getBankSearchRules();
+            if (searchRules.length) {
+                drafts = drafts.filter(item => searchRules.every(({field, operator, keyword}) => {
+                    const fields = field === 'all' ? ['content', 'answer_markdown', 'review', 'source', 'tags'] : [field];
+                    const needle = keyword.toLowerCase();
+                    const match = fields.some(key => {
+                        const value = String(item[key] || '');
+                        if (!value.toLowerCase().includes(needle)) return false;
+                        if (key === 'source' || key === 'tags') return true;
+                        const visible = window.MathBankImageAssets.spans(value).reverse().reduce((text, {start, end}) =>
+                            text.slice(0, start) + ' '.repeat(end - start) + text.slice(end), value);
+                        return visible.toLowerCase().includes(needle);
+                    });
+                    return operator === 'include' ? match : !match;
+                }));
+            }
+
             // Sort Drafts by time (updated_at)
             const sortOrder = document.getElementById('filterSort') ? document.getElementById('filterSort').value : 'desc';
             drafts.sort((a, b) => {
@@ -2137,7 +2486,14 @@ window.visualViewport?.addEventListener('scroll', repositionKnowledgePointPicker
                         // 数据和图表完全就绪，再顺滑滑入弹窗并淡化背景
                         document.body.classList.add('modal-active');
                         modal.classList.remove('hidden');
-                        window.MathBankModal.open(modal, { onEscape: closeStatsModal });
+                        window.MathBankModal.open(modal, {
+                            onEscape: closeStatsModal,
+                            returnFocus: () => {
+                                // The stats button inside More Tools is hidden when the menu closes.
+                                const moreTools = document.querySelector('#headerMoreActions > summary');
+                                return moreTools?.getClientRects().length ? moreTools : document.getElementById('appNavStats');
+                            }
+                        });
                         setTimeout(() => {
                             modal.classList.remove('opacity-0');
                             modal.querySelector('div').classList.remove('scale-95');
@@ -2481,6 +2837,8 @@ window.visualViewport?.addEventListener('scroll', repositionKnowledgePointPicker
             
             const params = new URLSearchParams();
             if (q) params.append('q', q);
+            getBankSearchRules().forEach(({field, operator, keyword}) =>
+                params.append('search_rule', JSON.stringify({field, operator, keyword})));
             if (qtype) params.append('qtype', qtype);
             if (difficulty) params.append('difficulty', difficulty);
             if (compulsory) params.append('compulsory', compulsory);
@@ -2693,8 +3051,9 @@ window.visualViewport?.addEventListener('scroll', repositionKnowledgePointPicker
                 container.style.display = 'none';
                 return;
             }
+            const pageDigits = Math.max(3, String(totalPages).length);
             container.innerHTML = `
-                <div class="sidebar-pagination-controls flex items-center justify-between">
+                <div class="sidebar-pagination-controls flex items-center justify-between" style="--pagination-digits-width: ${pageDigits}ch">
                     <button class="pagination-btn pagination-btn-nav" ${currentPage === 1 ? 'disabled' : ''} onclick="goToSidebarPage(${currentPage - 1}, '${tabType}')">上一页</button>
                     <label class="pagination-page-label">第 <input type="number" aria-label="跳转页码" min="1" max="${totalPages}" value="${currentPage}" class="pagination-jump-input" onkeydown="if(event.key==='Enter') jumpToSidebarPage(this.value, ${totalPages}, '${tabType}')"> / ${totalPages} 页</label>
                     <button class="pagination-btn pagination-btn-nav" ${currentPage === totalPages ? 'disabled' : ''} onclick="goToSidebarPage(${currentPage + 1}, '${tabType}')">下一页</button>

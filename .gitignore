@@ -120,6 +120,7 @@ tests/artifacts/*
 /mathbank/knowledge_backfill_apply.py
 /mathbank/question_exchange.py
 /scripts/association_batch.py
+/scripts/audit_subquestion_numbering.py
 /scripts/backfill_question_references.py
 /scripts/classification_proposals.py
 /scripts/difficulty_batch.py

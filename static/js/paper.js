@@ -10,7 +10,6 @@
     // Local Storage Keys
     const STORAGE_KEY_CART = 'mathbank_paper_cart';
     const STORAGE_KEY_META = 'mathbank_paper_meta';
-    const STORAGE_KEY_COLLAPSED = 'mathbank_paper_filter_collapsed';
     const PAPER_STREAM_PAGE_SIZE = 15;
     const PAPER_QUESTION_CACHE_LIMIT = 120;
     const A4_PAGE = Object.freeze({ width: 794, height: 1123, margin: 96 });
@@ -45,6 +44,7 @@
             tab: 'all' // 'all' or 'selected'
         },
         isFilterCollapsed: true,
+        keywordRules: [],
         aiSelectionPrompt: '',
         aiSelectionLimit: 5,
         aiReferenceMode: 'recent_gaokao',
@@ -71,7 +71,7 @@
         expandedAnswerIds: new Set(),
         answerLoadingIds: new Set(),
         answerErrors: Object.create(null),
-        activeWorkspace: 'dashboard'
+        get activeWorkspace() { return document.body.dataset.workspace || 'dashboard'; }
     };
 
     // Bound complete off-cart questions and answer objects across long paging sessions.
@@ -131,9 +131,6 @@
             }
         } catch (e) { }
 
-        try {
-            window.PaperStore.isFilterCollapsed = localStorage.getItem(STORAGE_KEY_COLLAPSED) !== 'false';
-        } catch (e) { }
     }
 
     function saveCartToStorage() {
@@ -387,7 +384,12 @@
 
     window.setPaperMobilePane = function (pane) {
         const target = pane === 'preview' ? 'preview' : 'questions';
-        document.querySelector('.paper-studio-body').dataset.mobilePane = target;
+        if (target === 'preview' && window.matchMedia('(max-width: 960px)').matches) {
+            setPaperFiltersOpen(false);
+        }
+        const body = document.querySelector('.paper-studio-body');
+        body.dataset.mobilePane = target;
+        body.closest('.paper-studio-frame').dataset.mobilePane = target;
         document.querySelectorAll('[data-paper-pane]').forEach(button => button.setAttribute('aria-selected', String(button.dataset.paperPane === target)));
         window.dispatchEvent(new Event('resize'));
     };
@@ -472,101 +474,68 @@
         window.setPaperSplitRatio = setPaperSplitRatio;
     }
 
-    // Import is authored after the app shell so its large markup stays isolated,
-    // then mounted beside the bank and paper sections as a peer workspace.
-    const mainWorkspaceContainer = document.querySelector('#appContentShell > main');
-    const importWorkspaceSection = document.getElementById('importWorkspaceSection');
-    const paperWorkspaceSection = document.getElementById('paperWorkspaceSection');
-    if (
-        mainWorkspaceContainer
-        && importWorkspaceSection
-        && paperWorkspaceSection
-        && importWorkspaceSection.parentElement !== mainWorkspaceContainer
-    ) {
-        mainWorkspaceContainer.insertBefore(importWorkspaceSection, paperWorkspaceSection);
+    function paperFilterCount() {
+        const f = window.PaperStore.filters;
+        const points = KnowledgePointState.filter('paper');
+        return ['compulsory', 'chapter', 'knowledge', 'question_type', 'difficulty'].filter(key => f[key]).length
+            + activePaperSearchRules().length + (f.sub_knowledge?.length ? 1 : 0)
+            + (points.knowledge_point_codes?.length || points.knowledge_point_unlabeled ? 1 : 0);
     }
 
-    // Workspace View Switcher
-    const originalSelectWorkspace = window.selectWorkspace;
-    window.selectWorkspace = function (workspaceId, workspaceName) {
-        if (workspaceId === 'qa' && window.__qaEnabled === false) return;
-        // The initial flash-prevention class keeps the first workspace visible
-        // during page boot.  Once the user makes an explicit workspace choice,
-        // remove it so its !important rules cannot mask the target workspace.
-        document.documentElement.classList.remove('init-ws-dashboard', 'init-ws-paper');
-        const previousWorkspace = window.PaperStore.activeWorkspace || 'dashboard';
-        if (typeof originalSelectWorkspace === 'function') {
-            originalSelectWorkspace(workspaceId, workspaceName);
-        }
-
-        const importSec = document.getElementById('importWorkspaceSection');
-        const recordsSec = document.getElementById('recordsWorkspaceSection');
-        const dashboardSec = document.getElementById('dashboardWorkspaceSection');
-        const qaSec = document.getElementById('qaWorkspaceSection');
-        if (workspaceId === 'import' && previousWorkspace !== 'import' && importSec) {
-            importSec.dataset.returnNavTarget = previousWorkspace;
-        }
-
-        window.PaperStore.activeWorkspace = workspaceId;
-        document.body.dataset.workspace = workspaceId;
-        try {
-            localStorage.setItem('mathbank_active_workspace', workspaceId);
-            if (window.__serverInstanceId) {
-                localStorage.setItem('mathbank_server_instance_id', window.__serverInstanceId);
-            }
-        } catch (e) { }
-
-        const bankSec = document.getElementById('bankWorkspaceSection');
-        const paperSec = document.getElementById('paperWorkspaceSection');
-
-        if (dashboardSec) dashboardSec.classList.add('hidden');
-        if (bankSec) bankSec.classList.add('hidden');
-        if (paperSec) paperSec.classList.add('hidden');
-        if (importSec) importSec.classList.add('hidden');
-        if (recordsSec) recordsSec.classList.add('hidden');
-        if (qaSec) qaSec.classList.add('hidden');
-
-        if (workspaceId === 'dashboard') {
-            if (dashboardSec) {
-                dashboardSec.classList.remove('hidden');
-                if (typeof window.loadDashboardData === 'function') {
-                    window.loadDashboardData();
-                }
-            }
-        } else if (workspaceId === 'paper') {
-            if (paperSec) {
-                paperSec.classList.remove('hidden');
-                window.renderPaperWorkspace();
-            }
-        } else if (workspaceId === 'import') {
-            if (importSec) importSec.classList.remove('hidden');
-        } else if (workspaceId === 'records') {
-            if (recordsSec) recordsSec.classList.remove('hidden');
-        } else if (workspaceId === 'qa') {
-            if (qaSec) qaSec.classList.remove('hidden');
-        } else {
-            if (typeof window.closeBankDetail === 'function') window.closeBankDetail();
-            if (bankSec) bankSec.classList.remove('hidden');
-        }
-    };
-
-    // Toggle Part 2 Filter Bar Collapsing
     function refreshPaperFilterSummary() {
-        const count = ['compulsory', 'chapter', 'knowledge', 'question_type', 'difficulty'].filter(key => window.PaperStore.filters[key]).length
-            + (window.PaperStore.filters.sub_knowledge?.length ? 1 : 0)
-            + (window.PaperStore.filters.knowledge_point_codes?.length || window.PaperStore.filters.knowledge_point_unlabeled ? 1 : 0);
+        const count = paperFilterCount();
+        const collapsed = window.PaperStore.isFilterCollapsed;
         const label = document.getElementById('paperFilterToggleTxt');
         const button = document.getElementById('togglePaperFilterBtn');
         if (label) label.textContent = count ? `筛选 (${count})` : '筛选';
-        if (button) button.setAttribute('aria-expanded', String(!window.PaperStore.isFilterCollapsed));
+        if (button) button.setAttribute('aria-expanded', String(!collapsed));
+        const summary = document.getElementById('paperFilterConditions');
+        if (!summary) return;
+        summary.hidden = !activePaperSearchRules().length;
+        summary.replaceChildren();
+        if (!summary.hidden) {
+            readQuestionSearchRows(document.getElementById('paperSearchRules')).forEach(({row, label, operator, keyword}) => {
+                if (!keyword.trim()) return;
+                const exclude = operator === 'exclude';
+                const title = `${label}${exclude ? '排除' : '包含'}「${keyword.trim()}」`;
+                summary.append(createQuestionFilterChip(title, () => row.querySelector('button').click(), exclude));
+            });
+        }
+        fitPaperFilterPopover();
     }
-    window.togglePaperFilterBar = function () {
-        window.PaperStore.isFilterCollapsed = !window.PaperStore.isFilterCollapsed;
-        try { localStorage.setItem(STORAGE_KEY_COLLAPSED, String(window.PaperStore.isFilterCollapsed)); } catch (e) { }
+
+    function fitPaperFilterPopover() {
+        fitQuestionFilterPopover('paperAdvancedFilters', 'paperWorkspaceSection', '.paper-library-column');
+    }
+
+    function setPaperFiltersOpen(open, restoreFocus = false) {
+        if (window.PaperStore.isFilterCollapsed === !open) return;
+        window.PaperStore.isFilterCollapsed = !open;
         const panel = document.getElementById('paperAdvancedFilters');
-        if (panel) panel.hidden = window.PaperStore.isFilterCollapsed;
+        if (panel) panel.hidden = !open;
         refreshPaperFilterSummary();
+        if (open) panel?.focus({preventScroll: true});
+        else {
+            const picker = knowledgePointViews.get('paper');
+            if (picker?.open) setKnowledgePointPickerOpen(picker, false);
+            if (restoreFocus) document.getElementById('togglePaperFilterBtn')?.focus({preventScroll: true});
+        }
+    }
+
+    window.togglePaperFilterBar = function () {
+        const open = window.PaperStore.isFilterCollapsed;
+        if (open) {
+            window.syncPaperConfiguration('meta', false);
+            window.syncPaperConfiguration('ai', false);
+        }
+        setPaperFiltersOpen(open, !open);
     };
+    window.closePaperFilterPopover = function (restoreFocus = true) {
+        setPaperFiltersOpen(false, restoreFocus);
+    };
+    bindQuestionFilterPopover('paperAdvancedFilters',
+        '#paperAdvancedFilters, #togglePaperFilterBtn, #paperFilterConditions, #mb-kp-picker-paper',
+        restoreFocus => setPaperFiltersOpen(false, restoreFocus), fitPaperFilterPopover);
     window.togglePaperConfiguration = function (kind) {
         const meta = kind === 'meta';
         const panel = document.getElementById(meta ? 'paperMetaDetails' : 'paperAiDetails');
@@ -575,6 +544,10 @@
     };
     window.syncPaperConfiguration = function (kind, open) {
         const meta = kind === 'meta';
+        if (open) {
+            setPaperFiltersOpen(false);
+            window.syncPaperConfiguration(meta ? 'ai' : 'meta', false);
+        }
         window.PaperStore[meta ? 'isMetaExpanded' : 'isAiExpanded'] = open;
         const panel = document.getElementById(meta ? 'paperMetaDetails' : 'paperAiDetails');
         if (panel) panel.hidden = !open;
@@ -583,10 +556,11 @@
     };
     window.clearPaperFilters = function () {
         Object.assign(window.PaperStore.filters, {compulsory:'', chapter:'', knowledge:'', sub_knowledge:[], sub_knowledge_mode:'any', question_type:'', difficulty:''});
+        window.PaperStore.keywordRules = [];
         KnowledgePointState.setFilter('paper', {knowledge_point_codes:[], knowledge_point_mode:'any', knowledge_point_role:'main',
             knowledge_point_status:'all', knowledge_point_unlabeled:false});
         renderPart2FilterSection();
-        window.onPaperFilterChange('keyword', window.PaperStore.filters.keyword);
+        reloadPaperFilterResults(true);
     };
     window.onPaperCurriculumChanged = function () {
         clearTimeout(filterDebounceTimer);
@@ -649,6 +623,7 @@
     };
 
     let bankQuestionsAbortController = null;
+    let filterDebounceTimer = null;
     let bankQuestionsRequestSeq = 0;
     let cartQuestionsLoadPromise = null;
     const paperActionInFlight = new Set();
@@ -889,6 +864,7 @@
 
     // Fetch one server-paginated page for the Question Bank Stream.
     async function fetchBankQuestions(requestedPage = null) {
+        clearTimeout(filterDebounceTimer);
         const protectedFigureLayouts = snapshotFigureLayoutsForBankFetch();
         const f = window.PaperStore.filters;
         const pagination = window.PaperStore.streamPagination.all;
@@ -917,6 +893,7 @@
             params.append('q', f.keyword);
             params.append('search', f.keyword);
         }
+        activePaperSearchRules().forEach(rule => params.append('search_rule', JSON.stringify(rule)));
         params.set('page', String(targetPage));
         params.set('page_size', String(PAPER_STREAM_PAGE_SIZE));
         params.set('sort', 'desc');
@@ -973,9 +950,9 @@
 
     // Render Full Paper Workspace (Part 2, Part 3, Part 4)
     window.renderPaperWorkspace = async function () {
+        renderPart2FilterSection();
         await fetchBankQuestions();
         await ensureCartQuestionsLoaded({ revalidateAll: true });
-        renderPart2FilterSection();
         renderPart3QuestionStream();
         window.renderPaperCanvas();
     };
@@ -986,6 +963,8 @@
         const f = window.PaperStore.filters;
         const container = document.getElementById('paperFilterSection');
         if (!container) return;
+        const focusId = container.contains(document.activeElement) ? document.activeElement.id : '';
+        const filterScroll = document.getElementById('paperFilterScroll')?.scrollTop || 0;
 
         const tree = window.categoryTree || {};
         const metadata = window.systemMetadata || {};
@@ -1046,30 +1025,47 @@
         });
 
         container.innerHTML = `
-            <div class="paper-controls-stack">
+            <div class="question-filter-anchor">
                 <div class="workspace-command-bar paper-command-bar">
-                    <label class="workspace-search"><i class="fa-solid fa-magnifying-glass" aria-hidden="true"></i><input id="paperFilterKeyword" type="search" aria-label="搜索组卷题库" value="${escapeHtml(f.keyword)}" oninput="onPaperFilterChange('keyword', this.value)" placeholder="搜索题干、来源或标签..." class="glass-input"></label>
                     <button type="button" id="togglePaperFilterBtn" class="glass-btn" onclick="togglePaperFilterBar()" aria-controls="paperAdvancedFilters" aria-expanded="${!window.PaperStore.isFilterCollapsed}"><i id="paperFilterToggleIcon" class="fa-solid fa-filter" aria-hidden="true"></i><span id="paperFilterToggleTxt">筛选</span></button>
+                    <label class="workspace-search"><i class="fa-solid fa-magnifying-glass" aria-hidden="true"></i><input id="paperFilterKeyword" type="search" aria-label="搜索组卷题库" value="${escapeHtml(f.keyword)}" placeholder="搜索题干、解析、来源或标签（#题号）…" class="glass-input"></label>
                     <button type="button" id="togglePaperMetaBtn" class="glass-btn" onclick="togglePaperConfiguration('meta')" aria-controls="paperMetaDetails" aria-expanded="${Boolean(window.PaperStore.isMetaExpanded)}">试卷信息</button>
                     <button type="button" id="togglePaperAiBtn" class="glass-btn" onclick="togglePaperConfiguration('ai')" aria-controls="paperAiDetails" aria-expanded="${Boolean(window.PaperStore.isAiExpanded)}"><i class="fa-solid fa-wand-magic-sparkles" aria-hidden="true"></i> AI 选题</button>
                 </div>
-                <div id="paperAdvancedFilters" class="workspace-filter-grid" ${window.PaperStore.isFilterCollapsed ? 'hidden' : ''}>
-                    <label>学段<select id="paperFilterCompulsory" class="glass-select" onchange="onPaperFilterChange('compulsory', this.value)">${bookOptions}</select></label>
-                    <label>章节<select id="paperFilterChapter" class="glass-select" onchange="onPaperFilterChange('chapter', this.value)" ${isChapterDisabled ? 'disabled' : ''}>${chapterOptions}</select></label>
-                    <label>小节<select id="paperFilterKnowledge" class="glass-select" onchange="onPaperFilterChange('knowledge', this.value)" ${isKnowledgeDisabled ? 'disabled' : ''}>${knowledgeOptions}</select></label>
-                    <label>题型<select id="paperFilterType" class="glass-select" onchange="onPaperFilterChange('question_type', this.value)">${qTypeOptions}</select></label>
-                    <label>难度<select id="paperFilterDifficulty" class="glass-select" onchange="onPaperFilterChange('difficulty', this.value)">${diffOptions}</select></label>
-                    <button type="button" class="glass-btn" onclick="clearPaperFilters()">清除筛选</button>
-                    <div id="paperKnowledgePointPicker" class="mb-knowledge-point-field"></div>
-                </div>
-                <section id="paperMetaDetails" class="paper-configuration-panel paper-meta-details" aria-labelledby="togglePaperMetaBtn" ${window.PaperStore.isMetaExpanded ? '' : 'hidden'}>
+                <div id="paperFilterConditions" class="bank-filter-conditions paper-filter-conditions" role="group" aria-label="组卷关键词条件" hidden></div>
+                <section id="paperAdvancedFilters" class="question-filter-popover" aria-labelledby="paperFilterHeading" tabindex="-1" ${window.PaperStore.isFilterCollapsed ? 'hidden' : ''}>
+                    <header class="question-filter-popover-heading">
+                        <h2 id="paperFilterHeading">筛选试题</h2>
+                        <button type="button" id="clearPaperFiltersBtn" class="question-filter-action" onclick="clearPaperFilters()">清除筛选</button>
+                        <button type="button" class="question-filter-action question-filter-dismiss" aria-label="关闭筛选" onclick="closePaperFilterPopover()"><i class="fa-solid fa-xmark" aria-hidden="true"></i></button>
+                    </header>
+                    <div id="paperFilterScroll" class="workspace-filter-grid question-filter-scroll">
+                        <div class="question-scope-filters" role="group" aria-label="题目范围">
+                            <label>学段<select id="paperFilterCompulsory" class="glass-select" onchange="onPaperFilterChange('compulsory', this.value)">${bookOptions}</select></label>
+                            <label>章节<select id="paperFilterChapter" class="glass-select" onchange="onPaperFilterChange('chapter', this.value)" ${isChapterDisabled ? 'disabled' : ''}>${chapterOptions}</select></label>
+                            <label>小节<select id="paperFilterKnowledge" class="glass-select" onchange="onPaperFilterChange('knowledge', this.value)" ${isKnowledgeDisabled ? 'disabled' : ''}>${knowledgeOptions}</select></label>
+                            <label>题型<select id="paperFilterType" class="glass-select" onchange="onPaperFilterChange('question_type', this.value)">${qTypeOptions}</select></label>
+                            <label>难度<select id="paperFilterDifficulty" class="glass-select" onchange="onPaperFilterChange('difficulty', this.value)">${diffOptions}</select></label>
+                            <div id="paperKnowledgePointPicker" class="mb-knowledge-point-field"></div>
+                        </div>
+                        <div class="bank-keyword-filters" role="group" aria-labelledby="paperKeywordHeading">
+                            <div class="bank-keyword-heading">
+                                <div><h3 id="paperKeywordHeading">关键词条件</h3><p id="paperKeywordHint">手动和 AI 选题共用</p></div>
+                                <button type="button" id="addPaperSearchRuleBtn" class="glass-btn bank-keyword-add" aria-controls="paperSearchRules" aria-describedby="paperKeywordHint"><i class="fa-solid fa-plus" aria-hidden="true"></i> 添加条件</button>
+                            </div>
+                            <div id="paperSearchRules" class="bank-keyword-rules"></div>
+                            <p id="paperSearchRuleLimit" class="bank-keyword-limit" role="status" hidden>已添加 8 条条件，移除一条后可继续添加。</p>
+                        </div>
+                    </div>
+                </section>
+                <section id="paperMetaDetails" class="paper-configuration-panel paper-meta-details paper-control-section" aria-labelledby="togglePaperMetaBtn" ${window.PaperStore.isMetaExpanded ? '' : 'hidden'}>
                     <div class="workspace-filter-grid">
                         <label>主标题<input type="text" id="paperMetaTitle" value="${escapeHtml(meta.title)}" oninput="updatePaperMeta('title', this.value)" onchange="updatePaperMeta('title', this.value)" class="glass-input"></label>
                         <label>副标题 / 备注<input type="text" id="paperMetaSubtitle" value="${escapeHtml(meta.subtitle)}" oninput="updatePaperMeta('subtitle', this.value)" onchange="updatePaperMeta('subtitle', this.value)" class="glass-input"></label>
                         <label>试卷模板<select id="paperMetaType" onchange="updatePaperMeta('paper_type', this.value)" class="glass-select"><option value="exam_19" ${meta.paper_type === 'exam_19' ? 'selected' : ''}>19题高考卷（含答题卡）</option><option value="exam" ${meta.paper_type === 'exam' ? 'selected' : ''}>常规试卷</option><option value="quiz" ${meta.paper_type === 'quiz' ? 'selected' : ''}>日常小练</option></select></label>
                     </div>
                 </section>
-                <section id="paperAiDetails" class="paper-configuration-panel paper-ai-details" aria-labelledby="togglePaperAiBtn" ${window.PaperStore.isAiExpanded ? '' : 'hidden'}>
+                <section id="paperAiDetails" class="paper-configuration-panel paper-ai-details paper-control-section" aria-labelledby="togglePaperAiBtn" ${window.PaperStore.isAiExpanded ? '' : 'hidden'}>
                     <div class="paper-ai-entry"><input type="text" id="paperAiPromptInput" aria-label="AI选题要求" value="${escapeHtml(window.PaperStore.aiSelectionPrompt || '')}" oninput="window.PaperStore.aiSelectionPrompt = this.value" onkeydown="if(event.key==='Enter'&&!event.isComposing) triggerAiPaperSelect()" class="glass-input" placeholder="例如：函数专题，兼顾基础、迁移与综合应用"><button type="button" id="paperAiSelectBtn" onclick="triggerAiPaperSelect()" aria-busy="${Boolean(window.PaperStore.aiSelectionBusy)}" ${window.PaperStore.aiSelectionBusy ? 'disabled' : ''} class="glass-btn-primary">${window.PaperStore.aiSelectionBusy ? '正在选题…' : '开始选题'}</button></div>
                     <div class="paper-ai-options">
                         <label>新增题量<input id="paperAiLimitInput" type="number" min="1" max="30" step="1" value="${escapeHtml(String(window.PaperStore.aiSelectionLimit))}" oninput="window.PaperStore.aiSelectionLimit = this.value" class="glass-input"></label>
@@ -1080,16 +1076,57 @@
                     <p class="paper-ai-help">在当前筛选范围内新增题目，保留已选题，自动参考相关课标要求。可在要求中说明已学进度；真题用于参考考查方式与难度梯度。明确题数优先，否则使用新增题量。</p>
                 </section>
             </div>`;
-        refreshPaperFilterSummary();
+        const keywordInput = document.getElementById('paperFilterKeyword');
+        bindQuestionSearchInput(keywordInput, immediate => window.onPaperFilterChange('keyword', keywordInput.value, immediate),
+            suspendPaperSearch);
+        mountPaperSearchRules();
         mountKnowledgePointPicker('paper', document.getElementById('paperKnowledgePointPicker'));
         if (typeof window.renderSubKnowledgeOptions === 'function') window.renderSubKnowledgeOptions('paper', f.sub_knowledge || []);
         renderPaperAiReferenceOptions();
         if (window.PaperStore.isAiExpanded) window.loadPaperReferenceExams();
+        refreshPaperFilterSummary();
+        document.getElementById('paperFilterScroll').scrollTop = filterScroll;
+        if (focusId) document.getElementById(focusId)?.focus({preventScroll: true});
     }
 
-    let filterDebounceTimer = null;
-    window.onPaperFilterChange = function (key, value) {
-        window.PaperStore.filters[key] = value;
+    function mountPaperSearchRules() {
+        const host = document.getElementById('paperSearchRules');
+        const add = document.getElementById('addPaperSearchRuleBtn');
+        const limit = document.getElementById('paperSearchRuleLimit');
+        const updateControls = () => updateQuestionSearchRuleControls(host, add, limit);
+        const commit = (immediate, reload) => {
+            window.PaperStore.keywordRules = readQuestionSearchRows(host)
+                .map(({field, operator, keyword}) => ({field, operator, keyword}));
+            if (reload) reloadPaperFilterResults(immediate);
+        };
+        const remove = row => {
+            const adjacent = row.nextElementSibling || row.previousElementSibling;
+            const reload = Boolean(row.querySelector('input').value.trim());
+            row.remove();
+            updateControls();
+            commit(true, reload);
+            const target = window.PaperStore.isFilterCollapsed ? document.getElementById('togglePaperFilterBtn')
+                : adjacent?.querySelector('input') || add;
+            target.focus();
+        };
+        const append = rule => appendQuestionSearchRuleRow(host, rule, commit, suspendPaperSearch, remove);
+        window.PaperStore.keywordRules.forEach(append);
+        add.addEventListener('click', () => {
+            if (host.children.length >= MAX_QUESTION_SEARCH_RULES) return;
+            const input = append({field:'all', operator:'include', keyword:''});
+            updateControls();
+            commit(true, false);
+            input.focus();
+        });
+        updateControls();
+    }
+
+    function suspendPaperSearch() {
+        clearTimeout(filterDebounceTimer);
+        cancelBankQuestionsFetch();
+    }
+
+    function reloadPaperFilterResults(immediate) {
         const allPagination = window.PaperStore.streamPagination.all;
         allPagination.page = 1;
         allPagination.total = null;
@@ -1097,39 +1134,34 @@
         allPagination.error = '';
         allPagination.retryPage = 1;
         window.PaperStore.bankQuestions = [];
-        cancelBankQuestionsFetch();
-        clearTimeout(filterDebounceTimer);
-        
+        suspendPaperSearch();
         refreshPaperFilterSummary();
-        // Handle cascade resets
-        if (key === 'compulsory') {
-            window.PaperStore.filters.chapter = '';
-            window.PaperStore.filters.knowledge = '';
-            window.PaperStore.filters.sub_knowledge = [];
-            renderPart2FilterSection();
-        } else if (key === 'chapter') {
-            window.PaperStore.filters.knowledge = '';
-            window.PaperStore.filters.sub_knowledge = [];
-            renderPart2FilterSection();
-        } else if (key === 'knowledge') {
-            window.PaperStore.filters.sub_knowledge = [];
-            if (typeof window.renderSubKnowledgeOptions === 'function') window.renderSubKnowledgeOptions('paper', []);
-        }
-        refreshPaperFilterSummary();
-
-        renderKnowledgePointPicker('paper');
-        if (key === 'keyword') {
+        const load = async () => {
+            if (await fetchBankQuestions(1)) renderPart3QuestionStream();
+        };
+        if (immediate) load();
+        else {
             allPagination.loading = true;
             renderPart3QuestionStream();
-            filterDebounceTimer = setTimeout(async () => {
-                const shouldRender = await fetchBankQuestions(1);
-                if (shouldRender) renderPart3QuestionStream();
-            }, 300);
-        } else {
-            fetchBankQuestions(1).then((shouldRender) => {
-                if (shouldRender) renderPart3QuestionStream();
-            });
+            filterDebounceTimer = setTimeout(load, 300);
         }
+    }
+
+    window.onPaperFilterChange = function (key, value, immediate = key !== 'keyword') {
+        const f = window.PaperStore.filters;
+        f[key] = value;
+        if (key === 'compulsory') {
+            Object.assign(f, {chapter:'', knowledge:'', sub_knowledge:[]});
+            renderPart2FilterSection();
+        } else if (key === 'chapter') {
+            Object.assign(f, {knowledge:'', sub_knowledge:[]});
+            renderPart2FilterSection();
+        } else if (key === 'knowledge') {
+            f.sub_knowledge = [];
+            if (typeof window.renderSubKnowledgeOptions === 'function') window.renderSubKnowledgeOptions('paper', []);
+            renderKnowledgePointPicker('paper');
+        }
+        reloadPaperFilterResults(immediate);
     };
 
     function syncCanvasHeaderMeta(key, value) {
@@ -1264,6 +1296,12 @@
         return fallback;
     }
 
+    function activePaperSearchRules() {
+        return (window.PaperStore.keywordRules || []).map(({field, operator, keyword}) => ({
+            field, operator, keyword: keyword.trim()
+        })).filter(rule => rule.keyword);
+    }
+
     function getPaperAiSelectionRequest() {
         const store = window.PaperStore;
         const f = store.filters;
@@ -1282,6 +1320,7 @@
             question_type: f.question_type,
             difficulty: f.difficulty,
             keyword: f.keyword,
+            search_rules: activePaperSearchRules(),
             ...KnowledgePointState.filter('paper')
         };
     }
@@ -1418,7 +1457,9 @@
         const safeTotalPages = Math.max(1, parseInt(totalPages, 10) || 1);
         const safeCurrentPage = clampPaperStreamPage(currentPage, safeTotalPages);
         const pageNumbers = getPaperStreamPageNumbers(safeCurrentPage, safeTotalPages);
+        const pageDigits = Math.max(3, String(safeTotalPages).length);
         const baseButtonClass = 'min-w-[32px] h-8 px-2 rounded-lg border text-xs font-semibold transition-colors disabled:cursor-not-allowed disabled:opacity-35';
+        const inactiveButtonClass = `${baseButtonClass} border-slate-200 bg-white text-slate-600 hover:border-brand-200 hover:text-brand-700 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300`;
 
         return `
             <nav class="mt-5 flex flex-wrap items-center justify-between gap-3 border-t border-slate-200/70 pt-4 dark:border-slate-700/70"
@@ -1427,24 +1468,36 @@
                 <div class="flex flex-wrap items-center justify-end gap-1.5">
                     <button type="button" onclick="window.changePaperStreamPage('${tabName}', ${safeCurrentPage - 1})"
                         ${safeCurrentPage <= 1 ? 'disabled' : ''}
-                        class="${baseButtonClass} border-slate-200 bg-white text-slate-600 hover:border-brand-200 hover:text-brand-700 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300">
+                        class="${inactiveButtonClass}">
                         上一页
                     </button>
                     ${pageNumbers.map(page => page === null
                         ? '<span class="min-w-[24px] text-center text-xs text-slate-400" aria-hidden="true">…</span>'
                         : `<button type="button" onclick="window.changePaperStreamPage('${tabName}', ${page})"
                             ${page === safeCurrentPage ? 'aria-current="page"' : ''}
-                            class="${baseButtonClass} ${page === safeCurrentPage
-                                ? 'border-brand-500 bg-brand-600 text-white shadow-sm'
-                                : 'border-slate-200 bg-white text-slate-600 hover:border-brand-200 hover:text-brand-700 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300'}">
+                            class="${page === safeCurrentPage
+                                ? `${baseButtonClass} border-brand-500 bg-brand-600 text-white shadow-sm`
+                                : inactiveButtonClass}">
                             ${page}
                         </button>`).join('')}
                     <button type="button" onclick="window.changePaperStreamPage('${tabName}', ${safeCurrentPage + 1})"
                         ${safeCurrentPage >= safeTotalPages ? 'disabled' : ''}
-                        class="${baseButtonClass} border-slate-200 bg-white text-slate-600 hover:border-brand-200 hover:text-brand-700 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300">
+                        class="${inactiveButtonClass}">
                         下一页
                     </button>
                 </div>
+                ${safeTotalPages > 1 ? `
+                    <form class="flex items-center gap-1.5" style="--pagination-digits-width: ${pageDigits}ch"
+                        onsubmit="event.preventDefault(); window.changePaperStreamPage('${tabName}', this.elements.page.valueAsNumber)">
+                        <label class="pagination-page-label text-slate-500 dark:text-slate-400">第
+                            <input type="number" name="page" aria-label="跳转页码" inputmode="numeric"
+                                min="1" max="${safeTotalPages}" step="1" required value="${safeCurrentPage}"
+                                class="pagination-jump-input h-8">
+                            页
+                        </label>
+                        <button type="submit" class="${inactiveButtonClass}">跳转</button>
+                    </form>
+                ` : ''}
             </nav>
         `;
     }
@@ -1770,6 +1823,7 @@
         const cart = window.PaperStore.cart;
         const bankQuestions = window.PaperStore.bankQuestions;
         const currentTab = window.PaperStore.filters.tab || 'all';
+        const candidateLabel = window.PaperStore.filters.keyword?.trim() || paperFilterCount() ? '筛选结果' : '全库试题';
         const pagination = window.PaperStore.streamPagination;
         const cartLoadState = window.PaperStore.cartQuestionLoad;
         clampStoredPaperStreamPages();
@@ -1810,11 +1864,11 @@
             <!-- Part 3 Stream Header Bar -->
             <div id="paperQuestionStreamTop" class="flex flex-wrap items-center justify-between gap-2 pb-3 mb-4 border-b border-slate-200/60 dark:border-slate-700/60">
                 <div class="flex items-center space-x-1.5 bg-slate-200/60 p-1 rounded-xl dark:bg-slate-800">
-                    <button onclick="switchPaperStreamTab('all')" 
+                    <button type="button" onclick="switchPaperStreamTab('all')" aria-pressed="${currentTab === 'all'}"
                         class="px-3 py-1 rounded-lg text-xs font-bold transition-all ${currentTab === 'all' ? 'bg-white text-brand-600 shadow-sm dark:bg-slate-700 dark:text-brand-200' : 'text-slate-500 hover:text-slate-800 dark:text-slate-400'}">
-                        全库试题 (${Number.isInteger(pagination.all.total) ? pagination.all.total : '—'})
+                        ${candidateLabel} (${Number.isInteger(pagination.all.total) ? pagination.all.total : '—'})
                     </button>
-                    <button onclick="switchPaperStreamTab('selected')" 
+                    <button type="button" onclick="switchPaperStreamTab('selected')" aria-pressed="${currentTab === 'selected'}"
                         class="px-3 py-1 rounded-lg text-xs font-bold transition-all ${currentTab === 'selected' ? 'bg-white text-brand-600 shadow-sm dark:bg-slate-700 dark:text-brand-200' : 'text-slate-500 hover:text-slate-800 dark:text-slate-400'}">
                         已选试题 (${cart.length})
                     </button>
@@ -1883,7 +1937,7 @@
                 ? (cart.length > 0 ? '已选题目暂未载入' : '尚未选择试题')
                 : '未找到符合条件的题目';
             const emptyDescription = currentTab === 'selected'
-                ? (cart.length > 0 ? '请重新加载已选题目后再预览或导出试卷。' : '从“全库试题”中加入题目后，会在这里按卷面顺序显示。')
+                ? (cart.length > 0 ? '请重新加载已选题目后再预览或导出试卷。' : `从「${candidateLabel}」中加入的题目会按卷面顺序显示。`)
                 : '请在上方调节学段、章节、题型、难度或搜索条件。';
             html += `
                 <div class="ui-state ui-state-empty py-20 bg-white/50 backdrop-blur-md rounded-2xl border border-dashed border-slate-300 dark:bg-slate-800/40 dark:border-slate-700">
@@ -1982,7 +2036,7 @@
                         <span class="paper-resource-category" title="${escapeHtml([q.category_compulsory, q.category_chapter].filter(Boolean).join(' · '))}">${escapeHtml([q.category_compulsory, q.category_chapter].filter(Boolean).join(' · '))}</span>
                         ${usageCount ? `<span class="paper-resource-usage">引用 ${escapeHtml(usageCount)} 次</span>` : ''}
                     </div>
-                    ${questionSource ? `<p class="paper-resource-source" title="${escapeHtml(questionSource)}">来源：${escapeHtml(questionSource)}</p>` : ''}
+                    ${questionSource ? `<p class="paper-resource-source" data-tooltip="${escapeHtml(questionSource)}" data-tooltip-variant="paper-source"><span class="paper-resource-source-text">来源：${escapeHtml(questionSource)}</span></p>` : ''}
 
                     <!-- Full Question Render Content -->
                     <div class="question-full-render-box text-sm leading-relaxed text-slate-800 dark:text-slate-100 overflow-x-auto select-text" id="paper-q-render-${q.id}">
@@ -3876,11 +3930,13 @@
             if (window.showToast) {
                 const baseTip = `Word 打包《${filename}》导出成功（含试卷正文与含答案解析两份文档）！`;
                 if (failedCount > 0) {
-                    window.showToast(`${baseTip}，有 ${failedCount} 处公式已用红字标出`, 'warning');
+                    window.showToast(`Word 已导出。两份文档共 ${failedCount} 处公式未能转换，请查看红字「公式待核对」。`, 'warning');
                 } else if (fallbackCount > 0) {
                     window.showToast(`${baseTip}，${nativeCount} 处原生公式，${fallbackCount} 处图片保真公式`, 'warning');
-                } else {
+                } else if (nativeCount > 0) {
                     window.showToast(`${baseTip}，${nativeCount} 处公式均可直接编辑`, 'success');
+                } else {
+                    window.showToast(baseTip, 'success');
                 }
             }
         } catch (e) {
@@ -5241,10 +5297,6 @@
         initPaperSplitResizer();
         loadStateFromStorage();
         updateCartBadges();
-
-        // A reload returns home; cart, paper metadata and local drafts stay intact.
-        window.selectWorkspace('dashboard', '工作台');
-        document.documentElement.classList.remove('init-ws-dashboard', 'init-ws-paper');
     });
 
 })();

@@ -82,7 +82,7 @@ def search_questions(query=None, qtype=None, difficulty=None, limit=50,
             reader, query=query or "", qtype=qtype or "",
             difficulty=difficulty or "", limit=-1 if limit is None else limit,
             related_to=associated_to_id, profile="evidence", include_answers=True,
-            sort="id_desc",
+            sort="id_desc", include_seq_num=False,
         )
     return [tuple(item.get(key, "") for key in LEGACY_COLUMNS)
             for item in result["items"]]
@@ -137,6 +137,7 @@ def build_parser():
     parser.add_argument("--sort", choices=("asc", "desc"), default="desc")
     parser.add_argument("--ids", action="append", help="按稳定ID读取，如 --ids 12,34；可重复传入")
     parser.add_argument("--profile", choices=("candidate", "teaching", "evidence"), help="候选摘要、完整教学材料或全部标注依据")
+    parser.add_argument("--no-seq-num", action="store_true", help="题目 JSON 中省略动态显示题号")
     actions = parser.add_mutually_exclusive_group()
     actions.add_argument("--capabilities", action="store_true", help="读取能力、当前枚举与字段说明")
     actions.add_argument("--catalog", action="store_true", help="查询知识点目录，配合 --knowledge-query 或 -q")
@@ -166,13 +167,13 @@ def _read(reader, args):
         if any((ids, args.query, args.source, args.compulsory, args.chapter, args.knowledge,
                 args.knowledge_point, args.knowledge_query, args.qtype, args.difficulty,
                 args.related_to is not None, args.profile, args.with_answers, args.version_code,
-                args.page != 1, args.limit is not None, args.sort != "desc",
+                args.page != 1, args.limit is not None, args.sort != "desc", args.no_seq_num,
                 args.knowledge_mode != "any", args.knowledge_role != "main")):
             raise ValueError("--capabilities 读取全库能力，不能同时使用题目筛选、分层或分页参数")
         return reader.capabilities(), "capabilities", False
     if args.catalog:
         if any((ids, args.source, args.knowledge_point, args.qtype, args.difficulty,
-                args.related_to is not None, args.profile, args.with_answers,
+                args.related_to is not None, args.profile, args.with_answers, args.no_seq_num,
                 args.sort != "desc", args.knowledge_mode != "any", args.knowledge_role != "main")):
             raise ValueError("--catalog 查询知识点目录，不支持题目ID、来源、题型、难度或详情参数")
         if not 1 <= limit <= 100:
@@ -187,7 +188,7 @@ def _read(reader, args):
             raise ValueError("--assets 需要 --ids 指定题目")
         if any((args.query, args.source, args.compulsory, args.chapter, args.knowledge,
                 args.knowledge_point, args.knowledge_query, args.qtype, args.difficulty,
-                args.related_to is not None, args.profile, args.with_answers,
+                args.related_to is not None, args.profile, args.with_answers, args.no_seq_num,
                 args.version_code, args.page != 1, args.limit is not None,
                 args.sort != "desc", args.knowledge_mode != "any",
                 args.knowledge_role != "main")):
@@ -198,6 +199,7 @@ def _read(reader, args):
         "teaching" if ids or args.with_answers or args.format == "markdown" else "candidate"
     )
     include_answers = args.with_answers or bool(ids) or args.profile in {"teaching", "evidence"}
+    include_seq_num = args.format == "json" and not args.no_seq_num
     if profile == "candidate" and args.with_answers:
         raise ValueError("candidate仅返回候选摘要；需要答案时请使用 teaching 或 evidence")
     if ids:
@@ -209,7 +211,7 @@ def _read(reader, args):
             raise ValueError("--ids 按指定ID读取，不能同时使用搜索筛选条件")
         result = reader.get_questions(
             ids, profile=profile, include_answers=include_answers,
-            version_code=args.version_code,
+            version_code=args.version_code, include_seq_num=include_seq_num,
         )
     else:
         result = _search_page(
@@ -220,7 +222,7 @@ def _read(reader, args):
             knowledge_point_role=args.knowledge_role, qtype=args.qtype or "",
             difficulty=args.difficulty or "", related_to=args.related_to,
             profile=profile, include_answers=include_answers, sort=args.sort,
-            version_code=args.version_code,
+            version_code=args.version_code, include_seq_num=include_seq_num,
         )
     return result, "questions", include_answers
 

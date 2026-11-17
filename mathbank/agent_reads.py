@@ -7,6 +7,7 @@ schema, seeds catalogues, restores retained assets, or changes stored content.
 
 from __future__ import annotations
 
+from collections import defaultdict
 import hashlib
 import json
 import mimetypes
@@ -105,6 +106,7 @@ class AgentReader:
             self.connection.row_factory = sqlite3.Row
             self.connection.execute("PRAGMA query_only=ON")
             self.connection.execute("BEGIN")
+            self._sequences = None
             self.tables = {row[0] for row in self.connection.execute(
                 "SELECT name FROM sqlite_master WHERE type='table'"
             )}
@@ -275,7 +277,7 @@ class AgentReader:
                knowledge_point_codes=None, knowledge_query="", knowledge_point_mode="any",
                knowledge_point_role="main", knowledge_point_status="all", qtype="", difficulty="",
                page=1, page_size=20, related_to=None, profile="candidate", include_answers=False,
-               sort="desc", version_code=None):
+               sort="desc", version_code=None, include_seq_num=True):
         profile = self._profile(profile)
         page = _integer(page, "页码")
         page_size = _integer(page_size, "每页条数", 1, 100)
@@ -363,7 +365,7 @@ class AgentReader:
         order = self._order(sort)
         rows = self._execute("SELECT q.* FROM questions q WHERE " + where + " ORDER BY " + order +
                              " LIMIT ? OFFSET ?", [*params, page_size, (page - 1) * page_size]).fetchall()
-        items = [self._project(dict(row), profile, include_answers, version) for row in rows]
+        items = self._project_rows(rows, profile, include_answers, version, include_seq_num)
         matched_codes = set(codes) | {point["code"] for point in resolved_points}
         for item, row in zip(items, rows):
             reasons = []
@@ -408,87 +410,143 @@ class AgentReader:
             raise ValueError("读取层次必须是 candidate、teaching 或 evidence")
         return profile
 
-    def get_questions(self, ids, profile="teaching", include_answers=True, version_code=None):
+    def get_questions(self, ids, profile="teaching", include_answers=True, version_code=None,
+                      *, include_seq_num=True):
         ids, profile = _ids(ids), self._profile(profile)
         version = self._version(version_code)
-        rows = {row["id"]: dict(row) for row in self._execute(
+        rows = {row["id"]: row for row in self._execute(
             "SELECT * FROM questions WHERE id IN (" + ",".join("?" for _ in ids) + ")", ids
         )}
-        return {"items": [self._project(rows[qid], profile, include_answers, version) for qid in ids if qid in rows],
+        ordered_rows = [rows[qid] for qid in ids if qid in rows]
+        return {"items": self._project_rows(ordered_rows, profile, include_answers, version, include_seq_num),
                 "requested_ids": ids, "missing_ids": [qid for qid in ids if qid not in rows],
                 "profile": profile, "version_code": version, "active_version_code": self.active_version_code}
 
-    def _points(self, qid, evidence=False):
+    def _points(self, ids, placeholders, evidence):
+        result = defaultdict(list)
         if not self._has("question_knowledge_points", "knowledge_points"):
-            return []
+            return result
         audit = "," + ",".join("r." + field for field in _AUDIT_FIELDS) if evidence else ""
-        rows = self._execute("SELECT k.code,k.name,r.role,r.status" + audit +
-                             " FROM question_knowledge_points r JOIN knowledge_points k ON k.code=r.point_code "
-                             "WHERE r.question_id=? ORDER BY r.position,r.id", (qid,))
-        result = []
+        rows = self._execute(
+            "SELECT r.question_id,k.code,k.name,r.role,r.status" + audit +
+            " FROM question_knowledge_points r JOIN knowledge_points k ON k.code=r.point_code "
+            f"WHERE r.question_id IN ({placeholders}) ORDER BY r.question_id,r.position,r.id", ids,
+        )
         for row in rows:
             point = dict(row)
+            qid = point.pop("question_id")
             if evidence:
                 for field in _AUDIT_FIELDS:
                     point[field] = _json(point[field], point[field])
-            result.append(point)
+            result[qid].append(point)
         return result
 
-    def _mappings(self, qid):
+    def _mappings(self, ids, placeholders):
+        result = defaultdict(list)
         if not self._has("question_curriculums"):
-            return []
-        result = []
-        for row in self._execute("SELECT * FROM question_curriculums WHERE question_id=? ORDER BY version_code", (qid,)):
+            return result
+        mappings = {}
+        for row in self._execute(
+            f"SELECT * FROM question_curriculums WHERE question_id IN ({placeholders}) "
+            "ORDER BY question_id,version_code", ids,
+        ):
             mapping = dict(row)
-            if self._has("question_sub_knowledge"):
-                mapping["sub_knowledge"] = [dict(value) for value in self._execute(
-                    "SELECT compulsory,chapter,knowledge FROM question_sub_knowledge WHERE curriculum_id=? ORDER BY position,id",
-                    (mapping["id"],),
-                )]
-            else:
-                mapping["sub_knowledge"] = []
-            result.append(mapping)
+            mapping["sub_knowledge"] = []
+            mappings[mapping["id"]] = mapping
+            result[mapping["question_id"]].append(mapping)
+        if mappings and self._has("question_sub_knowledge"):
+            for row in self._execute(
+                "SELECT s.curriculum_id,s.compulsory,s.chapter,s.knowledge "
+                "FROM question_sub_knowledge s JOIN question_curriculums c ON c.id=s.curriculum_id "
+                f"WHERE c.question_id IN ({placeholders}) ORDER BY s.curriculum_id,s.position,s.id", ids,
+            ):
+                child = dict(row)
+                mappings[child.pop("curriculum_id")]["sub_knowledge"].append(child)
         return result
 
-    def _references(self, row):
+    def _references(self, rows_by_id, placeholders, sequences):
+        result = defaultdict(list)
         if not self._has("question_references"):
-            return []
-        sequences, result = self._sequence_map(), []
-        for value in self._execute("SELECT * FROM question_references WHERE source_question_id=? ORDER BY field,start,id", (row["id"],)):
+            return result
+        for value in self._execute(
+            "SELECT r.*,target.id AS existing_target_id FROM question_references r "
+            "LEFT JOIN questions target ON target.id=r.target_question_id "
+            f"WHERE r.source_question_id IN ({placeholders}) ORDER BY r.source_question_id,r.field,r.start,r.id",
+            tuple(rows_by_id),
+        ):
             item = dict(value)
+            target_id = item.pop("existing_target_id")
+            row = rows_by_id[item["source_question_id"]]
             text = str(row.get(item["field"]) or "")
             current = _hash(text) == item["field_sha256"] and text[item["start"]:item["end"]] == item["text"]
             if not current:
                 status, reason = "stale", "source_text_changed"
             elif item["resolution_state"] == "resolved":
-                status = "resolved" if item["target_question_id"] in sequences else "target_deleted"
+                status = "resolved" if target_id is not None else "target_deleted"
                 reason = "" if status == "resolved" else "target_deleted"
             else:
                 status, reason = "unresolved", item.get("reason", "")
-            item.update(status=status, reason=reason,
-                        seq_num=sequences.get(item["target_question_id"]) if status == "resolved" else None)
-            result.append(item)
+            item.update(status=status, reason=reason)
+            if sequences is not None:
+                item["seq_num"] = sequences.get(target_id) if status == "resolved" else None
+            result[row["id"]].append(item)
         return result
 
-    def _project(self, row, profile, include_answers, version):
+    def _source_labels(self, ids, placeholders):
+        result = defaultdict(list)
+        if self._has("question_source_labels"):
+            for row in self._execute(
+                "SELECT question_id,book_key,label_key,original_label FROM question_source_labels "
+                f"WHERE question_id IN ({placeholders}) ORDER BY question_id,id", ids,
+            ):
+                label = dict(row)
+                result[label.pop("question_id")].append(label)
+        return result
+
+    def _project_rows(self, rows, profile, include_answers, version, include_seq_num):
+        if not rows:
+            return []
+        rows_by_id = {row["id"]: dict(row) for row in rows}
+        ids = tuple(rows_by_id)
+        placeholders = ",".join("?" for _ in ids)
+        include_details = profile != "candidate"
+        include_evidence = profile == "evidence"
+        sequences = self._sequence_map() if include_seq_num else None
+        points = self._points(ids, placeholders, include_evidence)
+        mappings = (self._mappings(ids, placeholders)
+                    if include_details or version != self.active_version_code else {})
+        references = self._references(rows_by_id, placeholders, sequences) if include_details else {}
+        labels = self._source_labels(ids, placeholders) if include_evidence else {}
+        return [
+            self._project(
+                row, profile, include_answers, version,
+                seq_num=sequences.get(qid) if sequences is not None else None,
+                points=points.get(qid, []), mappings=mappings.get(qid, []),
+                references=references.get(qid, []), source_labels=labels.get(qid, []),
+            )
+            for qid, row in rows_by_id.items()
+        ]
+
+    def _project(self, row, profile, include_answers, version, *, seq_num,
+                 points, mappings, references, source_labels):
         content = str(row.get("content") or "")
         asset_roles = self._asset_roles(row)
         item = {key: row.get(key, "") for key in (
             "id", "question_type", "category_compulsory", "category_chapter", "category_knowledge",
             "difficulty", "source", "association_group_id", "tags", "created_at",
         )}
+        if seq_num is not None:
+            item["seq_num"] = seq_num
         item.update(
-            seq_num=self._sequence_map().get(row["id"]),
             content_sha256=_hash(content),
             revision_sha256=_hash(json.dumps(row, ensure_ascii=False, sort_keys=True, separators=(",", ":"))),
             has_answer=bool(str(row.get("answer_markdown") or "").strip()),
             has_review=bool(str(row.get("review") or "").strip()),
             image_count=len(asset_roles), has_images=bool(asset_roles),
-            knowledge_points=self._points(row["id"], profile == "evidence"),
+            knowledge_points=points,
             version_code=version, active_version_code=self.active_version_code,
             quality={"content_verification": "unknown", "answer_verification": "unknown"},
         )
-        mappings = self._mappings(row["id"])
         if version != self.active_version_code:
             mapping = next((value for value in mappings if value["version_code"] == version), None)
             for key in ("compulsory", "chapter", "knowledge"):
@@ -501,7 +559,7 @@ class AgentReader:
             return item
         assets = self._assets(row)
         item.update(content=content, review=str(row.get("review") or ""),
-                    curriculum_mappings=mappings, question_references=self._references(row),
+                    curriculum_mappings=mappings, question_references=references,
                     assets=assets, image_paths=[asset["url"] for asset in assets
                                                if asset["url"] and "reference" not in asset["roles"]])
         for key in ("figure_align", "figure_align_custom", "figure_size", "usage_count"):
@@ -514,9 +572,7 @@ class AgentReader:
                 item[key] = row.get(key) or ""
             for key in ("content_tikz_assets", "answer_tikz_assets"):
                 item[key] = _json(row.get(key), [])
-            item["source_labels"] = [dict(value) for value in self._execute(
-                "SELECT book_key,label_key,original_label FROM question_source_labels WHERE question_id=? ORDER BY id", (row["id"],)
-            )] if self._has("question_source_labels") else []
+            item["source_labels"] = source_labels
         return item
 
     def _asset_roles(self, row):
@@ -564,6 +620,13 @@ class AgentReader:
                 item["url"] = "/" + self.uploads_url_prefix + "/" + path.relative_to(self.uploads_dir).as_posix()
                 if self.include_local_paths:
                     item["local_path"] = str(path)
+                from mathbank.tiered_storage import readable_path, TieredStorageError
+                try:
+                    path = readable_path(path)
+                except TieredStorageError:
+                    item["status"] = "external_unavailable"
+                    result.append(item)
+                    continue
                 item["exists"] = path.is_file()
                 item["status"] = "missing" if not item["exists"] else "available"
                 if item["exists"]:

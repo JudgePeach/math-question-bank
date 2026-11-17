@@ -26,10 +26,10 @@ from lxml import etree
 from docx import Document
 from docx.enum.section import WD_SECTION
 from docx.enum.table import WD_CELL_VERTICAL_ALIGNMENT, WD_TABLE_ALIGNMENT
-from docx.enum.text import WD_ALIGN_PARAGRAPH, WD_BREAK, WD_LINE_SPACING
+from docx.enum.text import WD_ALIGN_PARAGRAPH, WD_BREAK, WD_LINE_SPACING, WD_TAB_ALIGNMENT
 from docx.oxml import OxmlElement, parse_xml
 from docx.oxml.ns import nsdecls, qn
-from docx.shared import Cm, Inches, Pt, RGBColor
+from docx.shared import Cm, Emu, Inches, Pt, RGBColor
 
 from mathbank.runtime_components import find_usable_pandoc
 from mathbank.question_types import PAPER_TYPE_ORDER, custom_type_labels, is_written_question_type, paper_type_order
@@ -38,7 +38,10 @@ from mathbank.markdown_tables import find_markdown_tables, normalize_table_cell_
 from mathbank.source_comments import strip_source_attribution_comment
 from mathbank.content_sources import content_source_export_files, content_sources_notice
 from mathbank.word_lists import LatexList, find_latex_lists
-from mathbank.question_assets import image_reference_spans
+from mathbank.word_math import (
+    STANDALONE_ENVIRONMENTS, iter_word_math_spans, mask_word_math_literals, word_literal_ranges,
+)
+from mathbank.question_assets import _mask_literals, image_reference_spans
 from mathbank.paper_layout import item_solution_space_cm
 from mathbank.processing_timeouts import TIKZ_COMPILE_TIMEOUT_SECONDS, WORD_CONVERSION_TIMEOUT_SECONDS
 
@@ -75,7 +78,25 @@ TABULAR_PATTERN = re.compile(
     r"\\begin\{tabular\}\s*\{([^}]*)\}([\s\S]*?)\\end\{tabular\}",
     re.IGNORECASE,
 )
-BARE_MATH_ENVS = ("cases", "aligned", "alignedat", "matrix", "pmatrix", "bmatrix", "vmatrix", "Vmatrix")
+_TABULAR_TOKEN = re.compile(
+    r"\\(?P<edge>begin|end)\s*\{(?P<environment>[^{}\r\n]+)\}"
+    r"|(?P<row>\\\\\*?(?:[ \t]*\[[^\]\r\n]*\])?)"
+    r"|(?P<rule>\\(?:toprule|midrule|bottomrule|hline)(?![A-Za-z@])"
+    r"|\\(?:cline|cmidrule)(?:\([^)]*\))?\s*\{[^{}]*\})"
+    r"|\\[^\r\n]|(?P<brace>[{}])|(?P<cell>&)"
+)
+_WORD_ENV_BLOCK = re.compile(
+    r"\\begin\s*\{(?P<name>[A-Za-z]+\*?)\}(?P<body>[\s\S]*)\\end\s*\{(?P=name)\}"
+)
+_WORD_ALIGNED_ENVIRONMENTS = {"align": "aligned", "alignat": "alignedat", "flalign": "aligned"}
+_WORD_DISPLAY_WRAPPERS = {"equation", "displaymath", "math"}
+_WORD_ROW_NUMBER_ENVIRONMENTS = {*_WORD_ALIGNED_ENVIRONMENTS, "gather", "eqnarray"}
+_WORD_TAG_ARGUMENT = re.compile(r"\s*(?P<star>\*)?\s*\{")
+_WORD_PLAIN_TAG = re.compile(r"[^\\{}$%#^_&~\x00-\x1f\x7f]*")
+_WORD_COMPARISON_ALIASES = {r"\lt": "<", r"\gt": ">"}
+_WORD_TEXT_DOLLAR = re.compile(r"\\\\|\\\$|\\textdollar(?![A-Za-z@])(?:\{\})?")
+_PARAGRAPH_BREAK = re.compile(r"\n\s*\n")
+_FORMULA_PNG_SCALE = 3
 CJK_BODY_FONT = "SimSun"
 CJK_HEADING_FONT = "SimHei"
 CJK_TITLE_FONT = "STZhongsong"
@@ -142,6 +163,24 @@ class MathToken:
 
 
 @dataclass(frozen=True)
+class MathBoundaryIssue:
+    source: str
+    reason: str
+
+
+@dataclass(frozen=True)
+class WordEquationTags:
+    formula: str
+    labels: tuple[str | None, ...]
+
+
+@dataclass(frozen=True)
+class NumberedWordEquation:
+    omml: bytes
+    label: str
+
+
+@dataclass(frozen=True)
 class BlankToken:
     """A Word-native underlined answer blank, kept outside OMML."""
 
@@ -188,9 +227,26 @@ def _split_content_segments(content: str) -> list[tuple[str, str | LatexList, st
     segments: list[tuple[str, str | LatexList, str]] = []
 
     def add_text(value: str) -> None:
-        for paragraph in re.split(r"\n\s*\n", value):
-            if paragraph.strip():
-                segments.append(("text", paragraph.strip(), ""))
+        math_spans = list(iter_word_math_spans(value))
+        protected = word_literal_ranges(value) + [(span.start, span.end) for span in math_spans]
+        boundaries = [
+            match.span() for match in _PARAGRAPH_BREAK.finditer(value)
+            if not any(left < match.end() and match.start() < right for left, right in protected)
+        ]
+        boundaries.extend(
+            (position, position) for span in math_spans
+            if span.block or (span.display and _has_formula_tag(span.latex))
+            for position in (span.start, span.end)
+        )
+        cursor = 0
+        for start, end in sorted(boundaries):
+            if start < cursor:
+                continue
+            if paragraph := value[cursor:start].strip():
+                segments.append(("text", paragraph, ""))
+            cursor = end
+        if paragraph := value[cursor:].strip():
+            segments.append(("text", paragraph, ""))
 
     lists = find_latex_lists(source)
     blocks = [(item.start, item.end, "list", item, "")
@@ -298,8 +354,10 @@ def _find_pandoc() -> str | None:
 def _normalize_formula(formula: str) -> str:
     value = (formula or "").strip()
     value = re.sub(r"^\$\$?|\$\$?$", "", value).strip()
-    value = re.sub(r"\\lt\s*", "<", value)
-    value = re.sub(r"\\gt\s*", ">", value)
+    if r"\lt" in value or r"\gt" in value:
+        value = _WORD_FORMULA_COMMAND.sub(
+            lambda match: _WORD_COMPARISON_ALIASES.get(match.group(), match.group()), value,
+        )
     value = re.sub(r"\\(?:displaystyle|textstyle|scriptstyle|scriptscriptstyle)\b", "", value)
     return value.strip()
 
@@ -318,13 +376,20 @@ _WORD_FORMULA_LITERAL_COMMANDS = {
 
 
 def _prepare_word_formula(formula: str) -> str:
-    r"""Adapt four known zero-argument atoms in a conversion copy only.
+    r"""Adapt display environments and known zero-argument atoms for conversion.
 
     Keep the authored formula as the OMML/fallback cache key and diagnostic.
     Full control tokens consume escaped backslash pairs before aliases; braces
     keep each expansion one atom even in ``\frac\iu\eu`` or ``x^\iu``.
     Literal/definition-bearing input stays intact rather than guessing TeX.
     """
+    if (block := _WORD_ENV_BLOCK.fullmatch(formula)) and block["name"] in STANDALONE_ENVIRONMENTS:
+        if not _has_formula_tag(formula):
+            name = block["name"].rstrip("*")
+            # Keep row separators and one newline after a TeX comment.
+            body = _PARAGRAPH_BREAK.sub("\n", block["body"])
+            inner = _WORD_ALIGNED_ENVIRONMENTS.get(name, "gathered" if name == "gather" else block["name"])
+            formula = body.strip() if name in _WORD_DISPLAY_WRAPPERS else rf"\begin{{{inner}}}{body}\end{{{inner}}}"
     if not formula or not any("\\" + name in formula for name in _WORD_EXAMZH_CONSTANTS):
         return formula
     if ("`" in formula or re.search(r"https?://|/static/|<\s*(?:code|pre|mathbank-math)\b|\[\[MBM_", formula)
@@ -340,70 +405,115 @@ def _prepare_word_formula(formula: str) -> str:
     )
 
 
-def _consume_math(text: str, start: int) -> tuple[MathToken | None, int]:
-    if text.startswith("$$", start):
-        end = text.find("$$", start + 2)
-        if end >= 0:
-            return MathToken(_normalize_formula(text[start + 2 : end]), True), end + 2
-    if text.startswith(r"\[", start):
-        end = text.find(r"\]", start + 2)
-        if end >= 0:
-            return MathToken(_normalize_formula(text[start + 2 : end]), True), end + 2
-    if text.startswith(r"\(", start):
-        end = text.find(r"\)", start + 2)
-        if end >= 0:
-            return MathToken(_normalize_formula(text[start + 2 : end]), False), end + 2
-    if text[start : start + 1] == "$" and (start == 0 or text[start - 1] != "\\"):
-        cursor = start + 1
-        while cursor < len(text):
-            if text[cursor] == "$" and text[cursor - 1] != "\\":
-                return MathToken(_normalize_formula(text[start + 1 : cursor]), False), cursor + 1
-            cursor += 1
-    for env_name in BARE_MATH_ENVS:
-        opener = rf"\begin{{{env_name}}}"
-        if text.startswith(opener, start):
-            closer = rf"\end{{{env_name}}}"
-            end = text.find(closer, start + len(opener))
-            if end >= 0:
-                finish = end + len(closer)
-                return MathToken(_normalize_formula(text[start:finish]), True), finish
-    return None, start
+def _has_formula_tag(formula: str) -> bool:
+    if r"\tag" not in formula:
+        return False
+    scan = _mask_literals(formula)
+    return any(match.group() == r"\tag" for match in _WORD_FORMULA_COMMAND.finditer(scan))
 
 
-def tokenize_mixed_content(text: str) -> list[str | MathToken | BlankToken]:
-    """Split mixed Chinese/LaTeX text without relying on regex lookbehind."""
+def _extract_word_equation_tags(formula: str) -> WordEquationTags | None:
+    """Bind plain explicit tags to a whole display or to its authored rows."""
+    scan = _mask_literals(formula)
+    commands = list(_WORD_FORMULA_COMMAND.finditer(scan))
+    tags = {match.start(): match.end() for match in commands if match.group() == r"\tag"}
+    if not tags or any(
+        match.group() != r"\label" and match.group()[1:] in _WORD_FORMULA_LITERAL_COMMANDS for match in commands
+    ):
+        return None
+
+    block = _WORD_ENV_BLOCK.fullmatch(formula)
+    environment = block["name"].rstrip("*") if block else ""
+    per_row = environment in _WORD_ROW_NUMBER_ENVIRONMENTS
+    suppressions = {
+        match.start(): match.end() for match in commands if match.group() in (r"\notag", r"\nonumber")
+    } if per_row else {}
+    # The sole array form also occurs in older imported material.
+    at_root = per_row or environment in _WORD_DISPLAY_WRAPPERS | {"array", "multline"}
+    start, end = block.span("body") if at_root else (0, len(scan))
+    edits: list[tuple[int, int]] = []
+    labels: list[str | None] = []
+    environments: list[str] = []
+    depth = 0
+    row_start = start
+    cursor = start
+    current_label = None
+    found_tags = 0
+    for token in _TABULAR_TOKEN.finditer(scan, start, end):
+        position = token.start()
+        if position < cursor:
+            continue
+        if token["edge"] == "begin":
+            environments.append(token["environment"])
+        elif token["edge"] == "end":
+            if not environments or environments.pop() != token["environment"]:
+                return None
+        elif token["brace"]:
+            depth += 1 if token["brace"] == "{" else -1
+            if depth < 0:
+                return None
+        elif depth or environments:
+            continue
+        elif token["row"] and per_row:
+            labels.append(current_label)
+            current_label = None
+            row_start = token.end()
+        elif position in tags:
+            argument = _WORD_TAG_ARGUMENT.match(scan, tags[position], end)
+            group = _read_latex_group(formula, argument.end() - 1) if argument else None
+            if current_label is not None or group is None or group[1] > end:
+                return None
+            value = " ".join(group[0].split())
+            if not value or not _WORD_PLAIN_TAG.fullmatch(value):
+                return None
+            current_label = value if argument["star"] else f"({value})"
+            cursor = group[1]
+            edits.append((position, cursor))
+            found_tags += 1
+        elif position in suppressions:
+            cursor = suppressions[position]
+            edits.append((position, cursor))
+    if depth or environments or found_tags != len(tags):
+        return None
+    if not per_row or current_label is not None or scan[row_start:end].strip():
+        labels.append(current_label)
+    chunks = []
+    cursor = 0
+    for start, end in edits:
+        # Leave a TeX control-word boundary if the tag was between two atoms.
+        chunks.extend((formula[cursor:start], " "))
+        cursor = end
+    chunks.append(formula[cursor:])
+    return WordEquationTags("".join(chunks).strip(), tuple(labels))
+
+
+def tokenize_mixed_content(text: str) -> list[str | MathToken | BlankToken | MathBoundaryIssue]:
+    """Split mixed Word content, including formulas that need review."""
     from mathbank.fillin_placeholders import normalize_fillin_placeholder_clusters
     source = normalize_school_math_symbols(normalize_fillin_placeholder_clusters(text or ""), target="word")
     source = source.replace("\r\n", "\n").replace("\r", "\n")
-    tokens: list[str | MathToken | BlankToken] = []
-    plain: list[str] = []
-    index = 0
-    while index < len(source):
-        token, next_index = _consume_math(source, index)
-        if token is not None:
-            if plain:
-                tokens.append("".join(plain))
-                plain = []
-            if token.latex:
-                formula_parts = token.latex.split(r"\fillin")
-                for part_index, formula_part in enumerate(formula_parts):
-                    if formula_part.strip():
-                        tokens.append(MathToken(formula_part.strip(), token.display))
-                    if part_index < len(formula_parts) - 1:
-                        tokens.append(BlankToken())
-            index = next_index
-            continue
-        if source.startswith(r"\fillin", index):
-            if plain:
-                tokens.append("".join(plain))
-                plain = []
-            tokens.append(BlankToken())
-            index += len(r"\fillin")
-            continue
-        plain.append(source[index])
-        index += 1
-    if plain:
-        tokens.append("".join(plain))
+    tokens: list[str | MathToken | BlankToken | MathBoundaryIssue] = []
+
+    def append_parts(value: str, *, display: bool | None = None) -> None:
+        parts = value.split(r"\fillin")
+        for index, part in enumerate(parts):
+            if display is None:
+                if part:
+                    tokens.append(part)
+            elif part.strip():
+                tokens.append(MathToken(part.strip(), display))
+            if index + 1 < len(parts):
+                tokens.append(BlankToken())
+
+    cursor = 0
+    for span in iter_word_math_spans(source):
+        append_parts(source[cursor:span.start])
+        if span.issue:
+            tokens.append(MathBoundaryIssue(span.latex, span.issue))
+        else:
+            append_parts(_normalize_formula(span.latex), display=span.display)
+        cursor = span.end
+    append_parts(source[cursor:])
     return tokens
 
 
@@ -434,6 +544,8 @@ def _word_formula_sources(source: str) -> list[str]:
                     for literal, part in _markdown_cell_parts(normalize_table_cell_math(cell))
                     if not literal
                 )
+        elif kind == "table":
+            values.extend(_parse_table_cell(cell).text for row in _split_tabular_rows(second) for cell in row)
         else:
             values.extend((first, second))
     return values
@@ -442,11 +554,11 @@ def _word_formula_sources(source: str) -> list[str]:
 def _markdown_cell_parts(value: str) -> list[tuple[bool, str]]:
     """Separate literal code from math-bearing text in a Markdown cell."""
     parts: list[tuple[bool, str]] = []
+    math_ends = {span.start: span.end for span in iter_word_math_spans(value)}
     cursor = copied = 0
     while cursor < len(value):
-        token, next_index = _consume_math(value, cursor)
-        if token is not None:
-            cursor = next_index
+        if cursor in math_ends:
+            cursor = math_ends[cursor]
             continue
         code = re.match(r"(`+)(.*?)\1", value[cursor:])
         verb = re.match(
@@ -467,33 +579,121 @@ def _markdown_cell_parts(value: str) -> list[tuple[bool, str]]:
 
 def _decode_markdown_cell_pipes(value: str) -> str:
     parts: list[str] = []
-    cursor = copied = 0
-    while cursor < len(value):
-        token, next_index = _consume_math(value, cursor)
-        if token is not None:
-            parts.extend((value[copied:cursor].replace(r"\|", "|"), value[cursor:next_index]))
-            cursor = copied = next_index
-        else:
-            cursor += 1
+    copied = 0
+    for span in iter_word_math_spans(value):
+        parts.extend((value[copied:span.start].replace(r"\|", "|"), value[span.start:span.end]))
+        copied = span.end
     parts.append(value[copied:].replace(r"\|", "|"))
     return "".join(parts)
 
 
+def _omml_matrix_column(alignment: str):
+    column = OxmlElement("m:mc")
+    properties = OxmlElement("m:mcPr")
+    count = OxmlElement("m:count")
+    count.set(qn("m:val"), "1")
+    justification = OxmlElement("m:mcJc")
+    justification.set(qn("m:val"), alignment)
+    properties.extend((count, justification))
+    column.append(properties)
+    return column
+
+
+def _set_omml_alignment_columns(omml) -> None:
+    """Use explicit native math columns for viewers that center equation-array rows."""
+    array = omml.find(qn("m:eqArr"))
+    if array is None:
+        return
+
+    rows = []
+    run_tag, text_tag = qn("m:r"), qn("m:t")
+    for row in array.findall(qn("m:e")):
+        cells = [[]]
+        for child in row:
+            # Texmath emits bare ampersand runs for alignment points. Literal
+            # \& has run properties and must remain part of its cell.
+            if child.tag == run_tag and len(child) == 1 and child[0].tag == text_tag and child[0].text == "&":
+                cells.append([])
+            else:
+                cells[-1].append(child)
+        rows.append(cells)
+    column_count = max(map(len, rows), default=0)
+    if column_count < 2:
+        return
+
+    matrix = OxmlElement("m:m")
+    properties = OxmlElement("m:mPr")
+    matrix.append(properties)
+    for name, value in (("plcHide", "1"), ("cGpRule", "3"), ("cGp", "0")):
+        prop = OxmlElement(f"m:{name}")
+        prop.set(qn("m:val"), value)
+        properties.append(prop)
+    columns = OxmlElement("m:mcs")
+    properties.append(columns)
+    for index in range(column_count):
+        columns.append(_omml_matrix_column("left" if index % 2 else "right"))
+    for cells in rows:
+        row = OxmlElement("m:mr")
+        for nodes in cells + [[]] * (column_count - len(cells)):
+            cell = OxmlElement("m:e")
+            if nodes:
+                cell.extend(nodes)
+            else:
+                blank_run = OxmlElement("m:r")
+                blank_text = OxmlElement("m:t")
+                blank_text.text = "\u00a0"
+                blank_run.append(blank_text)
+                cell.append(blank_run)
+            row.append(cell)
+        matrix.append(row)
+    omml.replace(array, matrix)
+
+
+def _append_omml_row_labels(omml, labels: tuple[str | None, ...]) -> bool:
+    """Attach each label to its own native equation row after conversion."""
+    matrix = omml.find(qn("m:m"))
+    if matrix is None or len(omml) != 1:
+        return False
+    rows = matrix.findall(qn("m:mr"))
+    columns = matrix.find(f"{qn('m:mPr')}/{qn('m:mcs')}")
+    if columns is None or len(rows) != len(labels):
+        return False
+    columns.append(_omml_matrix_column("right"))
+    for row, label in zip(rows, labels, strict=True):
+        cell = OxmlElement("m:e")
+        run = OxmlElement("m:r")
+        properties = OxmlElement("m:rPr")
+        properties.append(OxmlElement("m:nor"))
+        style = OxmlElement("m:sty")
+        style.set(qn("m:val"), "p")
+        properties.append(style)
+        text = OxmlElement("m:t")
+        text.set(qn("xml:space"), "preserve")
+        text.text = "\u2003" + label if label else "\u00a0"
+        run.extend((properties, text))
+        cell.append(run)
+        row.append(cell)
+    return True
+
+
 class PandocOmmlConverter:
-    """Batch-convert unique LaTeX formulas and return serialized m:oMath nodes."""
+    """Batch-convert LaTeX to OMML with editable display or row labels."""
 
     def __init__(self, pandoc_path: str | None = None):
         self.pandoc_path = pandoc_path or _find_pandoc()
 
-    def convert_many(self, formulas: Iterable[str]) -> dict[str, bytes]:
-        unique = list(dict.fromkeys(item for item in formulas if item))
+    def convert_many(self, formulas: Iterable[str]) -> dict[str, bytes | NumberedWordEquation]:
+        unique = [
+            formula for formula in dict.fromkeys(formulas)
+            if formula and (not _has_formula_tag(formula) or _extract_word_equation_tags(formula) is not None)
+        ]
         if not unique or not self.pandoc_path:
             return {}
-        converted: dict[str, bytes] = {}
+        converted: dict[str, bytes | NumberedWordEquation] = {}
         self._convert_chunk(unique, converted)
         return converted
 
-    def _convert_chunk(self, formulas: list[str], output: dict[str, bytes]) -> None:
+    def _convert_chunk(self, formulas: list[str], output: dict[str, bytes | NumberedWordEquation]) -> None:
         if not formulas:
             return
         result = self._run_pandoc(formulas)
@@ -505,13 +705,21 @@ class PandocOmmlConverter:
         self._convert_chunk(missing[:midpoint], output)
         self._convert_chunk(missing[midpoint:], output)
 
-    def _run_pandoc(self, formulas: list[str]) -> dict[str, bytes]:
+    def _run_pandoc(self, formulas: list[str]) -> dict[str, bytes | NumberedWordEquation]:
         markdown_parts: list[str] = []
-        markers: dict[str, str] = {}
+        markers: dict[str, tuple[str, WordEquationTags | None]] = {}
         for index, formula in enumerate(formulas):
+            numbering = None
+            if _has_formula_tag(formula):
+                numbering = _extract_word_equation_tags(formula)
+                if numbering is None:
+                    continue
+            convertible = numbering.formula if numbering else formula
             marker = f"MBFORMULA{index:06d}"
-            markers[marker] = formula
-            markdown_parts.extend((marker, "", f"$${_prepare_word_formula(formula)}$$", ""))
+            markers[marker] = (formula, numbering)
+            markdown_parts.extend((marker, "", f"$${_prepare_word_formula(convertible)}$$", ""))
+        if not markers:
+            return {}
         with tempfile.TemporaryDirectory(prefix="mathbank_word_math_") as temp_dir:
             temp_path = Path(temp_dir)
             source_path = temp_path / "formulas.md"
@@ -543,22 +751,30 @@ class PandocOmmlConverter:
 
         root = parse_xml(xml_data)
         paragraphs = root.xpath(".//w:body/w:p")
-        result: dict[str, bytes] = {}
-        pending_formula: str | None = None
+        result: dict[str, bytes | NumberedWordEquation] = {}
+        pending: tuple[str, WordEquationTags | None] | None = None
         for paragraph in paragraphs:
             plain_text = "".join(paragraph.xpath(".//w:t/text()"))
             if plain_text in markers:
-                pending_formula = markers[plain_text]
+                pending = markers[plain_text]
                 continue
-            if pending_formula:
+            if pending:
                 math_nodes = paragraph.xpath(".//m:oMath")
-                if math_nodes:
-                    from lxml import etree
-
-                    result[pending_formula] = etree.tostring(math_nodes[0])
-                    pending_formula = None
-                elif plain_text.strip():
-                    pending_formula = None
+                if len(math_nodes) == 1 and not plain_text.strip():
+                    formula, numbering = pending
+                    pending = None
+                    omml = math_nodes[0]
+                    block = _WORD_ENV_BLOCK.fullmatch(formula)
+                    if block and block["name"].rstrip("*") in _WORD_ALIGNED_ENVIRONMENTS:
+                        _set_omml_alignment_columns(omml)
+                    if numbering and len(numbering.labels) > 1:
+                        if not _append_omml_row_labels(omml, numbering.labels):
+                            continue
+                    xml = etree.tostring(omml)
+                    label = numbering.labels[0] if numbering and len(numbering.labels) == 1 else None
+                    result[formula] = NumberedWordEquation(xml, label) if label else xml
+                elif math_nodes or plain_text.strip():
+                    pending = None
         return result
 
 
@@ -688,6 +904,15 @@ def _clean_plain_text(text: str) -> str:
     value = re.sub(r"\\(?:textbf|mathbf|mathrm|operatorname)\{([^{}]*)\}", r"\1", value)
     value = re.sub(r"\\(?:quad|qquad)\b|\\[,;!]", " ", value)
     value = value.replace(r"\%", "%").replace(r"\_", "_")
+    if r"\$" in value or r"\textdollar" in value:
+        pieces = []
+        cursor = 0
+        for match in _WORD_TEXT_DOLLAR.finditer(mask_word_math_literals(value)):
+            if match.group() != r"\\":
+                pieces.extend((value[cursor:match.start()], "$"))
+                cursor = match.end()
+        pieces.append(value[cursor:])
+        value = "".join(pieces)
     value = value.replace("\\\\", "\n")
     return value
 
@@ -814,10 +1039,21 @@ def _formula_fallback_png(formula: str) -> bytes | None:
     if not xelatex:
         return None
     prepared_formula = _prepare_word_formula(formula)
+    block = _WORD_ENV_BLOCK.fullmatch(prepared_formula)
+    if block and block["name"] in STANDALONE_ENVIRONMENTS:
+        display_formula = prepared_formula
+    elif _has_formula_tag(formula):
+        display_formula = rf"\begin{{equation*}}{prepared_formula}\end{{equation*}}"
+    else:
+        display_formula = None
+    if display_formula:
+        math_source = rf"\begin{{minipage}}{{4.8in}}{display_formula}\end{{minipage}}"
+    else:
+        math_source = rf"$\displaystyle {prepared_formula}$"
     tex = rf"""\documentclass[preview,border=2pt]{{standalone}}
 \usepackage{{amsmath,amssymb,mathtools,cancel,extarrows,yhmath}}
 \begin{{document}}
-$\displaystyle {prepared_formula}$
+{math_source}
 \end{{document}}
 """
     with tempfile.TemporaryDirectory(prefix="mathbank_word_fallback_") as temp_dir:
@@ -834,13 +1070,13 @@ $\displaystyle {prepared_formula}$
                 check=False,
             )
             pdf_path = temp_path / "formula.pdf"
-            if completed.returncode != 0 or not pdf_path.exists():
+            if completed.returncode != 0 or not pdf_path.exists() or b"Missing character:" in completed.stdout:
                 return None
             import pymupdf as fitz
             from PIL import Image, ImageChops
 
             with fitz.open(pdf_path) as pdf:
-                pixmap = pdf[0].get_pixmap(matrix=fitz.Matrix(3, 3), alpha=False)
+                pixmap = pdf[0].get_pixmap(matrix=fitz.Matrix(_FORMULA_PNG_SCALE, _FORMULA_PNG_SCALE), alpha=False)
                 image = Image.open(BytesIO(pixmap.tobytes("png"))).convert("RGB")
             background = Image.new("RGB", image.size, "white")
             bbox = ImageChops.difference(image, background).getbbox()
@@ -855,7 +1091,7 @@ $\displaystyle {prepared_formula}$
 
 
 class WordExamBuilder:
-    def __init__(self, omml_map: dict[str, bytes], diagnostics: WordExportDiagnostics):
+    def __init__(self, omml_map: dict[str, bytes | NumberedWordEquation], diagnostics: WordExportDiagnostics):
         self.omml_map = omml_map
         self.diagnostics = diagnostics
         self.math_font = MATH_FONT
@@ -939,6 +1175,33 @@ class WordExamBuilder:
             run.append(node)
             paragraph._p.append(run)
 
+    def _mark_formula_failure(self, paragraph, size: float, detail: str) -> None:
+        run = paragraph.add_run(f"[公式待核对：{detail}]")
+        _set_run_font(run, size, color=RGBColor(192, 0, 0))
+        self.diagnostics.failed_formulas += 1
+
+    def _append_numbered_equation(self, paragraph, equation: NumberedWordEquation, size: float, display: bool) -> None:
+        separator = "\u2003"
+        if (
+            display and paragraph._p.getparent().tag == qn("w:body")
+            and re.fullmatch(r"(?:\d+\.)?", paragraph.text.strip())
+            and not paragraph._p.xpath("./m:oMath | ./w:r/w:drawing")
+        ):
+            section = self.doc.sections[-1]
+            formatting = paragraph.paragraph_format
+            width = (
+                section.page_width - section.left_margin - section.right_margin
+                - (formatting.left_indent or 0) - (formatting.right_indent or 0)
+            )
+            if width > 0:
+                paragraph.alignment = WD_ALIGN_PARAGRAPH.LEFT
+                formatting.tab_stops.add_tab_stop(Emu(width // 2), WD_TAB_ALIGNMENT.CENTER)
+                formatting.tab_stops.add_tab_stop(Emu(width), WD_TAB_ALIGNMENT.RIGHT)
+                paragraph.add_run().add_tab()
+                separator = "\t"
+        _append_omml(paragraph, equation.omml)
+        _set_run_font(paragraph.add_run(separator + equation.label), size)
+
     def add_mixed(
         self,
         paragraph,
@@ -954,6 +1217,9 @@ class WordExamBuilder:
 
         def add_text(value: str) -> None:
             for token in tokenize_mixed_content(value):
+                if isinstance(token, MathBoundaryIssue):
+                    self._mark_formula_failure(paragraph, size, f"{token.reason}，原文 {token.source}")
+                    continue
                 if isinstance(token, BlankToken):
                     run = paragraph.add_run("\u00a0" * WORD_FILLIN_BLANK_SPACES)
                     _set_run_font(run, size)
@@ -972,9 +1238,12 @@ class WordExamBuilder:
                             paragraph.add_run().add_break()
                     continue
                 formula = token.latex
-                xml_bytes = self.omml_map.get(formula)
-                if xml_bytes:
-                    _append_omml(paragraph, xml_bytes)
+                native = self.omml_map.get(formula)
+                if native:
+                    if isinstance(native, NumberedWordEquation):
+                        self._append_numbered_equation(paragraph, native, size, token.display)
+                    else:
+                        _append_omml(paragraph, native)
                     self.diagnostics.native_formulas += 1
                     continue
                 if formula not in self.fallback_cache:
@@ -986,17 +1255,21 @@ class WordExamBuilder:
                         from PIL import Image
 
                         image = Image.open(BytesIO(image_bytes))
-                        ratio = image.width / max(image.height, 1)
-                        height = 0.24 if not token.display else 0.34
-                        width = min(6.1, max(0.3, ratio * height))
-                        run.add_picture(BytesIO(image_bytes), width=Inches(width), height=Inches(height))
+                        if token.display or _has_formula_tag(formula):
+                            width = min(max_image_width, image.width / (72 * _FORMULA_PNG_SCALE))
+                            if max_image_height is not None:
+                                width = min(width, max_image_height * image.width / max(image.height, 1))
+                            run.add_picture(BytesIO(image_bytes), width=Inches(width))
+                        else:
+                            ratio = image.width / max(image.height, 1)
+                            height = 0.24 if not token.display else 0.34
+                            width = min(6.1, max(0.3, ratio * height))
+                            run.add_picture(BytesIO(image_bytes), width=Inches(width), height=Inches(height))
                         self.diagnostics.fallback_formulas += 1
                         continue
                     except Exception:
                         pass
-                run = paragraph.add_run(f"[公式待核对：{formula}]")
-                _set_run_font(run, size, color=RGBColor(192, 0, 0))
-                self.diagnostics.failed_formulas += 1
+                self._mark_formula_failure(paragraph, size, formula)
 
         cursor = 0
         original_alignment = paragraph.alignment
@@ -1678,16 +1951,9 @@ class WordExamBuilder:
         image_layouts: dict | None = None,
     ) -> None:
         alignments = [char for char in column_spec if char in "lcr"] or ["c"]
-        cleaned = re.sub(r"\\(?:toprule|midrule|bottomrule|hline)\b", "", body)
-        cleaned = re.sub(
-            r"\\(?:cline|cmidrule)(?:\([^)]*\))?\s*\{[^{}]*\}",
-            "",
-            cleaned,
-        )
-        raw_rows = [row.strip() for row in re.split(r"\\\\(?:\[[^]]*\])?", cleaned) if row.strip()]
         source_rows = [
-            [_parse_table_cell(value) for value in _split_table_cells(row)]
-            for row in raw_rows
+            [_parse_table_cell(value) for value in row]
+            for row in _split_tabular_rows(body)
         ]
         if not source_rows:
             return
@@ -1949,25 +2215,41 @@ def _with_content_sources_docx_property(data: bytes, notice: str) -> bytes:
         return result.getvalue()
 
 
-def _split_table_cells(row: str) -> list[str]:
-    cells: list[str] = []
-    current: list[str] = []
+def _split_tabular_rows(body: str) -> list[list[str]]:
+    """Split outer table separators while preserving nested TeX and literal source."""
+    scan = _mask_literals(body, tex_comments=False)
+    rows: list[list[str]] = []
+    row: list[str] = []
+    cell_parts: list[str] = []
+    environments: list[str] = []
     depth = 0
-    index = 0
-    while index < len(row):
-        char = row[index]
-        if char == "{" and (index == 0 or row[index - 1] != "\\"):
+    start = 0
+    for token in _TABULAR_TOKEN.finditer(scan):
+        edge, environment, brace = token["edge"], token["environment"], token["brace"]
+        if edge == "begin":
+            environments.append(environment)
+        elif edge == "end" and environments and environments[-1] == environment:
+            environments.pop()
+        elif brace == "{":
             depth += 1
-        elif char == "}" and (index == 0 or row[index - 1] != "\\"):
+        elif brace == "}":
             depth = max(0, depth - 1)
-        if char == "&" and depth == 0 and (index == 0 or row[index - 1] != "\\"):
-            cells.append("".join(current).strip())
-            current = []
-        else:
-            current.append(char)
-        index += 1
-    cells.append("".join(current).strip())
-    return cells
+        elif not (depth or environments) and token.lastgroup in {"row", "cell", "rule"}:
+            cell_parts.append(body[start:token.start()])
+            start = token.end()
+            if token["rule"]:
+                continue
+            row.append("".join(cell_parts).strip())
+            cell_parts.clear()
+            if token["row"]:
+                if len(row) > 1 or row[0]:
+                    rows.append(row)
+                row = []
+    cell_parts.append(body[start:])
+    row.append("".join(cell_parts).strip())
+    if len(row) > 1 or row[0]:
+        rows.append(row)
+    return rows
 
 
 def _resolve_image_paths(values: Iterable[str], uploads_dir: str | Path | None) -> list[Path]:
@@ -1980,6 +2262,9 @@ def _resolve_image_paths(values: Iterable[str], uploads_dir: str | Path | None) 
             continue
         seen.add(basename)
         candidate = root / basename if root else Path(value)
+        if root:
+            from mathbank.tiered_storage import hydrate
+            hydrate(candidate)
         if candidate.exists():
             paths.append(candidate)
     return paths

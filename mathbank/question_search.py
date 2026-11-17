@@ -5,6 +5,7 @@ then calls the pure text projection only for fields that could match, so a
 search never materializes the library's question/knowledge ORM graphs.
 """
 
+import json
 import re
 
 from sqlalchemy import case, false, func, or_
@@ -15,6 +16,9 @@ from mathbank.question_assets import image_search_spans
 SQLITE_SEARCH_FUNCTION = "mathbank_search_text"
 _SEQUENCE = re.compile(r"(?P<exact>#)?(?P<number>[0-9]+)\Z")
 _SQLITE_MAX_INTEGER = (1 << 63) - 1
+MAX_SEARCH_RULES = 8
+MAX_SEARCH_RULE_KEYWORD = 64
+_TEXT_FIELDS = ("content", "answer_markdown", "review", "source", "tags")
 
 
 def searchable_question_text(value: str | None) -> str:
@@ -48,6 +52,48 @@ def literal_text_match(column, keyword: str, *, mask_image_targets=False):
     )
 
 
+def _text_conditions(keyword, fields=_TEXT_FIELDS):
+    from mathbank.database import Question
+
+    return [
+        literal_text_match(getattr(Question, field), keyword,
+                           mask_image_targets=field in ("content", "answer_markdown", "review"))
+        for field in fields
+    ]
+
+
+def decode_question_search_rule(raw: str):
+    if len(raw) > 1024:
+        raise ValueError("关键词条件格式过长")
+    try:
+        return json.loads(raw)
+    except (ValueError, RecursionError) as exc:
+        raise ValueError("关键词条件格式无效") from exc
+
+
+def apply_question_search_rules(query, rules):
+    """Apply all field-specific literal rules before counting or paginating."""
+    if not isinstance(rules, list):
+        raise ValueError("关键词条件须为列表")
+    if len(rules) > MAX_SEARCH_RULES:
+        raise ValueError(f"最多可添加 {MAX_SEARCH_RULES} 条关键词条件")
+    for rule in rules:
+        if not isinstance(rule, dict) or rule.keys() != {"field", "operator", "keyword"}:
+            raise ValueError("关键词条件格式无效")
+        field, operator, keyword = rule["field"], rule["operator"], rule["keyword"]
+        if field not in ("all", *_TEXT_FIELDS) or operator not in ("include", "exclude"):
+            raise ValueError("关键词条件的字段或匹配方式无效")
+        if not isinstance(keyword, str) or not 1 <= len(keyword.strip()) <= MAX_SEARCH_RULE_KEYWORD:
+            raise ValueError(f"每条关键词条件需输入 1 至 {MAX_SEARCH_RULE_KEYWORD} 个字符")
+        if "\0" in keyword or any("\ud800" <= char <= "\udfff" for char in keyword):
+            raise ValueError("关键词包含无效字符")
+        fields = _TEXT_FIELDS if field == "all" else (field,)
+        match = or_(*_text_conditions(keyword.strip(), fields))
+        # SQL NULL in an optional field counts as no match, even under exclusion.
+        query = query.filter(match if operator == "include" else match.is_not(True))
+    return query
+
+
 def apply_question_search(query, keyword: str | None, *, order_plan=None):
     """Keep plain-number compatibility and make #number a strict display lookup."""
     from mathbank.database import Question
@@ -69,11 +115,7 @@ def apply_question_search(query, keyword: str | None, *, order_plan=None):
                 target_id = target[0]
         if sequence["exact"]:
             return query.filter(Question.id == target_id if target_id is not None else false())
-    conditions = [
-        literal_text_match(column, keyword, mask_image_targets=True)
-        for column in (Question.content, Question.answer_markdown, Question.review)
-    ]
-    conditions.extend(literal_text_match(column, keyword) for column in (Question.source, Question.tags))
+    conditions = _text_conditions(keyword)
     if target_id is not None:
         conditions.append(Question.id == target_id)
     return query.filter(or_(*conditions))

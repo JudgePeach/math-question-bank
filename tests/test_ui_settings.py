@@ -57,6 +57,7 @@ def test_index_route_serves_visibility_and_keeps_other_workspaces(monkeypatch, e
         assert f'id="{workspace}WorkspaceSection"' in html
     assert ("qa-disabled" in html) is not enabled
     assert '/static/js/api.js?v=' in html
+    assert '/static/js/workspace.js?v=' in html
 
 
 def test_visibility_does_not_modify_bundled_source():

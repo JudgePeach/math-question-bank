@@ -214,8 +214,4 @@
     window.loadDashboardData = loadDashboardData;
     window.startManualQuestion = startManualQuestion;
     window.resumeSavedPaper = resumeSavedPaper;
-
-    document.addEventListener('DOMContentLoaded', () => {
-        loadDashboardData();
-    });
 })();

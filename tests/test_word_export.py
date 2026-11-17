@@ -9,7 +9,7 @@ from PIL import Image
 
 from main import LOCAL_TOKEN
 from mathbank import word_export_helper
-from mathbank.word_export_helper import MathToken, build_word_document, tokenize_mixed_content
+from mathbank.word_export_helper import MathBoundaryIssue, MathToken, build_word_document, tokenize_mixed_content
 
 
 def _document_xml(docx_bytes: bytes) -> bytes:
@@ -78,6 +78,231 @@ def test_tokenize_mixed_content_keeps_inline_and_display_math():
     math_tokens = [item for item in tokens if isinstance(item, MathToken)]
     assert [item.latex for item in math_tokens] == [r"A\cap B", r"x^2+y^2=1"]
     assert [item.display for item in math_tokens] == [False, True]
+
+
+@pytest.mark.skipif(shutil.which("pandoc") is None, reason="Pandoc is not installed")
+def test_word_export_preserves_comparison_symbols_and_aliases():
+    data, diagnostics = build_word_document("关系符号", "", "quiz", [{
+        "question": {
+            "question_type": "detailed_answer",
+            "content": r"比较 $a\lt b$、$a\gt b$、$A\ltimes B$ 和 $a\gtrsim b$。",
+        },
+        "score": 5,
+    }])
+    root = etree.fromstring(_document_xml(data))
+    ns = {"m": word_export_helper.MATH_NS}
+    assert [
+        "".join(equation.xpath(".//m:t/text()", namespaces=ns))
+        for equation in root.xpath(".//m:oMath", namespaces=ns)
+    ] == ["a<b", "a>b", "A⋉B", "a≳b"]
+    assert diagnostics["fallback_formulas"] == diagnostics["failed_formulas"] == 0
+
+
+def test_word_reports_incomplete_alignments_but_keeps_literal_examples():
+    alignment = r"\begin{align*}x&=1\\&=2\end{align*}"
+    text = (
+        f"{alignment}。用法：`{alignment}`\n\n"
+        f"~~~latex\n\n{alignment}\n~~~\n\n"
+        f"<code>{alignment}</code>\n"
+        rf"转义：\{alignment}。残缺：\begin{{align*}}x&=1"
+    )
+    tokens = tokenize_mixed_content(text)
+    assert [token for token in tokens if isinstance(token, MathToken)] == [MathToken(alignment, True)]
+    issues = [token for token in tokens if isinstance(token, MathBoundaryIssue)]
+    assert [issue.source for issue in issues] == [r"\begin{align*}x&=1"]
+
+
+@pytest.mark.skipif(shutil.which("pandoc") is None, reason="Pandoc is not installed")
+def test_word_exports_currency_standalone_equations_and_nested_cases():
+    answer = (
+        r"费用 $5，另有 $x^2+1$ 个单位。单价 \$10，折扣 \textdollar{}2.50。"
+        r"数值 $5$ 和乘积 $2 xy+3$。" "\n\n"
+        r"\begin{equation}u^2=4\end{equation}" "\n"
+        r"\begin{gather*}a=1\\b=2\end{gather*}" "\n"
+        r"\begin{alignat*}{2}c&=3&\quad d&=4\\c&=5&\quad d&=6\end{alignat*}" "\n"
+        r"\begin {align*}p&=7\\q&=8\end {align*}" "\n"
+        r"分段函数 \begin{cases}1,&x>0\\\begin{cases}2,&x<0\\3,&x=0\end{cases},&x\le0\end{cases}。"
+    )
+    data, diagnostics = build_word_document("公式边界回归", "", "quiz", [{
+        "question": {"question_type": "detailed_answer", "content": "样题。", "answer_markdown": answer},
+        "score": 5,
+    }], include_answers=True)
+    xml = etree.fromstring(_document_xml(data))
+    ns = {"m": word_export_helper.MATH_NS, "w": word_export_helper.WORD_NS}
+    formulas = xml.xpath(".//m:oMath", namespaces=ns)
+    text = ["".join(formula.xpath(".//m:t/text()", namespaces=ns)) for formula in formulas]
+    assert text[:5] == ["x2+1", "5", "2xy+3", "u2=4", "a=1b=2"]
+    assert "".join(text[5].split()) == "c=3d=4c=5d=6"
+    assert text[6:] == ["p=7q=8", "1,x>02,x<03,x=0,x≤0"]
+    assert formulas[-1].xpath(".//m:d//m:d", namespaces=ns), "Nested cases must remain a nested equation"
+    plain = "".join(xml.xpath(".//w:t/text()", namespaces=ns))
+    assert "费用 $5，另有 " in plain
+    assert "单价 $10，折扣 $2.50" in plain
+    assert r"\begin" not in plain and r"\end" not in plain
+    assert diagnostics["native_formulas"] == 8
+    assert diagnostics["fallback_formulas"] == diagnostics["failed_formulas"] == 0
+
+
+@pytest.mark.parametrize("as_single_docx", [True, False])
+@pytest.mark.skipif(shutil.which("pandoc") is None, reason="Pandoc is not installed")
+def test_word_export_reports_damaged_boundaries_and_failed_conversions(client, db_session, as_single_docx):
+    from mathbank.database import Question
+
+    question = Question(
+        content="样题。",
+        question_type="detailed_answer",
+        answer_markdown=(
+            r"残缺的 \(x^2=4" "\n\n"
+            r"残缺的 \begin{gather*}x=1" "\n\n"
+            r"未知命令 $x+\mathbankUndefinedCommand{2}$。紧随的公式 $y=3$。"
+        ),
+    )
+    db_session.add(question)
+    db_session.commit()
+    title = "公式失败核验"
+    response = client.post("/api/paper/export/word", json={
+        "title": title,
+        "paper_type": "quiz",
+        "questions": [{"id": question.id, "score": 5}],
+        "as_single_docx": as_single_docx,
+        "include_answers": True,
+    }, headers={"X-Local-Token": LOCAL_TOKEN})
+    assert response.status_code == 200
+    assert response.headers["X-Word-Native-Formulas"] == "1"
+    assert response.headers["X-Word-Fallback-Formulas"] == "0"
+    assert response.headers["X-Word-Failed-Formulas"] == "3"
+    if as_single_docx:
+        data = response.content
+    else:
+        with zipfile.ZipFile(io.BytesIO(response.content)) as bundle:
+            data = bundle.read(f"{title}_含答案与解析.docx")
+    xml = etree.fromstring(_document_xml(data))
+    ns = {"m": word_export_helper.MATH_NS, "w": word_export_helper.WORD_NS}
+    red = xml.xpath(".//w:r[w:rPr/w:color[@w:val='C00000']]/w:t/text()", namespaces=ns)
+    assert len(red) == 3
+    assert "缺少闭合定界符" in red[0] and r"\(x^2=4" in red[0]
+    assert "公式环境 gather* 未正确闭合" in red[1] and r"\begin{gather*}x=1" in red[1]
+    assert red[2] == r"[公式待核对：x+\mathbankUndefinedCommand{2}]"
+    assert "".join(xml.xpath(".//m:oMath//m:t/text()", namespaces=ns)) == "y=3"
+
+
+@pytest.mark.skipif(shutil.which("pandoc") is None, reason="Pandoc is not installed")
+def test_word_exports_numbered_displays_as_editable_formulas_with_visible_tags():
+    source = (
+        r"前文 \[\frac{x^2}{2}=4\tag{A}\] 后文。" "\n\n"
+        r"$$y^2=9\tag*{补充}$$" "\n\n"
+        r"\[\begin{array}{l}u+v=4\tag{6.9.7}\\v=3\\\end{array}\]"
+    )
+    data, diagnostics = build_word_document("编号公式", "", "quiz", [{
+        "question": {"question_type": "detailed_answer", "content": "样题。", "answer_markdown": source},
+        "score": 5,
+    }], include_answers=True)
+    root = etree.fromstring(_document_xml(data))
+    ns = {"m": word_export_helper.MATH_NS, "w": word_export_helper.WORD_NS}
+    paragraphs = root.xpath(".//w:p[m:oMath]", namespaces=ns)
+    assert [
+        ("".join(p.xpath("./m:oMath//m:t/text()", namespaces=ns)),
+         "".join(p.xpath("./w:r/w:t/text()", namespaces=ns)))
+        for p in paragraphs
+    ] == [("x22=4", "(A)"), ("y2=9", "补充"), ("u+v=4v=3", "(6.9.7)")]
+    assert paragraphs[0].xpath("./m:oMath/m:f/m:num/m:sSup", namespaces=ns)
+    for paragraph in paragraphs:
+        assert paragraph.xpath("./w:pPr/w:tabs/w:tab/@w:val", namespaces=ns) == ["center", "right"]
+    assert "前文(A)后文。" in "".join(root.xpath(".//w:t/text()", namespaces=ns))
+    assert not root.xpath(".//w:drawing", namespaces=ns)
+    assert diagnostics["native_formulas"] == 3
+    assert diagnostics["fallback_formulas"] == diagnostics["failed_formulas"] == 0
+
+
+@pytest.mark.skipif(shutil.which("pandoc") is None, reason="Pandoc is not installed")
+def test_word_keeps_multiline_tags_on_their_authored_rows():
+    source = (
+        r"\begin{align*}"
+        r"a&=\begin{pmatrix}1&2\\3&4\end{pmatrix}\tag {B}\\"
+        r"b&=5\notag\\"
+        r"c&=6\tag*{C}"
+        r"\end{align*}"
+    )
+    data, diagnostics = build_word_document("多行编号", "", "quiz", [{
+        "question": {"question_type": "detailed_answer", "content": source},
+        "score": 5,
+    }])
+    root = etree.fromstring(_document_xml(data))
+    ns = {"m": word_export_helper.MATH_NS, "w": word_export_helper.WORD_NS}
+    matrix = root.xpath(".//w:p/m:oMath/m:m", namespaces=ns)[0]
+    rows = matrix.xpath("./m:mr", namespaces=ns)
+    assert len(rows) == 3
+    assert ["".join(row.xpath("./m:e[last()]//m:t/text()", namespaces=ns)).strip() for row in rows] == [
+        "(B)", "", "C",
+    ]
+    assert ["".join(row.xpath("./m:e[2]//m:t/text()", namespaces=ns)) for row in rows] == [
+        "=1234", "=5", "=6",
+    ]
+    assert matrix.xpath("./m:mPr/m:mcs//m:mcJc/@m:val", namespaces=ns) == ["right", "left", "right"]
+    assert diagnostics["native_formulas"] == 1
+    assert diagnostics["fallback_formulas"] == diagnostics["failed_formulas"] == 0
+
+
+@pytest.mark.skipif(shutil.which("xelatex") is None, reason="XeLaTeX is not installed")
+def test_word_uses_fallback_for_tags_with_tex_formatting():
+    data, diagnostics = build_word_document("带格式编号", "", "quiz", [{
+        "question": {"question_type": "detailed_answer", "content": r"\[x^2=4\tag{\textbf{A}}\]"},
+        "score": 5,
+    }])
+    root = etree.fromstring(_document_xml(data))
+    assert root.xpath(".//w:drawing", namespaces={"w": word_export_helper.WORD_NS})
+    assert diagnostics["fallback_formulas"] == 1
+    assert diagnostics["native_formulas"] == diagnostics["failed_formulas"] == 0
+
+
+@pytest.mark.skipif(shutil.which("pandoc") is None, reason="Pandoc is not installed")
+def test_word_answer_exports_bare_alignments_as_editable_rows():
+    answer = (
+        r"【法一】设 $t=x$，则" "\n"
+        r"\begin{align*}" "\n"
+        r"Q(t)&=-8t^2+8t+25\\" "\n\n"
+        r"&=-8\left(t-\dfrac{1}{2}\right)^2+27\\" "\n"
+        r"&\le 27" "\n"
+        r"\end{align*}" "\n"
+        r"当且仅当 $t=\frac{1}{2}$ 时取等。" "\n\n"
+        r"【法二】由 \begin{align}2t&=1\\t&=\dfrac{1}{2}\end{align} 得同一结果。"
+    )
+    question = {
+        "question_type": "detailed_answer",
+        "content": "求最大值。",
+        "answer_markdown": answer,
+    }
+    data, diagnostics = build_word_document(
+        "答案公式回归", "", "quiz", [{"question": question, "score": 5}], include_answers=True,
+    )
+    xml = etree.fromstring(_document_xml(data))
+    ns = {"m": word_export_helper.MATH_NS, "w": word_export_helper.WORD_NS}
+    arrays = xml.xpath(".//w:p/m:oMath/m:m", namespaces=ns)
+    rows = [
+        [
+            ["".join(cell.xpath(".//m:t/text()", namespaces=ns)).strip()
+             for cell in row.xpath("./m:e", namespaces=ns)]
+            for row in array.xpath("./m:mr", namespaces=ns)
+        ]
+        for array in arrays
+    ]
+    assert [len(array_rows) for array_rows in rows] == [3, 2]
+    assert rows[0][0][0] == "Q(t)"
+    assert rows[0][0][1].startswith("=−8")
+    assert rows[0][1][1].endswith("+27")
+    assert rows[0][2] == ["", "≤27"]
+    assert rows[1][0] == ["2t", "=1"]
+    assert len(xml.xpath(".//m:m//m:f", namespaces=ns)) == 2
+    for array in arrays:
+        assert array.xpath("./m:mPr//m:mcJc/@m:val", namespaces=ns) == ["right", "left"]
+        assert "&" not in array.xpath(".//m:t/text()", namespaces=ns)
+        assert not array.xpath("../../w:r/w:t", namespaces=ns)
+    plain = "".join(xml.xpath(".//w:t/text()", namespaces=ns))
+    assert r"\begin{align" not in plain
+    assert "当且仅当" in plain and "时取等" in plain and "得同一结果" in plain
+    assert diagnostics["native_formulas"] == 4
+    assert diagnostics["failed_formulas"] == diagnostics["fallback_formulas"] == 0
+    assert question["answer_markdown"] == answer
 
 
 def test_word_fillin_uses_longer_native_underlined_blank(monkeypatch):
@@ -338,6 +563,39 @@ def test_word_export_preserves_complex_table_and_inline_image_positions(tmp_path
     assert len(table.xpath("./w:tr/w:trPr/w:cantSplit", namespaces=namespaces)) == 4
     assert len(table.xpath("./w:tr/w:tc/w:tcPr/w:vAlign[@w:val='center']", namespaces=namespaces)) == 12
     assert diagnostics["missing_images"] == 0
+
+
+@pytest.mark.skipif(shutil.which("pandoc") is None, reason="Pandoc is not installed")
+@pytest.mark.parametrize("field", ["content", "answer_markdown"])
+def test_word_export_keeps_matrix_entries_in_their_table_cell(field):
+    table = (
+        r"\begin{tabular}{|c|c|}" "\n"
+        r"\hline 项目 & 内容 \\[2pt]" "\n"
+        r"\hline 矩阵 & $\begin{pmatrix}1&2\\3&4\end{pmatrix}$ \\" "\n"
+        r"\hline 核对 & $x=2$ \\ \hline" "\n"
+        r"\end{tabular}"
+    )
+    question = {"question_type": "detailed_answer", "content": "核对各项。", field: table}
+    data, diagnostics = build_word_document(
+        "表格内公式", "", "quiz", [{"question": question, "score": 5}],
+        include_answers=field == "answer_markdown",
+    )
+    root = etree.fromstring(_document_xml(data))
+    ns = {"w": word_export_helper.WORD_NS, "m": word_export_helper.MATH_NS}
+    rows = root.xpath(".//w:tbl/w:tr", namespaces=ns)
+    assert len(rows) == 3
+    assert [len(row.xpath("./w:tc", namespaces=ns)) for row in rows] == [2, 2, 2]
+    matrix_rows = rows[1].xpath("./w:tc[2]//m:oMath//m:m/m:mr", namespaces=ns)
+    assert [
+        ["".join(cell.xpath(".//m:t/text()", namespaces=ns)) for cell in row.xpath("./m:e", namespaces=ns)]
+        for row in matrix_rows
+    ] == [["1", "2"], ["3", "4"]]
+    assert "".join(rows[2].xpath("./w:tc[2]//m:oMath//m:t/text()", namespaces=ns)) == "x=2"
+    plain = "".join(root.xpath(".//w:t/text()", namespaces=ns))
+    assert r"\begin{pmatrix}" not in plain and "[2pt]" not in plain
+    assert diagnostics["native_formulas"] == 2
+    assert diagnostics["fallback_formulas"] == diagnostics["failed_formulas"] == 0
+    assert not diagnostics["warnings"]
 
 
 @pytest.mark.parametrize(

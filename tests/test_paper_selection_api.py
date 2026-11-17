@@ -56,6 +56,25 @@ def test_keyword_and_existing_cart_remain_hard_constraints(client, db_session):
     assert fresh.usage_count == 0
 
 
+def test_ai_and_manual_selection_share_keyword_rules(client, db_session, monkeypatch):
+    valid = add(db_session, '函数专题 ![图示](/static/uploads/旧卷.png)', answer_markdown='换元', source=None)
+    excluded = add(db_session, '函数专题', answer_markdown='换元', source='旧卷')
+    add(db_session, '函数专题', answer_markdown='直接求值', source='新卷')
+    rules = [
+        {'field': 'answer_markdown', 'operator': 'include', 'keyword': '换元'},
+        {'field': 'all', 'operator': 'exclude', 'keyword': '旧卷'},
+    ]
+    listed = client.get('/api/questions', params={'q': '函数专题', 'page': 1,
+        'search_rule': [json.dumps(rule) for rule in rules]}).json()
+    calls = mock_model(monkeypatch, [excluded.id])
+    response = select(client, prompt='选2道题', keyword='函数专题', search_rules=rules)
+    assert response.status_code == 200, response.text
+    assert [q['id'] for q in listed['items']] == [q['id'] for q in response.json()['data']] == [valid.id]
+    assert response.json()['selection_summary']['shortfall'] == 1
+    assert len(calls) == 1
+    assert select(client, prompt='选1道题', search_rules={'unexpected': 'object'}).status_code == 400
+
+
 def test_old_matching_question_is_retrieved_before_latest_35(client, db_session):
     target = add(db_session, '函数目标题')
     for index in range(45):

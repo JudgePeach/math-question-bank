@@ -2,6 +2,7 @@
 from copy import deepcopy
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
+import hashlib
 import json
 from pathlib import Path
 from types import SimpleNamespace
@@ -534,9 +535,10 @@ def test_zip_import_preparation_can_overlap_switch_but_backup_and_commit_bind_on
     monkeypatch.setattr(main, "DATA_BACKUP_DIR", tmp_path / "backups")
     monkeypatch.setattr(main, "DATABASE_PATH", str(tmp_path / "isolated.db"))
     monkeypatch.setattr(main, "UPLOAD_DIR", str(tmp_path / "uploads"))
-    prepared_package = SimpleNamespace(summary={"image_count": 0})
+    prepared_package = SimpleNamespace(summary={"image_count": 0}, archive_sha256=None)
     @contextmanager
     def prepare(_archive, *, workspace_dir=None):
+        prepared_package.archive_sha256 = hashlib.sha256(_archive.read_bytes()).hexdigest()
         if pause_stage == "inspect":
             entered.set()
             assert release.wait(5)

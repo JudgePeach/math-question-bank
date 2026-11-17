@@ -27,7 +27,7 @@ python3 -m scripts.search_questions --catalog --knowledge-query "单调性" --fo
 从结果中选择与任务相符的编码。例如，确认本库的 `1136` 对应所需知识点后：
 
 ```sh
-python3 -m scripts.search_questions --knowledge-point 1136 --format json -n 10 --page 1
+python3 -m scripts.search_questions --knowledge-point 1136 --format json -n 10 --page 1 --no-seq-num
 ```
 
 多个知识点可以重复传入，明确采用任一命中还是全部命中：
@@ -66,6 +66,8 @@ python3 -m scripts.search_questions --ids 123 --profile evidence --format json
 ```
 
 按 ID 批量读取应检查 `requested_ids`、`missing_ids` 和返回题目。无效 ID 会报错；不存在 ID 会明确列出，不得将已返回部分称为完整材料。ID 是当前题库中的引用身份；动态连续序号 `seq_num` 只用于界面展示，增删或整理顺序后可以变化。跨库分享会分配新 ID。
+
+JSON 默认返回 `seq_num`。只按稳定 ID 选题和引用时，可在 CLI 加 `--no-seq-num`，或在 HTTP 搜索、单题和批量取题时传 `include_seq_num=false`。此时题目和题间引用都省略 `seq_num`，引用仍提供目标题 ID 和解析状态。
 
 `teaching` 保留完整题干和评析；`evidence` 进一步包含现有知识点依据、来源标签和 TikZ 材料。`has_answer` 只表示答案字段非空；知识点标注的 `confirmed` 不代表题干、解析或答案已经教师核验。读取返回的质量状态为未知时应如实保留，最终用于教学的题目仍应独立演算，核对定义域、参数范围、边界和图文关系。
 
@@ -134,7 +136,7 @@ CLI 输出使用 UTF-8。无命中是正常结果，退出码为 0；执行错�
 | --- | --- |
 | `/api/agent/capabilities` | 能力、枚举和默认值 |
 | `/api/agent/knowledge-points?q=单调性&limit=10&offset=0` | 知识点发现，可指定 `version_code` |
-| `/api/agent/questions?knowledge_point_codes=1136&page=1&page_size=10` | 候选搜索；编码可重复传入 |
+| `/api/agent/questions?knowledge_point_codes=1136&page=1&page_size=10&include_seq_num=false` | 按稳定 ID 筛选候选；编码可重复传入 |
 | `/api/agent/questions/batch?ids=123,456&profile=teaching` | 按 ID 批量取题，检查 `missing_ids` |
 | `/api/agent/questions/123?profile=teaching` | 单题完整读取 |
 | `/api/agent/assets?ids=123,456` | 多题资产清单 |

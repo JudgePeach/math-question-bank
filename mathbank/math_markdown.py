@@ -8,7 +8,7 @@ leaving ordinary prose and document-structure commands untouched.
 from __future__ import annotations
 
 import re
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 
 
 _MATH_RUN_RE = re.compile(r"[A-Za-z0-9\\{}_^+\-*/=<>|(),.:\[\]\t ]+")
@@ -94,32 +94,48 @@ def _replace_delimited_math(value: str, replace: Callable[[str], str]) -> str:
     return "".join(parts)
 
 
-def _replace_latex_environments(value: str, replace: Callable[[str, str], str]) -> str:
-    """Protect complete outer structures, including nested cases/matrices/tables."""
-    recognized = _TABLE_ENVIRONMENTS | _STANDALONE_MATH_ENVIRONMENTS | _INNER_MATH_ENVIRONMENTS
-    parts: list[str] = []
-    copied = 0
+def _matching_latex_environment_end(
+    value: str,
+    opening: re.Match[str],
+    pattern: re.Pattern[str] = _ENVIRONMENT_TOKEN_RE,
+) -> re.Match[str] | None:
+    stack = [opening[2]]
+    for token in pattern.finditer(value, opening.end()):
+        if _is_escaped(value, token.start()):
+            continue
+        action, name = token.groups()
+        if action == "begin":
+            stack.append(name)
+        elif name != stack[-1]:
+            return None
+        else:
+            stack.pop()
+        if not stack:
+            return token
+    return None
+
+
+def _iter_latex_environment_spans(value: str, recognized: set[str]) -> Iterator[tuple[int, int, str]]:
+    """Yield balanced outer environments, including any nested environments."""
     cursor = 0
     while match := _ENVIRONMENT_TOKEN_RE.search(value, cursor):
         cursor = match.end()
         kind, name = match.groups()
         if kind != "begin" or name not in recognized or _is_escaped(value, match.start()):
             continue
-        stack = [name]
-        for token in _ENVIRONMENT_TOKEN_RE.finditer(value, cursor):
-            if _is_escaped(value, token.start()):
-                continue
-            action, nested_name = token.groups()
-            if action == "begin":
-                stack.append(nested_name)
-            elif nested_name != stack[-1]:
-                break  # Preserve malformed structure; do not guess a repair.
-            else:
-                stack.pop()
-            if not stack:
-                parts.extend((value[copied:match.start()], replace(value[match.start():token.end()], name)))
-                cursor = copied = token.end()
-                break
+        if closing := _matching_latex_environment_end(value, match):
+            cursor = closing.end()
+            yield match.start(), cursor, name
+
+
+def _replace_latex_environments(value: str, replace: Callable[[str, str], str]) -> str:
+    """Protect complete outer structures, including nested cases/matrices/tables."""
+    recognized = _TABLE_ENVIRONMENTS | _STANDALONE_MATH_ENVIRONMENTS | _INNER_MATH_ENVIRONMENTS
+    parts: list[str] = []
+    copied = 0
+    for start, end, name in _iter_latex_environment_spans(value, recognized):
+        parts.extend((value[copied:start], replace(value[start:end], name)))
+        copied = end
     parts.append(value[copied:])
     return "".join(parts)
 

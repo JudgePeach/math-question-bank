@@ -102,16 +102,18 @@ flowchart LR
 - **Edit Protection During Recognition**: If you edit a question while OCR is running, your current text is kept and the OCR result waits for you to click **Load recognition result (载入识别结果)**. Late replies or manual crops from an outdated question state are rejected.
 - **Partial-Failure Retention & Reconnection**:
   * **PDF Partial Results**: When some PDF pages fail recognition, independently complete questions are retained while missing pages and cross-page fragments await explicit completion in the current page (reusing successful pages, not persisted across refreshes or restarts; if all selected pages fail, an error is reported directly).
-  * **PDF Parsing Tolerance (3.0.3 Source)**: Usable page text is retained when auxiliary figure fields are malformed, with a prompt to check the original page and add missing figures. If some question entries are invalid, valid cards are retained and the result explicitly reports partial success and the rejected count. Explicitly truncated responses and results with no valid questions still fail. This improvement is not included in the V3.0.2 official downloads linked below.
+  * **PDF Parsing Tolerance (V3.0.3)**: Usable page text is retained when auxiliary figure fields are malformed, with a prompt to check the original page and add missing figures. If some question entries are invalid, valid cards are retained and the result explicitly reports partial success and the rejected count. Explicitly truncated responses and results with no valid questions still fail.
   * **Batch Import & Word Review**: Batch import saves eligible questions first and keeps the remaining cards with per-question reasons. A malformed Word review batch does not stop later independent batches; verified Word bodies are not regenerated from scratch due to minor metadata errors (source-ID conflicts still stop processing).
   * **Network Reconnection**: Temporary disconnects trigger backoff polling of the original task without re-uploading files or resending model requests.
 
 ### 2. Curriculum Classification, Knowledge Points & Search
 - **Knowledge-Point Additions & Evidence Checks**: In AI classification results, you can click **Apply knowledge points only (只应用知识点)** to keep the current textbook placement and question type while preserving existing labels. The prompt checks each sub-question (flagging partial coverage when multiple targets are requested), requires actual solution steps for supporting points rather than a final answer alone, and marks step transcriptions from solution images as not independently verified.
 - **Classification Quality Profiles & Single-Question Precise Review**: Classification quality defaults to **Quick (快速)** and can be switched to **Precise (精细)** in Settings. During a Quick preview, click **本题精细复核** to re-analyze only the current question with the Precise profile (failed or cancelled waits keep the Quick suggestions; for relay B's `gemini-3.8-flash-high`, the model alias is preserved and only the output budget is increased).
+- **Combine keyword filters** (current source): In the local bank, drafts, or Paper Studio, open **筛选** (Filters) and select **添加条件** (Add condition). Each rule can include or exclude literal text in the stem, solution, teacher review, source, tags, or all text fields. Results must satisfy every inclusion and match no exclusion. Remove individual rules from the collapsed summary. Filters open in a popover below the toolbar in all three views. In Paper Studio, manual and AI selection use the same rules and keep the questions already on the paper.
 - **Exact Question-Number Search & Image Path Filtering**: Enter `#123` to find displayed question 123 exactly; plain numbers match both displayed numbers and text. Searches exclude image file paths in stems, solutions, and teacher reviews while keeping image descriptions searchable. Teacher-review images are preserved across saves, drafts, and full backups.
 
 ### 3. AI Paper Selection & PDF Diagnostics
+- **Jump to a question list page** (current source): In the paper workspace, enter a page number at the bottom of the All Questions or Selected Questions list, then press Enter or click **跳转** (Go). The field appears when the list has more than one page.
 - **AI Selection with Gaokao References & Curriculum Standards**: In **AI 选题** (1–30 questions; explicit counts in your prompt take priority), selection respects your current filters, excludes questions already in the draft, optionally references recent complete Gaokao papers in your bank for style and difficulty progression, and automatically attaches matched excerpts from the bundled curriculum standards with clause and page citations.
 - **On-Demand Full Reading for Finalists**: Initial screening retains sub-question outlines, and long or illustrated finalists can receive one additional full-stem read with the same model. Missing images, budget overflow, or unavailable AI fall back to clearly labeled local selection rules for teacher review.
 - **PDF Same-Page Layout & Missing-Glyph Diagnostics**: The web A4 view is a simulation; open **PDF 预览** to inspect the compiled PDF. Ordinary illustrated questions that fit on a single page keep the stem and figures together, while long questions may span pages. The export copy adapts prose `△` and `∠`; other missing font glyphs stop delivery and report the character and question location. Local diagnostics work without an API key, and the configured paper-parsing model can add suggestions for other compilation errors without rewriting stored questions.
@@ -127,14 +129,14 @@ flowchart LR
 
 ## 🚀 Quick Start
 
-**Version and downloads (verified 2026-11-02)**: The current source version is **3.0.3**, with launcher port coordination, PDF parsing tolerance, Word/PDF image export and saved-paper zero-score fixes, plus Pillow and Windows compatibility improvements. The latest official download remains [**V3.0.2**](https://github.com/JudgePeach/math-question-bank/releases/tag/V3.0.2), published on **October 26, 2026**, and does not include these updates. Download the actual ZIP assets for your platform from the release. Source commits, local builds, and official releases remain separate steps.
+**Version and downloads (verified 2026-11-17)**: Source version **3.1.0** adds PDF import recovery and optional MinerU figure localization, TikZ geometry checks, include/exclude keyword filters, and confirmation for repeated ZIP imports. It also improves Word equations and lists. The latest official GitHub portable download is [**V3.0.3**](https://github.com/JudgePeach/math-question-bank/releases/tag/V3.0.3), published on **November 3, 2026** (China Standard Time).
 
 ### 📦 Option 1: Download Portable Package (Recommended for Teachers)
 
-If you are unfamiliar with command line or Python environments, open the [**V3.0.2 release page**](https://github.com/JudgePeach/math-question-bank/releases/tag/V3.0.2), choose the ZIP asset for your platform under Assets, and **extract the complete archive**:
+If you are unfamiliar with command line or Python environments, open the [**V3.0.3 release page**](https://github.com/JudgePeach/math-question-bank/releases/tag/V3.0.3), choose the ZIP asset for your platform under Assets, and **extract the complete archive**:
 
-* **Windows Users**: Use Windows 10/11 x64 and download [`MathBank-Windows-x64.zip`](https://github.com/JudgePeach/math-question-bank/releases/download/V3.0.2/MathBank-Windows-x64.zip) (includes complete Python 3.10 and app-local VC++ runtimes; no separate installation required), extract it, and double-click **`启动题库系统.bat`**.
-* **macOS Users**: Download [`MathBank-macOS.zip`](https://github.com/JudgePeach/math-question-bank/releases/download/V3.0.2/MathBank-macOS.zip). **The macOS package does not include Python, so confirm that Python 3.10 or newer is installed on your Mac before launching MathBank.** Keep network access enabled when the launcher first creates or repairs the isolated `venv`, then double-click **`启动题库系统.command`**.
+* **Windows Users**: Use Windows 10/11 x64 and download [`MathBank-Windows-x64.zip`](https://github.com/JudgePeach/math-question-bank/releases/download/V3.0.3/MathBank-Windows-x64.zip) (includes complete Python 3.10 and app-local VC++ runtimes; no separate installation required), extract it, and double-click **`启动题库系统.bat`**.
+* **macOS Users**: Download [`MathBank-macOS.zip`](https://github.com/JudgePeach/math-question-bank/releases/download/V3.0.3/MathBank-macOS.zip). **The macOS package does not include Python, so confirm that Python 3.10 or newer is installed on your Mac before launching MathBank.** Keep network access enabled when the launcher first creates or repairs the isolated `venv`, then double-click **`启动题库系统.command`**.
 
 Both launchers check Python and required packages, and open an already-running MathBank service directly without restarting it. Port conflicts and startup failures display the specific error and service log.
 
@@ -159,7 +161,7 @@ Both launchers check Python and required packages, and open an already-running M
    * **Windows Users**: Double-click **`启动题库系统.bat`**
    * **CLI Start**: Run `python -m uvicorn main:app --reload`, open browser at `http://127.0.0.1:8000`
 
-   **New in the 3.0.3 source, not in the V3.0.2 official downloads**: The launchers default to port 8000 and reuse a running service from this project directory. If an older service remains after an update, they open it or ask you to close it normally from its original page before restarting. If another application occupies the port, the launcher suggests an available port and switches and remembers it only after an explicit `y`; later launches prefer that address. `MATHBANK_PORT` can select a fixed port; direct Uvicorn commands still require `--port`. Browser drafts, the question basket, and unsaved paper information are stored separately for each address. Changing ports does not migrate them; the originals remain in the original browser and address. Save your work before switching.
+   **V3.0.3 launchers**: The launchers default to port 8000 and reuse a running service from this project directory. If an older service remains after an update, they open it or ask you to close it normally from its original page before restarting. If another application occupies the port, the launcher suggests an available port and switches and remembers it only after an explicit `y`; later launches prefer that address. `MATHBANK_PORT` can select a fixed port; direct Uvicorn commands still require `--port`. Browser drafts, the question basket, and unsaved paper information are stored separately for each address. Changing ports does not migrate them; the originals remain in the original browser and address. Save your work before switching.
 
 > [!TIP]
 > **PDF & Word Smart Parsing Recommendations**:
@@ -185,6 +187,8 @@ MathBank integrates with [DeepSeek Official Open Platform](https://platform.deep
 
 ### 3. 🎨 TikZ Geometry Diagram Redrawing Model (`PREFER_DRAW_MODEL`)
 * Choose the drawing model separately; redrawing from a reference image requires vision support on that endpoint.
+* The current source checkout can compute common planar constructions locally. It can also check supplied conditions in three dimensions before projecting a single box, convex prism, or convex pyramid and drawing hidden edges. Use the compiled preview to check labels, connections, and the problem conditions.
+* Spatial right-angle marks follow the projection. When the problem explicitly identifies a named circumcircle, the preview checks whether the identifiable vector circle goes through the stated vertices. Inspect the preview when the circle could not be checked.
 * Test with a few representative geometry diagrams first. Single-question OCR includes automatic preview verification and source-crop fallback when TikZ is enabled.
 
 > [!WARNING]
@@ -214,21 +218,21 @@ MathBank integrates with [DeepSeek Official Open Platform](https://platform.deep
   ```
   Databases (`*.db`), API keys (`.env`), custom configurations (`data_backup/`), and illustrations (`static/uploads/`) are Git-ignored. Database migrations run automatically on startup when needed; verify the displayed version in Settings after restarting.
 
-  In the 3.0.3 source, credits and processing records for personal import batches stay in the local `.system_generated/content_sources.local.json`, excluded from Git and application packages. Public resources retain general upstream credits and licenses; local backups, library shares, and paper exports still include the local credits to preserve provenance.
+  Credits and processing records for personal import batches stay in the local `.system_generated/content_sources.local.json`, excluded from Git and application packages. Public resources retain general upstream credits and licenses. Local backups, library shares, and paper exports still include the local credits to preserve provenance.
 
 - **Method B: Portable Package Overwrite Upgrade**
   1. **Create a verified full backup** first (see **Full Backup and Restore** below).
   2. **Shut down safely** using the power button in the top-right of the web page, and wait until the page confirms the service has stopped. Never overwrite files while the backend is running.
   3. **Extract to a temporary folder**: Extract the new ZIP into a **separate temporary directory**, not directly into the existing installation.
-  4. **Windows**: Open the extracted folder, select all of its *contents*, copy them into the existing installation, and replace same-named files.
-  5. **macOS Finder**: Press `Command + Shift + .` first so hidden files such as `.env.example` are visible, then copy all *contents* of the extracted folder into the existing installation and **merge** same-named directories. **Do not choose Replace for the entire project folder**, or Finder may delete local data.
-  6. **Relaunch**: Double-click the new launcher. If the old version is still running, stop it via the webpage power button and launch again.
+  4. **Windows**: Rename the existing installation's `python` folder to an unused backup name such as `python-before-upgrade`. Copy the entire contents of the extracted folder into the existing installation and replace matching files. Keep the old runtime until the new launcher works.
+  5. **macOS**: In Terminal, type `/usr/bin/ditto ` and drag in the newly extracted folder. Type a space, drag in the existing MathBank folder, and press Return after checking that the new folder comes first. `ditto` replaces matching application files and preserves local files absent from the archive.
+  6. **Relaunch**: Double-click the new launcher, open the same address in the same browser, and check the version and a few saved questions. If the old version is still running, stop it via the webpage power button and launch again.
 
   Overlay upgrades preserve root databases and their WAL/SHM files, `.env`, `data_backup/`, `static/uploads/`, `.system_generated/`, and `venv/`. Never delete the existing installation directory.
 
 ### Current Source Pillow Policy & Optional macOS Migration
 
-**This section describes the 3.0.3 source policy; the linked V3.0.2 official downloads do not contain it.** This update does not require a Python migration on either platform. The Windows portable environment keeps Python 3.10. Source installations and macOS project environments on Python 3.11 or newer use Pillow 13.0.0 with the updated dependency list; Python 3.10 keeps 12.3.0. **The image decoder security issues retained in 12.3.0 remain unresolved, so this is not a fix across every supported environment.** Source/macOS launchers install dependencies when the list changes; install the updated requirements yourself before starting directly from the command line.
+**3.1.0 retains the V3.0.3 Python compatibility policy.** The Windows portable environment keeps Python 3.10. Source installations and macOS project environments on Python 3.11 or newer use Pillow 13.0.0, and Python 3.10 keeps 12.3.0. **The known image decoder security issues in 12.3.0 remain.** Source/macOS launchers update dependencies when the list changes. Install the updated requirements yourself before starting directly from the command line.
 
 The macOS launcher reuses an existing working `venv`; installing a newer Python does not replace it. Without a `venv`, the launcher may still find a `python3` command pointing to the older interpreter first. Python 3.10 users can continue running MathBank. To use Pillow 13, you may **optionally** migrate after checking that the new Python supports your macOS version; this is not required for this update:
 
@@ -314,12 +318,30 @@ Full backups include a per-file SHA-256 manifest and exclude `.env`, local token
 In **Settings → Question Bank Sharing (题库分享)**, you can package selected questions into a ZIP archive for colleagues or batch-import a shared ZIP without re-running OCR or configuring SQLite:
 
 - **Filter & Export**: Filter by source, keyword, textbook volume/chapter/section, and confirmed primary knowledge points (match any or match all). Selections persist across pages and filter changes. Background packaging bundles the selected stems, solutions, teacher reviews, classifications, knowledge points, TikZ code, and required original images into a ZIP.
-- **Additive Import & Automatic Backup**: Switch to **Import Sharing Package (导入分享包)** to import a MathBank sharing ZIP. **Imports are strictly additive: every question receives a new ID, images are safely renamed, and in-package question associations are preserved. Existing questions are not deduplicated or overwritten; importing the same package again adds another copy.**
+- **Additive Import & Automatic Backup**: Switch to **Import Sharing Package (导入分享包)** to import a MathBank sharing ZIP. **Imports are strictly additive: every question receives a new ID, images are safely renamed, and in-package question associations are preserved. Existing questions are preserved, and the importer skips per-question duplicate checks.**
+- **Repeat ZIP Warning (current working copy)**: MathBank checks the uploaded ZIP's exact bytes against successful import records, including renamed copies. Tick the confirmation checkbox to import the ZIP you just uploaded and append every question. The temporary upload expires after 10 minutes, and you can cancel before confirming. Full backups preserve the import records committed with the database.
 - **Background Progress & Reconnection**: After validation, MathBank automatically creates a full backup before writing in bounded batches within a single commit. Closing Settings or refreshing reconnects to the same task without re-uploading.
 - **Missing-Image Backup Tolerance**: If existing questions in your bank reference missing image files, the pre-import automatic backup preserves the database text and image references, records the missing files in a v3 manifest with a warning, and continues importing (permission, disk-space, or database integrity failures still block import).
 - **Limits**: Sharing ZIPs and question payloads are capped at 512 MiB each (1 GiB uncompressed total); split larger banks by source. Sharing packages exclude API keys, system settings, and saved papers, and do not replace a full backup.
 
 ---
+
+### 5. Optional External Asset Storage (Current Source, macOS)
+
+Storage remains local by default. The opt-in tier identifies an external volume by UUID; the main database, application, task metadata, runtime locks and automatic backups remain internal. Existing assets form a local baseline. New permanent question images, project/task source documents and independently retained PDF/Word/TeX uploads are written locally first, then copied and SHA-256 verified in the background. Active temporary crops remain local.
+
+Stop the service normally, then run from the project directory:
+
+```bash
+python3 -m scripts.tiered_storage enable --volume-uuid "YOUR-VOLUME-UUID" --directory "BusinessData/MathBank"
+python3 -m scripts.tiered_storage status
+```
+
+Restart to apply. Maintenance checks every minute and copies files stable for two minutes. Local caches are removed only after verified external publication and one hour of inactivity; reads verify and hydrate the cache. Volume renames are supported through UUID discovery; a different same-name disk is rejected. New files stage locally while disconnected and migrate after reconnection. External-only assets require their volume to read. An inline header notice reports disconnection. Failed migration preserves local originals; always eject disks normally.
+
+Full question-bank backups hydrate referenced images and fail clearly if required external bytes are unavailable. Independent source-document archives are outside the existing question-bank ZIP scope. Preserve the local `.system_generated/tiered_storage/` index, `.system_generated/received_documents/` records and the external business directory together. External `receipts/` record logical paths, sizes, hashes and retention events for manual recovery; do not edit or move `objects/`.
+
+Before disabling or rolling back code, stop the service, connect the correct disk and run `python3 -m scripts.tiered_storage disable`. It restores and verifies local files first and refuses to disable if any required file cannot be recovered. Use `restore-local` to hydrate without disabling, or `resume` to re-enable the existing catalog without rebuilding its baseline. Do not delete configuration or index files directly. This source capability does not imply that released downloads have been updated.
 
 ## 📂 Source Repository & Portable Package Contents
 
@@ -374,10 +396,11 @@ The tree below describes the **source repository** and its runtime data location
 │   ├── uploads/                # Unreferenced images enter recoverable retention
 │   └── js/                     # Cascading frontend JS modules
 │       ├── api.js              # API interaction & Token interceptor
-│       ├── editor.js           # Editing, KaTeX preview & TikZ compilation
+│       ├── editor.js           # Question bank and draft controls, editing & KaTeX preview
 │       ├── ocr.js              # Formula OCR recognition & interaction
-│       ├── import.js           # Exam paper parsing & draft/question list
-│       └── paper.js            # Exam paper workbench & Live Preview engine
+│       ├── import.js           # Exam paper parsing & import
+│       ├── paper.js            # Exam paper workbench & live preview
+│       └── workspace.js        # Workspace navigation & dashboard startup
 ├── templates/                  # LaTeX templates & exam-zh macro package library
 ├── tests/                      # Pytest automated testing & artifacts
 ├── main.py                     # FastAPI service entry point & routing

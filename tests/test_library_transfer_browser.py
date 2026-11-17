@@ -51,6 +51,17 @@ def _open_import(browser):
     browser.command("wait", "--fn", "!document.getElementById('libraryImportPanel').hidden")
 
 
+def _reset_mocked_transfer_session(browser):
+    url = browser.evaluate("""(() => {
+        stopLibraryTransferPolling();
+        localStorage.removeItem(libraryTransferStorageKey);
+        localStorage.removeItem(libraryTransferReceiptKey);
+        return location.origin;
+    })()""")
+    browser.command("open", url)
+    browser.command("wait", "--fn", "document.readyState === 'complete' && typeof openSettingsModal === 'function'")
+
+
 def _click(browser, selector):
     browser.command("scrollintoview", selector)
     browser.settle()
@@ -65,6 +76,14 @@ def _check(browser, selector):
 
 def _click_import(browser):
     _click(browser, "#libraryImportBtn")
+
+
+def _upload_fresh_archive(browser, sharing_package, tmp_path):
+    path = tmp_path / "fixture.zip"
+    path.write_bytes(sharing_package["path"].read_bytes())
+    with zipfile.ZipFile(path, "a") as archive:
+        archive.comment = uuid.uuid4().hex.encode("ascii")
+    browser.command("upload", "#libraryImportFile", str(path))
 
 
 def _wait_export_list(browser, total):
@@ -265,11 +284,32 @@ def test_real_export_import_appends_twice_and_preserves_editor(browser, sharing_
     ids = {original_id}
     task_ids = set()
     for expected_count in (2, 3):
-        browser.command("upload", "#libraryImportFile", str(sharing_package["path"]))
+        path = sharing_package["path"]
         if expected_count == 3:
-            assert browser.evaluate("document.getElementById('libraryImportBtn').disabled")
-            _check(browser, "#libraryImportRepeatConfirm")
+            path = tmp_path / "同一个包改名.zip"
+            path.write_bytes(sharing_package["path"].read_bytes())
+        browser.command("upload", "#libraryImportFile", str(path))
         _click_import(browser)
+        if expected_count == 3:
+            browser.command("wait", "--fn", "!document.getElementById('libraryImportRepeatLabel').classList.contains('hidden')")
+            assert "已有成功导入记录" in browser.evaluate("document.getElementById('libraryTransferMessage').textContent")
+            assert browser.evaluate("document.getElementById('libraryImportBtn').disabled")
+            assert len(_source_questions(browser, sharing_package["source"])) == 2
+            browser.evaluate("""(() => {
+                window.__confirmImportRequests={upload:0,confirm:0,original:window.fetch};
+                window.fetch=function(url,init){
+                    const log=__confirmImportRequests;
+                    if(String(url)==='/api/library-transfer/tasks/import')log.upload++;
+                    if(String(url).endsWith('/confirm-import')&&init.method==='POST'&&!init.body)log.confirm++;
+                    return log.original.call(this,url,init);
+                };return true;
+            })()""")
+            try:
+                _check(browser, "#libraryImportRepeatConfirm")
+                browser.command("wait", "--fn", "document.getElementById('libraryTransferStatus').dataset.state==='success'")
+                assert browser.evaluate("[__confirmImportRequests.upload,__confirmImportRequests.confirm]") == [0, 1]
+            finally:
+                browser.evaluate("window.fetch=__confirmImportRequests.original;true")
         browser.command("wait", "--fn", "document.getElementById('libraryTransferStatus').dataset.state==='success' && !document.getElementById('libraryImportFile').disabled")
         assert browser.evaluate("document.getElementById('libraryImportFile').files.length") == 1
         task_id = browser.evaluate("JSON.parse(localStorage.getItem('mathbank.libraryTransferTask.v1')).task_id")
@@ -337,9 +377,7 @@ def test_missing_old_image_warning_survives_success_and_page_reload(browser, sha
     _open_import(browser)
     try:
         image.unlink()
-        browser.command("upload", "#libraryImportFile", str(sharing_package["path"]))
-        if browser.evaluate("!document.getElementById('libraryImportRepeatLabel').classList.contains('hidden')"):
-            _check(browser, "#libraryImportRepeatConfirm")
+        _upload_fresh_archive(browser, sharing_package, tmp_path)
         _click_import(browser)
         browser.command("wait", "--fn", "document.getElementById('libraryTransferStatus').dataset.state==='success'")
         assert browser.evaluate("!document.getElementById('libraryTransferWarnings').classList.contains('hidden')")
@@ -363,11 +401,10 @@ def test_missing_old_image_warning_survives_success_and_page_reload(browser, sha
         _close_settings(browser)
 
 
-def test_import_busy_guard_survives_close_and_reopen(browser, sharing_package):
+def test_import_busy_guard_survives_close_and_reopen(browser, sharing_package, tmp_path):
     _open_sharing(browser)
     _open_import(browser)
-    browser.command("upload", "#libraryImportFile", str(sharing_package["path"]))
-    browser.evaluate("document.getElementById('libraryImportRepeatConfirm').checked=true;updateLibraryTransferControls();true")
+    _upload_fresh_archive(browser, sharing_package, tmp_path)
     browser.evaluate("""(() => {
         window.__sharingBusy={originalFetch:window.fetch,requests:0,release:null};
         window.fetch=function(url,init){
@@ -399,7 +436,7 @@ def test_import_busy_guard_survives_close_and_reopen(browser, sharing_package):
         browser.evaluate("__sharingBusy.release(); true")
         browser.command("wait", "--fn", "document.getElementById('libraryTransferStatus').dataset.state==='success' && !document.getElementById('libraryImportFile').disabled")
         assert browser.evaluate("__sharingBusy.requests") == 1
-        assert browser.evaluate("document.getElementById('libraryImportBtn').disabled")
+        assert not browser.evaluate("document.getElementById('libraryImportBtn').disabled")
     finally:
         browser.evaluate("window.fetch=__sharingBusy.originalFetch; true")
     _close_settings(browser)
@@ -735,15 +772,14 @@ def test_transfer_tabs_remain_visible_and_preserve_export_selection(browser, sel
 
 
 @pytest.mark.parametrize("viewport", [(1440, 1000), (375, 812)])
-def test_task_disconnect_reconnect_only_queries_original_task(browser, sharing_package, viewport):
+def test_task_disconnect_reconnect_only_queries_original_task(browser, sharing_package, viewport, tmp_path):
     """Lose the POST response after a real commit, then query its durable receipt."""
     browser.command("set", "viewport", str(viewport[0]), str(viewport[1]))
     _open_sharing(browser)
     _open_import(browser)
     before = len(_source_questions(browser, sharing_package["source"]))
-    browser.command("upload", "#libraryImportFile", str(sharing_package["path"]))
+    _upload_fresh_archive(browser, sharing_package, tmp_path)
     browser.evaluate("""(() => {
-        document.getElementById('libraryImportRepeatConfirm').checked=true;updateLibraryTransferControls();
         window.__transferDisconnect={fetch:window.fetch,posts:0,gets:0,offline:true,taskId:null};
         window.fetch=async function(url,init){
             if(String(url)==='/api/library-transfer/tasks/import'){
@@ -780,20 +816,19 @@ def test_task_disconnect_reconnect_only_queries_original_task(browser, sharing_p
         assert browser.evaluate("__transferDisconnect.posts") == 1
         assert len(_source_questions(browser, sharing_package["source"])) == before + 1
         assert browser.evaluate("JSON.parse(localStorage.getItem('mathbank.libraryTransferTask.v1')).task_id") == receipt["task_id"]
-        assert browser.evaluate("document.getElementById('libraryImportBtn').disabled")
+        assert not browser.evaluate("document.getElementById('libraryImportBtn').disabled")
     finally:
         browser.evaluate("window.fetch=__transferDisconnect.fetch;true")
     _close_settings(browser)
 
 
-def test_refresh_recovers_pending_task_without_post(browser, sharing_package):
+def test_refresh_recovers_pending_task_without_post(browser, sharing_package, tmp_path):
     """A full page reload only fetches the same task and never uploads again."""
     _open_sharing(browser)
     _open_import(browser)
     before = len(_source_questions(browser, sharing_package["source"]))
-    browser.command("upload", "#libraryImportFile", str(sharing_package["path"]))
+    _upload_fresh_archive(browser, sharing_package, tmp_path)
     browser.evaluate("""(() => {
-        document.getElementById('libraryImportRepeatConfirm').checked=true;updateLibraryTransferControls();
         window.__transferRefresh={fetch:window.fetch,posts:0,gets:0};
         window.fetch=async function(url,init){
             if(String(url)==='/api/library-transfer/tasks/import'){
@@ -909,6 +944,7 @@ def test_rejected_upload_storage_error_ends_intent_without_unknown_poll_or_retry
 
 def test_task_progress_timeout_and_late_receipt_keep_current_task(browser):
     """Bounded GETs and generation checks protect the current task on reconnect."""
+    _reset_mocked_transfer_session(browser)
     _open_sharing(browser)
     _open_import(browser)
     outcome = browser.evaluate("""(async () => {
@@ -928,13 +964,13 @@ def test_task_progress_timeout_and_late_receipt_keep_current_task(browser):
             restoreLibraryTransferTask({task_id:first,operation:'import',status:'queued'});
             while(!release)await new Promise(resolve=>originalTimeout(resolve,0));
             restoreLibraryTransferTask({task_id:second,operation:'import',status:'queued'});
-            await new Promise(resolve=>originalTimeout(resolve,20));
+            while(libraryTransferPollPending)await new Promise(resolve=>originalTimeout(resolve,0));
             release();await new Promise(resolve=>originalTimeout(resolve,20));
             const current=libraryTransferTask.task_id,progress=document.getElementById('libraryTransferProgress');
             const stage={current,value:progress.value,max:progress.max,message:document.getElementById('libraryTransferMessage').textContent};
             stopLibraryTransferPolling();libraryTransferGeneration++;
             window.setTimeout=function(callback,milliseconds,...args){
-                if(milliseconds===15000){requestedTimeout=milliseconds;return originalTimeout(callback,0,...args);}
+                if(milliseconds===60000){requestedTimeout=milliseconds;return originalTimeout(callback,0,...args);}
                 return originalTimeout(callback,milliseconds,...args);
             };
             window.fetch=function(url,init){
@@ -957,7 +993,7 @@ def test_task_progress_timeout_and_late_receipt_keep_current_task(browser):
     assert outcome["stage"]["current"] == outcome["second"], outcome
     assert (outcome["stage"]["value"], outcome["stage"]["max"]) == (3, 8)
     assert "3 / 8" in outcome["stage"]["message"] and "999" not in outcome["stage"]["message"]
-    assert outcome["requestedTimeout"] == 15000 and outcome["aborts"] == 1
+    assert outcome["requestedTimeout"] == 60000 and outcome["aborts"] == 1
     assert outcome["posts"] == 0 and outcome["gets"] == 2
     assert outcome["disconnected"] and outcome["retryVisible"] and outcome["importDisabled"]
     _close_settings(browser)
@@ -1041,6 +1077,7 @@ def test_resolved_unknown_task_stays_ended_after_storage_event_and_reload(browse
 
 @pytest.mark.parametrize("suspended_phase", ["fetch", "body"])
 def test_export_preview_timeout_releases_busy_state_and_web_lock(browser, suspended_phase):
+    _reset_mocked_transfer_session(browser)
     _open_sharing(browser)
     _open_export(browser)
     result = browser.evaluate("""(async () => {
@@ -1049,7 +1086,7 @@ def test_export_preview_timeout_releases_busy_state_and_web_lock(browser, suspen
         let timeout=0,aborts=0,taskPosts=0;
         libraryExportSelection.ids=new Set([987654]);libraryExportSelection.missing=new Set();updateLibraryTransferControls();
         window.setTimeout=function(callback,milliseconds,...args){
-            if(milliseconds===15000){timeout=milliseconds;return originalTimeout(callback,0,...args);}
+            if(milliseconds===60000){timeout=milliseconds;return originalTimeout(callback,0,...args);}
             return originalTimeout(callback,milliseconds,...args);
         };
         window.fetch=function(url,init){
@@ -1073,13 +1110,14 @@ def test_export_preview_timeout_releases_busy_state_and_web_lock(browser, suspen
             libraryExportSelection.ids=originalIds;libraryExportSelection.missing=originalMissing;updateLibraryTransferControls();
         }
     })()""" % json.dumps(suspended_phase))
-    assert result["timeout"] == 15000 and result["aborts"] == 1, result
+    assert result["timeout"] == 60000 and result["aborts"] == 1, result
     assert result["taskPosts"] == 0 and result["lockAvailable"] and not result["busy"] and not result["fileDisabled"]
     assert "核验超时" in result["message"] and "尚未创建导出任务" in result["message"]
     _close_settings(browser)
 
 
 def test_browser_without_web_locks_adopts_active_import_conflict_with_get(browser):
+    _reset_mocked_transfer_session(browser)
     _open_sharing(browser)
     _open_import(browser)
     result = browser.evaluate("""(async () => {

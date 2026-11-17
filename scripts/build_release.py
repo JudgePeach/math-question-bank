@@ -124,6 +124,7 @@ INTERNAL_TOOL_RELEASE_PATHS = frozenset({
     "mathbank/question_exchange.py",
     "mathbank/zhixue_archive_conversion.py",
     "scripts/association_batch.py",
+    "scripts/audit_subquestion_numbering.py",
     "scripts/backfill_question_references.py",
     "tests/test_backfill_question_references.py",
     "tests/test_question_references_exchange.py",

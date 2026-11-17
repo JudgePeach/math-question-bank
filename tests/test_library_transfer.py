@@ -17,10 +17,11 @@ from sqlalchemy.orm import sessionmaker
 
 from mathbank import database
 from mathbank.database import (
-    KnowledgePoint, KnowledgePointCurriculum, Question, QuestionCurriculum, QuestionFingerprint,
+    KnowledgePoint, KnowledgePointCurriculum, LibraryImportReceipt, Question, QuestionCurriculum, QuestionFingerprint,
     QuestionKnowledgePoint, QuestionReference, QuestionSourceLabel,
 )
 from mathbank import library_transfer as transfer
+from mathbank.question_duplicate_service import fingerprint_for_question, prepare_fingerprint_values
 from mathbank.question_references import (
     reference_payloads, sync_question_references, sync_question_source_labels,
 )
@@ -475,6 +476,7 @@ def test_failed_commit_rolls_back_rows_catalog_and_installed_files(share, tmp_pa
             transfer.import_library_zip(db, package, uploads_dir=uploads)
         assert [(q.id, q.content, q.source) for q in db.query(Question)] == [(20, "已有题", "已有来源")]
         assert db.query(KnowledgePoint).count() == db.query(QuestionReference).count() == db.query(QuestionSourceLabel).count() == db.query(QuestionFingerprint).count() == 0
+        assert db.query(LibraryImportReceipt).count() == 0
         assert list(uploads.iterdir()) == [sentinel]
         assert verified == [(tmp_path / "receiving.db", 2, True)]
 
@@ -509,6 +511,9 @@ def test_exception_after_real_commit_preserves_all_rows_relations_and_images(sha
         with sqlite3.connect(database_path) as readback:
             assert readback.execute("SELECT COUNT(*) FROM questions").fetchone()[0] == 3
             assert readback.execute("SELECT COUNT(*) FROM question_fingerprints").fetchone()[0] == 2
+            assert readback.execute("SELECT archive_sha256, question_count FROM library_import_receipts").fetchall() == [
+                (hashlib.sha256(package.read_bytes()).hexdigest(), 2),
+            ]
             assert readback.execute("SELECT COUNT(*) FROM question_curriculums").fetchone()[0] == 3
             assert readback.execute("SELECT COUNT(*) FROM question_knowledge_points").fetchone()[0] == 2
             assert readback.execute("PRAGMA integrity_check").fetchone()[0] == "ok"
@@ -940,11 +945,16 @@ def test_prepared_import_validates_images_once_and_preserves_original_bytes(shar
             result = transfer.import_library_zip(db, package, uploads_dir=uploads, prepared=prepared, progress=report)
             assert result["imported_count"] == db.query(Question).count() == 2
             assert db.query(QuestionFingerprint).count() == 2
+            for question in db.query(Question):
+                stored = db.query(QuestionFingerprint).filter_by(question_id=question.id).one()
+                expected = prepare_fingerprint_values(fingerprint_for_question(
+                    question, uploads_dir=uploads, url_prefix=transfer.UPLOAD_PREFIX))
+                assert {field: getattr(stored, field) for field in expected} == expected
     assert len(validated) == 3
     assert sorted(path.read_bytes() for path in uploads.iterdir()) == sorted(path.read_bytes() for path in source_uploads.iterdir())
     assert list(workspace.iterdir()) == []
     assert list(dict.fromkeys(stage for stage, _ in progress)) == [
-        "validating", "installing", "writing", "fingerprinting", "committing"]
+        "validating", "fingerprinting", "installing", "writing", "committing"]
     assert all(0 <= state["current"] <= state["total"] for _, state in progress)
 
 
@@ -977,7 +987,7 @@ def test_prepared_import_binds_archive_and_staged_image_bytes(share, tmp_path, c
         if changed == "archive":
             package.write_bytes(package.read_bytes() + b"changed")
         elif changed == "image":
-            image = next(next(workspace.iterdir()).iterdir())
+            image = next(next(workspace.iterdir()).glob("shared_*"))
             image.write_bytes(image_bytes("black"))
         else:
             target = tmp_path / "same-bytes.zip"

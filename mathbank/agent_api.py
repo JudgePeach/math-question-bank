@@ -68,7 +68,8 @@ def create_agent_router(
         qtype: str = "", difficulty: str = "", page: int = Query(1, ge=1),
         page_size: int = Query(20, ge=1, le=100),
         related_to: Optional[int] = Query(None, ge=1), profile: Profile = "candidate",
-        include_answers: Optional[bool] = None, sort: Literal["asc", "desc"] = "desc",
+        include_answers: Optional[bool] = None, include_seq_num: bool = True,
+        sort: Literal["asc", "desc"] = "desc",
         version_code: Optional[str] = None,
     ):
         return read(
@@ -80,14 +81,15 @@ def create_agent_router(
             difficulty=difficulty, page=page, page_size=page_size, related_to=related_to,
             profile=profile, include_answers=(profile != "candidate" if include_answers is None
                                               else include_answers), sort=sort,
-            version_code=version_code,
+            version_code=version_code, include_seq_num=include_seq_num,
         )
 
     @router.get("/questions/batch")
     def batch(ids: str, profile: Profile = "teaching", include_answers: bool = True,
-              version_code: Optional[str] = None):
+              version_code: Optional[str] = None, include_seq_num: bool = True):
         return read("get_questions", ids=_ids(ids), profile=profile,
-                    include_answers=include_answers, version_code=version_code)
+                    include_answers=include_answers, version_code=version_code,
+                    include_seq_num=include_seq_num)
 
     @router.get("/assets")
     def assets(ids: str):
@@ -95,9 +97,10 @@ def create_agent_router(
 
     @router.get("/questions/{question_id}")
     def question(question_id: int, profile: Profile = "teaching", include_answers: bool = True,
-                 version_code: Optional[str] = None):
+                 version_code: Optional[str] = None, include_seq_num: bool = True):
         result = read("get_questions", ids=[question_id], profile=profile,
-                      include_answers=include_answers, version_code=version_code)
+                      include_answers=include_answers, version_code=version_code,
+                      include_seq_num=include_seq_num)
         if result["missing_ids"]:
             raise HTTPException(status_code=404, detail="未找到对应的题目")
         return result["items"][0]

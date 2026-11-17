@@ -116,7 +116,7 @@ def test_schema14_upgrade_preserves_rows_and_is_idempotent(tmp_path, monkeypatch
         c.exec_driver_sql("PRAGMA user_version=14")
     monkeypatch.setattr(migrations,'SCHEMA_SNAPSHOT_DIR',tmp_path/'snapshots')
     result=migrations.migrate_database(engine)
-    assert result['from_version']==14 and result['to_version']==15
+    assert result['from_version']==14 and result['to_version']==migrations.LATEST_SCHEMA_VERSION
     assert result['added_question_display_order_columns']==1
     with engine.connect() as c:
         assert c.exec_driver_sql('SELECT id,content,display_order FROM questions').fetchall()==[(8,'original',None)]

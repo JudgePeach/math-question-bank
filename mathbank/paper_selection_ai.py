@@ -145,6 +145,8 @@ def prepare_full_review(questions, provider, *, status_scope="all", uploads_dir=
                 try:
                     path = resolve_upload_asset(reference, uploads_dir=uploads_dir,
                         url_prefix="static/uploads", require_file=False)
+                    from mathbank.tiered_storage import readable_path
+                    path = readable_path(path)
                     if not path.is_file():
                         raise FileNotFoundError
                     with path.open("rb") as stream:
@@ -221,6 +223,8 @@ def changed_review_image_ids(fingerprints, *, uploads_dir=None):
         try:
             path = resolve_upload_asset(reference, uploads_dir=uploads_dir,
                 url_prefix="static/uploads", require_file=False)
+            from mathbank.tiered_storage import readable_path
+            path = readable_path(path)
             with path.open("rb") as stream:
                 raw = read_stream_limited(stream, MAX_REVIEW_IMAGE_BYTES)
             if hashlib.sha256(raw).hexdigest() != expected:

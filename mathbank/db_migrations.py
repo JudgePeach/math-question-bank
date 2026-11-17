@@ -20,7 +20,7 @@ from mathbank.paths import SCHEMA_SNAPSHOT_DIR
 from mathbank.sub_knowledge import normalize_sub_knowledge
 
 
-LATEST_SCHEMA_VERSION = 15
+LATEST_SCHEMA_VERSION = 16
 LEGACY_REQUIRED_TABLES = {
     "questions",
     "question_curriculums",
@@ -29,7 +29,7 @@ LEGACY_REQUIRED_TABLES = {
 }
 KNOWLEDGE_POINT_TABLES = {"knowledge_points", "knowledge_point_curriculums", "question_knowledge_points"}
 QUESTION_REFERENCE_TABLES = {"question_source_labels", "question_references"}
-REQUIRED_TABLES = LEGACY_REQUIRED_TABLES | {"question_fingerprints", "question_sub_knowledge", "document_import_receipts"} | KNOWLEDGE_POINT_TABLES | QUESTION_REFERENCE_TABLES
+REQUIRED_TABLES = LEGACY_REQUIRED_TABLES | {"question_fingerprints", "question_sub_knowledge", "document_import_receipts", "library_import_receipts"} | KNOWLEDGE_POINT_TABLES | QUESTION_REFERENCE_TABLES
 
 V6_QUESTION_FINGERPRINT_COLUMNS = {
     "question_id",
@@ -606,6 +606,22 @@ def _validate_document_import_receipts(connection) -> None:
         raise RuntimeError("导入回执表的唯一约束或外键无效")
 
 
+def _validate_library_import_receipts(connection) -> None:
+    inspector = inspect(connection)
+    table = "library_import_receipts"
+    columns = {column["name"] for column in inspector.get_columns(table) if not column["nullable"]}
+    if (not {"archive_sha256", "imported_at", "question_count"}.issubset(columns)
+            or inspector.get_pk_constraint(table)["constrained_columns"] != ["archive_sha256"]):
+        raise RuntimeError("分享包导入记录表的字段或主键无效")
+
+
+def _ensure_library_import_receipts(connection) -> None:
+    from mathbank.database import LibraryImportReceipt
+
+    LibraryImportReceipt.__table__.create(bind=connection, checkfirst=True)
+    _validate_library_import_receipts(connection)
+
+
 def _ensure_question_reference_tables(connection) -> dict[str, int]:
     """v13 creates empty reference tables; startup never guesses bindings."""
 
@@ -976,6 +992,7 @@ def _rebuild_relationship_tables(engine: Engine) -> dict[str, int]:
             knowledge_point_stats = _ensure_knowledge_point_tables(connection)
             question_reference_stats = _ensure_question_reference_tables(connection)
             question_order_stats = _ensure_question_order_schema(connection)
+            _ensure_library_import_receipts(connection)
             added_question_fingerprints = _ensure_question_fingerprint_table(connection)
             _validate_figure_layout_schema(connection)
 
@@ -1023,6 +1040,7 @@ def _upgrade_derived_schema(engine: Engine) -> dict[str, int]:
             stats.update(_ensure_knowledge_point_tables(connection))
             stats.update(_ensure_question_reference_tables(connection))
             stats.update(_ensure_question_order_schema(connection))
+            _ensure_library_import_receipts(connection)
             stats["added_question_fingerprints"] = (
                 _ensure_question_fingerprint_table(connection)
             )
@@ -1099,6 +1117,7 @@ def _upgrade_v6_or_v7_fingerprint_schema(
             knowledge_point_stats = _ensure_knowledge_point_tables(connection)
             question_reference_stats = _ensure_question_reference_tables(connection)
             question_order_stats = _ensure_question_order_schema(connection)
+            _ensure_library_import_receipts(connection)
             _validate_figure_layout_schema(connection)
             connection.exec_driver_sql(f"PRAGMA user_version={LATEST_SCHEMA_VERSION}")
             connection.exec_driver_sql("COMMIT")
@@ -1143,6 +1162,7 @@ def migrate_database(
             _validate_knowledge_point_schema(connection)
             _validate_question_reference_schema(connection)
             _validate_document_import_receipts(connection)
+            _validate_library_import_receipts(connection)
             _validate_question_order_schema(connection)
         return {"from_version": current, "to_version": current, "backup": None}
 

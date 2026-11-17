@@ -243,6 +243,7 @@
                 dialogStack.push({
                     dialog,
                     previousFocus: document.activeElement,
+                    returnFocus: options.returnFocus,
                     onEscape: typeof options.onEscape === 'function' ? options.onEscape : null
                 });
                 isolateBackground(true);
@@ -270,7 +271,7 @@
                 }
 
                 requestAnimationFrame(() => {
-                    const restoreTarget = entry.previousFocus;
+                    const restoreTarget = entry.returnFocus?.() || entry.previousFocus;
                     if (restoreTarget && restoreTarget.isConnected && typeof restoreTarget.focus === 'function') {
                         restoreTarget.focus({ preventScroll: true });
                     } else if (currentEntry) {
@@ -673,7 +674,6 @@
         window.KnowledgePointState = KnowledgePointState;
 
         // Global variables
-        let activeSidebarTab = 'bank'; // 'bank' or 'drafts'
         let categoryTree = {};
         let systemMetadata = { question_types: [], difficulties: [], curriculum: {} };
         let uploadedImages = [];
@@ -2070,18 +2070,16 @@
         function libraryExportFilterSignature() { return JSON.stringify(libraryExportFilters()); }
         function updateLibraryTransferControls() {
             const busy = Boolean(libraryTransferBusy);
+            const repeat = libraryTransferTask?.status === 'awaiting_confirmation';
             const state = libraryExportSelection;
             document.getElementById('libraryTransferControls').disabled = busy;
             document.getElementById('libraryImportFile').disabled = busy;
-            document.getElementById('libraryExportBtn').disabled = busy || state.selecting || !state.ids.size || Boolean(state.missing.size);
+            document.getElementById('libraryExportBtn').disabled = busy || repeat || state.selecting || !state.ids.size || Boolean(state.missing.size);
             const selectedFile = document.getElementById('libraryImportFile').files[0];
-            const repeat = libraryTransferTask && libraryTransferTask.operation === 'import'
-                && libraryTransferTask.status === 'completed' && selectedFile
-                && libraryTransferTask.filename === selectedFile.name && libraryTransferTask.size === selectedFile.size
-                && libraryTransferTask.last_modified === selectedFile.lastModified;
             document.getElementById('libraryImportRepeatLabel').classList.toggle('hidden', !repeat);
-            document.getElementById('libraryImportBtn').disabled = busy || !selectedFile
-                || Boolean(repeat && !document.getElementById('libraryImportRepeatConfirm').checked);
+            document.getElementById('libraryImportRepeatConfirm').disabled = busy;
+            document.getElementById('libraryImportRepeatCancel').disabled = busy;
+            document.getElementById('libraryImportBtn').disabled = busy || repeat || !selectedFile;
             document.getElementById('settings-tab-transfer').setAttribute('aria-busy', String(busy));
             document.querySelector('#libraryExportBtn span').textContent = libraryTransferBusy === 'export' ? '正在打包…' : '导出 ' + state.ids.size + ' 题 · ZIP 分享包';
             document.querySelector('#libraryImportBtn span').textContent = libraryTransferBusy === 'import' ? '正在导入…' : '批量导入';
@@ -2099,6 +2097,11 @@
             document.getElementById('libraryExportList').setAttribute('aria-busy', String(state.loading));
             document.getElementById('libraryExportMissing').hidden = !state.missing.size;
             document.getElementById('libraryExportMissingText').textContent = '已选中有 ' + state.missing.size + ' 道题已被删除，已暂停导出。';
+        }
+        function onLibraryImportFileChange() {
+            document.getElementById('libraryImportRepeatConfirm').checked = false;
+            if (libraryTransferTask?.status === 'awaiting_confirmation') decideLibraryImportConfirmation(false);
+            updateLibraryTransferControls();
         }
         function libraryExportNode(tag, text = '', className = '') {
             const node = document.createElement(tag); node.textContent = text;
@@ -2418,6 +2421,8 @@
                 error.activeTaskId = data.active_task_id;
             }
             if (data && data.code === 'upload_rejected') error.uploadRejected = true;
+            if (data && data.code === 'repeat_import') error.repeatImport = data;
+            if (data && data.code === 'import_in_progress') error.uploadRejected = true;
             return error;
         }
 
@@ -2490,13 +2495,15 @@
             const status = snapshot ? snapshot.status : task.status;
             const completed = status === 'completed';
             const failed = status === 'failed';
+            const awaiting = status === 'awaiting_confirmation';
             const uncertain = ['interrupted', 'unknown'].includes(status);
-            libraryTransferBusy = libraryTransferTerminal.has(status) ? '' : task.operation;
+            libraryTransferBusy = libraryTransferTerminal.has(status) || (awaiting && !task.disconnected) ? '' : task.operation;
             const result = snapshot && snapshot.result || {};
-            let state = completed ? 'success' : failed || uncertain || task.disconnected ? 'error' : 'busy';
+            const state = completed ? 'success' : awaiting || failed || uncertain || task.disconnected ? 'error' : 'busy';
             if (!message) {
                 if (completed && task.operation === 'import') message = '导入完成：新增 ' + result.imported_count + ' 道题目、' + result.image_count + ' 张图片。全部题目已分配新 ID。';
                 else if (completed) message = 'ZIP 分享包已生成，可下载后交给对方导入。';
+                else if (awaiting) message = (snapshot?.error?.message || '这份 ZIP 正在等待确认。') + ' 勾选后直接使用刚才上传的文件。';
                 else if (failed && task.resolved_at) message = '已核实并结束此任务记录。再次导入仍会新增包内全部题目。';
                 else if (failed) message = (task.operation === 'import' ? '导入失败：' : '导出失败：') + (snapshot && snapshot.error && snapshot.error.message || task.error || '请查看服务日志后重试。');
                 else if (uncertain) message = '任务结果需要核实：' + (snapshot && snapshot.error && snapshot.error.message || '服务中断或未能确认提交结果。') + ' 请先查询原任务并核实题库，勿直接再次导入。';
@@ -2543,7 +2550,8 @@
             }
             if (!snapshot || snapshot.task_id !== taskId
                     || (snapshot.operation !== libraryTransferTask.operation && !(snapshot.operation === 'unknown' && snapshot.status === 'unknown'))
-                    || !['queued', 'running', 'committing', 'completed', 'failed', 'interrupted', 'unknown'].includes(snapshot.status)) {
+                    || !['awaiting_confirmation', 'queued', 'running', 'committing', 'completed', 'failed', 'interrupted', 'unknown'].includes(snapshot.status)
+                    || (snapshot.status === 'awaiting_confirmation' && (snapshot.operation !== 'import' || snapshot.error?.staged_task_id !== taskId))) {
                 throw new Error('任务回执格式无效。');
             }
             if (snapshot.status === 'completed' && snapshot.operation === 'import'
@@ -2551,6 +2559,7 @@
                         || !Number.isInteger(snapshot.result.image_count) || snapshot.result.image_count < 0)) throw new Error('导入结果格式无效。');
             const task = libraryTransferTask;
             task.snapshot = snapshot; task.status = snapshot.status; task.disconnected = false; task.failures = 0;
+            document.getElementById('libraryImportRepeatConfirm').checked = false;
             saveLibraryTransferTask(); renderLibraryTransferTask();
             if (snapshot.status === 'completed') {
                 if (task.operation === 'import' && libraryTransferRefreshedTask !== taskId) {
@@ -2560,7 +2569,7 @@
                     libraryTransferAutoDownload = ''; document.getElementById('libraryTransferDownload').click();
                 }
             }
-            return !libraryTransferTerminal.has(snapshot.status) && !['interrupted', 'unknown'].includes(snapshot.status);
+            return !libraryTransferTerminal.has(snapshot.status) && !['awaiting_confirmation', 'interrupted', 'unknown'].includes(snapshot.status);
         }
         async function pollLibraryTransferTask() {
             if (!libraryTransferTask || libraryTransferTask.resolved_at || libraryTransferPollPending) return;
@@ -2573,6 +2582,10 @@
                 const response = await fetch('/api/library-transfer/tasks/' + encodeURIComponent(taskId), {signal: controller.signal});
                 if (response.status === 404) {
                     if (!libraryTransferTaskIsCurrent(taskId, generation)) return;
+                    if (libraryTransferTask.status === 'awaiting_confirmation') {
+                        finishLibraryImportConfirmation('分享包暂存已失效，请重新选择并上传 ZIP。');
+                        return;
+                    }
                     libraryTransferTask.status = 'unknown'; libraryTransferTask.snapshot = null; libraryTransferTask.disconnected = true;
                     saveLibraryTransferTask(); renderLibraryTransferTask('未找到原任务回执，导入结果仍需核实。请检查题库或重新连接查询；不会重新上传分享包。');
                     return;
@@ -2631,6 +2644,58 @@
             }
             return guarded();
         }
+        function adoptActiveLibraryImport(activeTaskId) {
+            libraryTransferTask.status = 'failed';
+            archiveLibraryTransferTask();
+            const active = {...libraryTransferDescriptor(libraryTransferTask), task_id: activeTaskId, status: 'queued'};
+            restoreLibraryTransferTask(active); saveLibraryTransferTask();
+            renderLibraryTransferTask('同一分享包已在处理中，正在查询原任务。');
+        }
+
+        function finishLibraryImportConfirmation(message) {
+            Object.assign(libraryTransferTask, {status: 'failed', snapshot: null, disconnected: false,
+                submission_rejected: true, error: message});
+            saveLibraryTransferTask(); renderLibraryTransferTask(message);
+        }
+
+        async function decideLibraryImportConfirmation(accept) {
+            if (libraryTransferBusy || libraryTransferTask?.status !== 'awaiting_confirmation') return;
+            const taskId = libraryTransferTask.task_id, generation = libraryTransferGeneration;
+            libraryTransferTask.submitting = true;
+            libraryTransferBusy = 'import'; updateLibraryTransferControls();
+            const controller = new AbortController(), timeout = setTimeout(() => controller.abort(), MathBankTimeouts.QUERY_MS);
+            try {
+                const response = await fetch('/api/library-transfer/tasks/' + encodeURIComponent(taskId) + '/confirm-import',
+                    {method: accept ? 'POST' : 'DELETE', signal: controller.signal});
+                if (!libraryTransferTaskIsCurrent(taskId, generation)) return;
+                if (response.status === 204) {
+                    finishLibraryImportConfirmation('已取消本次重复导入。'); return;
+                }
+                if (response.ok) {
+                    if (applyLibraryTransferSnapshot(await response.json(), taskId, generation)) pollLibraryTransferTask();
+                    return;
+                }
+                const error = await libraryTransferResponseError(response);
+                if (error.activeTaskId) { adoptActiveLibraryImport(error.activeTaskId); return; }
+                if (response.status === 410 || error.uploadRejected) {
+                    finishLibraryImportConfirmation(error.message); return;
+                }
+                if (response.status === 503) {
+                    document.getElementById('libraryImportRepeatConfirm').checked = false;
+                    renderLibraryTransferTask(error.message); return;
+                }
+                throw error;
+            } catch (error) {
+                if (!libraryTransferTaskIsCurrent(taskId, generation)) return;
+                libraryTransferTask.disconnected = true;
+                renderLibraryTransferTask('正在查询同一次确认的结果。');
+                pollLibraryTransferTask();
+            } finally {
+                clearTimeout(timeout);
+                if (libraryTransferTaskIsCurrent(taskId, generation)) libraryTransferTask.submitting = false;
+            }
+        }
+
         async function submitLibraryTransferTask(operation, payload, file = null) {
             archiveLibraryTransferTask(); stopLibraryTransferPolling(); libraryTransferGeneration += 1;
             const taskId = newLibraryTransferId(), generation = libraryTransferGeneration;
@@ -2645,7 +2710,9 @@
             renderLibraryTransferTask();
             libraryTransferAutoDownload = operation === 'export' ? taskId : '';
             let body, headers;
-            if (operation === 'import') { body = new FormData(); body.append('file', file); body.append('client_request_id', taskId); }
+            if (operation === 'import') {
+                body = new FormData(); body.append('file', file); body.append('client_request_id', taskId);
+            }
             else { body = JSON.stringify({...payload, client_request_id: taskId}); headers = {'Content-Type': 'application/json'}; }
             const controller = new AbortController(), timeout = setTimeout(() => controller.abort(), MathBankTimeouts.UPLOAD_MS);
             try {
@@ -2653,12 +2720,13 @@
                 if (!libraryTransferTaskIsCurrent(taskId, generation)) return;
                 if (!response.ok) {
                     const error = await libraryTransferResponseError(response);
+                    if (response.status === 409 && operation === 'import' && error.repeatImport?.staged_task_id === taskId) {
+                        applyLibraryTransferSnapshot({task_id: taskId, operation: 'import', status: 'awaiting_confirmation',
+                            error: error.repeatImport}, taskId, generation);
+                        return;
+                    }
                     if (response.status === 409 && operation === 'import' && error.activeTaskId) {
-                        libraryTransferTask.status = 'failed'; libraryTransferTask.error = error.message;
-                        archiveLibraryTransferTask();
-                        const active = {...libraryTransferDescriptor(libraryTransferTask), task_id: error.activeTaskId, status: 'queued'};
-                        restoreLibraryTransferTask(active); saveLibraryTransferTask();
-                        renderLibraryTransferTask('同一分享包已在处理中，正在查询原任务，不会重复新增。');
+                        adoptActiveLibraryImport(error.activeTaskId);
                         return;
                     }
                     if ((response.status >= 400 && response.status < 500 && response.status !== 409) || response.status === 503 || error.uploadRejected) {
@@ -2680,7 +2748,7 @@
             }
         }
         async function exportLibraryTransfer() {
-            if (libraryTransferBusy || libraryExportSelection.selecting) return;
+            if (libraryTransferBusy || libraryExportSelection.selecting || libraryTransferTask?.status === 'awaiting_confirmation') return;
             return withLibraryTransferStart(async () => {
                 const state = libraryExportSelection, questionIds = Array.from(state.ids);
                 if (!questionIds.length || state.missing.size) {
@@ -2725,7 +2793,7 @@
                 () => prepareLibraryExportFilters(true),
                 () => { if (typeof window.loadDashboardData === 'function') return window.loadDashboardData(); },
                 () => {
-                    if (window.PaperStore && window.PaperStore.activeWorkspace === 'paper'
+                    if (document.body.dataset.workspace === 'paper'
                             && typeof window.renderPaperWorkspace === 'function') return window.renderPaperWorkspace();
                 }
             ];
@@ -3341,108 +3409,6 @@
             closeThemeDropdown();
         };
 
-        // Workspace Dropdown toggle logic
-        window.toggleWorkspaceDropdown = function(event) {
-            event.stopPropagation();
-            const menu = document.getElementById('workspaceDropdownMenu');
-            const arrow = document.getElementById('workspaceDropdownArrow');
-            if (!menu) return;
-            
-            const isOpen = !menu.classList.contains('pointer-events-none');
-            if (isOpen) {
-                closeWorkspaceDropdown();
-            } else {
-                if (typeof closeThemeDropdown === 'function') closeThemeDropdown();
-                menu.classList.remove('scale-90', 'opacity-0', 'pointer-events-none');
-                menu.classList.add('scale-100', 'opacity-100');
-                const workspaceDropdownButton = document.getElementById('workspaceDropdownBtn');
-                if (workspaceDropdownButton) workspaceDropdownButton.setAttribute('aria-expanded', 'true');
-                if (arrow) arrow.classList.add('rotate-180');
-                document.addEventListener('click', closeWorkspaceDropdownOnce);
-            }
-        };
-
-        function closeWorkspaceDropdown() {
-            const menu = document.getElementById('workspaceDropdownMenu');
-            const arrow = document.getElementById('workspaceDropdownArrow');
-            if (!menu) return;
-            menu.classList.add('scale-90', 'opacity-0', 'pointer-events-none');
-            menu.classList.remove('scale-100', 'opacity-100');
-            const workspaceDropdownButton = document.getElementById('workspaceDropdownBtn');
-            if (workspaceDropdownButton) workspaceDropdownButton.setAttribute('aria-expanded', 'false');
-            if (arrow) arrow.classList.remove('rotate-180');
-            document.removeEventListener('click', closeWorkspaceDropdownOnce);
-        }
-
-        function closeWorkspaceDropdownOnce() {
-            closeWorkspaceDropdown();
-        }
-
-        window.setAppNavigationActive = function(targetId) {
-            document.querySelectorAll('[data-app-nav-target]').forEach((button) => {
-                const isActive = button.dataset.appNavTarget === targetId;
-                if (isActive) {
-                    button.setAttribute('aria-current', 'page');
-                } else {
-                    button.removeAttribute('aria-current');
-                }
-            });
-        };
-
-        window.selectWorkspace = function(workspaceId, workspaceName) {
-            window.setAppNavigationActive(workspaceId);
-            const currentWorkspaceName = document.getElementById('currentWorkspaceName');
-            if (currentWorkspaceName) {
-                currentWorkspaceName.textContent = workspaceName;
-            }
-
-            const checkDashboard = document.getElementById('ws-check-dashboard');
-            const checkBank = document.getElementById('ws-check-bank');
-            const checkPaper = document.getElementById('ws-check-paper');
-            const btnDashboard = document.getElementById('ws-btn-dashboard');
-            const btnBank = document.getElementById('ws-btn-bank');
-            const btnPaper = document.getElementById('ws-btn-paper');
-
-            if (checkDashboard && checkBank && checkPaper) {
-                if (workspaceId === 'dashboard') {
-                    checkDashboard.classList.remove('hidden');
-                    checkBank.classList.add('hidden');
-                    checkPaper.classList.add('hidden');
-                    if (btnDashboard) btnDashboard.classList.add('font-medium');
-                    if (btnBank) btnBank.classList.remove('font-medium');
-                    if (btnPaper) btnPaper.classList.remove('font-medium');
-                } else if (workspaceId === 'bank') {
-                    checkDashboard.classList.add('hidden');
-                    checkBank.classList.remove('hidden');
-                    checkPaper.classList.add('hidden');
-                    if (btnDashboard) btnDashboard.classList.remove('font-medium');
-                    if (btnBank) btnBank.classList.add('font-medium');
-                    if (btnPaper) btnPaper.classList.remove('font-medium');
-                } else if (workspaceId === 'paper') {
-                    checkDashboard.classList.add('hidden');
-                    checkBank.classList.add('hidden');
-                    checkPaper.classList.remove('hidden');
-                    if (btnDashboard) btnDashboard.classList.remove('font-medium');
-                    if (btnBank) btnBank.classList.remove('font-medium');
-                    if (btnPaper) btnPaper.classList.add('font-medium');
-                } else {
-                    checkDashboard.classList.add('hidden');
-                    checkBank.classList.add('hidden');
-                    checkPaper.classList.add('hidden');
-                    if (btnDashboard) btnDashboard.classList.remove('font-medium');
-                    if (btnBank) btnBank.classList.remove('font-medium');
-                    if (btnPaper) btnPaper.classList.remove('font-medium');
-                }
-            }
-
-            const checkQa = document.getElementById('ws-check-qa');
-            const btnQa = document.getElementById('ws-btn-qa');
-            if (checkQa) checkQa.classList.toggle('hidden', workspaceId !== 'qa');
-            if (btnQa) btnQa.classList.toggle('font-medium', workspaceId === 'qa');
-
-            closeWorkspaceDropdown();
-        };
-
         window.toggleDarkMode = function() {
             const isDark = document.documentElement.classList.toggle('dark');
             document.body.classList.toggle('dark', isDark);
@@ -3496,6 +3462,11 @@
             }
         }
 
+        document.addEventListener('DOMContentLoaded', () => {
+            fetchConfigStatus();
+            loadCategories();
+        }, { once: true });
+
         // Initialize theme and check update on DOMContentLoaded
         document.addEventListener('DOMContentLoaded', () => {
             initTheme();
@@ -3508,9 +3479,9 @@
          * =========================================================================
          * 全局极速自定义 Tooltip 悬浮提示系统 (Global Fast Tooltip System)
          * =========================================================================
-         * 自动接管全局所有带有 title 与 data-tooltip 属性的按钮与元素：
+         * 自动接管带有 title 或 data-tooltip 的元素；组卷来源使用可换行的提示样式：
          * 1. 移入按钮稳定停顿 0.5 秒 (500ms) 后平滑浮现提示文字。
-         * 2. 移出按钮瞬间 0ms 立即消失隐藏，杜绝旧按钮文字滞留与残影。
+         * 2. 移出目标立即隐藏；组卷来源可移入气泡继续阅读。
          * 3. 滑入新按钮重新独立计时 0.5 秒，鼠标快速扫过不闪烁。
          * 4. 自动移除原生 title 属性暂存至 dataset.tooltip，防止 2 秒后原生浏览器气泡重叠打架。
          * 5. 智能自适应视口边缘碰撞与上下翻转，点击、滚动与按键时即刻淡出隐藏。
@@ -3528,6 +3499,9 @@
                     tooltipEl.className = 'global-tooltip';
                     tooltipEl.setAttribute('role', 'tooltip');
                     tooltipEl.setAttribute('aria-hidden', 'true');
+                    tooltipEl.addEventListener('mouseleave', (event) => {
+                        if (activeTarget && !activeTarget.contains(event.relatedTarget)) hideImmediately();
+                    });
                     document.body.appendChild(tooltipEl);
                 }
                 return tooltipEl;
@@ -3562,19 +3536,19 @@
                 const tipHeight = el.offsetHeight || 28;
                 const viewportWidth = window.innerWidth;
                 const viewportHeight = window.innerHeight;
+                // 来源气泡与来源行贴合，鼠标可直接移进去阅读和滚动。
+                const offset = el.classList.contains('is-paper-source') ? 0 : OFFSET_Y;
 
                 // 水平居中计算并进行安全边缘 Clamp (左右保留 8px 安全边距)
                 let left = rect.left + (rect.width - tipWidth) / 2;
                 left = Math.max(8, Math.min(left, viewportWidth - tipWidth - 8));
 
                 // 垂直定位计算：优先放置在下方，若下方空间不足则放置在上方
-                let top = rect.bottom + OFFSET_Y;
+                let top = rect.bottom + offset;
                 if (top + tipHeight > viewportHeight - 8) {
-                    top = rect.top - tipHeight - OFFSET_Y;
+                    top = rect.top - tipHeight - offset;
                 }
-                if (top < 8) {
-                    top = 8;
-                }
+                top = Math.max(8, Math.min(top, viewportHeight - tipHeight - 8));
 
                 el.style.left = Math.round(left) + 'px';
                 el.style.top = Math.round(top) + 'px';
@@ -3598,7 +3572,9 @@
                 showTimer = setTimeout(() => {
                     if (!target || !target.isConnected || activeTarget !== target) return;
                     const el = ensureTooltipElement();
+                    el.classList.toggle('is-paper-source', target.dataset.tooltipVariant === 'paper-source');
                     el.textContent = text;
+                    el.scrollTop = 0;
                     positionTooltip(target, el);
                     el.classList.add('is-visible');
                     el.setAttribute('aria-hidden', 'false');
@@ -3632,15 +3608,18 @@
             document.addEventListener('mouseout', (e) => {
                 const target = e.target && e.target.closest ? e.target.closest('[title], [data-tooltip]') : null;
                 if (target && target === activeTarget) {
-                    if (!e.relatedTarget || !target.contains(e.relatedTarget)) {
+                    if (!target.contains(e.relatedTarget) && !tooltipEl?.contains(e.relatedTarget)) {
                         hideImmediately();
                     }
                 }
             }, true);
 
-            // 点击、触控、滚动或按键时瞬间隐藏，绝不遮挡操作
+            // 在气泡外点击、触控或滚动时立即隐藏。
             ['mousedown', 'pointerdown', 'touchstart', 'wheel', 'scroll'].forEach((evtName) => {
-                window.addEventListener(evtName, hideImmediately, { passive: true, capture: true });
+                window.addEventListener(evtName, (event) => {
+                    if (event.target instanceof Node && tooltipEl?.contains(event.target)) return;
+                    hideImmediately();
+                }, { passive: true, capture: true });
             });
 
             document.addEventListener('keydown', (e) => {

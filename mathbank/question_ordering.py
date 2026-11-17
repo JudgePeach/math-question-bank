@@ -11,13 +11,18 @@ def assign_append_order(connection, question):
     """New rows stay at the end even after high-ID questions were deleted."""
     if question.display_order is not None:
         return
+    question.display_order = next_append_order(connection)
+
+
+def next_append_order(connection):
+    """Find the first free position for a write in the current transaction."""
     table = Question.__table__
     if connection.execute(select(table.c.id).where(
             table.c.display_order.isnot(None)).limit(1)).first() is None:
-        return
+        return None
     maximum = connection.execute(select(func.max(func.coalesce(
         table.c.display_order, table.c.id)))).scalar()
-    question.display_order = int(maximum or 0) + 1
+    return int(maximum or 0) + 1
 
 
 @dataclass(frozen=True)

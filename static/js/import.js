@@ -182,25 +182,6 @@
             backupEditorState(null, null);
         }
 
-        function switchSidebarTab(tab) {
-            activeSidebarTab = tab;
-
-            const bankBtn = document.getElementById('sidebarTab-bank');
-            const draftsBtn = document.getElementById('sidebarTab-drafts');
-
-            if (tab === 'bank') {
-                bankBtn.classList.add('active');
-                draftsBtn.classList.remove('active-green');
-
-                loadQuestions();
-            } else {
-                draftsBtn.classList.add('active-green');
-                bankBtn.classList.remove('active');
-
-                loadDrafts();
-            }
-        }
-
         // Toast Helper
         function switchWorkflowTab(tabId) {
             const tabs = ['ai', 'ocr', 'image'];
@@ -2107,7 +2088,6 @@
         let parsedDuplicateCandidateFallbackQueue = [];
         let parsedDuplicateCandidateFallbackFrame = null;
         let parsedDuplicateCandidateRenderGeneration = 0;
-        let allSourcesList = [];
 
         // Source comparison is optional evidence, never an import permission
         // gate. Model-verification labels still belong to the exact snapshot;
@@ -7772,150 +7752,6 @@
 
 
         // ==========================================
-        // SIDEBAR QUESTION SOURCE AUTOCOMPLETE FILTER
-        // ==========================================
-        function setupSourceFilterAutocomplete() {
-            const sourceInput = document.getElementById('filterSource');
-            const suggestionsDiv = document.getElementById('filterSourceSuggestions');
-            const toggleBtn = document.getElementById('toggleFilterSourceBtn');
-            const clearBtn = document.getElementById('clearFilterSourceBtn');
-            const chevronIcon = document.getElementById('chevronFilterSourceIcon');
-            
-            if (!sourceInput || !suggestionsDiv) return;
-
-            function fetchSources(callback) {
-                fetch('/api/sources')
-                    .then(r => r.json())
-                    .then(sources => {
-                        allSourcesList = sources;
-                        if (callback) callback(sources);
-                    })
-                    .catch(err => {
-                        console.error('Failed to fetch sources:', err);
-                    });
-            }
-            
-            function renderSuggestions(list) {
-                suggestionsDiv.innerHTML = '';
-                if (list.length === 0) {
-                    suggestionsDiv.innerHTML = '<div class="px-3 py-2 text-[10px] text-slate-400 italic text-center select-none">无匹配来源</div>';
-                    suggestionsDiv.classList.remove('hidden');
-                    chevronIcon.classList.add('rotate-180');
-                    return;
-                }
-
-                list.forEach(src => {
-                    const item = document.createElement('div');
-                    item.className = "px-3 py-2 hover:bg-slate-50 text-xs text-slate-700 cursor-pointer select-none truncate font-medium transition-colors border-b border-slate-100/50 last:border-b-0";
-                    item.textContent = src;
-                    item.addEventListener('click', () => {
-                        sourceInput.value = src;
-                        suggestionsDiv.classList.add('hidden');
-                        chevronIcon.classList.remove('rotate-180');
-                        updateClearButtonVisibility();
-                        currentBankPage = 1;
-                        currentDraftPage = 1;
-                        if (activeSidebarTab === 'bank') {
-                            loadQuestions();
-                        } else {
-                            loadDrafts();
-                        }
-                    });
-                    suggestionsDiv.appendChild(item);
-                });
-                suggestionsDiv.classList.remove('hidden');
-                chevronIcon.classList.add('rotate-180');
-            }
-            
-            function updateClearButtonVisibility() {
-                if (sourceInput.value.trim() !== '') {
-                    clearBtn.classList.remove('hidden');
-                } else {
-                    clearBtn.classList.add('hidden');
-                }
-            }
-            
-            sourceInput.addEventListener('focus', () => {
-                fetchSources(sources => {
-                    const val = sourceInput.value.trim().toLowerCase();
-                    if (val === '') {
-                        renderSuggestions(sources);
-                    } else {
-                        const filtered = sources.filter(s => s.toLowerCase().includes(val));
-                        renderSuggestions(filtered);
-                    }
-                });
-            });
-            
-            sourceInput.addEventListener('input', () => {
-                updateClearButtonVisibility();
-                const val = sourceInput.value.trim().toLowerCase();
-                if (val === '') {
-                    renderSuggestions(allSourcesList);
-                } else {
-                    const filtered = allSourcesList.filter(s => s.toLowerCase().includes(val));
-                    renderSuggestions(filtered);
-                }
-            });
-            
-            sourceInput.addEventListener('change', () => {
-                currentBankPage = 1;
-                currentDraftPage = 1;
-                if (activeSidebarTab === 'bank') {
-                    loadQuestions();
-                } else {
-                    loadDrafts();
-                }
-            });
-            
-            sourceInput.addEventListener('keydown', (e) => {
-                if (e.key === 'Enter') {
-                    suggestionsDiv.classList.add('hidden');
-                    chevronIcon.classList.remove('rotate-180');
-                    currentBankPage = 1;
-                    currentDraftPage = 1;
-                    if (activeSidebarTab === 'bank') {
-                        loadQuestions();
-                    } else {
-                        loadDrafts();
-                    }
-                }
-            });
-            
-            toggleBtn.addEventListener('click', (e) => {
-                e.stopPropagation();
-                if (!suggestionsDiv.classList.contains('hidden')) {
-                    suggestionsDiv.classList.add('hidden');
-                    chevronIcon.classList.remove('rotate-180');
-                } else {
-                    sourceInput.focus();
-                }
-            });
-            
-            clearBtn.addEventListener('click', (e) => {
-                e.stopPropagation();
-                sourceInput.value = '';
-                updateClearButtonVisibility();
-                suggestionsDiv.classList.add('hidden');
-                chevronIcon.classList.remove('rotate-180');
-                currentBankPage = 1;
-                currentDraftPage = 1;
-                if (activeSidebarTab === 'bank') {
-                    loadQuestions();
-                } else {
-                    loadDrafts();
-                }
-            });
-            
-            document.addEventListener('click', (e) => {
-                if (!e.target.closest('#filterSourceContainer')) {
-                    suggestionsDiv.classList.add('hidden');
-                    chevronIcon.classList.remove('rotate-180');
-                }
-            });
-        }
-
-        // ==========================================
         // LaTeX TITLE AUTO-EXTRACTION HELPERS
         // ==========================================
         function extractLatexBraceGroup(latex, start) {
@@ -8020,107 +7856,9 @@
                 .trim();
         }
 
-        function setupSidebarSearch() {
-            const input = document.getElementById('searchInput');
-            if (!input) return;
-            let composing = false;
-            input.addEventListener('compositionstart', () => {
-                composing = true;
-                cancelPendingSidebarSearch();
-                invalidatePendingBankQuestions();
-            });
-            input.addEventListener('compositionend', () => {
-                composing = false;
-                if (input.value.trim()) scheduleSidebarSearch();
-                else runSidebarSearchImmediately();
-            });
-            input.addEventListener('input', event => {
-                if (composing || event.isComposing) {
-                    cancelPendingSidebarSearch();
-                    invalidatePendingBankQuestions();
-                    return;
-                }
-                if (input.value.trim()) scheduleSidebarSearch();
-                else runSidebarSearchImmediately();
-            });
-            input.addEventListener('keydown', event => {
-                if (event.key !== 'Enter' || composing || event.isComposing || event.keyCode === 229) return;
-                event.preventDefault();
-                runSidebarSearchImmediately();
-            });
-        }
-
-        // App Initialization
         document.addEventListener('DOMContentLoaded', () => {
-            // Check configs
-            fetchConfigStatus();
-            
-            // Load and update drafts count
-            updateDraftCountBadge();
-
-            setupSidebarSearch();
-
-            // Bind filterType and filterDifficulty select elements dynamically to loadQuestions / loadDrafts
-            document.getElementById('filterType').addEventListener('change', () => {
-                currentBankPage = 1;
-                currentDraftPage = 1;
-                if (activeSidebarTab === 'bank') {
-                    loadQuestions();
-                } else {
-                    loadDrafts();
-                }
-            });
-
-            document.getElementById('filterDifficulty').addEventListener('change', () => {
-                currentBankPage = 1;
-                currentDraftPage = 1;
-                if (activeSidebarTab === 'bank') {
-                    loadQuestions();
-                } else {
-                    loadDrafts();
-                }
-            });
-
-            // Bind filterSort change event
-            const filterSortEl = document.getElementById('filterSort');
-            if (filterSortEl) {
-                filterSortEl.addEventListener('change', () => {
-                    currentBankPage = 1;
-                    currentDraftPage = 1;
-                    if (activeSidebarTab === 'bank') {
-                        loadQuestions();
-                    } else {
-                        loadDrafts();
-                    }
-                });
-            }
-
-            // Load Cascade Category Tree
-            loadCategories();
-            
-            // Load saved questions list
-            loadQuestions();
-            
-            // Candidate pages load only after the user opens or searches the picker.
             setupRelatedQuestionPicker();
-
-            // Set up debounced event listeners for realtime markdown preview
-            setupRealtimePreviews();
-
-            // Setup drag-and-drop & clipboard listeners for illustrations & OCR
-            setupUploadHandlers();
-            
-            // Setup resizers
-            initResizers();
-
-            // Setup searchable source filter autocomplete
-            setupSourceFilterAutocomplete();
-
-            // Setup LaTeX batch import handlers
             setupImportFileHandlers();
-
-            // Initialize empty original state
-            backupEditorState(null, null);
 
             // ================== Shared on-demand multimodal TikZ workbench ==================
             const tikzWorkbenchState = {
@@ -8519,6 +8257,7 @@
             async function renderTikzWorkbenchCode(tikzCode) {
                 const formData = new FormData();
                 formData.append('tikz_code', tikzCode);
+                formData.append('context', tikzContextText());
                 const response = await fetch('/api/render_tikz', { method: 'POST', body: formData });
                 const data = await response.json().catch(() => ({}));
                 if (!response.ok || data.status !== 'success') {
@@ -8537,10 +8276,14 @@
                 tikzWorkbenchState.compiledPath = safePath;
                 tikzWorkbenchState.compiledCode = tikzCode;
                 document.getElementById('insertAnswerTikzWorkbenchBtn').disabled = false;
-                setTikzWorkbenchStatus(
-                    tikzWorkbenchState.editingAssetId ? '编译成功，可更新' : '编译成功，可新增',
-                    'success'
-                );
+                if (data.circle_review?.status === 'unverified') {
+                    setTikzWorkbenchStatus('编译成功，圆的几何条件待核对', 'warning');
+                } else {
+                    setTikzWorkbenchStatus(
+                        tikzWorkbenchState.editingAssetId ? '编译成功，可更新' : '编译成功，可新增',
+                        'success'
+                    );
+                }
                 return safePath;
             }
 

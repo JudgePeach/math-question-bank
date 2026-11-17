@@ -10,7 +10,6 @@ ROOT = Path(__file__).resolve().parents[1]
 
 def _frontend_source():
     editor = (ROOT / "static/js/editor.js").read_text(encoding="utf-8")
-    imports = (ROOT / "static/js/import.js").read_text(encoding="utf-8")
     helpers = editor[:editor.index("// A subdivision always carries")]
     load_start = editor.index("        function loadQuestions(retryCount = 0)")
     load_end = editor.index("        // ==========================================", load_start)
@@ -18,20 +17,14 @@ def _frontend_source():
     draft_end = editor.index("        function deleteDraft(", draft_start)
     page_start = editor.index("        function goToSidebarPage(")
     page_end = editor.index("        // Expose to global scope", page_start)
-    setup_start = imports.index("        function setupSidebarSearch()")
-    setup_end = imports.index("        // App Initialization", setup_start)
-    tab_start = imports.index("        function switchSidebarTab(")
-    tab_end = imports.index("        // Toast Helper", tab_start)
     return "\n".join((helpers, editor[load_start:load_end], editor[draft_start:draft_end],
-                      editor[page_start:page_end], imports[setup_start:setup_end],
-                      imports[tab_start:tab_end]))
+                      editor[page_start:page_end]))
 
 
 SETUP = r"""
 const assert = require('node:assert/strict');
 const window = {};
 const console = {error() {}, warn() {}};
-let activeSidebarTab = 'bank';
 const timers = new Map(); let nextTimer = 0;
 const setTimeout = (fn, ms) => {timers.set(++nextTimer, {fn, ms}); return nextTimer;};
 const clearTimeout = id => timers.delete(id);
@@ -82,7 +75,7 @@ function parameters(request=requests.at(-1)) {return new URL(request.url,'http:/
 def _run(assertions):
     node = shutil.which("node")
     assert node, "Node.js is required for the executable frontend regression"
-    script = SETUP + _frontend_source() + "\nsetupSidebarSearch();\n(async()=>{\n" + assertions + r"""
+    script = SETUP + _frontend_source() + "\nsetupBankSearchControls();\n(async()=>{\n" + assertions + r"""
 assert.equal(JSON.stringify(originalEditor),originalEditorSnapshot,'search changed unsaved editor/cart');
 })().catch(error=>{process.stderr.write(String(error.stack));process.exitCode=1;});
 """
@@ -131,7 +124,13 @@ for(const [id,value,param] of [['filterType','single_choice','qtype'],
   ['filterDifficulty','medium','difficulty'],['filterSort','asc','sort'],
   ['filterCompulsory','必修一','compulsory'],['filterChapter','函数','chapter'],
   ['filterKnowledge','单调性','knowledge'],['filterSource','合成来源','source']]) {
-  const count=requests.length;input('pending-'+id);nodes[id].value=value;loadQuestions();
+  const count=requests.length;input('pending-'+id);nodes[id].value=value;
+  if (['filterType', 'filterDifficulty', 'filterSort'].includes(id)) {
+    currentBankPage=3;currentDraftPage=2;nodes[id].emit('change');
+    assert.equal(parameters().get('page'),'1');assert.equal(currentDraftPage,1);
+  } else {
+    loadQuestions();
+  }
   assert.equal(requests.length,count+1);assert.equal(parameters().get(param),value);
   tick();assert.equal(requests.length,count+1);respond(requests.at(-1));await flush();
 }

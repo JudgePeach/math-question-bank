@@ -199,6 +199,47 @@ def test_batch_missing_validation_and_related_status(library):
         assert value.search(related_to=999)["related_status"] == "not_found"
 
 
+def test_batched_read_preserves_relations_and_skips_unneeded_queries(library):
+    with sqlite3.connect(library[0]) as db:
+        db.executescript("""
+            CREATE TABLE question_sub_knowledge(id INTEGER PRIMARY KEY, curriculum_id INTEGER,
+              compulsory TEXT, chapter TEXT, knowledge TEXT, position INTEGER);
+            INSERT INTO question_curriculums VALUES(2,9,'B','B册','B章','另一节');
+            INSERT INTO question_sub_knowledge VALUES(1,1,'B册','B章','第二小节',2);
+            INSERT INTO question_sub_knowledge VALUES(2,1,'B册','B章','第一小节',1);
+            INSERT INTO question_sub_knowledge VALUES(3,2,'B册','B章','另一题小节',1);
+            INSERT INTO question_source_labels VALUES(1,3,'书一','1','例1');
+            INSERT INTO question_source_labels VALUES(2,9,'书二','2','例2');
+        """)
+    with reader(library, active_version_code="A") as value:
+        statements = []
+        value.connection.set_trace_callback(statements.append)
+        candidate = value.search(page_size=2, include_seq_num=False)
+        assert all("seq_num" not in item for item in candidate["items"])
+        assert not any("SELECT id FROM questions ORDER BY" in sql or "question_curriculums" in sql
+                       for sql in statements)
+        assert sum("question_knowledge_points" in sql for sql in statements) == 1
+
+        statements.clear()
+        batch = value.get_questions([9, 999, 3], profile="evidence", version_code="B",
+                                    include_seq_num=False)
+        assert batch["missing_ids"] == [999]
+        assert [item["id"] for item in batch["items"]] == [9, 3]
+        assert [item["category_knowledge"] for item in batch["items"]] == ["另一节", "B节"]
+        assert [[point["code"] for point in item["knowledge_points"]] for item in batch["items"]] == [
+            ["p1"], ["p1", "p2"],
+        ]
+        assert [[label["original_label"] for label in item["source_labels"]] for item in batch["items"]] == [
+            ["例2"], ["例1"],
+        ]
+        assert [[child["knowledge"] for child in item["curriculum_mappings"][0]["sub_knowledge"]]
+                for item in batch["items"]] == [["另一题小节"], ["第一小节", "第二小节"]]
+        for table in ("question_knowledge_points", "question_sub_knowledge",
+                      "question_references", "question_source_labels"):
+            assert sum(table in sql for sql in statements) == 1
+        assert not any("SELECT id FROM questions ORDER BY" in sql for sql in statements)
+
+
 def test_observed_enums_and_display_identity(library):
     db = sqlite3.connect(library[0])
     db.execute("UPDATE questions SET difficulty='custom',question_type='custom_type',display_order=1 WHERE id=12")
@@ -273,6 +314,11 @@ def test_reference_status_is_checked_against_same_snapshot(library):
     db.commit()
     db.close()
     with reader(library) as value:
+        without_seq = value.get_questions([3], include_seq_num=False)["items"][0]
+        assert "seq_num" not in without_seq
+        assert without_seq["question_references"][0]["status"] == "resolved"
+        assert without_seq["question_references"][0]["target_question_id"] == 9
+        assert "seq_num" not in without_seq["question_references"][0]
         reference = value.get_questions([3])["items"][0]["question_references"][0]
         assert reference["status"] == "resolved" and reference["seq_num"] == 2
     db = sqlite3.connect(library[0])
@@ -281,6 +327,13 @@ def test_reference_status_is_checked_against_same_snapshot(library):
     db.close()
     with reader(library) as value:
         assert value.get_questions([3])["items"][0]["question_references"][0]["status"] == "stale"
+    with sqlite3.connect(library[0]) as db:
+        db.execute("UPDATE questions SET review=? WHERE id=3", (text,))
+        db.execute("DELETE FROM questions WHERE id=9")
+    with reader(library) as value:
+        reference = value.get_questions([3], include_seq_num=False)["items"][0]["question_references"][0]
+        assert reference["status"] == "target_deleted"
+        assert "seq_num" not in reference
 
 
 @pytest.mark.parametrize("kwargs", [{"page_size": 101}, {"page": 0}, {"profile": "bad"},

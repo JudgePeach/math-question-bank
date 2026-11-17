@@ -132,6 +132,14 @@ class DocumentImportReceipt(Base):
     created_at = Column(DateTime, nullable=False, default=_utcnow_naive)
 
 
+class LibraryImportReceipt(Base):
+    """The latest successful import of an exact ZIP into this database."""
+    __tablename__ = "library_import_receipts"
+    archive_sha256 = Column(String(64), primary_key=True)
+    imported_at = Column(DateTime, nullable=False)
+    question_count = Column(Integer, nullable=False)
+
+
 class Question(Base):
     __tablename__ = "questions"
     __table_args__ = (

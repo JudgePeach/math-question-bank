@@ -117,7 +117,7 @@
         <div class="app-nav-spacer"></div>
         <div class="app-nav-section-label app-nav-utility-label">工具</div>
         <div class="app-nav-utilities">
-            <button type="button" class="app-nav-item app-nav-utility" onclick="openStatsModal()">
+            <button type="button" id="appNavStats" class="app-nav-item app-nav-utility" onclick="openStatsModal()">
                 <i class="fa-solid fa-chart-pie" aria-hidden="true"></i>
                 <span>数据统计</span>
             </button>
@@ -354,86 +354,139 @@
         
         <!-- Workspace 1: Bank management workspace -->
         <div id="bankWorkspaceSection" class="bank-workspace bank-browser w-full h-full overflow-hidden hidden">
-            <header class="bank-management-header workspace-command-bar" aria-label="题库工具栏">
-                <h1 class="sr-only">题库管理</h1>
-                <div id="sidebarTopPanel" class="flex flex-col shrink-0 overflow-hidden">
-                <!-- Sidebar Navigation Tabs - Apple Glass Style -->
-                <div class="bank-sidebar-tabs px-4 pt-1.5 pb-0 shrink-0">
-                    <div class="glass-tab flex space-x-1">
-                        <button onclick="switchSidebarTab('bank')" id="sidebarTab-bank" class="glass-tab-item active flex-1 py-2.5 rounded-lg text-[11px] font-semibold text-center flex items-center justify-center space-x-1.5">
-                            <i class="fa-solid fa-database text-[10px]"></i>
-                            <span>本地题库</span>
-                        </button>
-                        <button onclick="switchSidebarTab('drafts')" id="sidebarTab-drafts" class="glass-tab-item flex-1 py-2.5 rounded-lg text-[11px] font-semibold text-center flex items-center justify-center space-x-1.5">
-                            <i class="fa-solid fa-box-archive text-[10px]"></i>
-                            <span>草稿箱 (<span id="draftCount">0</span>)</span>
-                        </button>
-                    </div>
-                </div>
-            </div>
-                <div class="bank-search-row relative">
-                    <span class="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
-                        <i class="fa-solid fa-magnifying-glass text-slate-400 text-xs"></i>
-                    </span>
-                    <input type="text" id="searchInput" aria-label="搜索题库" placeholder="搜索题干、解析、来源或标签（#题号）…"
-                           class="glass-input w-full pl-8 pr-4 py-1.5 text-xs rounded-xl">
-                </div>
-                <button type="button" class="bank-filter-toggle" aria-expanded="false" aria-controls="bankFilterFields" onclick="toggleBankFilters(this)">筛选条件</button>
-                <button type="button" id="clearBankFiltersBtn" class="glass-btn bank-clear-filters" hidden onclick="clearBankFilters()">清除筛选</button>
-                <div class="bank-management-actions"><button type="button" onclick="openNewQuestionEditor()" class="glass-btn-primary bank-create-btn flex items-center justify-center space-x-1.5 rounded-xl font-medium text-xs">
-                        <i class="fa-solid fa-plus text-[10px]"></i>
-                        <span>新建题目</span>
-                    </button></div>
-            </header>
-
-            <section class="bank-filter-toolbar" aria-label="题库检索与筛选">
-
-
-
-                <div id="bankFilterFields" class="bank-filter-fields">
-                <select id="filterCompulsory" aria-label="学段" class="glass-select text-xs px-2.5 py-2.5 rounded-xl">
-                    <option value="">所有学段</option>
-                </select>
-                <select id="filterChapter" aria-label="章节" class="glass-select text-xs px-2.5 py-2.5 rounded-xl hidden">
-                    <option value="">所有章节</option>
-                </select>
-                <select id="filterKnowledge" aria-label="小节" class="glass-select" disabled><option value="">先选择章节</option></select>
-                <select id="filterType" aria-label="题型" class="glass-select text-xs px-2.5 py-2.5 rounded-xl">
-                    <option value="">所有题型</option>
-                    <option value="single_choice">单选题</option>
-                    <option value="multi_choice">多选题</option>
-                    <option value="fill_in_blank">填空题</option>
-                    <option value="detailed_answer">解答题</option>
-                </select>
-                <select id="filterDifficulty" aria-label="难度" class="glass-select text-xs px-2.5 py-2.5 rounded-xl">
-                    <option value="">所有级别</option>
-                    <option value="easy_error">易错题</option>
-                    <option value="challenge">挑战题</option>
-                    <option value="qiangji">强基题</option>
-                </select>
-
-                <div class="bank-filter-row relative" id="filterSourceContainer">
-                    <span class="bank-filter-label">来源</span>
-                    <div class="relative flex-1">
-                        <input type="text" id="filterSource" aria-label="来源" placeholder="输入题目来源..."
-                               class="glass-input w-full pl-3 pr-7 py-1.5 text-xs rounded-xl bg-white/40"
-                               autocomplete="off">
-                        <span class="absolute inset-y-0 right-0 pr-2.5 flex items-center cursor-pointer text-slate-400 hover:text-slate-600" id="toggleFilterSourceBtn">
-                            <i class="fa-solid fa-chevron-down text-[9px] transition-transform duration-200" id="chevronFilterSourceIcon"></i>
-                        </span>
-                        <span class="absolute inset-y-0 right-6 pr-1 flex items-center cursor-pointer text-slate-400 hover:text-slate-600 hidden" id="clearFilterSourceBtn">
-                            <i class="fa-solid fa-circle-xmark text-[10px]"></i>
-                        </span>
-                        <div id="filterSourceSuggestions" class="glass-dropdown absolute left-0 right-0 mt-1 max-h-48 overflow-y-auto z-30 hidden custom-scrollbar">
-                            <!-- Options will be injected here -->
+            <div class="bank-controls question-filter-anchor">
+                <header class="bank-management-header workspace-command-bar" aria-label="题库工具栏">
+                    <h1 class="sr-only">题库管理</h1>
+                    <div id="sidebarTopPanel" class="flex flex-col shrink-0 overflow-hidden">
+                        <!-- Sidebar Navigation Tabs - Apple Glass Style -->
+                        <div class="bank-sidebar-tabs px-4 pt-1.5 pb-0 shrink-0">
+                            <div class="glass-tab flex space-x-1">
+                                <button onclick="switchSidebarTab('bank')" id="sidebarTab-bank" class="glass-tab-item active flex-1 py-2.5 rounded-lg text-[11px] font-semibold text-center flex items-center justify-center space-x-1.5">
+                                    <i class="fa-solid fa-database text-[10px]"></i>
+                                    <span>本地题库</span>
+                                </button>
+                                <button onclick="switchSidebarTab('drafts')" id="sidebarTab-drafts" class="glass-tab-item flex-1 py-2.5 rounded-lg text-[11px] font-semibold text-center flex items-center justify-center space-x-1.5">
+                                    <i class="fa-solid fa-box-archive text-[10px]"></i>
+                                    <span>草稿箱 (<span id="draftCount">0</span>)</span>
+                                </button>
+                            </div>
                         </div>
                     </div>
-                </div>
-                <div id="bankKnowledgePointPicker" class="mb-knowledge-point-field"></div>
-                </div>
-                <div id="bankFilterConditions" class="bank-filter-conditions" aria-label="已生效的筛选条件" aria-live="polite" hidden></div>
-                <div id="bankKnowledgePointConditions" class="mb-knowledge-point-conditions" aria-live="polite" hidden></div>
-            </section>
+                    <button type="button" class="bank-filter-toggle" aria-expanded="false" aria-controls="bankFilterFields" onclick="toggleBankFilters()"><i class="fa-solid fa-filter" aria-hidden="true"></i><span id="bankFilterToggleText">筛选</span></button>
+                    <div class="bank-search-row relative">
+                        <span class="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+                            <i class="fa-solid fa-magnifying-glass text-slate-400 text-xs"></i>
+                        </span>
+                        <input type="text" id="searchInput" aria-label="搜索题库" placeholder="搜索题干、解析、来源或标签（#题号）…"
+                               class="glass-input w-full pl-8 pr-4 py-1.5 text-xs rounded-xl">
+                    </div>
+                    <div class="bank-management-actions"><button type="button" onclick="openNewQuestionEditor()" class="glass-btn-primary bank-create-btn flex items-center justify-center space-x-1.5 rounded-xl font-medium text-xs">
+                            <i class="fa-solid fa-plus text-[10px]"></i>
+                            <span>新建题目</span>
+                        </button></div>
+                </header>
+
+                <section class="bank-filter-toolbar" aria-label="已生效的筛选">
+                    <div id="bankFilterConditions" class="bank-filter-conditions" aria-label="已生效的筛选条件" aria-live="polite" hidden></div>
+                    <div id="bankKnowledgePointConditions" class="mb-knowledge-point-conditions" aria-live="polite" hidden></div>
+                </section>
+
+                <section id="bankFilterFields" class="question-filter-popover" aria-labelledby="bankFilterHeading" tabindex="-1" hidden>
+                    <header class="question-filter-popover-heading">
+                        <h2 id="bankFilterHeading">筛选试题</h2>
+                        <button type="button" id="clearBankFiltersBtn" class="question-filter-action" hidden onclick="clearBankFilters()">清除筛选</button>
+                        <button type="button" class="question-filter-action question-filter-dismiss" aria-label="关闭筛选" onclick="closeBankFilterPopover()"><i class="fa-solid fa-xmark" aria-hidden="true"></i></button>
+                    </header>
+                    <div class="workspace-filter-grid question-filter-scroll bank-filter-fields">
+                        <div class="question-scope-filters" role="group" aria-label="题目范围">
+                            <label>学段
+                                <select id="filterCompulsory" aria-label="学段" class="glass-select text-xs px-2.5 py-2.5 rounded-xl">
+                                    <option value="">所有学段</option>
+                                </select>
+                            </label>
+                            <label>章节
+                                <select id="filterChapter" aria-label="章节" class="glass-select text-xs px-2.5 py-2.5 rounded-xl hidden">
+                                    <option value="">所有章节</option>
+                                </select>
+                            </label>
+                            <label>小节
+                                <select id="filterKnowledge" aria-label="小节" class="glass-select" disabled><option value="">先选择章节</option></select>
+                            </label>
+                            <label>题型
+                                <select id="filterType" aria-label="题型" class="glass-select text-xs px-2.5 py-2.5 rounded-xl">
+                                    <option value="">所有题型</option>
+                                    <option value="single_choice">单选题</option>
+                                    <option value="multi_choice">多选题</option>
+                                    <option value="fill_in_blank">填空题</option>
+                                    <option value="detailed_answer">解答题</option>
+                                </select>
+                            </label>
+                            <label>难度
+                                <select id="filterDifficulty" aria-label="难度" class="glass-select text-xs px-2.5 py-2.5 rounded-xl">
+                                    <option value="">所有级别</option>
+                                    <option value="easy_error">易错题</option>
+                                    <option value="challenge">挑战题</option>
+                                    <option value="qiangji">强基题</option>
+                                </select>
+                            </label>
+
+                            <div class="bank-filter-source" id="filterSourceContainer">
+                                <label for="filterSource">来源</label>
+                                <div class="relative flex-1">
+                                    <input type="text" id="filterSource" aria-label="来源" placeholder="搜索来源"
+                                           class="glass-input w-full pl-3 pr-7 py-1.5 text-xs rounded-xl bg-white/40"
+                                           autocomplete="off">
+                                    <span class="absolute inset-y-0 right-0 pr-2.5 flex items-center cursor-pointer text-slate-400 hover:text-slate-600" id="toggleFilterSourceBtn">
+                                        <i class="fa-solid fa-chevron-down text-[9px] transition-transform duration-200" id="chevronFilterSourceIcon"></i>
+                                    </span>
+                                    <span class="absolute inset-y-0 right-6 pr-1 flex items-center cursor-pointer text-slate-400 hover:text-slate-600 hidden" id="clearFilterSourceBtn">
+                                        <i class="fa-solid fa-circle-xmark text-[10px]"></i>
+                                    </span>
+                                </div>
+                                <div id="filterSourceSuggestions" class="glass-dropdown mt-1 max-h-40 overflow-y-auto hidden custom-scrollbar">
+                                    <!-- Options will be injected here -->
+                                </div>
+                            </div>
+                            <div id="bankKnowledgePointPicker" class="mb-knowledge-point-field"></div>
+                        </div>
+                        <div class="bank-keyword-filters" role="group" aria-labelledby="bankKeywordHeading">
+                            <div class="bank-keyword-heading">
+                                <div>
+                                    <h3 id="bankKeywordHeading">关键词条件</h3>
+                                    <p id="bankKeywordHint">同时满足每条条件。命中任一排除项的题目会被隐藏。</p>
+                                </div>
+                                <button type="button" id="addBankSearchRuleBtn" class="glass-btn bank-keyword-add"
+                                        aria-controls="bankSearchRules" aria-describedby="bankKeywordHint" onclick="addBankSearchRule()">
+                                    <i class="fa-solid fa-plus" aria-hidden="true"></i> 添加条件
+                                </button>
+                            </div>
+                            <div id="bankSearchRules" class="bank-keyword-rules"></div>
+                            <p id="bankSearchRuleLimit" class="bank-keyword-limit" role="status" hidden>已添加 8 条条件，移除一条后可继续添加。</p>
+                            <template id="questionSearchRuleTemplate">
+                                <div class="bank-keyword-rule" role="group">
+                                    <select class="glass-select" data-rule-field aria-label="匹配字段">
+                                        <option value="all">全部文本</option>
+                                        <option value="content">题干</option>
+                                        <option value="answer_markdown">解析</option>
+                                        <option value="review">教师评析</option>
+                                        <option value="source">来源</option>
+                                        <option value="tags">标签</option>
+                                    </select>
+                                    <select class="glass-select" data-rule-operator aria-label="匹配方式">
+                                        <option value="include">包含</option>
+                                        <option value="exclude">排除</option>
+                                    </select>
+                                    <input type="text" class="glass-input" maxlength="64" autocomplete="off"
+                                           aria-label="条件关键词" placeholder="输入关键词">
+                                    <button type="button" class="glass-btn bank-keyword-remove" aria-label="移除条件">
+                                        <i class="fa-solid fa-xmark" aria-hidden="true"></i>
+                                    </button>
+                                </div>
+                            </template>
+                        </div>
+                    </div>
+                </section>
+            </div>
 
             <!-- Lower left: question resources -->
             <section id="sidebarSection" class="bank-library-panel bank-question-pane glass-sidebar flex flex-col h-full overflow-hidden">
@@ -1041,14 +1094,14 @@
                         </div>
 
                         <!-- Content Render Box Container -->
-                        <div class="relative group/copy">
-                            <div class="text-sm leading-relaxed text-slate-800 space-y-4 preview-box pb-6" id="paperContent">
+                        <div>
+                            <div class="text-sm leading-relaxed text-slate-800 space-y-4 preview-box" id="paperContent">
                                 <!-- Injected by JS -->
                                 <p class="text-slate-400 italic text-center py-10">输入题干内容后，此处将展示实时试卷排版效果。</p>
                             </div>
                             <!-- Copy Button -->
-                            <button type="button" id="copyContentBtn" onclick="copyPaperContent()" class="absolute bottom-1 right-1 opacity-40 group-hover/copy:opacity-100 hover:scale-105 active:scale-95 bg-white hover:bg-slate-50 border border-slate-200 text-slate-500 hover:text-brand-600 p-1.5 rounded-lg shadow-sm transition-all duration-200 text-xs flex items-center space-x-1" title="复制 LaTeX 题干">
-                                <i class="fa-regular fa-copy"></i>
+                            <button type="button" id="copyContentBtn" onclick="copyPaperContent()" class="ml-auto mt-3 bg-white hover:bg-slate-50 border border-slate-200 text-slate-500 hover:text-brand-600 px-2.5 py-1.5 rounded-lg shadow-sm transition-colors duration-200 text-xs flex items-center space-x-1 whitespace-nowrap" title="复制 LaTeX 题干">
+                                <i class="fa-regular fa-copy" aria-hidden="true"></i>
                                 <span class="text-[9px] font-bold">复制题干</span>
                             </button>
                         </div>
@@ -1066,14 +1119,14 @@
                                 </button>
                             </div>
 
-                            <div class="relative group/copy">
-                                <div class="p-4 rounded-xl bg-slate-50 border border-slate-200 transition-all duration-300 leading-relaxed text-sm preview-box pb-7" id="paperAnalysisContent">
+                            <div>
+                                <div class="p-4 rounded-xl bg-slate-50 border border-slate-200 transition-all duration-300 leading-relaxed text-sm preview-box" id="paperAnalysisContent">
                                     <!-- Injected by JS -->
                                     <p class="text-slate-400 italic">暂无解析内容。</p>
                                 </div>
                                 <!-- Copy Button -->
-                                <button type="button" id="copyAnalysisBtn" onclick="copyPaperAnalysis()" class="absolute bottom-1.5 right-1.5 opacity-40 group-hover/copy:opacity-100 hover:scale-105 active:scale-95 bg-white hover:bg-slate-50 border border-slate-200 text-slate-500 hover:text-brand-600 p-1.5 rounded-lg shadow-sm transition-all duration-200 text-xs flex items-center space-x-1" title="复制 LaTeX 解析">
-                                    <i class="fa-regular fa-copy"></i>
+                                <button type="button" id="copyAnalysisBtn" onclick="copyPaperAnalysis()" class="ml-auto mt-3 bg-white hover:bg-slate-50 border border-slate-200 text-slate-500 hover:text-brand-600 px-2.5 py-1.5 rounded-lg shadow-sm transition-colors duration-200 text-xs flex items-center space-x-1 whitespace-nowrap" title="复制 LaTeX 解析">
+                                    <i class="fa-regular fa-copy" aria-hidden="true"></i>
                                     <span class="text-[9px] font-bold">复制解析</span>
                                 </button>
                             </div>
@@ -1115,18 +1168,16 @@
 
         <!-- Workspace 2: Smart paper studio -->
         <div id="paperWorkspaceSection" class="paper-studio w-full h-full overflow-hidden hidden">
-            <div class="paper-studio-frame">
+            <div class="paper-studio-frame" data-mobile-pane="questions">
                 <h1 class="sr-only">智能组卷</h1>
-                <div class="paper-config-panel workspace-command-panel">
-
-                            <div id="paperFilterSection" class="paper-filter-content transition-all duration-300">
-                                <!-- Rendered by paper.js -->
-                            </div>
-                        </div>
-
                 <div class="paper-mobile-switch" role="tablist" aria-label="组卷视图">
                     <button type="button" role="tab" aria-selected="true" data-paper-pane="questions" onclick="setPaperMobilePane('questions')">选题</button>
                     <button type="button" role="tab" aria-selected="false" data-paper-pane="preview" onclick="setPaperMobilePane('preview')">卷面预览</button>
+                </div>
+                <div class="paper-config-panel workspace-command-panel">
+                    <div id="paperFilterSection" class="paper-filter-content">
+                        <!-- Rendered by paper.js -->
+                    </div>
                 </div>
                 <div class="paper-studio-body" data-mobile-pane="questions">
                     <!-- Left: configuration and question stream -->
@@ -1712,10 +1763,13 @@
                             <p id="libraryImportHelp" class="mb-transfer-import-help">选择 MathBank 导出的 ZIP 分享包，自动导入题目、配图、解析与分类。每道题分配新 ID，同名图片安全改名。</p>
                             <div class="mb-transfer-file-picker">
                                 <label for="libraryImportFile">选择题库分享包</label>
-                                <input id="libraryImportFile" type="file" accept=".zip,application/zip" onchange="updateLibraryTransferControls()" aria-describedby="libraryImportHelp libraryImportRepeatNote" class="block min-h-[44px] w-full min-w-0 text-xs text-slate-600 dark:text-slate-300">
+                                <input id="libraryImportFile" type="file" accept=".zip,application/zip" onchange="onLibraryImportFileChange()" aria-describedby="libraryImportHelp libraryImportRepeatNote" class="block min-h-[44px] w-full min-w-0 text-xs text-slate-600 dark:text-slate-300">
                             </div>
-                            <p id="libraryImportRepeatNote" class="mb-transfer-import-note"><i class="fa-solid fa-circle-info" aria-hidden="true"></i><span>每次导入都会新增全部题目，不查重。导入前自动备份；原有题库缺失的图片会记录并提示，保留题目原文后继续导入。</span></p>
-                            <label id="libraryImportRepeatLabel" class="hidden mb-transfer-repeat"><input id="libraryImportRepeatConfirm" type="checkbox" onchange="updateLibraryTransferControls()"><span>我确认再次新增此包中的全部题目</span></label>
+                            <p id="libraryImportRepeatNote" class="mb-transfer-import-note"><i class="fa-solid fa-circle-info" aria-hidden="true"></i><span>同一份 ZIP 已导入时会提示确认，即使文件改了名。确认后追加包内全部题目，跳过逐题查重。写入前会自动备份，旧题缺图会记录并提示。</span></p>
+                            <div id="libraryImportRepeatLabel" class="hidden mb-transfer-repeat flex-wrap">
+                                <label class="flex items-center gap-2 min-h-[44px]"><input id="libraryImportRepeatConfirm" type="checkbox" onchange="if (this.checked) decideLibraryImportConfirmation(true)"><span>勾选即继续导入，再次新增包内全部题目</span></label>
+                                <button id="libraryImportRepeatCancel" type="button" class="glass-btn min-h-[44px]" onclick="decideLibraryImportConfirmation(false)">取消本次导入</button>
+                            </div>
                             <button type="button" id="libraryImportBtn" onclick="importLibraryTransfer()" disabled class="glass-btn-primary min-h-[44px] px-4 py-2 rounded-xl text-xs font-medium disabled:opacity-50 disabled:cursor-wait"><i class="fa-solid fa-upload mr-1.5" aria-hidden="true"></i><span>批量导入</span></button>
                         </section>
                     </fieldset>
@@ -2467,6 +2521,7 @@
     <script src="/static/js/document-import-session.js"></script>
     <script src="/static/js/paper.js"></script>
     <script src="/static/js/dashboard.js"></script>
+    <script src="/static/js/workspace.js"></script>
     <!-- QA_START -->
     <script src="/static/js/qa-data.js"></script>
     <script src="/static/js/qa.js"></script>

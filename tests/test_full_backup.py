@@ -530,7 +530,7 @@ def test_restore_rejects_future_schema_before_replacing_current_database(tmp_pat
             "compulsory TEXT NOT NULL, chapter TEXT NOT NULL, knowledge TEXT NOT NULL, "
             "position INTEGER NOT NULL)"
         )
-        # Unknown future schemas still include the supported v14 data tables;
+        # Unknown future schemas still include the supported data tables;
         # restore rejects their newer version before replacing current data.
         for table in ("knowledge_points", "knowledge_point_curriculums", "question_knowledge_points"):
             connection.execute(f'CREATE TABLE "{table}" (id INTEGER PRIMARY KEY)')
@@ -542,6 +542,10 @@ def test_restore_rejects_future_schema_before_replacing_current_database(tmp_pat
             "payload_sha256 VARCHAR(64) NOT NULL, draft_revision INTEGER NOT NULL, "
             "question_id INTEGER REFERENCES questions(id) ON DELETE SET NULL, created_at DATETIME NOT NULL, "
             "UNIQUE(project_id,card_id))"
+        )
+        connection.execute(
+            "CREATE TABLE library_import_receipts (archive_sha256 VARCHAR(64) PRIMARY KEY NOT NULL, "
+            "imported_at DATETIME NOT NULL, question_count INTEGER NOT NULL)"
         )
     archive = create_full_backup(
         output_dir=tmp_path / "snapshots",

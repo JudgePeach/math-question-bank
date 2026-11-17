@@ -183,3 +183,44 @@ def test_strict_sequence_api_uses_global_display_order_and_no_text_fallback(isol
         assert get('/api/questions', q='#2', source='不存在', page=1)['total'] == 0
         assert {x['id'] for x in get('/api/questions', q='2', page=1)['items']} == {10, 20, 30}
     ''')
+
+
+def test_search_rules_filter_before_pagination_and_compose_with_quick_search(isolated_app):
+    isolated_app(r'''
+        a = seed_question(10, source=None, answer_markdown="用换元法")
+        b = seed_question(20, source="旧卷", answer_markdown="用换元法")
+        c = seed_question(30, source="新卷", answer_markdown="用换元法")
+        d = seed_question(40, source="新卷", answer_markdown="不相关")
+        for question in (a, b, c, d):
+            question.content = '函数 100%_ ![图示](/static/uploads/旧卷.png)'
+            question.display_order = question.id
+        c.tags = "旧卷资料"
+        db.commit()
+
+        def rule(field, operator, keyword):
+            return json.dumps(dict(field=field, operator=operator, keyword=keyword))
+
+        filters = [rule('content', 'include', '  %_  '),
+                   rule('answer_markdown', 'include', '换元'),
+                   rule('source', 'exclude', '旧卷'),
+                   rule('content', 'exclude', '旧卷')]
+        first = get('/api/questions', search_rule=filters, page=1, page_size=1, sort='asc')
+        second = get('/api/questions', search_rule=filters, page=2, page_size=1, sort='asc')
+        assert first['total'] == second['total'] == 2
+        assert [item['id'] for item in first['items'] + second['items']] == [10, 30]
+        assert get('/api/questions', search_rule=filters, q='#2', page=1)['total'] == 0
+        assert get('/api/questions', search_rule=filters, q='#3', page=1)['items'][0]['id'] == 30
+        assert get('/api/questions', search_rule=filters, source='新卷', page=1)['total'] == 1
+        assert get('/api/questions', search_rule=filters, qtype='single_choice', page=1)['total'] == 0
+        assert [item['id'] for item in get('/api/questions', search_rule=filters + [
+            rule('all', 'exclude', '旧卷'), rule('content', 'include', '图示'),
+        ])] == [10]
+        assert get('/api/questions', search_rule=[rule('all', 'include', '#1')], page=1)['total'] == 0
+
+        for invalid in (['invalid JSON'], ['null'], [rule('id', 'include', '10')],
+                        [rule('all', 'not', '函数')], [rule('all', 'include', ' ')],
+                        [rule('all', 'exclude', '字' * 65)], [rule('all', 'exclude', '\ud800')],
+                        filters * 3):
+            response = client.get('/api/questions', params={'search_rule': invalid})
+            assert response.status_code == 400, response.text
+    ''')

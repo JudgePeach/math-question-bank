@@ -162,6 +162,7 @@ def test_internal_tools_are_limited_to_the_declared_paths(ignored_paths):
         for name in names
     ] + [
         "scripts/backfill_question_references.py",
+        "scripts/audit_subquestion_numbering.py",
         "scripts/difficulty_classify.py",
         "scripts/migrate_word_math_private_chars.py",
         "mathbank/zhixue_archive_conversion.py",

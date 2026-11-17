@@ -127,6 +127,15 @@ def resolve_upload_asset(
     if resolved.exists() and not resolved.is_file():
         raise AssetSecurityError("插图路径不是普通文件。")
     if require_file and not resolved.exists():
+        from mathbank.tiered_storage import TieredStorageError, hydrate
+        try:
+            hydrate(resolved)
+        except TieredStorageError as exc:
+            raise AssetSecurityError(str(exc)) from exc
+    elif require_file:
+        from mathbank.tiered_storage import hydrate
+        hydrate(resolved)  # Refresh a managed local cache's idle lease.
+    if require_file and not resolved.exists():
         from mathbank.asset_lifecycle import AssetLifecycleError, restore_asset
 
         try:

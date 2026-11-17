@@ -133,6 +133,7 @@ def browser(tmp_path_factory):
 
 
 def test_association_switching_and_real_unsaved_changes(browser, tmp_path):
+    browser.command("set", "viewport", "1600", "1100")
     ids = browser.evaluate(r"""
     (async () => {
         selectWorkspace('bank', '题库研讨工作台');
@@ -304,6 +305,32 @@ def test_editor_confirmations_are_visible_and_restore_editing(browser, tmp_path,
     assert browser.evaluate("!document.querySelector('main').inert && !document.getElementById('appNavigation').inert")
     browser.evaluate("selectWorkspace('paper', '智能组卷'); true")
     browser.command("set", "viewport", "1600", "1100")
+
+
+@pytest.mark.parametrize("width", [375, 1440])
+def test_stats_modal_returns_focus_to_visible_entry(browser, width):
+    browser.command("set", "viewport", str(width), "900")
+    browser.command("click", "#appNavDashboard")
+    more_tools = "#headerMoreActions > summary"
+    trigger = "#statsOpenBtn" if width == 375 else "#appNavStats"
+    return_target = more_tools if width == 375 else trigger
+
+    for dismiss in ("Escape", "button"):
+        if width == 375:
+            browser.command("focus", more_tools)
+            browser.command("press", "Enter")
+        browser.command("focus", trigger)
+        browser.command("press", "Enter")
+        browser.command("wait", "--fn", (
+            "document.activeElement.id === 'statsModalTitle' && !statsModal.classList.contains('opacity-0')"
+        ))
+        if dismiss == "Escape":
+            browser.command("press", "Escape")
+        else:
+            browser.command("click", "#statsModal [data-modal-close]")
+        browser.command("wait", "--fn", "statsModal.classList.contains('hidden')")
+        assert browser.evaluate(f"document.activeElement.matches({json.dumps(return_target)})")
+        assert browser.evaluate("!document.getElementById('headerMoreActions').open")
 
 
 def test_resizing_repartitions_every_question_inside_footer_boundary(browser):
@@ -831,7 +858,7 @@ def test_reload_returns_home_without_losing_cart_metadata_or_drafts(browser):
     assert browser.evaluate("document.querySelector('.paper-preview-column').getClientRects().length > 0 && !document.querySelector('.paper-library-column').getClientRects().length")
     browser.command('click', '[data-paper-pane="questions"]')
     browser.command('reload')
-    browser.command('wait', '--fn', "typeof PaperStore !== 'undefined' && PaperStore.activeWorkspace === 'dashboard'")
+    browser.command('wait', '--fn', "document.body.dataset.workspace === 'dashboard'")
     assert browser.evaluate("!document.getElementById('dashboardWorkspaceSection').classList.contains('hidden')")
     assert browser.evaluate("PaperStore.cart.map(q=>q.id)") == [saved['id']]
     assert browser.evaluate("PaperStore.meta.title") == '刷新保留的演示卷'

@@ -85,6 +85,8 @@ def _backup_count_tables(schema_version: int) -> set[str]:
         tables.update({"question_source_labels", "question_references"})
     if schema_version >= 14:
         tables.add("document_import_receipts")
+    if schema_version >= 16:
+        tables.add("library_import_receipts")
     return tables
 
 
@@ -401,6 +403,10 @@ def _copy_referenced_uploads(
             source.resolve(strict=False).relative_to(source_root)
         except ValueError as exc:
             raise RuntimeError(f"插图路径越出上传目录: {source}") from exc
+        # Missing external bytes must fail a complete backup, including when
+        # allow_missing_uploads was requested for genuinely historical gaps.
+        from mathbank.tiered_storage import hydrate
+        hydrate(source)
         try:
             source_stat = source.stat()
         except FileNotFoundError:
@@ -939,6 +945,7 @@ def verify_full_backup(archive_path: Path) -> dict[str, Any]:
                     V6_QUESTION_FINGERPRINT_INDEXES,
                     V7_QUESTION_FINGERPRINT_COLUMNS,
                     V7_QUESTION_FINGERPRINT_INDEXES,
+                    _validate_library_import_receipts,
                     _validate_question_fingerprint_schema,
                 )
 
@@ -971,6 +978,8 @@ def verify_full_backup(archive_path: Path) -> dict[str, Any]:
                                     )
                                 ),
                             )
+                            if schema_version >= 16:
+                                _validate_library_import_receipts(validation_connection)
                             if schema_version >= 11:
                                 from mathbank.db_migrations import _validate_sub_knowledge_schema
                                 _validate_sub_knowledge_schema(validation_connection)
@@ -1136,6 +1145,11 @@ def _create_raw_recovery_archive(
     metadata_path: Path,
 ) -> Path:
     """Capture raw resources before any SQLite API can mutate WAL sidecars."""
+
+    from mathbank.tiered_storage import get_storage
+    storage = get_storage()
+    if storage:
+        storage.hydrate_all(uploads_dir)
 
     output_dir.mkdir(parents=True, exist_ok=True)
     output_dir.chmod(0o700)

@@ -156,6 +156,11 @@ def quarantine_asset(reference, *, uploads_dir, url_prefix, reason) -> bool:
         candidate = resolve_upload_asset(
             reference, uploads_dir=root, url_prefix=url_prefix, require_file=False
         )
+        from mathbank.tiered_storage import hydrate, forget, get_storage
+        storage = get_storage()
+        if storage and storage.retain_external(candidate):
+            return True
+        hydrate(candidate)
         relative = candidate.relative_to(root)
         paths = _store_paths(root, relative)
         if paths is None:
@@ -186,6 +191,7 @@ def quarantine_asset(reference, *, uploads_dir, url_prefix, reason) -> bool:
                 _exclusive_move(candidate, retained)
         except OSError as exc:
             raise AssetLifecycleError("图片保留未完成，已有图片副本未删除。") from exc
+        forget(candidate)
         return True
 
 
@@ -254,6 +260,15 @@ class RetainedUploadStaticFiles(StaticFiles):
         if scope["method"] not in {"GET", "HEAD"}:
             raise HTTPException(status_code=405)
         reference = "/" + self.url_prefix + "/" + path[len(self.upload_static_prefix):]
+        # External cache I/O must not hold the shared lifecycle lock used by
+        # ordinary question edits and unrelated image requests.
+        try:
+            logical = resolve_upload_asset(reference, uploads_dir=self.uploads_dir,
+                                           url_prefix=self.url_prefix, require_file=False)
+            from mathbank.tiered_storage import hydrate
+            hydrate(logical)
+        except (AssetSecurityError, AssetLifecycleError, OSError, ValueError):
+            raise HTTPException(status_code=404)
         with ASSET_LIFECYCLE_LOCK:
             try:
                 candidate = resolve_upload_asset(

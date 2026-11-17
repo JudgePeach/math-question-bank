@@ -34,7 +34,7 @@ def review_script():
         section("function renderParsedKnowledgePoints", "function setupCardCategoryLinkage"),
         section("function validateParsedQuestionBeforeImport", "function confirmClearAllParsed"),
         section("function clearAllParsedSources()", "function getCheckedUnsavedIndices"),
-        section("function getCheckedUnsavedIndices", "// SIDEBAR QUESTION SOURCE"),
+        section("function getCheckedUnsavedIndices", "// LaTeX TITLE AUTO-EXTRACTION HELPERS"),
         section("async function generateSingleAnswer", "window.generateSingleAnswer ="),
     ])
     setup = r"""

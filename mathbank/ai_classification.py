@@ -53,6 +53,9 @@ def build_classification_user_message(question, provider, *, uploads_dir=UPLOADS
             try:
                 path = resolve_upload_asset(reference, uploads_dir=uploads_dir,
                                             url_prefix=url_prefix, require_file=False)
+                logical_path = path
+                from mathbank.tiered_storage import readable_path
+                path = readable_path(path)
                 if not path.is_file():
                     failure = "missing_file"
                 else:
@@ -74,7 +77,7 @@ def build_classification_user_message(question, provider, *, uploads_dir=UPLOADS
         image_inputs.append(detail)
         if failure is None:
             visible.append(reference)
-            safe_path = url_prefix.strip("/") + "/" + path.relative_to(uploads_dir).as_posix()
+            safe_path = url_prefix.strip("/") + "/" + logical_path.relative_to(uploads_dir).as_posix()
             image_id = manifest.add_sent_image(path=safe_path, file_path=path, raw=raw, sent=normalized.data,
                                                references=owners, max_bytes=MAX_CLASSIFY_IMAGE_BYTES)
             detail.update(image_id=image_id, path=safe_path)

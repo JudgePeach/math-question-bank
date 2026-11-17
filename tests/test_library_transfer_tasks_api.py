@@ -11,7 +11,7 @@ import zipfile
 
 import pytest
 
-from test_library_transfer_api import transfer_api, _export, _seed, _question_count  # noqa: F401
+from test_library_transfer_api import transfer_api, _export, _import, _seed, _question_count  # noqa: F401
 from mathbank.backup import verify_full_backup
 from mathbank.database import Question
 
@@ -26,11 +26,13 @@ def tasks_api(transfer_api):
             manager.close()
 
 
-def _start_import(api, archive, task_id=None):
+def _start_import(api, archive, task_id=None, *, filename="MathBank.zip", confirm=None):
+    fields = {"client_request_id": task_id or str(uuid.uuid4())}
+    if confirm is not None:
+        fields["confirm_repeat_sha256"] = confirm
     return api.client.post(
         "/api/library-transfer/tasks/import", headers=api.headers,
-        data={"client_request_id": task_id or str(uuid.uuid4())},
-        files={"file": ("MathBank.zip", archive, "application/zip")},
+        data=fields, files={"file": (filename, archive, "application/zip")},
     )
 
 
@@ -46,7 +48,7 @@ def _wait(api, task_id):
     pytest.fail(f"Task did not finish: {result}")
 
 
-def test_retry_after_response_loss_queries_same_append_and_new_uuid_can_repeat(tasks_api):
+def test_retry_after_response_loss_and_renamed_zip_can_confirm_without_upload(tasks_api):
     api = tasks_api
     _seed(api)
     archive = _export(api)
@@ -68,10 +70,78 @@ def test_retry_after_response_loss_queries_same_append_and_new_uuid_can_repeat(t
     assert set(finished["stage_timings"]) >= {"validating", "backup", "installing", "writing", "fingerprinting", "committing"}
     assert "intent" not in finished and "input.zip" not in json.dumps(finished)
     assert len(list((api.backups / "snapshots").glob("*.zip"))) == 1
-    explicit = _start_import(api, archive)
-    assert explicit.status_code == 202
+    api.main._LIBRARY_TRANSFER_TASKS.close()
+    api.main._LIBRARY_TRANSFER_TASKS = None
+    repeat_id = str(uuid.uuid4())
+    warning = _start_import(api, archive, repeat_id, filename="改名了.zip")
+    assert warning.status_code == 409 and warning.json()["code"] == "repeat_import"
+    assert warning.json()["archive_sha256"] == hashlib.sha256(archive).hexdigest()
+    assert warning.json()["staged_task_id"] == repeat_id
+    assert not (api.generated / "library_transfer_tasks" / repeat_id).exists()
+    staged = api.generated / "library_transfer_tasks" / "_repeat_uploads"
+    assert [path.read_bytes() for path in staged.iterdir()] == [archive]
+    status_url = f"/api/library-transfer/tasks/{repeat_id}"
+    assert api.client.get(status_url).json()["status"] == "awaiting_confirmation"
+    assert _question_count(api) == 2 and len(list((api.backups / "snapshots").glob("*.zip"))) == 1
+    assert _import(api, archive).status_code == 409
+    wrong = _start_import(api, archive, repeat_id, confirm="f" * 64)
+    assert wrong.status_code == 400 and _question_count(api) == 2
+    confirm_url = status_url + "/confirm-import"
+    explicit = api.client.post(confirm_url, headers=api.headers)
+    assert explicit.status_code == 202 and explicit.json()["task_id"] == repeat_id
     assert _wait(api, explicit.json()["task_id"])["status"] == "completed"
     assert _question_count(api) == 3
+    assert not list(staged.iterdir())
+    assert api.client.post(confirm_url, headers=api.headers).status_code == 200
+    assert api.client.delete(confirm_url, headers=api.headers).status_code == 409
+    assert _question_count(api) == 3
+
+
+@pytest.mark.parametrize("end", ["cancel", "expiry", "restart"])
+def test_unconfirmed_archive_is_cleaned_and_never_imported(tasks_api, monkeypatch, end):
+    from mathbank import library_transfer_tasks
+
+    api = tasks_api
+    _seed(api, with_image=False)
+    archive = _export(api)
+    assert _import(api, archive).status_code == 200
+    if end == "expiry":
+        monkeypatch.setattr(library_transfer_tasks, "REPEAT_UPLOAD_SECONDS", 0.3)
+    task_id = str(uuid.uuid4())
+    warning = _start_import(api, archive, task_id)
+    assert warning.status_code == 409 and warning.json()["staged_task_id"] == task_id
+    url = f"/api/library-transfer/tasks/{task_id}/confirm-import"
+    directory = api.generated / "library_transfer_tasks" / "_repeat_uploads"
+    if end == "cancel":
+        assert api.client.delete(url, headers=api.headers).status_code == 204
+    elif end == "restart":
+        api.main._LIBRARY_TRANSFER_TASKS.close()
+        api.main._LIBRARY_TRANSFER_TASKS = None
+    else:
+        deadline = time.monotonic() + 2
+        while list(directory.iterdir()) and time.monotonic() < deadline:
+            time.sleep(0.025)
+    assert not list(directory.iterdir())
+    assert api.client.post(url, headers=api.headers).status_code == 410
+    assert _question_count(api) == 2
+    assert len(list((api.backups / "snapshots").glob("*.zip"))) == 1
+
+
+def test_existing_background_receipt_warns_without_sqlite_history(tasks_api):
+    api = tasks_api
+    _seed(api, with_image=False)
+    archive = _export(api)
+    digest = hashlib.sha256(archive).hexdigest()
+    task_id = str(uuid.uuid4())
+    directory = api.generated / "library_transfer_tasks" / task_id
+    directory.mkdir(parents=True)
+    (directory / "state.json").write_text(json.dumps({
+        "version": 1, "task_id": task_id, "operation": "import", "status": "completed",
+        "stage": "completed", "intent": "import:" + digest, "result": {"imported_count": 1},
+    }), encoding="utf-8")
+    response = _start_import(api, archive)
+    assert response.status_code == 409 and response.json()["archive_sha256"] == digest
+    assert "历史" in response.json()["message"] and _question_count(api) == 1
 
 
 def test_upload_cleanup_failure_preserves_accepted_response_and_same_uuid_retry(tasks_api, monkeypatch):
@@ -277,7 +347,7 @@ def test_two_windows_with_different_uuids_cannot_concurrently_append_the_same_ar
     assert _question_count(api) == 2
     # Once the first operation is complete, a fresh explicit intent remains
     # an append rather than an accidental persistent package deduplication.
-    explicit = _start_import(api, archive, second_id)
+    explicit = _start_import(api, archive, second_id, confirm=hashlib.sha256(archive).hexdigest())
     assert explicit.status_code == 202
     assert _wait(api, second_id)["status"] == "completed"
     assert _question_count(api) == 3

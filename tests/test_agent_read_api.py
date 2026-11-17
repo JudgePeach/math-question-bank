@@ -117,12 +117,22 @@ def test_http_and_cli_share_one_read_only_teaching_workflow(isolated_app):
             '/api/agent/knowledge-points', q='单调性')
         assert cli('--knowledge-point', '1136') == get(
             '/api/agent/questions', knowledge_point_codes=['1136'])
+        candidates = cli('--knowledge-point', '1136', '--no-seq-num')
+        assert candidates == get('/api/agent/questions', knowledge_point_codes=['1136'],
+                                 include_seq_num='false')
+        assert 'seq_num' not in candidates['items'][0]
         detail = cli('--ids', '7,999', '--profile', 'teaching')
         assert detail['missing_ids'] == [999]
         assert detail['items'][0]['content'] == question.content
         assert detail['items'][0]['answer_markdown'] == question.answer_markdown
         assert detail['items'][0]['review'] == question.review
         assert public(detail) == get('/api/agent/questions/batch', ids='7,999', profile='teaching')
+        assert detail['items'][0]['seq_num'] == 1
+        batch_without_seq = cli('--ids', '7,999', '--no-seq-num')
+        assert 'seq_num' not in batch_without_seq['items'][0]
+        assert public(batch_without_seq) == get('/api/agent/questions/batch', ids='7,999',
+                                                include_seq_num='false')
+        assert public(batch_without_seq['items'][0]) == get('/api/agent/questions/7', include_seq_num='false')
         assets = cli('--assets', '--ids', '7,999')
         assert assets['missing_ids'] == [999]
         assert Path(assets['items'][0]['assets'][0]['local_path']).resolve() == image.resolve()

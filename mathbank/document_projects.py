@@ -343,6 +343,9 @@ class DocumentProjectStore:
         try:
             self._assert_root()
             self._safe_directory(directory)
+            if filename == "source.bin":
+                from mathbank.tiered_storage import hydrate
+                hydrate(directory / filename)
             if _WINDOWS:
                 path = directory / filename
                 before = path.lstat()

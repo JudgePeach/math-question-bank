@@ -244,8 +244,10 @@ def duplicate_input_for_question(
     )
 
 
-def _stored_values(fingerprint: QuestionFingerprint) -> dict[str, object]:
+def prepare_fingerprint_values(fingerprint: QuestionFingerprint) -> dict[str, object]:
+    """Serialize only the index fields, without a database ID or write timestamp."""
     values: dict[str, object] = {
+        "fingerprint_version": fingerprint.fingerprint_version,
         "content_revision_hash": fingerprint.content_revision_hash,
         "exact_hash": fingerprint.exact_hash,
         "critical_math_hash": fingerprint.critical_math_hash,
@@ -259,7 +261,6 @@ def _stored_values(fingerprint: QuestionFingerprint) -> dict[str, object]:
         ),
         "tikz_hashes": json.dumps(list(fingerprint.tikz_signatures), ensure_ascii=False),
         "status": "ready",
-        "updated_at": dt.datetime.now(dt.timezone.utc).replace(tzinfo=None),
     }
     for band_no, band_value in enumerate(fingerprint.bands):
         values[f"band{band_no}"] = band_value
@@ -282,8 +283,8 @@ def upsert_question_fingerprint(
     ).delete(synchronize_session=False)
     values = {
         "question_id": question.id,
-        "fingerprint_version": fingerprint.fingerprint_version,
-        **_stored_values(fingerprint),
+        **prepare_fingerprint_values(fingerprint),
+        "updated_at": dt.datetime.now(dt.timezone.utc).replace(tzinfo=None),
     }
     update_values = {
         field: value
@@ -312,6 +313,19 @@ def upsert_question_fingerprints(
     size, including older SQLite builds shipped on Windows.
     """
 
+    upsert_prepared_fingerprints(db, (
+        (question.id, prepare_fingerprint_values(fingerprint))
+        for question, fingerprint in fingerprints
+    ), batch_size=batch_size)
+
+
+def upsert_prepared_fingerprints(
+    db: Session,
+    fingerprints: Iterable[tuple[int, dict[str, object]]],
+    *,
+    batch_size: int = 128,
+) -> None:
+    """Write prepared index fields after their question IDs have been assigned."""
     if not isinstance(batch_size, int) or isinstance(batch_size, bool) or not 1 <= batch_size <= 500:
         raise ValueError("fingerprint batch_size must be between 1 and 500")
     iterator = iter(fingerprints)
@@ -329,15 +343,15 @@ def upsert_question_fingerprints(
     while batch := list(islice(iterator, batch_size)):
         retired_ids: dict[int, list[int]] = {}
         rows = []
-        for question, fingerprint in batch:
-            if question.id is None or question.id in seen_question_ids:
+        for question_id, values in batch:
+            if question_id is None or question_id in seen_question_ids:
                 raise ValueError("fingerprint batch requires distinct persisted questions")
-            seen_question_ids.add(question.id)
-            retired_ids.setdefault(fingerprint.fingerprint_version, []).append(question.id)
+            seen_question_ids.add(question_id)
+            retired_ids.setdefault(values["fingerprint_version"], []).append(question_id)
             rows.append({
-                "question_id": question.id,
-                "fingerprint_version": fingerprint.fingerprint_version,
-                **_stored_values(fingerprint),
+                **values,
+                "question_id": question_id,
+                "updated_at": dt.datetime.now(dt.timezone.utc).replace(tzinfo=None),
             })
         for version, question_ids in retired_ids.items():
             db.query(StoredFingerprint).filter(

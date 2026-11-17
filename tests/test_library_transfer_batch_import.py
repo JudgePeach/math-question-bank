@@ -27,8 +27,8 @@ def test_streamed_question_json_matches_v1_bytes_and_exact_size_cap(tmp_path, mo
         transfer._write_questions_json(iter(records), path)
 
 
-@pytest.mark.parametrize("fail_index", [None, 130])
-def test_large_import_flushes_groups_and_rolls_back_late_batch_failure(tmp_path, monkeypatch, fail_index):
+@pytest.mark.parametrize("failure", [None, "preparation", "writing"])
+def test_large_import_prepares_outside_transaction_and_flushes_groups(tmp_path, monkeypatch, failure):
     source_engine = create_engine(f"sqlite:///{tmp_path / 'source.db'}")
     Base.metadata.create_all(source_engine)
     archive = tmp_path / "sharing.zip"
@@ -39,6 +39,14 @@ def test_large_import_flushes_groups_and_rolls_back_late_batch_failure(tmp_path,
     source_engine.dispose()
     target_engine = create_engine(f"sqlite:///{tmp_path / 'destination.db'}")
     Base.metadata.create_all(target_engine)
+    with Session(target_engine) as target:
+        target.add_all([Question(id=7, content="旧题", display_order=3),
+                        Question(id=20, content="未重新编号的旧题")])
+        target.commit()
+        # Exercise an older mixed ordering. Normal insert automatically fills
+        # display_order when any existing row has a custom position.
+        target.query(Question).filter_by(id=20).update({Question.display_order: None})
+        target.commit()
     flushed, persistent_questions = [], []
     def count_flush(session, *_):
         flushed.append(len(session.new))
@@ -46,31 +54,40 @@ def test_large_import_flushes_groups_and_rolls_back_late_batch_failure(tmp_path,
         persistent_questions.append(sum(isinstance(row, Question) for row in session.identity_map.values()))
     real_fingerprint, computed = fingerprints.fingerprint_for_question, []
     def compute(question, **kwargs):
+        assert question.id is None and not flushed
         computed.append(question.id)
-        if len(computed) == fail_index:
+        if failure == "preparation" and len(computed) == 130:
             raise RuntimeError("controlled late fingerprint failure")
         return real_fingerprint(question, **kwargs)
+    def progress(stage, *, current, total):
+        if failure == "writing" and stage == "writing" and current == 130:
+            raise RuntimeError("controlled late write failure")
     monkeypatch.setattr(fingerprints, "fingerprint_for_question", compute)
     with Session(target_engine) as target:
         event.listen(target, "before_flush", count_flush)
         event.listen(target, "after_flush_postexec", count_persistent)
-        if fail_index is None:
+        if failure is None:
             result = transfer.import_library_zip(target, archive, uploads_dir=tmp_path / "uploads")
             assert result["imported_count"] == 257
             assert len(set(result["id_map"].values())) == 257
         else:
-            with pytest.raises(RuntimeError, match="late fingerprint"):
-                transfer.import_library_zip(target, archive, uploads_dir=tmp_path / "uploads")
+            with pytest.raises(RuntimeError, match="late (fingerprint|write)"):
+                transfer.import_library_zip(target, archive, uploads_dir=tmp_path / "uploads", progress=progress)
     # Use a separate connection/session to check actual persisted outcomes.
     with Session(target_engine) as readback:
-        expected = 257 if fail_index is None else 0
-        assert readback.query(Question).count() == expected
+        expected = 257 if failure is None else 0
+        assert readback.query(Question).count() == 2 + expected
         assert readback.query(QuestionFingerprint).count() == expected
         if expected:
             assert {row.status for row in readback.query(QuestionFingerprint)} == {"ready"}
             assert len(flushed) < 12
+            orders = readback.query(Question.display_order).filter(Question.id > 20).order_by(Question.id)
+            assert [order for order, in orders] == list(range(21, 278))
     target_engine.dispose()
-    assert persistent_questions and max(persistent_questions) <= 128
+    if failure == "preparation":
+        assert not flushed
+    else:
+        assert persistent_questions and max(persistent_questions) <= 128
 
 
 def test_consumed_private_point_trees_release_without_losing_persisted_evidence(tmp_path):

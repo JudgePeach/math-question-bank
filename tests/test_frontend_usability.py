@@ -40,14 +40,17 @@ def _index_elements() -> dict[str, dict[str, str | None]]:
     return parser.by_id
 
 
-def test_mobile_viewport_and_five_level_script_order_are_preserved():
+def test_mobile_viewport_and_frontend_script_order_are_preserved():
     index_source = _read(INDEX_PATH)
     expected_order = (
         "/static/js/api.js",
         "/static/js/editor.js",
         "/static/js/ocr.js",
         "/static/js/import.js",
+        "/static/js/document-import-session.js",
         "/static/js/paper.js",
+        "/static/js/dashboard.js",
+        "/static/js/workspace.js",
     )
 
     assert 'name="viewport"' in index_source
@@ -1370,6 +1373,7 @@ def test_application_shell_navigation_reuses_peer_workspaces():
     api_source = _read(STATIC_JS_DIR / "api.js")
     import_source = _read(STATIC_JS_DIR / "import.js")
     paper_source = _read(STATIC_JS_DIR / "paper.js")
+    workspace_source = _read(STATIC_JS_DIR / "workspace.js")
 
     assert elements["appNavigation"]["aria-label"] == "MathBank 主导航"
     assert elements["appNavPrimary"]["aria-label"] == "主要工作区"
@@ -1387,19 +1391,12 @@ def test_application_shell_navigation_reuses_peer_workspaces():
     assert "openSavedPapersModal()" in index_source
     assert 'id="appContentShell"' in index_source
 
-    assert "window.setAppNavigationActive = function(targetId)" in api_source
-    assert "button.setAttribute('aria-current', 'page')" in api_source
-    assert "window.setAppNavigationActive(workspaceId)" in api_source
+    assert "window.selectWorkspace = function" in workspace_source
+    assert "button.setAttribute('aria-current', 'page')" in workspace_source
+    assert all("window.selectWorkspace = " not in source for source in (api_source, import_source, paper_source))
     assert "function openImportModal()" in import_source
     assert "window.selectWorkspace('import', '导入中心')" in import_source
-    assert "const importWorkspaceSection = document.getElementById('importWorkspaceSection')" in paper_source
-    assert "mainWorkspaceContainer.insertBefore(importWorkspaceSection, paperWorkspaceSection)" in paper_source
-    assert "workspaceId === 'import'" in paper_source
-    assert "importSec.classList.remove('hidden')" in paper_source
-    assert "workspaceId === 'records'" in paper_source
-    assert "recordsSec.classList.remove('hidden')" in paper_source
-    assert "workspaceId === 'dashboard'" in paper_source
-    assert "dashboardSec.classList.remove('hidden')" in paper_source
+    assert "mainWorkspaceContainer.insertBefore(importWorkspaceSection, paperWorkspaceSection)" in workspace_source
 
     for marker in (
         ".app-navigation",
@@ -1417,7 +1414,7 @@ def test_dashboard_workspace_reuses_read_only_metrics_and_existing_workflows():
     css_source = _read(CSS_PATH)
     dashboard_source = _read(STATIC_JS_DIR / "dashboard.js")
     editor_source = _read(STATIC_JS_DIR / "editor.js")
-    paper_source = _read(STATIC_JS_DIR / "paper.js")
+    workspace_source = _read(STATIC_JS_DIR / "workspace.js")
 
     for element_id in (
         "dashboardWorkspaceSection",
@@ -1453,7 +1450,7 @@ def test_dashboard_workspace_reuses_read_only_metrics_and_existing_workflows():
     assert "align-items: stretch" in css_source
     assert ".dashboard-task-panel" in css_source
     assert "__preserveNewQuestionEditor" in editor_source
-    assert "classList.remove('init-ws-dashboard', 'init-ws-paper')" in paper_source
+    assert "classList.remove('init-ws-dashboard', 'init-ws-paper')" in workspace_source
 
 
 def test_dashboard_monthly_counts_follow_backend_beijing_dates():
@@ -1989,7 +1986,7 @@ def test_paper_bank_stream_uses_server_pagination_and_latest_request_wins():
     fetch_start = paper_source.index("let bankQuestionsAbortController = null;")
     fetch_end = paper_source.index("// Render Full Paper Workspace", fetch_start)
     fetch_source = paper_source[fetch_start:fetch_end]
-    filter_start = paper_source.index("let filterDebounceTimer = null;")
+    filter_start = paper_source.index("function suspendPaperSearch()")
     filter_end = paper_source.index("function syncCanvasHeaderMeta", filter_start)
     filter_source = paper_source[filter_start:filter_end]
 
@@ -2019,6 +2016,7 @@ def test_paper_bank_stream_uses_server_pagination_and_latest_request_wins():
     assert node, "Node.js is required for the frontend executable regression"
     script = r'''
 const PAPER_STREAM_PAGE_SIZE = 15;
+function activePaperSearchRules() { return []; }
 const controllers = [];
 class TestAbortController {
   constructor() {
@@ -2342,7 +2340,7 @@ def test_paper_selected_stream_paginates_with_full_cart_indexes_and_total_counts
         "window.movePaperQuestion(${cartIndex}, 'up')",
         "window.movePaperQuestion(${cartIndex}, 'down')",
         "cartIndex === cart.length - 1",
-        "全库试题 (${Number.isInteger(pagination.all.total) ? pagination.all.total : '—'})",
+        "${candidateLabel} (${Number.isInteger(pagination.all.total) ? pagination.all.total : '—'})",
         "renderPaperStreamPagination(currentTab, currentPage, total, totalPages)",
         "共 ${safeTotal} 题 / ${safeTotalPages} 页",
     ):
@@ -2352,6 +2350,7 @@ def test_paper_selected_stream_paginates_with_full_cart_indexes_and_total_counts
     assert node, "Node.js is required for the frontend executable regression"
     script = r'''
 const PAPER_STREAM_PAGE_SIZE = 15;
+function paperFilterCount() { return 0; }
 const sourceAttack = '2026 "试卷" <img src=x onerror="alert(1)"> & 来源';
 const longSource = '2026年高三数学质量检测·原始卷名'.repeat(20);
 const container = {
@@ -2425,8 +2424,8 @@ function initializeAutoFigureSizing() {}
 renderPart3QuestionStream();
 let html = container.innerHTML;
 if ((html.match(/class="paper-resource-source"/g) || []).length !== 2 ||
-    !html.includes(`title="${escapeHtml(sourceAttack)}">来源：${escapeHtml(sourceAttack)}</p>`) ||
-    !html.includes(`title="${escapeHtml(longSource)}"`) || html.includes('<img src=x')) {
+    !html.includes(`data-tooltip="${escapeHtml(sourceAttack)}" data-tooltip-variant="paper-source"`) ||
+    !html.includes(`data-tooltip="${escapeHtml(longSource)}"`) || html.includes('<img src=x')) {
   throw new Error('selected sources must display safely, retain full tooltips, and hide blank values');
 }
 if (window.PaperStore.streamPagination.selected.page !== 2) {
@@ -2453,7 +2452,7 @@ window.PaperStore.filters.tab = 'all';
 renderPart3QuestionStream();
 html = container.innerHTML;
 if ((html.match(/class="paper-resource-source"/g) || []).length !== 1 ||
-    !html.includes(`来源：${escapeHtml(sourceAttack)}</p>`)) {
+    !html.includes(`来源：${escapeHtml(sourceAttack)}</span></p>`)) {
   throw new Error('all-bank candidates must show their persisted source');
 }
 if (!html.includes('全库试题 (47)') || !html.includes('共 47 题 / 4 页') ||
@@ -2490,7 +2489,7 @@ def test_paper_source_information_is_ellipsized_and_outside_the_printed_canvas()
     canvas_start = paper_source.index("// Render Part 4")
     assert 'paper-resource-source' not in paper_source[canvas_start:]
     css = _read(CSS_PATH)
-    rule = re.search(r"#paperQuestionStream \.paper-resource-source\s*\{([^}]+)\}", css)
+    rule = re.search(r"#paperQuestionStream \.paper-resource-source-text\s*\{([^}]+)\}", css)
     assert rule
     for declaration in ('text-overflow: ellipsis', 'white-space: nowrap', 'overflow: hidden'):
         assert declaration in rule.group(1)
@@ -2948,6 +2947,34 @@ def test_word_export_prepares_pandoc_once_and_can_continue_in_compatibility_mode
         "decision === 'compatibility'",
     ):
         assert marker in paper_source
+
+
+def test_word_export_warns_when_download_contains_unconverted_formulas():
+    source = _read(STATIC_JS_DIR / "paper.js")
+    download = source[source.index("    async function generateAndDownloadWord(payload)"):
+                      source.index("    window.exportPaperWord =")]
+    script = r"""
+const assert = require('node:assert/strict');
+const toasts = [];
+let downloads = 0;
+global.window = { showToast(message, kind) { toasts.push({message, kind}); } };
+global.document = { createElement() { return {click() { downloads++; }}; } };
+global.fetch = async () => new Response(new Blob(['zip']), {
+    headers: {'X-Word-Native-Formulas': '8', 'X-Word-Failed-Formulas': '3'}
+});
+function rememberPaperExportPreflight() {}
+""" + download + r"""
+(async () => {
+    await generateAndDownloadWord({title: '样题'});
+    assert.equal(downloads, 1);
+    assert.equal(toasts.at(-1).kind, 'warning');
+    assert.match(toasts.at(-1).message, /3 处公式未能转换.*公式待核对/);
+})().catch(error => { console.error(error); process.exitCode = 1; });
+"""
+    node = shutil.which("node")
+    assert node, "Node.js is required for the frontend executable regression"
+    result = subprocess.run([node, "-"], input=script, encoding="utf-8", text=True, capture_output=True, timeout=15)
+    assert result.returncode == 0, result.stderr
 
 
 def test_rejoined_pandoc_install_failure_allows_retry_compatibility_and_cancel():

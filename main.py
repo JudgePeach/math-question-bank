@@ -137,7 +137,7 @@ from mathbank.library_transfer import (
     select_library_question_ids,
 )
 from mathbank.library_transfer_tasks import (
-    LibraryTransferTasks, TransferTaskConflict, TransferTaskError,
+    LibraryTransferTasks, RepeatLibraryImport, SynchronousImportInProgress, TransferTaskConflict, TransferTaskError,
     TransferTaskQueueFull, log_transfer_error, normalize_transfer_task_id,
     transfer_error,
 )
@@ -254,7 +254,11 @@ from mathbank.pdf_figures import (
 )
 from mathbank.pdf_layout import inspect_pdf_page
 from mathbank.document_requests import DOCUMENT_AI_TIMEOUT_SECONDS
-from mathbank.pdf_vision_request import completion_content, request_pdf_vision, collected_usage
+from mathbank.pdf_vision_request import PDFVisionResponseError, completion_content, request_pdf_vision, collected_usage
+from mathbank.tikz_geometry import TikzGeometryError, render_geometry_reply
+from mathbank.tikz_circle_review import (
+    add_anchor_probes, circumcircles, review_compiled_circles, wants_circle_review,
+)
 from mathbank.paths import (
     DATABASE_PATH,
     DATA_BACKUP_DIR,
@@ -537,6 +541,16 @@ async def app_lifespan(_app: FastAPI):
         yield
         return
 
+    from mathbank.tiered_storage import get_storage
+    tiered_storage = get_storage()
+    if tiered_storage:
+        def storage_busy():
+            # Snapshot references without acquiring the task/lifecycle locks in
+            # reverse order. Historical interrupted records have no live future.
+            from mathbank.tiered_storage import document_workers_busy
+            return document_workers_busy(DOCUMENT_TASKS._records)
+        tiered_storage.start(busy=storage_busy)
+
     if (SYSTEM_GENERATED_DIR / "library_transfer_tasks").is_dir():
         # Recover durable receipts before accepting requests, without replaying
         # any previously queued or potentially committed import.
@@ -555,6 +569,9 @@ async def app_lifespan(_app: FastAPI):
     try:
         yield
     finally:
+        if tiered_storage:
+            import asyncio
+            await asyncio.to_thread(tiered_storage.close)
         _DOCUMENT_PROJECT_STOP.set()
         if _LIBRARY_TRANSFER_TASKS is not None:
             import asyncio
@@ -570,6 +587,14 @@ async def app_lifespan(_app: FastAPI):
 
 
 app = FastAPI(title="本地化数学题库管理系统 API", lifespan=app_lifespan)
+from mathbank.tiered_storage import StorageActivityMiddleware
+app.add_middleware(StorageActivityMiddleware)
+
+
+@app.get("/api/storage/status")
+def external_storage_status():
+    from mathbank.tiered_storage import storage_status
+    return storage_status()
 
 # Enable CORS for local development (restrict allowed origins)
 app.add_middleware(
@@ -806,6 +831,10 @@ def _document_curriculum_sha256():
 
 
 def _register_document_input(task_id, content, document_type, filename, **options):
+    from mathbank.tiered_storage import get_storage
+    storage = get_storage()
+    if storage:
+        storage.save_received(content, filename, document_type)
     persistent = DOCUMENT_TASK_STORE is not None and not (PDF_CLOUD_ONLY and document_type == "pdf")
     source = (DOCUMENT_TASK_STORE.source(task_id, content) if persistent else
               {"sha256": hashlib.sha256(content).hexdigest(), "bytes": len(content)})
@@ -893,7 +922,10 @@ def read_index():
         html_content = render_qa_visibility(html_content, enabled=qa_enabled)
         
         # Inject dynamic cache-busting version parameter based on file mtime
-        js_files = ["api.js", "editor.js", "ocr.js", "import.js", "document-import-session.js", "paper.js", "dashboard.js", "qa-data.js", "qa.js"]
+        js_files = [
+            "api.js", "editor.js", "ocr.js", "import.js", "document-import-session.js",
+            "paper.js", "dashboard.js", "workspace.js", "qa-data.js", "qa.js",
+        ]
         for js in js_files:
             js_path = str(STATIC_JS_DIR / js)
             mtime = int(os.path.getmtime(js_path)) if os.path.exists(js_path) else 0
@@ -914,6 +946,7 @@ def read_index():
         # Inject the token and server_instance_id directly into index.html to bypass any cookie blocking policies
         token_script = f'<script>window.__localToken = "{LOCAL_TOKEN}"; window.__serverInstanceId = "{SERVER_INSTANCE_ID}"; window.__qaEnabled = {json.dumps(qa_enabled)}; window.__pdfCloudOnly = {json.dumps(PDF_CLOUD_ONLY)}; window.__processingLimits = {json.dumps(public_processing_limits())};</script>'
         html_content = html_content.replace('<head>', f'<head>\n    {token_script}')
+        html_content = html_content.replace('</body>', '<script src="/static/js/storage-status.js"></script></body>')
             
         res = HTMLResponse(content=html_content)
         res.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
@@ -1193,7 +1226,7 @@ def extract_tikz_source(ai_message: str) -> str:
         return match.group(0).strip()
 
     match_block = re.search(
-        r"```(?:latex|tex)?\s*(.*?)```",
+        r"```(?:(?:latex|tex|tikz)\b)?\s*([\\%].*?)```",
         message,
         re.DOTALL | re.IGNORECASE,
     )
@@ -1205,7 +1238,11 @@ def extract_tikz_source(ai_message: str) -> str:
     raise RuntimeError("绘图模型未返回完整的 tikzpicture 源码。")
 
 
-def request_tikz_completion(provider, content_payload, *, timeout: int = AI_REQUEST_TIMEOUT_SECONDS) -> str:
+def request_tikz_completion(
+    provider, content_payload, *, timeout: int = AI_REQUEST_TIMEOUT_SECONDS,
+    geometry_context: tuple[str, str] | None = None,
+    geometry_reference: bool = False,
+) -> str:
     """Send one TikZ model request with the shared reasoning and parser policy."""
 
     payload = {
@@ -1228,10 +1265,16 @@ def request_tikz_completion(provider, content_payload, *, timeout: int = AI_REQU
         raise RuntimeError(
             f"{provider.provider_label} 绘图接口返回 HTTP {response.status_code}"
         )
-    choices = response.json().get("choices", [])
-    if not choices:
-        raise RuntimeError(f"{provider.provider_label} 绘图接口未返回 choices。")
-    ai_message = choices[0].get("message", {}).get("content", "")
+    ai_message = completion_content(
+        response.json(), "绘图模型", max_chars=200_000, allow_missing_finish=True,
+    )
+    if geometry_context is not None:
+        context, instruction = geometry_context
+        computed = render_geometry_reply(
+            ai_message, context=context, instruction=instruction, has_reference=geometry_reference,
+        )
+        if computed is not None:
+            return computed
     return extract_tikz_source(ai_message)
 
 
@@ -1308,11 +1351,19 @@ def draw_tikz_via_high_model(
         content_payload = prompt
 
     try:
+        geometry_context = None
+        if not (existing_tikz or "").strip() and ((latex_content or "").strip() or (instruction or "").strip()):
+            geometry_context = (latex_content or "", instruction or "")
         return request_tikz_completion(
             provider,
             content_payload,
             timeout=AI_REQUEST_TIMEOUT_SECONDS,
+            geometry_context=geometry_context,
+            geometry_reference=use_image_input,
         )
+    except (TikzGeometryError, PDFVisionResponseError):
+        # The workbench can show the failing check or output error. OCR keeps the verified crop.
+        raise
     except Exception as e:
         print(f"[High Model Draw Error] 大模型请求发生异常: {str(e)}")
     return None
@@ -1401,9 +1452,15 @@ def ocr_formula(
                 instruction=instruction, require_image_support=True,
             )
 
+        def compile_one(code):
+            context = recognized["markdown"]
+            if circumcircles(context):
+                return compile_tikz_to_png(code, context=context)
+            return compile_tikz_to_png(code)
+
         figures = materialize_ocr_illustrations(
             recognized, image, skip_tikz=skip_tikz, upload_root=UPLOAD_DIR,
-            url_prefix=UPLOAD_DIR_REL, draw=draw_one, compile_tikz=compile_tikz_to_png,
+            url_prefix=UPLOAD_DIR_REL, draw=draw_one, compile_tikz=compile_one,
             require_review=True, verified_crops=recognized["_verified_crops"],
         )
         figures = review_tikz_previews(figures, ocr_provider, upload_root=UPLOAD_DIR,
@@ -2057,7 +2114,7 @@ def check_version_update():
 
 # ----------------- TikZ Render & AI Correction API -----------------
 
-def compile_tikz_to_png(tikz_code: str) -> str:
+def compile_tikz_to_png(tikz_code: str, *, context="", circle_review=None) -> str:
     """
     编译 TikZ 代码为 PNG 并存放在静态资源目录中。
     如果编译成功，返回相对路径（如 /static/uploads/tikz_xxx.png）。
@@ -2095,6 +2152,9 @@ def compile_tikz_to_png(tikz_code: str) -> str:
     png_path = os.path.join(temp_dir, f"{unique_id}.png")
     aux_path = os.path.join(temp_dir, f"{unique_id}.aux")
     log_path = os.path.join(temp_dir, f"{unique_id}.log")
+    requirements = circumcircles(context)
+    token = "MBA" + unique_id[:12]
+    instrumented = add_anchor_probes(tikz_code, requirements, token)
 
     # 拼装完整的 TeX 模板
     tex_content = f"""\\documentclass[tikz, border=2mm]{{standalone}}
@@ -2108,7 +2168,7 @@ def compile_tikz_to_png(tikz_code: str) -> str:
 \\usetikzlibrary{{calc,positioning,intersections,arrows}}
 \\usetikzlibrary{{shapes.geometric,through,decorations.pathmorphing,arrows.meta,quotes,mindmap,shapes.symbols,shapes.arrows,automata,angles,3d,trees,shadows,shapes.callouts,decorations.pathreplacing,decorations.markings}}
 \\begin{{document}}
-{tikz_code}
+{instrumented or tikz_code}
 \\end{{document}}"""
 
     try:
@@ -2163,6 +2223,12 @@ def compile_tikz_to_png(tikz_code: str) -> str:
             if len(doc) == 0:
                 raise RuntimeError("生成的 PDF 文件为空。")
             page = doc.load_page(0)
+            if instrumented and len(doc) == 1:
+                audit = review_compiled_circles(page, result.stdout.decode(errors="replace"), token, requirements)
+                if circle_review is not None:
+                    circle_review.update(audit)
+            elif circle_review is not None and (requirements or wants_circle_review(tikz_code)):
+                circle_review.update(status="unverified", message="圆未能与题设中的已知点绑定，请核对预览。")
             pix = page.get_pixmap(dpi=150)
             pix.save(png_path)
 
@@ -2191,11 +2257,16 @@ def compile_tikz_to_png(tikz_code: str) -> str:
                     pass
 
 @app.post("/api/render_tikz")
-def render_tikz_endpoint(tikz_code: str = Form(...)):
+def render_tikz_endpoint(tikz_code: str = Form(...), context: str = Form("")):
     """接收 TikZ 代码并编译成静态 PNG，返回其相对路径"""
     try:
-        image_path = compile_tikz_to_png(tikz_code)
-        return {"status": "success", "image_path": image_path}
+        circle_review = {}
+        image_path = (compile_tikz_to_png(tikz_code, context=context, circle_review=circle_review)
+                      if context or wants_circle_review(tikz_code) else compile_tikz_to_png(tikz_code))
+        response = {"status": "success", "image_path": image_path}
+        if circle_review:
+            response["circle_review"] = circle_review
+        return response
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
 
@@ -2652,15 +2723,18 @@ def _check_library_import_storage(prepared):
         check_directory_access(Path(UPLOAD_DIR), label="题目图片目录（static/uploads）")
 
 
-def _run_library_import_task(directory, progress):
+def _run_library_import_task(directory, progress, *, confirm_repeat_sha256=None):
     from mathbank.database import SessionLocal
 
     archive = directory / "input.zip"
     with prepare_library_import(archive, workspace_dir=directory / "prepared", progress=progress) as prepared:
-        # Image and textbook mutation locks cover backup and the one atomic
-        # transaction; upload and validation hold neither lock.
+        # The upload, validation and fingerprint preparation hold neither lock.
+        # Keep a consistent backup and import under the mutation locks.
         progress("waiting")
         with ASSET_LIFECYCLE_LOCK, _METADATA_SAVE_LOCK:
+            _library_transfer_tasks().check_import(
+                prepared.archive_sha256, confirm_repeat_sha256, current_task_id=directory.name,
+            )
             _check_library_import_storage(prepared)
             import_version = get_active_version_code()
             progress("backup")
@@ -2695,6 +2769,13 @@ def _run_library_export_task(directory, payload, progress):
             "download_url": f"/api/library-transfer/tasks/{directory.name}/download"}
 
 
+def _lookup_library_import(archive_sha256):
+    from mathbank.database import LibraryImportReceipt, SessionLocal
+
+    with SessionLocal() as db:
+        return db.get(LibraryImportReceipt, archive_sha256) is not None
+
+
 def _library_transfer_tasks():
     global _LIBRARY_TRANSFER_TASKS
     root = SYSTEM_GENERATED_DIR / "library_transfer_tasks"
@@ -2706,6 +2787,7 @@ def _library_transfer_tasks():
         if _LIBRARY_TRANSFER_TASKS is None:
             _LIBRARY_TRANSFER_TASKS = LibraryTransferTasks(
                 root, run_import=_run_library_import_task, run_export=_run_library_export_task,
+                lookup_import=_lookup_library_import,
             )
         return _LIBRARY_TRANSFER_TASKS
 
@@ -2739,25 +2821,38 @@ def _transfer_task_http_error(exc):
     return HTTPException(status_code=500, detail=error["message"])
 
 
+def _library_import_conflict_response(exc):
+    if isinstance(exc, RepeatLibraryImport):
+        return JSONResponse(exc.details(), status_code=409, headers={"Cache-Control": "no-store"})
+    if isinstance(exc, SynchronousImportInProgress):
+        return JSONResponse({"code": "import_in_progress", "detail": str(exc)}, status_code=409,
+                            headers={"Cache-Control": "no-store"})
+    if exc.active_task_id:
+        return JSONResponse(
+            {"detail": str(exc), "active_task_id": exc.active_task_id, "code": "active_import"},
+            status_code=409, headers={"Cache-Control": "no-store"},
+        )
+    raise _transfer_task_http_error(exc) from exc
+
+
 @_LIBRARY_TRANSFER_UPLOAD_ROUTER.post("/api/library-transfer/tasks/import")
-def start_library_import_task(file: UploadFile = File(...), client_request_id: str = Form(...)):
+def start_library_import_task(
+    file: UploadFile = File(...), client_request_id: str = Form(...),
+    confirm_repeat_sha256: Optional[str] = Form(None),
+):
     try:
         task_id = normalize_transfer_task_id(client_request_id)
         tasks = _library_transfer_tasks()
         with tasks.upload_workspace() as workspace:
             archive = workspace / "upload.zip"
             digest = _receive_library_archive(file, archive)
-            result, created = tasks.submit_import(task_id, archive, digest)
+            result, created = tasks.submit_import(task_id, archive, digest,
+                                                  confirm_repeat_sha256=confirm_repeat_sha256, retain_repeat=True)
         return JSONResponse(result, status_code=202 if created else 200, headers={"Cache-Control": "no-store"})
     except HTTPException:
         raise
     except TransferTaskConflict as exc:
-        if exc.active_task_id:
-            return JSONResponse(
-                {"detail": str(exc), "active_task_id": exc.active_task_id, "code": "active_import"},
-                status_code=409, headers={"Cache-Control": "no-store"},
-            )
-        raise _transfer_task_http_error(exc) from exc
+        return _library_import_conflict_response(exc)
     except Exception as exc:
         raise _transfer_task_http_error(exc) from exc
     finally:
@@ -2765,6 +2860,27 @@ def start_library_import_task(file: UploadFile = File(...), client_request_id: s
             file.file.close()
         except OSError:
             pass
+
+
+@app.post("/api/library-transfer/tasks/{task_id}/confirm-import")
+def confirm_library_import_task(task_id: str):
+    try:
+        result, created = _library_transfer_tasks().confirm_repeat(task_id)
+        return JSONResponse(result, status_code=202 if created else 200, headers={"Cache-Control": "no-store"})
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=410, detail="分享包暂存已失效，请重新选择并上传 ZIP。") from exc
+    except TransferTaskConflict as exc:
+        return _library_import_conflict_response(exc)
+    except Exception as exc:
+        raise _transfer_task_http_error(exc) from exc
+
+
+@app.delete("/api/library-transfer/tasks/{task_id}/confirm-import", status_code=204)
+def cancel_library_import_confirmation(task_id: str):
+    try:
+        _library_transfer_tasks().cancel_repeat(task_id)
+    except Exception as exc:
+        raise _transfer_task_http_error(exc) from exc
 
 
 @app.post("/api/library-transfer/tasks/export")
@@ -2822,19 +2938,24 @@ def download_library_transfer_task(task_id: str):
 def import_library_transfer(
     background_tasks: BackgroundTasks,
     file: UploadFile = File(...),
+    confirm_repeat_sha256: Optional[str] = Form(None),
     db: Session = Depends(get_db),
 ):
-    """Validate, back up and append; importing the same archive appends again."""
+    """Validate and append; a previously imported archive needs confirmation."""
     workspace = None
     try:
         transfer_root = SYSTEM_GENERATED_DIR / "library_transfer"
         transfer_root.mkdir(parents=True, exist_ok=True)
         workspace = Path(tempfile.mkdtemp(prefix="import-", dir=transfer_root))
         archive = workspace / "library.zip"
-        _receive_library_archive(file, archive)
+        digest = _receive_library_archive(file, archive)
+        tasks = _library_transfer_tasks()
         # Invalid packages must fail before any backup or destination write.
-        with prepare_library_import(archive, workspace_dir=workspace) as prepared:
+        with tasks.reserve_synchronous_import(digest, confirm_repeat_sha256), \
+                prepare_library_import(archive, workspace_dir=workspace) as prepared:
             with ASSET_LIFECYCLE_LOCK, _METADATA_SAVE_LOCK:
+                if prepared.archive_sha256 != digest:
+                    raise ValueError("分享包在接收后发生变化，请重新选择文件。")
                 _check_library_import_storage(prepared)
                 import_version = get_active_version_code()
                 backup_path = _sharing_backup()
@@ -2854,6 +2975,8 @@ def import_library_transfer(
         }
     except HTTPException:
         raise
+    except TransferTaskConflict as exc:
+        return _library_import_conflict_response(exc)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except Exception as exc:
@@ -2883,6 +3006,7 @@ app.include_router(create_agent_router(
 def list_questions(
     q: str = None,
     search: str = None,
+    search_rule: Optional[List[str]] = Query(None),
     compulsory: str = None,
     category_compulsory: str = None,
     chapter: str = None,
@@ -2929,10 +3053,16 @@ def list_questions(
             )
 
         from mathbank.question_ordering import library_list_order
-        from mathbank.question_search import apply_question_search
+        from mathbank.question_search import (
+            apply_question_search, apply_question_search_rules, decode_question_search_rule,
+            MAX_SEARCH_RULES,
+        )
 
         query = apply_question_search(query, search_q, order_plan=read_snapshot.order_plan)
         try:
+            if search_rule and len(search_rule) > MAX_SEARCH_RULES:
+                raise ValueError(f"最多可添加 {MAX_SEARCH_RULES} 条关键词条件")
+            query = apply_question_search_rules(query, [decode_question_search_rule(rule) for rule in search_rule or []])
             paths = [json.loads(path) for path in (sub_knowledge or [])]
             query = apply_curriculum_filters(
                 query, comp_val, chap_val, know_val,
@@ -2957,7 +3087,7 @@ def list_questions(
         if page is not None:
             result = page_questions(
                 query, read_snapshot, page=page, page_size=page_size,
-                descending=descending, single_scan=bool(str(search_q or "").strip()),
+                descending=descending, single_scan=bool(search_rule or str(search_q or "").strip()),
             )
             questions = result.items
         else:
@@ -5472,7 +5602,7 @@ def delete_unreferenced_question_assets(db: Session, references) -> int:
     removed = 0
     for candidate in candidates:
         try:
-            if candidate.is_file() and candidate not in referenced:
+            if candidate not in referenced:
                 relative = candidate.relative_to(Path(UPLOAD_DIR).resolve()).as_posix()
                 removed += int(quarantine_asset(
                     f"/{UPLOAD_DIR_REL}/{relative}", uploads_dir=UPLOAD_DIR,
@@ -5845,7 +5975,7 @@ def ai_select_paper(payload: dict, db: Session = Depends(get_db)):
         candidate_revision, review_shortlist, prepare_full_review, changed_review_image_ids,
         MAX_REVIEW_CANDIDATES,
     )
-    from mathbank.question_search import apply_question_search
+    from mathbank.question_search import apply_question_search, apply_question_search_rules
     from mathbank.paper_standards import build_paper_standard_context
     from mathbank.paper_standard_alignment import validate_standard_alignment, standard_analysis_text
 
@@ -5890,6 +6020,7 @@ def ai_select_paper(payload: dict, db: Session = Depends(get_db)):
             unlabeled=payload.get("knowledge_point_unlabeled", False),
         )
         query = apply_question_search(query, payload.get("keyword", ""))
+        query = apply_question_search_rules(query, payload.get("search_rules", []))
         reference = build_reference_context(
             db, "none" if reference_mode == "none" else payload.get("reference_key"))
         warnings = list(reference["warnings"])

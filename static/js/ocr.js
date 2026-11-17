@@ -182,6 +182,8 @@
                 }
             });
         }
+        document.addEventListener('DOMContentLoaded', setupUploadHandlers, { once: true });
+
         function setupDragDropListeners(zone, onFileReceived) {
             ['dragenter', 'dragover'].forEach(eventName => {
                 zone.addEventListener(eventName, (e) => {

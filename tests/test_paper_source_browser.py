@@ -34,12 +34,13 @@ def test_paper_sources_in_candidates_and_selection_stay_outside_exam(browser, wi
     browser.settle()
     observed = browser.evaluate("""(()=>{
       const label=document.querySelector(%s),rect=label.getBoundingClientRect();
-      return {text:label.textContent,tooltip:label.getAttribute('data-tooltip')||label.getAttribute('title'),
-        markup:label.querySelector('em')!==null,ellipsis:getComputedStyle(label).textOverflow,
+      const excerpt=label.querySelector('.paper-resource-source-text');
+      return {text:label.textContent,tooltip:label.dataset.tooltip,native:label.hasAttribute('title'),
+        markup:label.querySelector('em')!==null,ellipsis:getComputedStyle(excerpt).textOverflow,
         right:rect.right,left:rect.left,overflow:document.documentElement.scrollWidth>innerWidth+1};
     })()""" % json.dumps(selector))
     assert source in observed["text"] and observed["tooltip"] == source
-    assert not observed["markup"] and not observed["overflow"]
+    assert not observed["native"] and not observed["markup"] and not observed["overflow"]
     assert observed["ellipsis"] == "ellipsis" and observed["right"] <= width + 1 and observed["left"] >= -1
     assert browser.evaluate(f"document.querySelector('[data-paper-question-id=\"{questions[1]['id']}\"] .paper-resource-source')===null")
     assert browser.evaluate("document.querySelectorAll('#paperQuestionStream .paper-resource-source').length") == 2

@@ -49,9 +49,27 @@ INSTALL_MEASUREMENTS = r"""
         left:Math.min(...leaves.map(r=>r.left)),right:Math.max(...leaves.map(r=>r.right)),
         top:Math.min(...leaves.map(r=>r.top)),bottom:Math.max(...leaves.map(r=>r.bottom)),
     } : null;
-    window.__fractionSpacingMeasure = selector => {
+    window.__fractionSpacingMeasure = (selector, inline = false) => {
         const host=document.querySelector(selector);
         if (!host) throw new Error('Missing fraction preview: '+selector);
+        if (inline) {
+            const rows = new Map();
+            for (const base of host.querySelectorAll('.katex-html > .base')) {
+                if (base.closest('.katex-display') || !base.querySelector('.mfrac')) continue;
+                const strut = base.querySelector(':scope > .strut');
+                const baseline = Math.round(strut.getBoundingClientRect().bottom
+                    + parseFloat(getComputedStyle(strut).verticalAlign));
+                if (!rows.has(baseline)) rows.set(baseline, []);
+                rows.get(baseline).push(...ink(base));
+            }
+            const boxes = [...rows.keys()].sort((a, b) => a - b)
+                .map(baseline => bounds(rows.get(baseline))).filter(Boolean);
+            return {
+                gaps: boxes.slice(1).map((row, index) => row.top - boxes[index].bottom),
+                fontSize: parseFloat(getComputedStyle(host).fontSize),
+                errors: host.querySelectorAll('.katex-error').length,
+            };
+        }
         return {selector,width:host.clientWidth,errors:host.querySelectorAll('.katex-error').length,
             tables:[...host.querySelectorAll('.katex-html')].flatMap(html => {
                 const table=html.querySelector('.mtable');
@@ -179,6 +197,53 @@ def test_display_fraction_rows_have_clear_ink_gaps_in_multiline_environments(bro
         browser.command("screenshot", str(tmp_path / "fraction-rows-wide-large-font.png"))
     finally:
         browser.evaluate("document.getElementById('fraction-spacing-fixtures')?.remove(); delete window.__fractionSpacingMeasure; true")
+        _reload_clean_ui(browser)
+
+
+def test_wrapped_inline_fractions_clear_adjacent_answer_lines(browser):
+    source = r"答案：$\dfrac{29}{15}$。" + "\n\n" + (
+        r"若 $m\ge 16$，则 $\dfrac{n}{m}\le\dfrac{30}{16}$。"
+        r"若 $m\le 15$，则 $\dfrac{n}{m}\le\dfrac{2m-1}{m}=2-\dfrac{1}{m}\le\dfrac{29}{15}$。"
+    ) * 5
+    question_id = None
+    try:
+        browser.evaluate(INSTALL_MEASUREMENTS)
+        question_id = browser.evaluate("""
+        (async () => {
+            selectWorkspace('bank','题库管理');
+            const form = new FormData();
+            Object.entries({content:'行内分式换行回归', answer_markdown:%s,
+                question_type:'detailed_answer', difficulty:'medium'})
+                .forEach(([key, value]) => form.set(key, value));
+            const response = await fetch('/api/questions', {method:'POST', body:form});
+            const data = await response.json();
+            if (!response.ok) throw new Error(JSON.stringify(data));
+            await loadQuestions();
+            return data.question.id;
+        })()
+        """ % json.dumps(source))
+        browser.command("wait", "--fn", f"!!document.querySelector('#questionsList [data-id=\"{question_id}\"]')")
+        browser.command("click", f'#questionsList [data-id="{question_id}"]')
+        browser.command("wait", "--fn", f"EditorState.questionId==={question_id} && !questionDetailLoading")
+
+        def check_clearance(selector):
+            browser.settle()
+            result = browser.evaluate(f"__fractionSpacingMeasure({json.dumps(selector)}, true)")
+            assert result["errors"] == 0 and len(result["gaps"]) >= 2, result
+            assert min(result["gaps"]) >= result["fontSize"] * 0.12, result
+
+        for width in (1600, 375):
+            browser.command("set", "viewport", str(width), "1100")
+            browser.evaluate("showBankDetail(); true")
+            check_clearance("#paperAnalysisContent")
+            browser.evaluate("openQuestionEditorModal('answer'); true")
+            check_clearance("#answerPreview")
+            browser.evaluate("closeQuestionEditorModal(); true")
+        assert browser.evaluate("document.getElementById('editAnswerMarkdown').value") == source
+        assert not browser.evaluate("isEditorModified()")
+    finally:
+        if question_id is not None:
+            browser.evaluate(f"fetch('/api/questions/{question_id}',{{method:'DELETE'}}).then(r=>r.ok)")
         _reload_clean_ui(browser)
 
 

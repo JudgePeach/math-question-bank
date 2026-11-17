@@ -52,6 +52,8 @@ class DocumentTaskStore:
             if content is not None:
                 self._write(path, content)
                 return {"sha256": hashlib.sha256(content).hexdigest(), "bytes": len(content)}
+            from mathbank.tiered_storage import hydrate
+            hydrate(path)
             if path.is_symlink() or path.stat().st_size > self.MAX_STATE_BYTES:
                 raise ValueError("原文档恢复文件不可用。")
             return path.read_bytes()
@@ -59,12 +61,18 @@ class DocumentTaskStore:
     def has_source(self, task_id):
         try:
             path = self._path(task_id, ".source")
-            return not path.is_symlink() and path.is_file()
+            if not path.is_symlink() and path.is_file():
+                return True
+            from mathbank.tiered_storage import get_storage
+            storage = get_storage()
+            return bool(storage and storage.known(path))
         except (OSError, ValueError):
             return False
 
     def remove(self, task_id):
         with self.lock:
+            from mathbank.tiered_storage import forget
+            forget(self._path(task_id, ".source"))
             for suffix in (".json", ".source"):
                 try:
                     self._path(task_id, suffix).unlink(missing_ok=True)

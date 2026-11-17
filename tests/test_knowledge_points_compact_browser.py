@@ -132,10 +132,11 @@ def catalog_examples(browser):
     return {"cross": points[0], "unmapped": points[1]}
 
 
-def test_expanded_filters_omit_duplicate_chips_and_collapsed_summary_remains_removable(browser, catalog_examples):
+def test_filter_summary_remains_visible_and_removable_with_the_popover(browser, catalog_examples):
     reset_bank(browser)
     expanded = browser.evaluate("""['bankFilterConditions','bankKnowledgePointConditions'].map(id=>{const n=document.getElementById(id);return {id,visible:n.checkVisibility(),height:n.getBoundingClientRect().height};})""")
-    assert all(not row["visible"] and row["height"] == 0 for row in expanded), expanded
+    assert expanded[0]["visible"] and 0 < expanded[0]["height"] <= 40, expanded
+    assert not expanded[1]["visible"], expanded
     before = location(browser)
     capture(browser, "desktop-expanded-compact-light")
     browser.command("click", ".bank-filter-toggle")
@@ -150,7 +151,7 @@ def test_expanded_filters_omit_duplicate_chips_and_collapsed_summary_remains_rem
     browser.command("wait", "--fn", "document.getElementById('filterKnowledge').value===''")
     assert browser.evaluate("document.querySelectorAll('#bankFilterConditions button').length") == 3
     browser.command("click", ".bank-filter-toggle")
-    assert not browser.evaluate("document.getElementById('bankFilterConditions').checkVisibility()")
+    assert browser.evaluate("document.getElementById('bankFilterConditions').checkVisibility()")
     assert browser.evaluate("document.getElementById('filterChapter').value") == CHAPTER
 
 

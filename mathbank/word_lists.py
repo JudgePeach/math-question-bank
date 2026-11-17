@@ -10,6 +10,7 @@ from dataclasses import dataclass, field
 import re
 
 from mathbank.question_assets import _escaped, _mask_literals, markdown_literal_ranges
+from mathbank.word_math import iter_word_math_spans
 
 
 @dataclass(frozen=True)
@@ -31,10 +32,9 @@ _STRUCTURE = re.compile(
     r"\\(?P<edge>begin|end)\s*\{(?P<environment>[^{}\r\n]+)\}"
     r"|\\(?P<item>item)(?![A-Za-z])|(?P<brace>[{}])"
 )
-_MATH_BOUNDARY = re.compile(r"\$+|\\[()[\]]")
 _HTML = re.compile(
-    r"<(?:script|style|textarea)\b(?:\"[^\"]*\"|'[^']*'|[^'\">])*?>"
-    r"[\s\S]*?(?:</(?:script|style|textarea)\s*>|\Z)"
+    r"<(?P<literal>script|style|textarea|pre|code)\b(?:\"[^\"]*\"|'[^']*'|[^'\">])*?>"
+    r"[\s\S]*?(?:</(?P=literal)\s*>|\Z)"
     r"|<mathbank-math\b[^>]*>[\s\S]*?(?:</mathbank-math\s*>|\Z)"
     r"|</?[A-Za-z][A-Za-z0-9:_-]*(?:\"[^\"]*\"|'[^']*'|[^'\">])*?>",
     re.IGNORECASE,
@@ -48,7 +48,8 @@ def _mask_ranges(source: str, ranges: list[tuple[int, int]]) -> str:
     return "".join(chars)
 
 
-def _literal_mask(source: str) -> str:
+def mask_word_non_prose(source: str) -> str:
+    """Hide literal source and delimited math while preserving offsets."""
     # Reuse the shared code/URL/TikZ scanners, preserving every source offset.
     scan = _mask_literals(source)
     ranges = markdown_literal_ranges(source)
@@ -70,29 +71,14 @@ def _literal_mask(source: str) -> str:
             cursor += 1
         scan = _mask_ranges(scan, [(start, cursor)])
 
-    # All mathematical shells are opaque, including malformed shells whose
-    # end cannot be established. Literal dollars were already hidden above.
-    cursor = 0
-    while match := _MATH_BOUNDARY.search(scan, cursor):
-        cursor = match.end()
-        if _escaped(source, match.start()):
-            continue
-        opening = match.group()
-        if opening not in ("$", "$$", r"\(", r"\["):
-            scan = _mask_ranges(scan, [(match.start(), len(scan))])
+    # Keep mathematical shells opaque while locating list items. A malformed
+    # shell cannot certify where an outer list resumes.
+    math_ranges = []
+    for span in iter_word_math_spans(source, masked_source=scan):
+        math_ranges.append((span.start, len(scan) if span.issue else span.end))
+        if span.issue:
             break
-        closing = {r"\(": r"\)", r"\[": r"\]"}.get(opening, opening)
-        finish = len(scan)
-        for boundary in _MATH_BOUNDARY.finditer(scan, cursor):
-            if _escaped(source, boundary.start()):
-                continue
-            if boundary.group() == closing:
-                finish = boundary.end()
-            # Mismatched shells cannot prove where prose starts again.
-            break
-        scan = _mask_ranges(scan, [(match.start(), finish)])
-        cursor = finish
-    return scan
+    return _mask_ranges(scan, math_ranges)
 
 
 def _optional_label(source: str, scan: str, start: int) -> tuple[str | None, int] | None:
@@ -230,7 +216,7 @@ def find_latex_lists(source: str) -> list[LatexList]:
     """
     if not isinstance(source, str) or not source or r"\begin" not in source:
         return []
-    scan = _literal_mask(source)
+    scan = mask_word_non_prose(source)
     lists: list[LatexList] = []
     cursor = 0
     brace_depth = 0

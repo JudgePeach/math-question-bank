@@ -31,6 +31,7 @@ const document = {getElementById:id=>nodes[id]||null,createElement:()=>element()
 const window = {activeCurriculumVersion:'rja',PaperStore:{
   cart:[{id:1,score:5}],meta:{paper_type:'exam',title:'test',section_order:[]},
   filters:{compulsory:'必修一',chapter:'函数',knowledge:'函数的概念',question_type:'',difficulty:'',keyword:'测试',tab:'all'},
+  keywordRules:[{field:'source',operator:'exclude',keyword:' 旧卷 '},{field:'all',operator:'include',keyword:' '}],
   aiSelectionLimit:2,aiSelectionPrompt:nodes.paperAiPromptInput.value,aiReferenceMode:'recent_gaokao',aiReferenceKey:'',
   aiSelectionBusy:false,aiReferenceExams:[],aiReferenceLoaded:false,aiReferenceLoading:false,aiReferenceError:'',
   questionsMap:{},activeWorkspace:'paper'
@@ -57,6 +58,7 @@ def test_selection_is_single_flight_sends_current_scope_and_reports_shortfall():
   const first=window.triggerAiPaperSelect();await window.triggerAiPaperSelect();
   assert.equal(calls,1);assert(nodes.paperAiSelectBtn.disabled);assert(window.PaperStore.aiSelectionBusy);
   assert.deepEqual(request.exclude_ids,[1]);assert.equal(request.keyword,'测试');assert.equal(request.limit,2);
+  assert.deepEqual(request.search_rules,[{field:'source',operator:'exclude',keyword:'旧卷'}]);
   assert.equal(request.paper_type,'exam');assert.equal(request.reference_mode,'recent_gaokao');
   assert.equal(request.expected_version_code,'rja');assert.deepEqual(request.knowledge_point_codes,['kp1']);
   pending.resolve(success({status:'success',data:[{id:1},{id:2,question_type:'single_choice'},{id:2}],
@@ -85,6 +87,7 @@ def test_late_selection_cannot_change_another_paper_or_changed_requirements():
     ()=>window.PaperStore.meta={...window.PaperStore.meta},
     ()=>window.PaperStore.meta.title+='改',
     ()=>window.PaperStore.filters.keyword+='改',
+    ()=>window.PaperStore.keywordRules[0].keyword+='改',
     ()=>window.activeCurriculumVersion+='改',
     ()=>nodes.paperAiPromptInput.value+='改',
     ()=>window.PaperStore.aiSelectionLimit++,
