@@ -77,3 +77,15 @@ def test_number_only_page_requires_ink_free_body_outside_owned_footer():
         assert is_confirmed_number_only_page(page)
         page.draw_line((25, 460), (65, 460), color=(.95, .95, .95))
         assert not is_confirmed_number_only_page(page)
+
+
+def test_right_axis_unit_keeps_adjacent_glyph_but_not_prose_below():
+    from mathbank.pdf_raster_guard import _right_label_continuation
+
+    core = (360, 260, 542, 354)
+    near = [(551, 316, 567, 331)]
+    continuation = (568, 317, 582, 331)
+    unrelated = (568, 370, 589, 390)
+    assert _right_label_continuation(near, [*near, continuation, unrelated], core, 14) == [
+        *near, continuation,
+    ]

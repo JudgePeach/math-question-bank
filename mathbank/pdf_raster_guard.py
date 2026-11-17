@@ -182,6 +182,25 @@ def _is_regular_grid(mask, box):
     return rules(crop) >= 3 and rules(crop.transpose(Image.Transpose.TRANSPOSE)) >= 3
 
 
+def _right_label_continuation(labels, nearby, core, letter_height):
+    """Keep adjacent glyphs of a short right-end axis unit together."""
+    attached = [label for label in labels if label[0] >= core[2]
+                and core[1] <= label[1] and label[3] <= core[3]]
+    if not attached:
+        return labels
+    edge = max(attached, key=lambda label: label[2])
+    expanded = list(labels)
+    for candidate in sorted(nearby, key=lambda item: item[0]):
+        if candidate in expanded or not 0 <= candidate[0] - edge[2] <= .55 * letter_height:
+            continue
+        overlap = max(0, min(candidate[3], edge[3]) - max(candidate[1], edge[1]))
+        if (candidate[2] - core[2] <= 4 * letter_height
+                and overlap >= .60 * min(candidate[3] - candidate[1], edge[3] - edge[1])):
+            expanded.append(candidate)
+            edge = candidate
+    return expanded
+
+
 @lru_cache(maxsize=4)
 def _page_evidence(path: str, mtime_ns: int, file_size: int):
     del mtime_ns
@@ -233,7 +252,7 @@ def _page_evidence(path: str, mtime_ns: int, file_size: int):
         # evidence even when there are too few separate outside labels below.
         line_components.append(component)
         radius = min(24.0, max(8.0, letter_height * 1.6))
-        labels = []
+        nearby = []
         for index, other in enumerate(components):
             if index % 128 == 0 and time.monotonic() > deadline:
                 raise _EvidenceLimit("本地图形分析达到时间上限")
@@ -242,10 +261,13 @@ def _page_evidence(path: str, mtime_ns: int, file_size: int):
             label = other["bbox"]
             if (label[2] - label[0] <= letter_height * 3.5 and label[3] - label[1] <= letter_height * 2.0
                     and label[3] - label[1] >= 3 and other["pixels"] >= 7
-                    and _gap(box, label) <= radius
+                    and _gap(box, label) <= radius + 4 * letter_height
                     and not _contains(box, label)
                     and not any(_intersection(label, row) > 0 for row in text_rows)):
-                labels.append(label)
+                nearby.append(label)
+        labels = [label for label in nearby if _gap(box, label) <= radius]
+        if not overlaps and len(labels) >= 2:
+            labels = _right_label_continuation(labels, nearby, box, letter_height)
         axis_labels = (bool(overlaps) and max(row[3] for row in overlaps) - min(row[1] for row in overlaps)
                        <= letter_height * 2.2)
         if axis_labels:
