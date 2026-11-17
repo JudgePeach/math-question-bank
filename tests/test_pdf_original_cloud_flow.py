@@ -41,7 +41,7 @@ FUNCTION_HASHES = {
 
 # Reviewed routing after the 2026-11-17 PDF workflow changes. The original
 # upstream digest above remains fixed for provenance.
-PDF_WORKFLOW_AST = "6c2ade74da67650edb7b13c0697216b91eb127af8b4ee329d8fb80a5fce96c25"
+PDF_WORKFLOW_AST = "086c418441ac39640e3099b66652075118cb22445b5555a511e5d62249329de4"
 
 
 def _ast_key(node):

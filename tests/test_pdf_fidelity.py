@@ -65,3 +65,15 @@ def test_unique_scanned_graph_reframes_only_with_no_neighbor_content_loss():
     assert _clean_local_graph_frame(evidence, original, allow_relocation=False) == graph
     evidence['significant_components'].append((450, 285, 500, 310))
     assert _clean_local_graph_frame(evidence, original, allow_relocation=False) is None
+
+
+def test_number_only_page_requires_ink_free_body_outside_owned_footer():
+    from mathbank.pdf_blank_pages import is_confirmed_number_only_page
+
+    with fitz.open() as document:
+        page = document.new_page(width=595, height=800)
+        page.draw_rect((0, 0, 595, 25), color=None, fill=(.91, .95, .99))
+        page.insert_text((294, 780), "1", fontsize=12)
+        assert is_confirmed_number_only_page(page)
+        page.draw_line((25, 460), (65, 460), color=(.95, .95, .95))
+        assert not is_confirmed_number_only_page(page)

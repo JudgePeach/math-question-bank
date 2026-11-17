@@ -6471,6 +6471,23 @@ def run_pdf_parsing_task(
             else:
                 pages_requiring_ocr.append(local_idx)
 
+        furniture_pages = set()
+        if pdf_strategy == "layout_aware":
+            from mathbank.pdf_blank_pages import is_confirmed_number_only_page
+
+            # Exact printed number is a prefilter; pixel proof is required.
+            possible = [index for index in pages_requiring_ocr
+                        if str(inspector_pages.get(target_page_indices[index], {}).get("markdown") or "").strip()
+                        in {"", str(target_page_indices[index] + 1)}]
+            if possible:
+                with fitz.open(tmp_pdf_path) as document:
+                    for index in possible:
+                        check_pdf_cancelled()
+                        number = target_page_indices[index]
+                        if is_confirmed_number_only_page(document[number]):
+                            furniture_pages.add(index)
+                            ocr_results[index] = f"<!-- MATHBANK_PDF_PAGE:{number + 1} -->\n"
+            pages_requiring_ocr = [index for index in pages_requiring_ocr if index not in furniture_pages]
         all_ocr_indices = set(pages_requiring_ocr)
         if recovery is not None:
             if recovery.get("page_indices") != target_page_indices:
@@ -6530,6 +6547,8 @@ def run_pdf_parsing_task(
                     page = document[page_num]
                     if pdf_strategy == "layout_aware" and page_num not in page_layout_infos:
                         page_layout_infos[page_num] = inspect_pdf_page(page, page_num)
+                        if local_idx in furniture_pages:
+                            page_layout_infos[page_num].update(needs_visual=False, candidates=[], warnings=[])
                     image_filename = f"pdf_page_{task_id}_{page_num}.png"
                     image_path = str(Path(TMP_UPLOAD_DIR) / image_filename)
                     page.get_pixmap(dpi=150).save(image_path)
@@ -6582,7 +6601,8 @@ def run_pdf_parsing_task(
             plan = regional_plans.get(local_idx)
             extraction_pages.append({
                 "page_number": page_num + 1,
-                "mode": ("reused_transcription" if recovery is not None and local_idx in all_ocr_indices
+                "mode": ("furniture_only" if local_idx in furniture_pages else
+                         "reused_transcription" if recovery is not None and local_idx in all_ocr_indices
                          and local_idx not in pages_requiring_ocr else
                          ("regional" if plan else "full_vision") if local_idx in pages_requiring_ocr else "native"),
                 "structure_repaired": inspector_pages.get(page_num, {}).get("native_repair", {}).get("status") == "repaired",
@@ -6867,7 +6887,8 @@ def run_pdf_parsing_task(
             for local_idx, page_num in enumerate(target_page_indices):
                 page = next((item for item in (layout_result or {}).get("pages", [])
                              if item["page_index"] == page_num), {})
-                origin = ("regional_vision" if local_idx in regional_plans else
+                origin = ("furniture_only" if local_idx in furniture_pages else
+                          "regional_vision" if local_idx in regional_plans else
                           "joint_vision" if page_num in joint_page_results else
                           "ocr" if local_idx in all_ocr_indices else
                           "native_repaired" if inspector_pages.get(page_num, {}).get("native_repair", {}).get("status") == "repaired"
