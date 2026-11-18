@@ -13,7 +13,10 @@ from mathbank.tikz_geometry_protocol import (
 
 Vec = tuple[float, float, float]
 _PLAN_FIELDS = {"mathbank_geometry", "points", "solid", "draw", "checks", "view"}
-_REFERENCE_FIELDS = {"reference_right_angles", "reference_left_to_right", "reference_edge_visibility", "reference_alignment"}
+_REFERENCE_FIELDS = {
+    "reference_right_angles", "reference_left_to_right", "reference_edge_visibility",
+    "reference_alignment", "reference_points",
+}
 _VIEWS = {
     "front_right": (4, -7, 5), "front_left": (-4, -7, 5),
     "back_right": (4, 7, 5), "back_left": (-4, 7, 5),
@@ -399,7 +402,103 @@ def _aligned_views(directions, alignments):
                 yield sign*a, sign*b, pitch
 
 
-def _projection(points, view, faces, segments, order, edge_hints, alignments, eps):
+def _reference_points(plan, points):
+    rows = plan.get("reference_points", [])
+    _require(isinstance(rows, list) and len(rows) <= 12, "参考图投影点格式无效。")
+    anchors = {}
+    for row in rows:
+        name, x, y = _row(row, (3,))
+        _point(points, name)
+        x, y = _number(x), _number(y)
+        _require(name not in anchors and 0 <= min(x, y) <= max(x, y) <= 1000,
+                 "参考图投影点重复或超出 0–1000。")
+        anchors[name] = (x, -y)
+    return anchors
+
+
+def _without_components(vector, directions):
+    for direction in directions:
+        vector = _sub(vector, _scale(direction, _dot(vector, direction)))
+    return vector
+
+
+def _fit_axis(centered, target, fixed):
+    """Least squares in the subspace orthogonal to the exact direction hints."""
+    fixed_basis = []
+    for delta in fixed:
+        available = _without_components(_unit(delta), fixed_basis)
+        if _norm(available) > _TOL:
+            fixed_basis.append(_unit(available))
+
+    # Orthogonalize the sampled values and carry the same operations through
+    # to the world coefficients. At most three columns are fitted.
+    columns = []
+    axis = (0., 0., 0.)
+    scale = max(_norm(delta) for delta in centered)
+    for basis in ((1., 0., 0.), (0., 1., 0.), (0., 0., 1.)):
+        coefficient = _without_components(basis, fixed_basis)
+        values = tuple(_dot(delta, coefficient) for delta in centered)
+        for previous, previous_coefficient in columns:
+            component = sum(a*b for a, b in zip(values, previous))
+            coefficient = _sub(coefficient, _scale(previous_coefficient, component))
+            values = tuple(a-component*b for a, b in zip(values, previous))
+        norm = math.hypot(*values)
+        if norm <= .015*scale:
+            continue
+        values = tuple(value/norm for value in values)
+        coefficient = _scale(coefficient, 1/norm)
+        columns.append((values, coefficient))
+        axis = _add(axis, _scale(coefficient, sum(a*b for a, b in zip(values, target))))
+    return axis if len(columns) == 3-len(fixed_basis) else (0., 0., 0.)
+
+
+def _fit_reference_views(points, reference, alignments):
+    if len(reference) < 4:
+        return ()
+    center = _mean([points[name] for name in reference])
+    centered = [_sub(points[name], center) for name in reference]
+    # An isolated face cannot establish a view of a solid.
+    if not _norm(_fit_axis(centered, [p[0] for p in centered], [])):
+        return ()
+    axes = []
+    for index, direction in enumerate(("vertical", "horizontal")):
+        values = [p[index] for p in reference.values()]
+        mean = sum(values)/len(values)
+        axes.append(_fit_axis(centered, [value-mean for value in values],
+                              [delta for _, _, kind, delta in alignments if kind == direction]))
+    right, vertical = axes
+    scale = max(_norm(right), _norm(vertical))
+    if scale <= _TOL:
+        return ()
+    right, vertical = _scale(right, 1/scale), _scale(vertical, 1/scale)
+    normal = _cross(right, vertical)
+    # With maximum row norm one, this bounds anisotropy and shear and rejects
+    # a nearly one-dimensional view even if it matched the sampled points.
+    if _norm(normal) < .48:
+        return ()
+    camera = _unit(normal)
+    return (Projection(camera, right, vertical),
+            Projection(_scale(camera, -1), right, vertical, True))
+
+
+def _reference_error(projected, reference):
+    """RMS paper error after common translation and uniform positive scaling."""
+    if len(reference) < 4:
+        return math.inf
+    _, _, span = _bounds(reference.values())
+    if span < 40:
+        return math.inf
+    def centered(values):
+        mean_x, mean_y = _mean(values)
+        return tuple(value for x, y in values for value in (x-mean_x, y-mean_y))
+
+    actual = centered([projected[name] for name in reference])
+    expected = centered(list(reference.values()))
+    scale = max(0., sum(a*b for a, b in zip(actual, expected))/sum(a*a for a in actual))
+    return math.dist((a*scale for a in actual), expected)/math.sqrt(len(reference))/span
+
+
+def _projection(points, view, faces, segments, markers, order, edge_hints, alignments, reference, eps):
     _require(isinstance(view, str) and (view == "auto" or view in _VIEWS), "空间投影视角不受支持。")
     directions = list(_VIEWS) if view == "auto" or edge_hints else [view]
     names = list(points)
@@ -409,7 +508,7 @@ def _projection(points, view, faces, segments, order, edge_hints, alignments, ep
     def facing(camera):
         return tuple(_dot(face.normal, camera) > _TOL for face in faces)
 
-    def score(projection, yaw, is_preferred, visible_faces):
+    def score(projection, yaw, is_preferred, visible_faces, *, fitted=False):
         xy = {name: projection.point(point) for name, point in points.items()}
         _, _, span = _bounds(xy.values())
         if span <= eps:
@@ -422,6 +521,8 @@ def _projection(points, view, faces, segments, order, edge_hints, alignments, ep
         # Keep the requested camera if it already prints clearly. A modest
         # yaw is enough to separate overlapping projected edges in most cases.
         quality = min(.035, spacing/span, clearance/span)
+        if fitted and quality < .008:
+            return
         matches = sum(xy[b][0]-xy[a][0] >= .008*span for a, b in order)
         edge_matches = sum(any(visible_faces[i] for i in owners) == visible for owners, visible in edge_hints)
         aligned = 0
@@ -432,9 +533,20 @@ def _projection(points, view, faces, segments, order, edge_hints, alignments, ep
         # A new camera must leave space between unrelated vertices and lines.
         if aligned and clearance < .008*span:
             aligned = 0
-        scores.append(((edge_matches, matches, aligned, quality, is_preferred,
-                        not projection.mirrored, -abs(yaw)), projection))
+        ranks = edge_matches, matches, aligned
+        error = _reference_error(xy, reference) if fitted else math.inf
+        if fitted and (ranks != targets or error > .055):
+            return
+        if fitted:
+            unit = 6.5/span
+            try:
+                list(_marker_strokes(points, markers,
+                                     lambda point: tuple(unit*v for v in projection.point(point)), unit))
+            except TikzGeometryError:
+                return
+        scores.append(((*ranks, -error, quality, is_preferred, not projection.mirrored, -abs(yaw)), projection))
 
+    targets = len(edge_hints), len(order), len(alignments)
     for direction in directions:
         x, y, z = _VIEWS[direction]
         visible_faces = facing(Projection.from_view((x, y, z)).camera)
@@ -457,8 +569,20 @@ def _projection(points, view, faces, segments, order, edge_hints, alignments, ep
         if order:
             score(projection.mirror(), 0, False, visible_faces)
     _require(bool(scores), "当前视角有无法分开的投影点，请调整绘图视向。")
-    score, chosen = max(scores, key=lambda item: item[0])
-    return chosen, score[:3] == (len(edge_hints), len(order), len(alignments))
+    baseline_score, chosen = max(scores, key=lambda item: item[0])
+    if reference:
+        baseline_error = _reference_error({name: chosen.point(points[name]) for name in reference}, reference)
+        scores.clear()
+        for projection in _fit_reference_views(points, reference, alignments):
+            visible_faces = facing(projection.camera)
+            if not edge_hints and visible_faces != facing(chosen.camera):
+                continue
+            score(projection, 0, False, visible_faces, fitted=True)
+        if scores:
+            fitted_score, fitted_view = max(scores, key=lambda item: item[0])
+            if fitted_score[:3] > baseline_score[:3] or -fitted_score[3]+.008 < baseline_error:
+                return fitted_view, True
+    return chosen, baseline_score[:3] == targets
 
 
 def _clip_positive(interval, left, right):
@@ -685,9 +809,10 @@ def render_spatial_plan(plan, sources, *, has_reference=False):
         _require(_matches(points, op, args, eps), f"空间几何方案未满足条件「{evidence}」。")
 
     projection, respects_reference = _projection(
-        points, plan["view"], faces, segments, _reference_order(plan, points),
+        points, plan["view"], faces, segments, markers, _reference_order(plan, points),
         _reference_edges(plan, faces, points),
-        _reference_alignment(plan, points, drawn) if has_reference else [], eps,
+        _reference_alignment(plan, points, drawn) if has_reference else [],
+        _reference_points(plan, points) if has_reference else {}, eps,
     )
     projected = {name: projection.point(p) for name, p in points.items()}
     low_x, low_y, span = _bounds(projected.values())
