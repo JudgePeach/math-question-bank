@@ -266,6 +266,12 @@ jobs:
         if: runner.os == 'macOS'
         shell: bash
         run: bash -n '启动题库系统.command'
+      - name: Install macOS external storage test dependencies
+        if: runner.os == 'macOS'
+        run: python -m pip install --disable-pip-version-check -r requirements-dev.txt
+      - name: Verify external volume storage on macOS
+        if: runner.os == 'macOS'
+        run: python -m pytest -q tests/test_tiered_storage.py
 
 
   pillow-windows311:
@@ -313,10 +319,11 @@ jobs:
         run: |
           python -m pytest -q tests/test_document_project_windows_locks.py tests/test_asset_lifecycle.py tests/test_asset_security.py tests/test_raster_validation.py tests/test_processing_limits.py --durations=15 --junitxml=focused-windows311.xml | Tee-Object -FilePath focused-windows311.log
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-      - name: Run complete application regression suite
+      - name: Run Windows application regression suite
         shell: pwsh
         run: |
-          python -m pytest -q tests/ --durations=25 --junitxml=full-windows311.xml | Tee-Object -FilePath full-windows311.log
+          # External-volume tests require POSIX directory descriptors and run on macOS and Linux.
+          python -m pytest -q tests/ --ignore=tests/test_tiered_storage.py --durations=25 --junitxml=full-windows311.xml | Tee-Object -FilePath full-windows311.log
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Preserve native Windows diagnostics
         if: always()

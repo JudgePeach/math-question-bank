@@ -506,7 +506,7 @@
 - Windows CPython 3.10 使用无 marker、无递归 include 的独立 `requirements-windows.txt`。发布守卫必须核对其全部依赖与源码锁的目标选择一致，拒绝宿主 marker、重复依赖和版本漂移；不能仅删除旧守卫使 CI 变绿。Windows 内嵌 Python 升级需另行验证下载哈希、ABI、SQLite、路径文件及原生启动，不在这个过渡补丁中默改。
 - 本次不强制 Windows/macOS 解释器迁移，也不提高 Python 3.10 最低要求。macOS 的可用旧 `venv` 继续复用；仅安装新 Python 不会替换 `venv`，无 `venv` 时 `.command` 也可能先选到旧 `python3`，不得承诺双击自动迁移或已获得 Pillow 13。源码/macOS 启动器按 requirements 变化安装依赖，直接启动用户须自行更新依赖。
 - macOS Python 3.10 用户的迁移为可选手动流程：确认新解释器支持本机 macOS，保存编辑、完整备份并正常停服；保持原目录、配置、图片、`.system_generated/`、浏览器与网址（含端口）；将旧 `venv` 以未占用名称备存，用新解释器的明确安装路径在原目录创建 `venv`，再双击安装依赖。须回读实际 Python/Pillow 版本并核对题目、图片、草稿；失败保留环境并恢复旧 `venv`，不得误删用户数据或将环境回退等同于数据库降级。README 中英文与包内说明须同步，来源版本和正式下载包边界分别说明。
-- 正式 `.github/workflows/ci.yml` 分别承担 Windows Python 3.11 + Pillow 13 的完整应用/原生锁回归、Windows Python 3.10 分享回归及嵌入式包构建/中文空格路径首次启动和重开、Linux Python 3.10/3.14 应用回归；各环境结果只证明相应范围。临时验证工作流和去重跳过条件不进入正式 CI；不能把 Windows 3.11 应用通过解释成 Windows 3.10 便携包已升级解释器或修复图片解码漏洞。
+- 正式 `.github/workflows/ci.yml` 分别承担 Windows Python 3.11 + Pillow 13 的 Windows 应用/原生锁回归、Windows Python 3.10 分享回归及嵌入式包构建/中文空格路径首次启动和重开、Linux Python 3.10/3.14 应用回归。依赖 POSIX 目录文件描述符的外置卷专项 `tests/test_tiered_storage.py` 由 macOS 发布守卫单独执行，并纳入 Linux 全量回归；各环境结果只证明相应范围。临时验证工作流和去重跳过条件不进入正式 CI；不能把 Windows 3.11 应用通过解释成 Windows 3.10 便携包已升级解释器或修复图片解码漏洞。
 
 ### Windows 原生回归约束
 - 上传静态路由接收的是 Starlette 的操作系统原生路径；匹配 URL 前缀前只转换原生分隔符，继续使用统一资产校验与恢复锁，不能放宽路径穿越或私有恢复区访问。
