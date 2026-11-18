@@ -2,11 +2,17 @@
 import hashlib
 import json
 from pathlib import Path
+import sys
 import threading
 
 import pytest
 
 from mathbank import tiered_storage as ts
+
+
+pytestmark = pytest.mark.skipif(
+    sys.platform == "win32", reason="External volume storage requires POSIX directory file descriptors"
+)
 
 
 UUID = "00000000-0000-4000-8000-000000000001"  # Synthetic test volume.

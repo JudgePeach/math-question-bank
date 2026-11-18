@@ -322,8 +322,7 @@ jobs:
       - name: Run Windows application regression suite
         shell: pwsh
         run: |
-          # External-volume tests require POSIX directory descriptors and run on macOS and Linux.
-          python -m pytest -q tests/ --ignore=tests/test_tiered_storage.py --durations=25 --junitxml=full-windows311.xml | Tee-Object -FilePath full-windows311.log
+          python -m pytest -q tests/ --durations=25 --junitxml=full-windows311.xml | Tee-Object -FilePath full-windows311.log
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Preserve native Windows diagnostics
         if: always()
