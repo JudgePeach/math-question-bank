@@ -259,6 +259,7 @@ from mathbank.tikz_geometry import TikzGeometryError, render_geometry_reply
 from mathbank.tikz_circle_review import (
     add_anchor_probes, circumcircles, review_compiled_circles, wants_circle_review,
 )
+from mathbank.tikz_label_layout import LabelReview, TikzPreview, review_compiled_labels
 from mathbank.paths import (
     DATABASE_PATH,
     DATA_BACKUP_DIR,
@@ -1453,10 +1454,11 @@ def ocr_formula(
             )
 
         def compile_one(code):
-            context = recognized["markdown"]
-            if circumcircles(context):
-                return compile_tikz_to_png(code, context=context)
-            return compile_tikz_to_png(code)
+            preview = compile_tikz_with_label_review(code, context=recognized["markdown"], adjust=True)
+            if preview.collisions:
+                (Path(UPLOAD_DIR) / Path(preview.image_path).name).unlink(missing_ok=True)
+                raise TikzGeometryError("图中点名与线条重叠。")
+            return preview
 
         figures = materialize_ocr_illustrations(
             recognized, image, skip_tikz=skip_tikz, upload_root=UPLOAD_DIR,
@@ -2114,7 +2116,7 @@ def check_version_update():
 
 # ----------------- TikZ Render & AI Correction API -----------------
 
-def compile_tikz_to_png(tikz_code: str, *, context="", circle_review=None) -> str:
+def compile_tikz_to_png(tikz_code: str, *, context="", circle_review=None, label_review=None) -> str:
     """
     编译 TikZ 代码为 PNG 并存放在静态资源目录中。
     如果编译成功，返回相对路径（如 /static/uploads/tikz_xxx.png）。
@@ -2229,6 +2231,8 @@ def compile_tikz_to_png(tikz_code: str, *, context="", circle_review=None) -> st
                     circle_review.update(audit)
             elif circle_review is not None and (requirements or wants_circle_review(tikz_code)):
                 circle_review.update(status="unverified", message="圆未能与题设中的已知点绑定，请核对预览。")
+            if label_review is not None and len(doc) == 1:
+                label_review["layout"] = review_compiled_labels(page, tikz_code, suggest=label_review["suggest"])
             pix = page.get_pixmap(dpi=150)
             pix.save(png_path)
 
@@ -2256,14 +2260,47 @@ def compile_tikz_to_png(tikz_code: str, *, context="", circle_review=None) -> st
                 except Exception:
                     pass
 
+def compile_tikz_with_label_review(code, *, context="", adjust=False, circle_review=None):
+    first = {"suggest": adjust}
+    image_path = compile_tikz_to_png(code, context=context, circle_review=circle_review, label_review=first)
+    layout = first.get("layout", LabelReview())
+    if layout.adjustment:
+        second = {"suggest": False}
+        updated_circles = {} if circle_review is not None else None
+        try:
+            updated_path = compile_tikz_to_png(layout.adjustment, context=context,
+                                               circle_review=updated_circles, label_review=second)
+        except RuntimeError:
+            return TikzPreview(image_path, code, layout.collisions)
+        verified = second.get("layout")
+        if verified is not None and not verified.collisions:
+            (Path(UPLOAD_DIR) / Path(image_path).name).unlink(missing_ok=True)
+            if circle_review is not None:
+                circle_review.clear()
+                circle_review.update(updated_circles)
+            return TikzPreview(updated_path, layout.adjustment)
+        (Path(UPLOAD_DIR) / Path(updated_path).name).unlink(missing_ok=True)
+    return TikzPreview(image_path, code, layout.collisions)
+
+
 @app.post("/api/render_tikz")
-def render_tikz_endpoint(tikz_code: str = Form(...), context: str = Form("")):
+def render_tikz_endpoint(tikz_code: str = Form(...), context: str = Form(""),
+                         review_labels: bool = Form(False), adjust_labels: bool = Form(False)):
     """接收 TikZ 代码并编译成静态 PNG，返回其相对路径"""
     try:
         circle_review = {}
-        image_path = (compile_tikz_to_png(tikz_code, context=context, circle_review=circle_review)
-                      if context or wants_circle_review(tikz_code) else compile_tikz_to_png(tikz_code))
-        response = {"status": "success", "image_path": image_path}
+        if review_labels or adjust_labels:
+            preview = compile_tikz_with_label_review(tikz_code, context=context, adjust=adjust_labels,
+                                                    circle_review=circle_review)
+            response = {"status": "success", "image_path": preview.image_path}
+            if preview.code != tikz_code:
+                response["tikz_code"] = preview.code
+            if preview.collisions:
+                response["label_collisions"] = preview.collisions
+        else:
+            image_path = (compile_tikz_to_png(tikz_code, context=context, circle_review=circle_review)
+                          if context or wants_circle_review(tikz_code) else compile_tikz_to_png(tikz_code))
+            response = {"status": "success", "image_path": image_path}
         if circle_review:
             response["circle_review"] = circle_review
         return response

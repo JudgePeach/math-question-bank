@@ -23,6 +23,7 @@ from mathbank.asset_security import normalize_raster_image, normalize_upload_ass
 from mathbank.content_locks import _formulas
 from mathbank.math_markdown import normalize_table_math_wrappers
 from mathbank.question_assets import markdown_literal_ranges
+from mathbank.tikz_label_layout import TikzPreview
 
 
 MAX_OCR_FIGURES = 20  # Same bound as the editable content_tikz_assets contract.
@@ -343,6 +344,8 @@ def materialize_ocr_illustrations(result: dict, image: Image.Image, *, skip_tikz
                 if not isinstance(code, str) or not code.strip():
                     raise ValueError("未获得TikZ源码。")
                 rendered = compile_tikz(code)
+                if isinstance(rendered, TikzPreview):
+                    code, rendered = rendered.code, rendered.image_path
                 if not isinstance(rendered, str) or not rendered:
                     raise ValueError("未获得编译后的预览图。")
                 rendered = normalize_upload_asset_reference(rendered, uploads_dir=upload_root, url_prefix=url_prefix)

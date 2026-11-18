@@ -13,7 +13,7 @@ from mathbank.tikz_geometry_protocol import (
 
 Vec = tuple[float, float, float]
 _PLAN_FIELDS = {"mathbank_geometry", "points", "solid", "draw", "checks", "view"}
-_REFERENCE_FIELDS = {"reference_right_angles", "reference_left_to_right", "reference_edge_visibility"}
+_REFERENCE_FIELDS = {"reference_right_angles", "reference_left_to_right", "reference_edge_visibility", "reference_alignment"}
 _VIEWS = {
     "front_right": (4, -7, 5), "front_left": (-4, -7, 5),
     "back_right": (4, 7, 5), "back_left": (-4, 7, 5),
@@ -131,7 +131,7 @@ _CHECKS = {
     "xyz": 4, "distance": 3, "equal_length": 4, "angle": 4, "perpendicular": 4,
     "parallel": 4, "on_line": 3, "on_segment": 3, "midpoint": 3, "on_plane": 4,
     "perpendicular_plane": 5, "parallel_plane": 5, "perpendicular_planes": 6,
-    "drawn_segment": 2,
+    "drawn_segment": 2, "length_ratio": 5, "dihedral": 5,
 }
 
 
@@ -144,15 +144,28 @@ def _matches(points, op, args, eps):
         return all(_same_length(a, b) for a, b in zip(_point(points, args[0]), expected))
     if op == "distance":
         return _same_length(math.dist(*get(*args[:2])), _positive(args[2]))
-    if op == "equal_length":
-        a, b, c, d = get(*args)
+    if op in {"equal_length", "length_ratio"}:
+        a, b, c, d = get(*args[:4])
         ab, cd = math.dist(a, b), math.dist(c, d)
-        return min(ab, cd) > eps and _same_length(ab, cd)
+        if min(ab, cd) <= eps:
+            return False
+        if op == "length_ratio":
+            return _same_length(ab / cd, _positive(args[4]))
+        return _same_length(ab, cd)
     if op == "angle":
         a, b, c = get(*args[:3])
         u, v = _unit(_sub(a, b)), _unit(_sub(c, b))
         actual = math.degrees(math.atan2(_norm(_cross(u, v)), _dot(u, v)))
         return abs(actual - _number(args[3])) <= 1e-4
+    if op == "dihedral":
+        a, b, c, d = get(*args[:4])
+        edge = _unit(_sub(c, b))
+        # Use the rays on the specified half-planes perpendicular to BC.
+        # This retains the difference between obtuse and acute dihedrals.
+        u = _unit(_sub(a, _nearest_point(a, b, edge)))
+        v = _unit(_sub(d, _nearest_point(d, b, edge)))
+        actual = math.degrees(math.atan2(_norm(_cross(u, v)), _dot(u, v)))
+        return abs(actual - _number(args[4])) <= 1e-4
     if op in {"perpendicular", "parallel"}:
         a, b, c, d = get(*args)
         u, v = _unit(_sub(b, a)), _unit(_sub(d, c))
@@ -352,7 +365,41 @@ def _reference_edges(plan, faces, points):
     return list(hints.values())
 
 
-def _projection(points, view, faces, segments, order, edge_hints, eps):
+def _reference_alignment(plan, points, drawn):
+    rows = plan.get("reference_alignment", [])
+    _require(isinstance(rows, list) and len(rows) <= 6, "参考图水平、竖直提示格式无效。")
+    axes = {}
+    for row in rows:
+        a, b, axis = _row(row, (3,))
+        delta = _sub(_point(points, b), _point(points, a))
+        key = frozenset((a, b))
+        _require(axis in ("horizontal", "vertical") and a != b and key not in axes,
+                 "参考图水平、竖直提示有重复或无效线段。")
+        if key in drawn:
+            axes[key] = (a, b, axis, delta)
+    return list(axes.values())
+
+
+def _aligned_views(directions, alignments):
+    """Supplement preset views with cameras that can preserve a drawn axis."""
+    for _, _, axis, (x, y, z) in alignments:
+        length = math.hypot(x, y)
+        if length <= _TOL:
+            continue
+        if axis == "horizontal" and abs(z) > _TOL:
+            # Paper y = cos(pitch) * z - sin(pitch) * depth.
+            for dx, dy, _ in directions:
+                depth = (dx*x + dy*y)/math.hypot(dx, dy)
+                if z*depth > 0 and .12 <= z/depth <= 3:
+                    yield dx, dy, math.hypot(dx, dy)*z/depth
+            continue
+        a, b = (-y/length, x/length) if axis == "horizontal" else (x/length, y/length)
+        for sign in (1, -1):
+            for pitch in (.35, .48, 5/math.hypot(4, 7)):
+                yield sign*a, sign*b, pitch
+
+
+def _projection(points, view, faces, segments, order, edge_hints, alignments, eps):
     _require(isinstance(view, str) and (view == "auto" or view in _VIEWS), "空间投影视角不受支持。")
     directions = list(_VIEWS) if view == "auto" or edge_hints else [view]
     names = list(points)
@@ -377,7 +424,16 @@ def _projection(points, view, faces, segments, order, edge_hints, eps):
         quality = min(.035, spacing/span, clearance/span)
         matches = sum(xy[b][0]-xy[a][0] >= .008*span for a, b in order)
         edge_matches = sum(any(visible_faces[i] for i in owners) == visible for owners, visible in edge_hints)
-        scores.append(((edge_matches, matches, quality, is_preferred, not projection.mirrored, -abs(yaw)), projection))
+        aligned = 0
+        for a, b, axis, _ in alignments:
+            major = 0 if axis == "horizontal" else 1
+            delta = (xy[b][0]-xy[a][0], xy[b][1]-xy[a][1])
+            aligned += abs(delta[major]) >= .008*span and abs(delta[1-major]) <= 1e-7*span
+        # A new camera must leave space between unrelated vertices and lines.
+        if aligned and clearance < .008*span:
+            aligned = 0
+        scores.append(((edge_matches, matches, aligned, quality, is_preferred,
+                        not projection.mirrored, -abs(yaw)), projection))
 
     for direction in directions:
         x, y, z = _VIEWS[direction]
@@ -390,9 +446,19 @@ def _projection(points, view, faces, segments, order, edge_hints, eps):
             score(projection, yaw, direction == view, visible_faces)
             if order:
                 score(projection.mirror(), yaw, direction == view, visible_faces)
+    preset_directions = [_VIEWS[name] for name in directions]
+    preset_faces = {facing(Projection.from_view(direction).camera) for direction in preset_directions}
+    for direction in _aligned_views(preset_directions, alignments):
+        projection = Projection.from_view(direction)
+        visible_faces = facing(projection.camera)
+        if visible_faces not in preset_faces and not edge_hints:
+            continue
+        score(projection, 0, False, visible_faces)
+        if order:
+            score(projection.mirror(), 0, False, visible_faces)
     _require(bool(scores), "当前视角有无法分开的投影点，请调整绘图视向。")
     score, chosen = max(scores, key=lambda item: item[0])
-    return chosen, score[:2] == (len(edge_hints), len(order))
+    return chosen, score[:3] == (len(edge_hints), len(order), len(alignments))
 
 
 def _clip_positive(interval, left, right):
@@ -620,7 +686,8 @@ def render_spatial_plan(plan, sources, *, has_reference=False):
 
     projection, respects_reference = _projection(
         points, plan["view"], faces, segments, _reference_order(plan, points),
-        _reference_edges(plan, faces, points), eps,
+        _reference_edges(plan, faces, points),
+        _reference_alignment(plan, points, drawn) if has_reference else [], eps,
     )
     projected = {name: projection.point(p) for name, p in points.items()}
     low_x, low_y, span = _bounds(projected.values())
@@ -628,7 +695,7 @@ def render_spatial_plan(plan, sources, *, has_reference=False):
     display = {name: ((x-low_x)*unit, (y-low_y)*unit) for name, (x, y) in projected.items()}
     code = [r"\begin{tikzpicture}[line width=.6pt]"]
     if not respects_reference:
-        code.append("% 参考图的左右点序或棱线虚实提示无法全部同时保留，请核对视向。")
+        code.append("% 参考图的左右点序、水平竖直或棱线虚实无法全部同时保留，请核对视向。")
     for name, (x, y) in display.items():
         code.append(rf"\coordinate ({name}) at ({x:.9f},{y:.9f});")
     front = _front_faces(points, faces, projection)

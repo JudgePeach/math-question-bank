@@ -8254,10 +8254,12 @@
                 }, 200);
             };
 
-            async function renderTikzWorkbenchCode(tikzCode) {
+            async function renderTikzWorkbenchCode(tikzCode, { adjustLabels = false } = {}) {
                 const formData = new FormData();
                 formData.append('tikz_code', tikzCode);
                 formData.append('context', tikzContextText());
+                formData.append('review_labels', 'true');
+                if (adjustLabels) formData.append('adjust_labels', 'true');
                 const response = await fetch('/api/render_tikz', { method: 'POST', body: formData });
                 const data = await response.json().catch(() => ({}));
                 if (!response.ok || data.status !== 'success') {
@@ -8266,17 +8268,25 @@
                 if (!EditorState.isCurrent(tikzWorkbenchState.editorSession)) {
                     throw new Error('当前编辑题目已变更，本次绘图结果已丢弃。');
                 }
+                const source = document.getElementById('answerTikzWorkbenchCode');
+                if (source.value.trim() !== tikzCode.trim()) {
+                    throw new Error('源码在编译期间已修改，请重新预览。');
+                }
                 const safePath = window.MathBankSafe.safeImageUrl(data.image_path);
                 if (!safePath) throw new Error('服务器返回了无效的预览图路径。');
+                const compiledCode = data.tikz_code || tikzCode;
+                if (data.tikz_code) source.value = compiledCode;
 
                 const preview = document.getElementById('answerTikzWorkbenchPreviewImage');
                 document.getElementById('answerTikzWorkbenchPlaceholder').classList.add('hidden');
                 preview.src = `${safePath}?t=${Date.now()}`;
                 preview.classList.remove('hidden');
                 tikzWorkbenchState.compiledPath = safePath;
-                tikzWorkbenchState.compiledCode = tikzCode;
+                tikzWorkbenchState.compiledCode = compiledCode.trim();
                 document.getElementById('insertAnswerTikzWorkbenchBtn').disabled = false;
-                if (data.circle_review?.status === 'unverified') {
+                if (data.label_collisions?.length) {
+                    setTikzWorkbenchStatus(`${data.label_collisions.join('、')} 标注与线条重叠，请调整`, 'warning');
+                } else if (data.circle_review?.status === 'unverified') {
                     setTikzWorkbenchStatus('编译成功，圆的几何条件待核对', 'warning');
                 } else {
                     setTikzWorkbenchStatus(
@@ -8325,7 +8335,7 @@
                     document.getElementById('answerTikzWorkbenchCode').value = data.tikz_code;
                     document.getElementById('answerTikzSourceDetails').open = false;
                     setTikzWorkbenchBusy(true, '源码已生成，正在安全编译…');
-                    await renderTikzWorkbenchCode(data.tikz_code);
+                    await renderTikzWorkbenchCode(data.tikz_code, { adjustLabels: true });
                 } catch (error) {
                     setTikzWorkbenchStatus('生成或编译失败', 'error');
                     showToast(error.message || 'AI TikZ 绘图失败', 'error');
