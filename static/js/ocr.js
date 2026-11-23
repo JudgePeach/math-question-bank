@@ -49,6 +49,7 @@
             setupPasteListener(contentOcrDropZone, (file) => runContentOcr(file));
 
             // Setup Image Answer Drag and Drop
+            setupPasteListener(document.getElementById('editAnswerMarkdown'), uploadAnswerImage);
             const imageAnswerDropZone = document.getElementById('imageAnswerDropZone');
             const imageAnswerFileInput = document.getElementById('imageAnswerFileInput');
             

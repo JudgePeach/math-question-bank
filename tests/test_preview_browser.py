@@ -307,6 +307,58 @@ def test_editor_confirmations_are_visible_and_restore_editing(browser, tmp_path,
     browser.command("set", "viewport", "1600", "1100")
 
 
+def test_new_question_pastes_screenshot_into_answer_on_default_ai_tab(browser):
+    browser.command("reload")
+    browser.command("click", "#appNavBank")
+    browser.command("click", ".bank-create-btn")
+    browser.command("click", "#contentTabBtn-manual")
+    stem = "粘贴截图回归：求 $1+1$。"
+    browser.command("fill", "#editContent", stem)
+    browser.command("click", '[data-editor-panel-target="answer"]')
+    assert browser.evaluate("document.getElementById('tabContent-ai').getClientRects().length > 0")
+    browser.command("fill", "#editAnswerMarkdown", "解：结果为 2。")
+    browser.command("focus", "#editAnswerMarkdown")
+
+    assert browser.evaluate(r"""
+        (async () => {
+            const answer = document.getElementById('editAnswerMarkdown');
+            const text = new DataTransfer();
+            text.setData('text/plain', '可正常粘贴的文字');
+            const paste = clipboardData => answer.dispatchEvent(new ClipboardEvent('paste', {
+                clipboardData, bubbles: true, cancelable: true
+            }));
+            if (!paste(text)) throw new Error('Text paste was intercepted');
+
+            const canvas = document.createElement('canvas');
+            const screenshot = await new Promise(resolve => canvas.toBlob(resolve, 'image/png'));
+            const image = new DataTransfer();
+            image.items.add(new File([screenshot], 'answer.png', {type: 'image/png'}));
+            answer.setSelectionRange(2, 2);
+            return document.activeElement === answer && !paste(image);
+        })()
+    """)
+
+    browser.command("wait", "--fn", "editAnswerMarkdown.value.includes('![') || editContent.value.includes('![')")
+    assert browser.evaluate("editContent.value") == stem
+    answer = browser.evaluate("editAnswerMarkdown.value")
+    assert answer.startswith("解：\n\n![图片解答](") and answer.endswith("\n\n结果为 2。")
+    assert answer.count("![图片解答](") == 1
+    browser.command("wait", "--fn", "document.querySelector('#answerPreview img')?.naturalWidth > 0")
+    assert browser.evaluate("isEditorModified()")
+
+    saved = browser.evaluate(r"""
+        (async () => {
+            if (!await saveQuestion(true)) throw new Error('Failed to save question');
+            const response = await fetch(`/api/questions/${EditorState.questionId}`);
+            if (!response.ok) throw new Error('Failed to reopen saved question');
+            return response.json();
+        })()
+    """)
+    assert saved["content"] == stem
+    (path,) = saved["image_paths"]
+    assert saved["answer_markdown"].splitlines() == ["解：", "", f"![图片解答]({path})", "", "结果为 2。"]
+
+
 @pytest.mark.parametrize("width", [375, 1440])
 def test_stats_modal_returns_focus_to_visible_entry(browser, width):
     browser.command("set", "viewport", str(width), "900")
