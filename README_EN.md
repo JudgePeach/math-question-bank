@@ -129,7 +129,7 @@ flowchart LR
 
 ## 🚀 Quick Start
 
-**Version and downloads (verified 2026-11-17)**: Source version **3.1.0** adds PDF import recovery and optional MinerU figure localization, TikZ geometry checks, include/exclude keyword filters, and confirmation for repeated ZIP imports. It also improves Word equations and lists. The latest official GitHub portable download is [**V3.1.0**](https://github.com/JudgePeach/math-question-bank/releases/tag/V3.1.0), published on **November 17, 2026** (China Standard Time).
+**Version and downloads (verified 2026-11-23)**: Source version **3.1.1** fixes where screenshots are inserted when pasted into the solution editor and improves TikZ spatial projection and point-label placement. The latest official GitHub portable download is [**V3.1.0**](https://github.com/JudgePeach/math-question-bank/releases/tag/V3.1.0), published on **November 17, 2026** (China Standard Time).
 
 ### 📦 Option 1: Download Portable Package (Recommended for Teachers)
 

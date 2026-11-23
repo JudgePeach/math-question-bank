@@ -128,7 +128,7 @@ flowchart LR
 
 ## 🚀 快速开始
 
-**版本与下载（2026-11-17 核对）**：当前源码版本为 **3.1.0**，新增了 PDF 拆题恢复和可选 MinerU 配图定位、TikZ 几何验算、包含与排除关键词筛选、ZIP 重复导入确认，并改进了 Word 公式与列表导出。GitHub 最新正式便携包为北京时间 **2026 年 11 月 17 日**发布的 [**V3.1.0**](https://github.com/JudgePeach/math-question-bank/releases/tag/V3.1.0)。
+**版本与下载（2026-11-23 核对）**：当前源码版本为 **3.1.1**，修复了解析框粘贴截图的图片归属，并改进了 TikZ 立体投影和点名避让。GitHub 最新正式便携包为北京时间 **2026 年 11 月 17 日**发布的 [**V3.1.0**](https://github.com/JudgePeach/math-question-bank/releases/tag/V3.1.0)。
 
 ### 📦 方式一：下载便携包（推荐一线教师使用）
 
