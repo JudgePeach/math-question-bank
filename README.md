@@ -128,14 +128,14 @@ flowchart LR
 
 ## 🚀 快速开始
 
-**版本与下载（2026-11-23 核对）**：当前源码版本为 **3.1.1**，修复了解析框粘贴截图的图片归属，并改进了 TikZ 立体投影和点名避让。GitHub 最新正式便携包为北京时间 **2026 年 11 月 17 日**发布的 [**V3.1.0**](https://github.com/JudgePeach/math-question-bank/releases/tag/V3.1.0)。
+**版本与下载（2026-11-25 核对）**：当前源码版本为 **3.1.1**，修复了解析框粘贴截图的图片归属，并改进了 TikZ 立体投影和点名避让。GitHub 最新正式便携包为北京时间 **2026 年 11 月 23 日**发布的 [**V3.1.1**](https://github.com/JudgePeach/math-question-bank/releases/tag/V3.1.1)。
 
 ### 📦 方式一：下载便携包（推荐一线教师使用）
 
-如果您不熟悉命令行或 Python 环境，请直接前往 [**V3.1.0 发布页面**](https://github.com/JudgePeach/math-question-bank/releases/tag/V3.1.0)，在 Assets 中下载对应系统的 ZIP 附件并**完整解压**：
+如果您不熟悉命令行或 Python 环境，请直接前往 [**V3.1.1 发布页面**](https://github.com/JudgePeach/math-question-bank/releases/tag/V3.1.1)，在 Assets 中下载对应系统的 ZIP 附件并**完整解压**：
 
-* **Windows 用户**：使用 Windows 10/11 x64，下载 [`MathBank-Windows-x64.zip`](https://github.com/JudgePeach/math-question-bank/releases/download/V3.1.0/MathBank-Windows-x64.zip)（内置完整 Python 3.10 与应用本地 VC++ 运行时，无需另行安装），完整解压后双击 **`启动题库系统.bat`**。
-* **macOS 用户**：下载 [`MathBank-macOS.zip`](https://github.com/JudgePeach/math-question-bank/releases/download/V3.1.0/MathBank-macOS.zip)。**macOS 包不内置 Python，运行前请先确认本机已安装 Python 3.10 或更高版本**。首次准备或修复项目隔离环境 `venv` 时需保持联网，随后双击 **`启动题库系统.command`**。
+* **Windows 用户**：使用 Windows 10/11 x64，下载 [`MathBank-Windows-x64.zip`](https://github.com/JudgePeach/math-question-bank/releases/download/V3.1.1/MathBank-Windows-x64.zip)（内置完整 Python 3.10 与应用本地 VC++ 运行时，无需另行安装），完整解压后双击 **`启动题库系统.bat`**。
+* **macOS 用户**：下载 [`MathBank-macOS.zip`](https://github.com/JudgePeach/math-question-bank/releases/download/V3.1.1/MathBank-macOS.zip)。**macOS 包不内置 Python，运行前请先确认本机已安装 Python 3.10 或更高版本**。首次准备或修复项目隔离环境 `venv` 时需保持联网，随后双击 **`启动题库系统.command`**。
 
 两个启动器会自动检查 Python 与依赖；若题库服务已在运行，会直接打开网页，无需先关闭再重开。端口冲突或启动失败时会直接显示具体原因与服务日志。
 
