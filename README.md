@@ -22,7 +22,7 @@ https://github.com/user-attachments/assets/46834cbd-3499-4c06-9d8e-c81bdc10a0a7
 
 只需了解一些基础的 LaTeX 数学公式语法，MathBank 就能帮一线数学老师高效解决组卷与备课难题：
 
-- 🧑‍🏫 **让 AI 备课工作流读取自己的题库**：提供只读 Agent 取题接口与结构化命令行检索。本地 AI 备课工具可先发现教材、题型与知识点目录，分页筛选候选后，按稳定题目 ID 读取完整题干、解析、教师评析和配图清单，用于准备教案、例题与分层作业。读取过程不修改题库，也不自动调用模型；采用前仍需教师核对原题与图片。详见 [接入指南](https://github.com/JudgePeach/math-question-bank/blob/main/docs/AI_DATABASE_GUIDE.md) 及下方命令示例。
+- 🧑‍🏫 **AI 备课工具可以从自己的题库取材。** 通过只读 Agent 接口与命令行，工具可以发现教材、题型与知识点目录，分页筛选题目，读取完整题干、解析、教师评析和配图。命令行结果可按网页题号回查。采用前仍需教师核对原题与图片。 [接入指南](https://github.com/JudgePeach/math-question-bank/blob/main/docs/AI_DATABASE_GUIDE.md)
 - 🎨 **1:1 A4 仿真组卷排版**：提供像 Word 一样直观的仿真试卷画布，密封线、大标题、注意事项框一应俱全。支持拖拽排序、解答题留白高度（0–30 cm）调整，以及一键切换 A3 答题卡与高考 19 题预设。
 - ⚡ **秒级公式渲染与高考级导出**：内置专业数学公式排版引擎，网页修改秒级预览。选择题完整显示题干、选项与图片，并按实际宽度在四列、两列、单列间自动适配；长文字自然换行，仅超宽不可拆分的公式独立横向滚动。小问分段保留前置标点，网页预览原生兼容 `\iu` / `\upi`（正体 i）与 `\eu` / `\upe`（正体 e）。支持一键导出高考标准的高清 PDF 试卷、可编辑公式的 Word 文档与完整 LaTeX 源码包。
 - 🤖 **AI 智能选题与辅助解答**：在组卷工作台按教材范围、知识点、题型与难度梯度从题库已有题目中挑选题目加入草稿，支持参考库内高考卷风格并自动匹配随程序保存的课标选摘；支持单题一键 AI 生成详细解析与教学反思。
@@ -273,24 +273,33 @@ macOS 启动器优先复用可用的原 `venv`；安装新 Python 不会替换�
 ## 🛠️ 命令行检索、备份与题库分享
 
 ### 1. 本地终端检索与 Agent 只读接入 (`scripts/search_questions.py`)
+
+下列题号与组合筛选示例适用于当前仓库源码。
+
 在终端中快速检索题库（如搜索“导数”）：
 ```bash
 python3 -m scripts.search_questions -q "导数"
 ```
-**常用参数**：`-q` 关键词 | `-n` 返回数量 (Markdown 默认 50，`-1` 显式全量兼容) | `-a` 携带答案解析 | `-t` 题型过滤 | `-d` 难度过滤 | `-r` 关联题目检索。
+`-q` 搜索关键词，`-t` 和 `-d` 筛选题型和难度，`-a` 显示解析与评析。用 `--include` 和 `--exclude` 叠加关键词条件，例如找题干含「三角函数」且来源排除「模拟」的题目。
 
-**AI Agent 取题流程**：建议先发现当前目录与知识点编码，再小页检索候选，最后按稳定 ID 读取完整题目与图片清单：
+```bash
+python3 -m scripts.search_questions --include 'content=三角函数' --exclude 'source=模拟' -n 5
+```
+
+AI 助手可以先查知识点编码，再分页筛选候选。
+
 ```bash
 python3 -m scripts.search_questions --capabilities --format json
 python3 -m scripts.search_questions --catalog --knowledge-query "单调性" --format json -n 10
 python3 -m scripts.search_questions --knowledge-point 1136 --format json -n 10
 ```
-确认知识点编码并选定题目后，使用实际返回的稳定 ID 读取完整教学材料及配图清单（下方 `123,456` 仅为语法示例）：
+Markdown 标题中的 `#题号` 和 JSON 的 `seq_num` 均与网页显示一致。用实际返回的题号读取详情和图片。
+
 ```bash
-python3 -m scripts.search_questions --ids 123,456 --profile teaching --format json
-python3 -m scripts.search_questions --ids 123,456 --assets --format json
+python3 -m scripts.search_questions --seq-nums 123,456 --profile teaching --format json
+python3 -m scripts.search_questions --seq-nums 123,456 --assets --format json
 ```
-查询全程采用只读快照，不修改题库。JSON 搜索默认返回 20 条候选摘要；`--profile teaching/evidence` 可读取完整题干、评析与按需依据，`--assets` 返回图片用途、状态和可读路径。完整说明见 [Agent 只读取题指南](https://github.com/JudgePeach/math-question-bank/blob/main/docs/AI_DATABASE_GUIDE.md)，服务运行时也可调用只读 `/api/agent/` HTTP 接口。
+查询使用只读快照。JSON 搜索默认每页 20 条候选摘要，Markdown 默认 50 题，`-n -1` 可显式读取全部命中项。既有脚本可继续使用 JSON 的内部 `id`、`--ids` 和 `-r`。服务运行时也可调用只读 `/api/agent/` HTTP 接口。 [完整参数与示例](https://github.com/JudgePeach/math-question-bank/blob/main/docs/AI_DATABASE_GUIDE.md)
 
 ### 2. 数据清洗与构建脚本
 - **填空题下划线全量升级**：`python3 -m scripts.migrate_fillin`（将旧下划线规范化为 `\fillin` 宏）

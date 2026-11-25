@@ -20,7 +20,7 @@ It provides second-level real-time previews of LaTeX formulas and geometric figu
 
 With just basic LaTeX math formula syntax, MathBank empowers frontline math teachers to efficiently solve exam generation and lesson preparation challenges:
 
-- 🧑‍🏫 **Connect your bank to AI lesson-preparation workflows**: Read-only Agent endpoints and a structured search CLI let a locally connected AI tool discover curricula, question types, and knowledge points, page through candidates, and retrieve complete questions, solutions, teacher reviews, and image manifests by stable ID. Reading does not modify the bank, generate lesson materials, or invoke a model; check the original questions and images before teaching. See the [integration guide](https://github.com/JudgePeach/math-question-bank/blob/main/docs/AI_DATABASE_GUIDE.md) and CLI examples below.
+- 🧑‍🏫 **Connect your question bank to an AI lesson-preparation tool.** The read-only Agent endpoints and CLI let a local AI tool discover curricula, question types, and knowledge points, then filter candidates and retrieve full questions, solutions, teacher reviews, and images. CLI results can be looked up by their question numbers in the web app. Check the original questions and images before teaching. [Integration guide](https://github.com/JudgePeach/math-question-bank/blob/main/docs/AI_DATABASE_GUIDE.md)
 - 🎨 **1:1 A4 Simulation Exam Layout**: Provides an intuitive exam paper canvas just like Word, complete with sealing line, title, and notice box. Supports drag-and-drop sorting, solution blank-space adjustment (0–30 cm), and one-click switching to an A3 answer sheet or the Gaokao 19-question preset.
 - ⚡ **Second-Level Formula Rendering & Exam-Level Export**: Built-in professional math formula typesetting engine with real-time web preview. Choice options adapt to 4, 2, or 1 columns according to their rendered widths; long text wraps naturally while only indivisible wide formulas scroll horizontally. Sub-questions preserve leading punctuation, and web previews natively support `\iu` / `\upi` (upright i) and `\eu` / `\upe` (upright e). Supports one-click export of high-definition PDFs, editable-formula Word documents, and complete LaTeX source packages.
 - 🤖 **AI Exam Selection & Solving Assistance**: Selects existing questions from your bank according to scope, knowledge points, question types, and difficulty progression, with optional style references from complete Gaokao papers in your bank and automatic matching of bundled curriculum-standard excerpts. Single-question AI tools can also generate detailed solutions and teaching reflections.
@@ -274,24 +274,33 @@ Supported released versions can be upgraded directly without installing intermed
 ## 🛠️ CLI Search, Backup & Library Sharing
 
 ### 1. Fast Terminal Search & Agent Read-Only Access (`scripts/search_questions.py`)
+
+The question-number and combined-filter examples below apply to the current repository source.
+
 Quickly search the question bank from the terminal (e.g., search "导数"):
 ```bash
 python3 -m scripts.search_questions -q "导数"
 ```
-**Parameters**: `-q` keyword | `-n` return count (Markdown defaults to 50; explicit `-1` remains compatible) | `-a` include answers/solutions | `-t` filter type | `-d` filter difficulty | `-r` search associated questions.
+Use `-q` for keywords, `-t` and `-d` for type and difficulty, and `-a` for solutions and teacher reviews. Add `--include` and `--exclude` to combine keyword conditions. This example finds questions with “三角函数” in the stem and excludes sources containing “模拟”.
 
-**AI Agent Read Workflow**: Discover current values and knowledge-point codes first, search a small candidate page, and then retrieve complete questions and image manifests by stable ID:
+```bash
+python3 -m scripts.search_questions --include 'content=三角函数' --exclude 'source=模拟' -n 5
+```
+
+AI assistants can look up knowledge-point codes before paging through candidates.
+
 ```bash
 python3 -m scripts.search_questions --capabilities --format json
 python3 -m scripts.search_questions --catalog --knowledge-query "单调性" --format json -n 10
 python3 -m scripts.search_questions --knowledge-point 1136 --format json -n 10
 ```
-After confirming the knowledge-point code and choosing questions, use their actual returned IDs (`123,456` below is only a syntax example):
+Markdown headings show the web app's `#question-number`. JSON exposes the same number as `seq_num`. Use the returned numbers to fetch full questions and image manifests.
+
 ```bash
-python3 -m scripts.search_questions --ids 123,456 --profile teaching --format json
-python3 -m scripts.search_questions --ids 123,456 --assets --format json
+python3 -m scripts.search_questions --seq-nums 123,456 --profile teaching --format json
+python3 -m scripts.search_questions --seq-nums 123,456 --assets --format json
 ```
-Queries use read-only snapshots and do not modify the bank. JSON search defaults to 20 candidate summaries; `--profile teaching/evidence` returns complete questions, teacher reviews, and optional evidence, while `--assets` returns image roles, availability, and readable paths. See the [Agent read-only guide](https://github.com/JudgePeach/math-question-bank/blob/main/docs/AI_DATABASE_GUIDE.md) and the read-only `/api/agent/` HTTP endpoints.
+Queries use read-only snapshots. Search defaults to 20 candidate summaries per JSON page and 50 questions per Markdown page. Use `-n -1` for all matches. Existing scripts can keep using the internal JSON `id`, `--ids`, and `-r`. The read-only `/api/agent/` endpoints are available while the service is running. [Full options and examples](https://github.com/JudgePeach/math-question-bank/blob/main/docs/AI_DATABASE_GUIDE.md)
 
 ### 2. Data Cleaning & Release Scripts
 - **Fill-in-the-blank Underline Upgrade**: `python3 -m scripts.migrate_fillin` (Standardizes old underlines to `\fillin` macro)

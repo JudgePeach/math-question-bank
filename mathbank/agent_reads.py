@@ -56,14 +56,14 @@ def _integer(value, name, minimum=1, maximum=2**63 - 1):
     return value
 
 
-def _ids(values):
+def _ids(values, label="题目 ID"):
     if not isinstance(values, (list, tuple)) or not values or len(values) > MAX_BATCH_SIZE:
-        raise ValueError(f"题目 ID 必须是 1 至 {MAX_BATCH_SIZE} 项的数组")
+        raise ValueError(f"{label} 必须是 1 至 {MAX_BATCH_SIZE} 项的数组")
     result = []
     for value in values:
-        value = _integer(value, "题目 ID")
+        value = _integer(value, label)
         if value in result:
-            raise ValueError("题目 ID 不能重复")
+            raise ValueError(f"{label} 不能重复")
         result.append(value)
     return result
 
@@ -186,7 +186,7 @@ class AgentReader:
             "knowledge_points_available": self._has("knowledge_points", "question_knowledge_points"),
             "curriculum_mappings_available": self._has("question_curriculums"),
             "query_is_literal": True,
-            "identity_note": "id 是当前题库内的题目身份；seq_num 是随增删和整理顺序变化的展示序号",
+            "identity_note": "向用户报告网页题号时使用 seq_num。题号可随增删或排序变化，id 用于库内稳定引用。",
             "quality_note": "has_answer 仅表示有答案；知识点标注状态不证明题文或答案已核验",
             "content_sources_note": "逐题 source 保留具体出处；公共资料来源声明见 mathbank/resources/content_sources.json",
         }
@@ -273,11 +273,40 @@ class AgentReader:
         row = self._execute("SELECT association_group_id FROM questions WHERE id=?", (question_id,)).fetchone()
         return str(row[0] or "").strip() or None if row else None
 
+    def _search_rule_conditions(self, rules):
+        from mathbank.question_search import (
+            IMAGE_SEARCH_FIELDS, SQLITE_SEARCH_FUNCTION, normalize_question_search_rules,
+            register_question_search_function,
+        )
+
+        normalized = normalize_question_search_rules(rules)
+        if normalized:
+            register_question_search_function(self.connection)
+        clauses, params = [], []
+        for fields, operator, keyword in normalized:
+            matches = []
+            pattern = _like(keyword)
+            for field in fields:
+                if field not in self.columns:
+                    continue
+                column = f"q.{field}"
+                raw = f"{column} LIKE ? ESCAPE '\\'"
+                params.append(pattern)
+                if field in IMAGE_SEARCH_FIELDS:
+                    projected = f"{SQLITE_SEARCH_FUNCTION}({column}) LIKE ? ESCAPE '\\'"
+                    raw = f"CASE WHEN {raw} THEN {projected} ELSE 0 END"
+                    params.append(pattern)
+                matches.append(raw)
+            match = " OR ".join(matches) or "0"
+            check = "IS NOT TRUE" if operator == "exclude" else "IS TRUE"
+            clauses.append(f"({match}) {check}")
+        return clauses, params
+
     def search(self, query="", source="", compulsory="", chapter="", knowledge="",
                knowledge_point_codes=None, knowledge_query="", knowledge_point_mode="any",
                knowledge_point_role="main", knowledge_point_status="all", qtype="", difficulty="",
                page=1, page_size=20, related_to=None, profile="candidate", include_answers=False,
-               sort="desc", version_code=None, include_seq_num=True):
+               sort="desc", version_code=None, include_seq_num=True, *, search_rules=None):
         profile = self._profile(profile)
         page = _integer(page, "页码")
         page_size = _integer(page_size, "每页条数", 1, 100)
@@ -290,7 +319,8 @@ class AgentReader:
             raise ValueError("知识点角色必须是 main、auxiliary 或 all")
         if knowledge_point_status not in {"all", "confirmed", "suggested"}:
             raise ValueError("知识点状态必须是 all、confirmed 或 suggested")
-        clauses, params, resolved_points = [], [], []
+        clauses, params = self._search_rule_conditions(search_rules) if search_rules is not None else ([], [])
+        resolved_points = []
         if query:
             fields = [field for field in ("category_compulsory", "category_chapter", "category_knowledge",
                       "content", "source", "tags", "answer_markdown", "review") if field in self.columns]
@@ -410,16 +440,44 @@ class AgentReader:
             raise ValueError("读取层次必须是 candidate、teaching 或 evidence")
         return profile
 
-    def get_questions(self, ids, profile="teaching", include_answers=True, version_code=None,
-                      *, include_seq_num=True):
-        ids, profile = _ids(ids), self._profile(profile)
+    def _question_rows(self, ids, seq_nums):
+        if seq_nums is None:
+            requested = _ids(ids)
+            ids_by_number = {qid: qid for qid in requested}
+            lookup_key = "ids"
+        else:
+            if ids is not None:
+                raise ValueError("请只指定题库题号或内部 ID")
+            requested = _ids(seq_nums, "题库题号")
+            requested_set = set(requested)
+            ids_by_number = {number: qid for qid, number in self._sequence_map().items()
+                             if number in requested_set}
+            lookup_key = "seq_nums"
+
+        question_ids = tuple(ids_by_number.values())
+        rows = {}
+        if question_ids:
+            placeholders = ",".join("?" for _ in question_ids)
+            rows = {row["id"]: row for row in self._execute(
+                f"SELECT * FROM questions WHERE id IN ({placeholders})", question_ids
+            )}
+        ordered_rows = []
+        missing = []
+        for number in requested:
+            row = rows.get(ids_by_number.get(number))
+            if row is None:
+                missing.append(number)
+            else:
+                ordered_rows.append(row)
+        return ordered_rows, {f"requested_{lookup_key}": requested, f"missing_{lookup_key}": missing}
+
+    def get_questions(self, ids=None, profile="teaching", include_answers=True, version_code=None,
+                      *, seq_nums=None, include_seq_num=True):
+        profile = self._profile(profile)
         version = self._version(version_code)
-        rows = {row["id"]: row for row in self._execute(
-            "SELECT * FROM questions WHERE id IN (" + ",".join("?" for _ in ids) + ")", ids
-        )}
-        ordered_rows = [rows[qid] for qid in ids if qid in rows]
+        ordered_rows, lookup = self._question_rows(ids, seq_nums)
         return {"items": self._project_rows(ordered_rows, profile, include_answers, version, include_seq_num),
-                "requested_ids": ids, "missing_ids": [qid for qid in ids if qid not in rows],
+                **lookup,
                 "profile": profile, "version_code": version, "active_version_code": self.active_version_code}
 
     def _points(self, ids, placeholders, evidence):
@@ -531,12 +589,11 @@ class AgentReader:
                  points, mappings, references, source_labels):
         content = str(row.get("content") or "")
         asset_roles = self._asset_roles(row)
-        item = {key: row.get(key, "") for key in (
+        item = {"seq_num": seq_num} if seq_num is not None else {}
+        item.update({key: row.get(key, "") for key in (
             "id", "question_type", "category_compulsory", "category_chapter", "category_knowledge",
             "difficulty", "source", "association_group_id", "tags", "created_at",
-        )}
-        if seq_num is not None:
-            item["seq_num"] = seq_num
+        )})
         item.update(
             content_sha256=_hash(content),
             revision_sha256=_hash(json.dumps(row, ensure_ascii=False, sort_keys=True, separators=(",", ":"))),
@@ -645,10 +702,13 @@ class AgentReader:
             result.append(item)
         return result
 
-    def assets(self, ids):
-        ids = _ids(ids)
-        rows = {row["id"]: dict(row) for row in self._execute(
-            "SELECT * FROM questions WHERE id IN (" + ",".join("?" for _ in ids) + ")", ids
-        )}
-        return {"items": [{"id": qid, "assets": self._assets(rows[qid])} for qid in ids if qid in rows],
-                "requested_ids": ids, "missing_ids": [qid for qid in ids if qid not in rows]}
+    def assets(self, ids=None, *, seq_nums=None, include_seq_num=False):
+        rows, lookup = self._question_rows(ids, seq_nums)
+        sequences = self._sequence_map() if rows and include_seq_num else {}
+        items = []
+        for row in rows:
+            qid = row["id"]
+            item = {"seq_num": sequences[qid]} if include_seq_num else {}
+            item.update(id=qid, assets=self._assets(dict(row)))
+            items.append(item)
+        return {"items": items, **lookup}

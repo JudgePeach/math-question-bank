@@ -115,14 +115,19 @@ class AgentArgumentParser(argparse.ArgumentParser):
 
 def build_parser():
     parser = AgentArgumentParser(
-        description="只读检索数学题库，按知识点找题、按ID取题和读取图片清单。"
+        description="只读检索数学题库，按知识点找题、按网页题号取题和读取图片清单。"
     )
     parser.add_argument("-q", "--query", help="字面关键词；保留原册/章/小节、正文、来源和标签检索")
+    rule_help = "字段为 all、content、answer_markdown、review、source 或 tags；省略字段时搜索全部文本"
+    parser.add_argument("--include", action="append", metavar="[FIELD=]TEXT",
+                        help=f"添加包含条件，可重复；{rule_help}")
+    parser.add_argument("--exclude", action="append", metavar="[FIELD=]TEXT",
+                        help=f"添加排除条件，可重复；{rule_help}")
     parser.add_argument("-t", "--type", dest="qtype", help="题型值；通过 --capabilities 查看当前可用值")
     parser.add_argument("-d", "--difficulty", help="难度值；支持当前与历史自定义值")
     parser.add_argument("-n", "--limit", type=int, help="本页题数（Markdown默认50，JSON默认20）；-1保留显式全量兼容")
     parser.add_argument("-a", "--with-answers", action="store_true", help="包含答案、解析和评析")
-    parser.add_argument("-r", "--related-to", type=int, help="查找与指定稳定题目ID同组的其他题")
+    parser.add_argument("-r", "--related-to", type=int, help="按内部 ID 查询同组的其他题")
     parser.add_argument("--format", choices=("markdown", "json"), default="markdown")
     parser.add_argument("--source", default="", help="来源包含的字面文字")
     parser.add_argument("--compulsory", default="", help="精确册名")
@@ -135,47 +140,74 @@ def build_parser():
     parser.add_argument("--version-code", help="教材版本；省略时使用现有活跃版本")
     parser.add_argument("--page", type=int, default=1)
     parser.add_argument("--sort", choices=("asc", "desc"), default="desc")
-    parser.add_argument("--ids", action="append", help="按稳定ID读取，如 --ids 12,34；可重复传入")
+    selection = parser.add_mutually_exclusive_group()
+    selection.add_argument("--seq-nums", action="append",
+                           help="按网页题号读取，如 --seq-nums 12,34 或 --seq-nums '#12'；可重复")
+    selection.add_argument("--ids", action="append",
+                           help="按内部 ID 读取，供既有脚本兼容；可重复")
     parser.add_argument("--profile", choices=("candidate", "teaching", "evidence"), help="候选摘要、完整教学材料或全部标注依据")
     parser.add_argument("--no-seq-num", action="store_true", help="题目 JSON 中省略动态显示题号")
     actions = parser.add_mutually_exclusive_group()
     actions.add_argument("--capabilities", action="store_true", help="读取能力、当前枚举与字段说明")
     actions.add_argument("--catalog", action="store_true", help="查询知识点目录，配合 --knowledge-query 或 -q")
-    actions.add_argument("--assets", action="store_true", help="读取 --ids 指定题目的图片清单和本地可读路径")
+    actions.add_argument("--assets", action="store_true",
+                         help="读取 --seq-nums 或 --ids 所选题目的图片清单和本地可读路径")
     return parser
 
 
-def _ids(values):
+def _parse_numbers(values, *, display=False):
     if not values:
         return None
+    label = "题库题号" if display else "内部 ID"
     result = []
     for value in values:
         for token in value.split(","):
             token = token.strip()
-            if not token or not token.isascii() or not token.isdecimal() or int(token) < 1:
-                raise ValueError("题目ID必须为逗号分隔的正整数")
-            result.append(int(token))
+            if display:
+                token = token.removeprefix("#")
+            digits = token.lstrip("0")
+            if not 1 <= len(digits) <= 19 or not digits.isascii() or not digits.isdecimal():
+                raise ValueError(f"{label}必须为逗号分隔的正整数")
+            result.append(int(digits))
     return result
 
 
+def _keyword_rules(args):
+    rules = []
+    for operator, values in (("include", args.include), ("exclude", args.exclude)):
+        for value in values or ():
+            field, equals, keyword = value.partition("=")
+            if not equals:
+                field, keyword = "all", field
+            rules.append({"field": field.strip(), "operator": operator, "keyword": keyword})
+    return rules or None
+
+
 def _read(reader, args):
-    ids = _ids(args.ids)
+    ids = _parse_numbers(args.ids)
+    seq_nums = _parse_numbers(args.seq_nums, display=True)
+    selected = ids is not None or seq_nums is not None
+    search_filters = (
+        args.query, args.source, args.compulsory, args.chapter, args.knowledge,
+        args.knowledge_point, args.knowledge_query, args.qtype, args.difficulty,
+        args.related_to is not None, args.include, args.exclude,
+        args.knowledge_mode != "any", args.knowledge_role != "main",
+        args.page != 1, args.limit is not None, args.sort != "desc",
+    )
     limit = args.limit if args.limit is not None else (20 if args.format == "json" else 50)
     if args.page < 1:
         raise ValueError("页码必须为正整数")
     if args.capabilities:
-        if any((ids, args.query, args.source, args.compulsory, args.chapter, args.knowledge,
-                args.knowledge_point, args.knowledge_query, args.qtype, args.difficulty,
-                args.related_to is not None, args.profile, args.with_answers, args.version_code,
-                args.page != 1, args.limit is not None, args.sort != "desc", args.no_seq_num,
-                args.knowledge_mode != "any", args.knowledge_role != "main")):
+        if any((*search_filters, selected, args.profile, args.with_answers,
+                args.version_code, args.no_seq_num)):
             raise ValueError("--capabilities 读取全库能力，不能同时使用题目筛选、分层或分页参数")
         return reader.capabilities(), "capabilities", False
     if args.catalog:
-        if any((ids, args.source, args.knowledge_point, args.qtype, args.difficulty,
+        if any((selected, args.source, args.knowledge_point, args.qtype, args.difficulty,
                 args.related_to is not None, args.profile, args.with_answers, args.no_seq_num,
-                args.sort != "desc", args.knowledge_mode != "any", args.knowledge_role != "main")):
-            raise ValueError("--catalog 查询知识点目录，不支持题目ID、来源、题型、难度或详情参数")
+                args.sort != "desc", args.knowledge_mode != "any", args.knowledge_role != "main",
+                args.include, args.exclude)):
+            raise ValueError("--catalog 查询知识点目录，不支持题目选取、题目筛选或详情参数")
         if not 1 <= limit <= 100:
             raise ValueError("知识点目录每页数量必须在1到100之间")
         return reader.knowledge_points(
@@ -183,34 +215,25 @@ def _read(reader, args):
             compulsory=args.compulsory, chapter=args.chapter, knowledge=args.knowledge,
             limit=limit, offset=(args.page - 1) * limit,
         ), "catalog", False
+    include_seq_num = args.format == "markdown" or not args.no_seq_num
     if args.assets:
-        if not ids:
-            raise ValueError("--assets 需要 --ids 指定题目")
-        if any((args.query, args.source, args.compulsory, args.chapter, args.knowledge,
-                args.knowledge_point, args.knowledge_query, args.qtype, args.difficulty,
-                args.related_to is not None, args.profile, args.with_answers, args.no_seq_num,
-                args.version_code, args.page != 1, args.limit is not None,
-                args.sort != "desc", args.knowledge_mode != "any",
-                args.knowledge_role != "main")):
-            raise ValueError("--assets 只读取指定ID的图片清单，不能同时使用搜索、分层或分页参数")
-        return reader.assets(ids), "assets", False
+        if not selected:
+            raise ValueError("--assets 需要 --seq-nums 或 --ids 指定题目")
+        if any((*search_filters, args.profile, args.with_answers, args.version_code)):
+            raise ValueError("--assets 读取所选题目的图片清单，不能同时使用搜索、分层或分页参数")
+        return reader.assets(ids, seq_nums=seq_nums, include_seq_num=include_seq_num), "assets", False
 
     profile = args.profile or (
-        "teaching" if ids or args.with_answers or args.format == "markdown" else "candidate"
+        "teaching" if selected or args.with_answers or args.format == "markdown" else "candidate"
     )
-    include_answers = args.with_answers or bool(ids) or args.profile in {"teaching", "evidence"}
-    include_seq_num = args.format == "json" and not args.no_seq_num
+    include_answers = args.with_answers or selected or args.profile in {"teaching", "evidence"}
     if profile == "candidate" and args.with_answers:
         raise ValueError("candidate仅返回候选摘要；需要答案时请使用 teaching 或 evidence")
-    if ids:
-        if any((args.query, args.source, args.compulsory, args.chapter,
-                args.knowledge, args.knowledge_point, args.knowledge_query,
-                args.qtype, args.difficulty, args.related_to is not None,
-                args.page != 1, args.limit is not None, args.sort != "desc",
-                args.knowledge_mode != "any", args.knowledge_role != "main")):
-            raise ValueError("--ids 按指定ID读取，不能同时使用搜索筛选条件")
+    if selected:
+        if any(search_filters):
+            raise ValueError("--seq-nums 和 --ids 读取指定题目，不能同时使用搜索筛选条件")
         result = reader.get_questions(
-            ids, profile=profile, include_answers=include_answers,
+            ids, seq_nums=seq_nums, profile=profile, include_answers=include_answers,
             version_code=args.version_code, include_seq_num=include_seq_num,
         )
     else:
@@ -223,6 +246,7 @@ def _read(reader, args):
             difficulty=args.difficulty or "", related_to=args.related_to,
             profile=profile, include_answers=include_answers, sort=args.sort,
             version_code=args.version_code, include_seq_num=include_seq_num,
+            search_rules=_keyword_rules(args),
         )
     return result, "questions", include_answers
 
@@ -249,12 +273,14 @@ def _markdown(result, action, include_answers):
         return
     items = result.get("items", [])
     print(f"## 题库检索结果（总命中 {result.get('total', len(items))}，本次返回 {len(items)}）\n")
+    if result.get("missing_seq_nums"):
+        print("未找到题号 " + "、".join(f"#{number}" for number in result["missing_seq_nums"]) + "\n")
     if result.get("missing_ids"):
-        print("缺失题目ID：" + ", ".join(map(str, result["missing_ids"])) + "\n")
+        print("未找到内部 ID " + "、".join(map(str, result["missing_ids"])) + "\n")
     if result.get("next_page"):
         print(f"下一页：--page {result['next_page']}\n")
-    for index, item in enumerate(items, 1):
-        print(f"### 题目 {index} (ID: #{item['id']})")
+    for item in items:
+        print(f"### 题目 #{item['seq_num']}")
         if action == "assets":
             _print_assets(item.get("assets", []))
             print()

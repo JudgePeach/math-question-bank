@@ -19,6 +19,7 @@ _SQLITE_MAX_INTEGER = (1 << 63) - 1
 MAX_SEARCH_RULES = 8
 MAX_SEARCH_RULE_KEYWORD = 64
 _TEXT_FIELDS = ("content", "answer_markdown", "review", "source", "tags")
+IMAGE_SEARCH_FIELDS = frozenset(("content", "answer_markdown", "review"))
 
 
 def searchable_question_text(value: str | None) -> str:
@@ -34,6 +35,10 @@ def searchable_question_text(value: str | None) -> str:
 
 def register_search_functions(connection) -> None:
     """Register a deterministic, read-only projection on a SQLite connection."""
+    register_question_search_function(connection)
+
+
+def register_question_search_function(connection) -> None:
     connection.create_function(
         SQLITE_SEARCH_FUNCTION, 1, searchable_question_text, deterministic=True,
     )
@@ -57,7 +62,7 @@ def _text_conditions(keyword, fields=_TEXT_FIELDS):
 
     return [
         literal_text_match(getattr(Question, field), keyword,
-                           mask_image_targets=field in ("content", "answer_markdown", "review"))
+                           mask_image_targets=field in IMAGE_SEARCH_FIELDS)
         for field in fields
     ]
 
@@ -71,12 +76,13 @@ def decode_question_search_rule(raw: str):
         raise ValueError("关键词条件格式无效") from exc
 
 
-def apply_question_search_rules(query, rules):
-    """Apply all field-specific literal rules before counting or paginating."""
+def normalize_question_search_rules(rules):
+    """Validate keyword conditions and expand the fields they search."""
     if not isinstance(rules, list):
         raise ValueError("关键词条件须为列表")
     if len(rules) > MAX_SEARCH_RULES:
         raise ValueError(f"最多可添加 {MAX_SEARCH_RULES} 条关键词条件")
+    normalized = []
     for rule in rules:
         if not isinstance(rule, dict) or rule.keys() != {"field", "operator", "keyword"}:
             raise ValueError("关键词条件格式无效")
@@ -88,7 +94,14 @@ def apply_question_search_rules(query, rules):
         if "\0" in keyword or any("\ud800" <= char <= "\udfff" for char in keyword):
             raise ValueError("关键词包含无效字符")
         fields = _TEXT_FIELDS if field == "all" else (field,)
-        match = or_(*_text_conditions(keyword.strip(), fields))
+        normalized.append((fields, operator, keyword.strip()))
+    return normalized
+
+
+def apply_question_search_rules(query, rules):
+    """Apply all field-specific literal rules before counting or paginating."""
+    for fields, operator, keyword in normalize_question_search_rules(rules):
+        match = or_(*_text_conditions(keyword, fields))
         # SQL NULL in an optional field counts as no match, even under exclusion.
         query = query.filter(match if operator == "include" else match.is_not(True))
     return query

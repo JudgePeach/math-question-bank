@@ -121,7 +121,7 @@
   - **保真与验证**：完整备份恢复保留三表，并继续支持旧schema档案。同步JSON保持顶层数组，知识点项携带目录定义、状态、主辅及证据；旧JSON省略保留，显式空数组清关系。AI只读Markdown将全部已有知识点分主辅展示，保留原有JSON状态与依据以便追溯；不自动将知识点印入PDF/Word题文。专项为 `tests/test_knowledge_points.py`、`tests/test_knowledge_points_api.py`、`tests/test_knowledge_points_frontend.py`、`tests/test_knowledge_points_exports.py`、`tests/test_database_migrations.py`、`tests/test_full_backup.py`；浏览器使用 `MATHBANK_TEST_BROWSER=1 python3 -B -m pytest --noconftest tests/test_knowledge_points_browser.py` 的无真实数据库/图片/凭据临时副本。本次本机已审阅结果的批量应用须精确绑定题目与图片哈希、人类批准状态、运行锁、完整备份和单事务，不借迁移改写原题或旧分类。
 - **全局试题序号同步 (#seq_num)**：
   - 题库卡片与 Toast 交互统一展示连续 `seq_num`（1 ~ N）。schema v15 备份优先新增可空正整数 `questions.display_order`，由 `mathbank.question_ordering` 共用 `COALESCE(display_order,id),id` 计算序号；未指定排序时兼容旧 ID 顺序。题目稳定 `id`、试卷及交叉引用身份不因整理顺序改变。明确整理过顺序的库，列表正/倒序采用同一独立排序；未整理的库沿用创建时间与 ID 的原列表排序。按序号查找、关联候选、分享预览、动态原书引用和同步 JSON/Markdown 使用一致序号；已整理库的新题未指定排序值时由正常写入流程按最大有效排序值追加，旧库继续兼容 ID 顺序，删除后动态重新连续编号。完整备份保留排序字段，题库分享包不把来源库的全局排序值强加给接收库。专项 `tests/test_question_ordering.py`、迁移、分享、关联和原书引用回归只在隔离库验证。
-  - **题库与组卷文字搜索**：`GET /api/questions` 共用 `mathbank.question_search`，仅在搜索副本中遮蔽题干、解析和评析里完整 Markdown／HTML／TeX 图片引用的目标地址；保留可见替代文字、正文、公式和字面代码，来源与标签继续参与搜索。不改数据库或图片引用；SQLite 查询内转换搜索副本，不把全库 ORM 题目加载到 Python。`#正整数` 严格按全库动态显示题号定位，不存在时返回空结果；纯数字仍兼容题号与文字的 OR 匹配，`%`／`_` 按字面搜索，原有筛选与分页继续生效。关联候选、分享包和 Agent CLI 的独立检索不因本入口调整自动改变。专项 `tests/test_question_search.py`，接口验证仅在隔离源码副本执行。
+  - **题库与组卷文字搜索**：`GET /api/questions` 共用 `mathbank.question_search`，仅在搜索副本中遮蔽题干、解析和评析里完整 Markdown／HTML／TeX 图片引用的目标地址；保留可见替代文字、正文、公式和字面代码，来源与标签继续参与搜索。不改数据库或图片引用；SQLite 查询内转换搜索副本，不把全库 ORM 题目加载到 Python。`#正整数` 严格按全库动态显示题号定位，不存在时返回空结果；纯数字仍兼容题号与文字的 OR 匹配，`%`／`_` 按字面搜索，原有筛选与分页继续生效。CLI 的包含和排除条件复用字段校验和图片地址投影。专项 `tests/test_question_search.py`，接口验证仅在隔离源码副本执行。
   - **编辑会话状态 (`EditorState`)**：`api.js` 的 `EditorState` 是当前题目 ID、序号、草稿 ID 与编辑模式的唯一状态来源，禁止引入平行全局变量。
 - **草稿箱与未保存决策流**：
   - 草稿统一存放在 LocalStorage 键 `mathbank_local_drafts`。离开未保存 Dirty 页面时提供“存入本地库/暂存草稿/离开/返回”决策流，入库后自动从草稿箱移除。
@@ -182,7 +182,7 @@
 - **可验证完整备份 (`data_backup/snapshots/mathbank-backup-*.zip`)**：通过 SQLite 在线快照保存数据库、数据库引用的 `static/uploads/` 文件及自定义元数据，并在 `manifest.json` 记录逐文件 SHA-256、大小、表计数与结构版本；明确排除 `.env`、本地 Token 和 API 密钥。创建并复验使用 `python3 -m scripts.backup`，仅验证使用 `python3 -m scripts.restore <备份.zip>`。
 - **恢复安全边界**：实际恢复必须完全关闭服务并显式运行 `python3 -m scripts.restore <备份.zip> --apply --yes`。服务在首次访问数据库前持有跨平台运行锁，恢复 API/CLI 必须持有同一把锁；锁被占用时必须停止，不得用 PID 信号探测替代。恢复前先创建已验证安全备份；若当前数据库已损坏或缺失而无法生成标准快照，则保留原数据库、WAL/SHM、上传和元数据的原始灾难恢复包，再原子替换并在失败时回滚。默认不带 `--apply` 只检查，不能修改现有数据。
 - **AI 专属只读题库 (`data_backup/questions_library.md`)**：只输出学段、章节、知识点和题干，过滤答案与点评，清洗 `\item`、`\\` 等排版命令，完全保留 `$` 公式。
-- **终端检索工具 (`scripts/search_questions.py`)**：提供 CLI 工具支持模糊匹配与结构化题目拉取（运行 `python3 -m scripts.search_questions -q <关键词>`）。
+- **终端检索工具 (`scripts/search_questions.py`)** 支持字面关键词检索、组合筛选和按网页题号取题。参数与返回约定见下文 Agent 只读取题。
 - **填空题下划线迁移工具 (`scripts/migrate_fillin.py`)**：批量规范化旧下划线格式为 `\fillin` 并刷新备份。
 
 ### 3.4 题目双向关联
@@ -431,7 +431,8 @@
 
 ## 4. 外部 API 接入规范
 - **Agent 只读取题**：`mathbank.agent_reads.AgentReader` 为 `scripts.search_questions` 与 `GET /api/agent/*` 的共同读取层，独立以 SQLite `mode=ro`、`PRAGMA query_only=ON` 和显式读事务访问现有库；不得调用应用初始化、迁移、目录播种或写回分类。原网页 API 与 CLI 的 `-q/-t/-d/-n/-a/-r` 参数继续兼容，旧 Markdown 默认仍给完整题干，答案按 `-a` 显示，显式 `-n -1` 保留为兼容全量入口；Agent 搜索默认20题、每页最多100题，批量 ID 有界，返回总命中数、分页和 `missing_ids`，不得静默丢弃非法 ID。知识点先以名称、原名、别名发现稳定编码，再按主/辅、any/all与来源、教材路径组合检索；用户自定义难度/题型从只读元数据与实际库发现，不写死旧枚举。`candidate` 用于候选筛选，`teaching` 保留完整题文及教师评析，`evidence` 才展开知识点审核依据；`confirmed` 不代表题文或答案已核验。资产清单区分题干、解析、评析与参考图，沿用受限上传路径校验，报告缺图和尺寸，不返回图像base64；CLI可提供经校验的本地绝对路径，HTTP不暴露本机绝对路径。教材版本查询只读已有镜像，不切换全局设置；稳定ID与动态显示序号分开。使用与字段契约维护于 `docs/AI_DATABASE_GUIDE.md`；专项 `tests/test_agent_reads.py`、`tests/test_search_questions_cli.py`、`tests/test_agent_read_api.py` 必须使用隔离题库，并核对读取前后数据不变。
-  - 同页或同批题目的知识点、教材映射和小节、正文引用及来源标签在同一快照内按返回层次批量补载，保留原有排序、引用状态和内容哈希。HTTP 与 JSON CLI 默认返回题目及引用的动态显示序号，`include_seq_num=false` 或 `--no-seq-num` 时省略 `seq_num` 并跳过全库题号映射，仍在同一快照验证引用目标题是否存在。普通 Markdown 与旧 Python 元组不需要显示序号，直接跳过映射。
+  - 同页或同批题目的知识点、教材映射和小节、正文引用及来源标签在同一快照内按返回层次批量补载，保留排序、引用状态和内容哈希。CLI 的 Markdown 标题使用 `#题号`，搜索、详情及配图 JSON 默认包含 `seq_num`，按全库顺序计算。用 `--seq-nums` 批量读取详情或配图，按请求顺序返回并报告 `missing_seq_nums`。内部 `id`、`--ids`、`-r` 和旧 Python 元组继续供既有调用使用。`--no-seq-num` 或 Agent HTTP 的 `include_seq_num=false` 省略 JSON 题号，按题号定位时仍需计算映射；引用状态在同一快照确认。
+  - CLI 的 `--include [FIELD=]TEXT` 和 `--exclude [FIELD=]TEXT` 可重复传入。在原有筛选基础上，题目须满足全部包含条件并避开全部排除条件，结果先筛选再计数与分页。字段、关键词长度、条件总数和图片地址处理与题库网页的关键词条件一致。
 - **密钥与鉴权**：读取 `.env` 密钥，修改类接口必须携带 `X-Local-Token` 头部。
 - **私有配置提交边界**：`.env`、`.env.*`（包括 `.env.bak`、`.env.production` 等副本）与 `.system_generated/` 必须由 Git 忽略，仅允许根目录不含真实密钥的 `.env.example` 配置模板入库。控制令牌泄露后须在服务停止时更换本地文件，再启动服务、刷新页面；添加忽略规则不能撤回历史提交中的凭据。
 - **模型配置**：

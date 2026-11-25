@@ -81,7 +81,7 @@ def test_legacy_markdown_keeps_full_stem_and_answer_opt_in(cli):
     assert "独立解析乙" not in output and "评析乙" not in output
     output = cli("-d", "normal", "-a").stdout
     assert "独立解析甲" in output and "原书错印说明甲" in output
-    assert "常规题" in output and "ID: #1" in output
+    assert "常规题" in output and "### 题目 #1" in output
     assert "teacher-only.png" not in cli("-d", "normal").stdout
     assert "teacher-only.png" in output
 
@@ -129,6 +129,66 @@ def test_assets_include_independent_figure_and_local_readable_path(cli):
     assert "standalone.png" in cli("--assets", "--ids", "1").stdout
 
 
+def test_cli_displays_and_looks_up_web_numbers_in_global_order(cli):
+    cli.python('''
+        from mathbank.database import Question, SessionLocal
+        with SessionLocal() as db:
+            db.get(Question, 1).display_order = 40
+            db.get(Question, 2).display_order = 30
+            db.add(Question(id=9, content='另一道题', display_order=10))
+            db.commit()
+    ''')
+    database = cli.root / "math_question_bank.db"
+    before = hashlib.sha256(database.read_bytes()).hexdigest()
+
+    search = ("-d", "normal", "--source", "甲讲义")
+    output = cli(*search).stdout
+    assert "### 题目 #3\n" in output and "ID: #" not in output
+    candidate, = json.loads(cli(*search, "--format", "json").stdout)["items"]
+    assert candidate["seq_num"] == 3 and candidate["id"] == 1
+
+    detail = json.loads(cli("--seq-nums", "#3,9", "--seq-nums", "1", "--format", "json").stdout)
+    assert detail["requested_seq_nums"] == [3, 9, 1] and detail["missing_seq_nums"] == [9]
+    assert [(item["seq_num"], item["id"]) for item in detail["items"]] == [(3, 1), (1, 9)]
+    assert detail["items"][0]["answer_markdown"] == "独立解析甲"
+    output = cli("--seq-nums", "3,9").stdout
+    assert "未找到题号 #9" in output and "### 题目 #3" in output
+
+    asset, = json.loads(cli("--seq-nums", "3", "--assets", "--format", "json").stdout)["items"]
+    assert asset["seq_num"] == 3 and asset["id"] == 1
+    assert any(item["url"].endswith("/standalone.png") for item in asset["assets"] if item["url"])
+    assert "### 题目 #3" in cli("--assets", "--ids", "1").stdout
+    assert hashlib.sha256(database.read_bytes()).hexdigest() == before
+
+
+def test_keyword_filters_precede_count_and_pagination(cli):
+    cli.python(r'''
+        from mathbank.database import Question, SessionLocal
+        with SessionLocal() as db:
+            for qid, content, answer, source in (
+                (3, '函数 100%_ $x=1$ ![图示](/static/uploads/模拟卷.png)', '用换元', None),
+                (4, '函数 100%_ $x=1$', '用换元', '模拟卷'),
+                (5, '函数 100%_ $x=1$', '用换元', '真题'),
+                (6, '函数 100%_ $x=1$', '用换元，评析标记', '真题'),
+                (7, '函数 100A_ $x=1$', '用换元', '真题'),
+                (8, '函数 100%_ $x=1$', '用配方', '真题'),
+            ):
+                db.add(Question(id=qid, content=content, answer_markdown=answer, source=source,
+                                difficulty='normal', question_type='detailed_answer'))
+            db.commit()
+    ''')
+    arguments = (
+        "--include", "content= 100%_ ", "--include", "answer_markdown=换元", "--include", "content=x=1",
+        "--exclude", "模拟卷", "--exclude", "answer_markdown=评析标记",
+        "--type", "detailed_answer", "-q", "函数", "--sort", "asc", "-n", "1", "--format", "json",
+    )
+    first = json.loads(cli(*arguments).stdout)
+    second = json.loads(cli(*arguments, "--page", "2").stdout)
+    assert first["total"] == second["total"] == 2
+    assert first["next_page"] == 2 and second["next_page"] is None
+    assert [item["seq_num"] for item in first["items"] + second["items"]] == [3, 5]
+
+
 @pytest.mark.parametrize("arguments", [
     ("--ids", "1,bad"), ("--ids", "0"), ("--assets",),
     ("--page", "0"), ("--ids", "1", "--source", "甲"),
@@ -138,6 +198,15 @@ def test_assets_include_independent_figure_and_local_readable_path(cli):
     ("--assets", "--ids", "1", "--source", "甲"),
     ("--capabilities", "-q", "甲"),
     ("--catalog", "--source", "甲"),
+    ("--seq-nums", "1", "--ids", "1"),
+    ("--seq-nums", "#1,1"),
+    ("--seq-nums", "#0"),
+    ("--seq-nums", "1", "--exclude", "甲"),
+    ("--catalog", "--include", "甲"),
+    ("--include", "id=1"),
+    ("--exclude", "source= "),
+    ("--include", "content=" + "字" * 65),
+    ("--exclude", "甲") * 9,
 ])
 def test_json_validation_is_machine_readable(cli, arguments):
     result = cli(*arguments, "--format", "json", expected=2)

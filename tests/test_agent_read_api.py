@@ -128,6 +128,12 @@ def test_http_and_cli_share_one_read_only_teaching_workflow(isolated_app):
         assert detail['items'][0]['review'] == question.review
         assert public(detail) == get('/api/agent/questions/batch', ids='7,999', profile='teaching')
         assert detail['items'][0]['seq_num'] == 1
+        sequence_detail = cli('--seq-nums', '#1,7')
+        assert sequence_detail['missing_seq_nums'] == [7]
+        website, = get('/api/questions', q='#1', page=1)['items']
+        assert [(item['id'], item['seq_num'], item['content']) for item in sequence_detail['items']] == [
+            (website['id'], website['seq_num'], website['content'])
+        ]
         batch_without_seq = cli('--ids', '7,999', '--no-seq-num')
         assert 'seq_num' not in batch_without_seq['items'][0]
         assert public(batch_without_seq) == get('/api/agent/questions/batch', ids='7,999',
@@ -135,8 +141,9 @@ def test_http_and_cli_share_one_read_only_teaching_workflow(isolated_app):
         assert public(batch_without_seq['items'][0]) == get('/api/agent/questions/7', include_seq_num='false')
         assets = cli('--assets', '--ids', '7,999')
         assert assets['missing_ids'] == [999]
+        assert assets['items'][0]['seq_num'] == 1
         assert Path(assets['items'][0]['assets'][0]['local_path']).resolve() == image.resolve()
-        assert public(assets) == get('/api/agent/assets', ids='7,999')
+        assert public(cli('--assets', '--ids', '7,999', '--no-seq-num')) == get('/api/agent/assets', ids='7,999')
         assert fingerprint() == before
     ''')
 
