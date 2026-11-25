@@ -129,14 +129,14 @@ flowchart LR
 
 ## 🚀 Quick Start
 
-**Version and downloads (verified 2026-11-23)**: Source version **3.1.1** fixes where screenshots are inserted when pasted into the solution editor and improves TikZ spatial projection and point-label placement. The latest official GitHub portable download is [**V3.1.0**](https://github.com/JudgePeach/math-question-bank/releases/tag/V3.1.0), published on **November 17, 2026** (China Standard Time).
+**Version and downloads (verified 2026-11-25)**: Source version **3.1.1** fixes where screenshots are inserted when pasted into the solution editor and improves TikZ spatial projection and point-label placement. The latest official GitHub portable download is [**V3.1.1**](https://github.com/JudgePeach/math-question-bank/releases/tag/V3.1.1), published on **November 23, 2026** (China Standard Time).
 
 ### 📦 Option 1: Download Portable Package (Recommended for Teachers)
 
-If you are unfamiliar with command line or Python environments, open the [**V3.1.0 release page**](https://github.com/JudgePeach/math-question-bank/releases/tag/V3.1.0), choose the ZIP asset for your platform under Assets, and **extract the complete archive**:
+If you are unfamiliar with command line or Python environments, open the [**V3.1.1 release page**](https://github.com/JudgePeach/math-question-bank/releases/tag/V3.1.1), choose the ZIP asset for your platform under Assets, and **extract the complete archive**:
 
-* **Windows Users**: Use Windows 10/11 x64 and download [`MathBank-Windows-x64.zip`](https://github.com/JudgePeach/math-question-bank/releases/download/V3.1.0/MathBank-Windows-x64.zip) (includes complete Python 3.10 and app-local VC++ runtimes; no separate installation required), extract it, and double-click **`启动题库系统.bat`**.
-* **macOS Users**: Download [`MathBank-macOS.zip`](https://github.com/JudgePeach/math-question-bank/releases/download/V3.1.0/MathBank-macOS.zip). **The macOS package does not include Python, so confirm that Python 3.10 or newer is installed on your Mac before launching MathBank.** Keep network access enabled when the launcher first creates or repairs the isolated `venv`, then double-click **`启动题库系统.command`**.
+* **Windows Users**: Use Windows 10/11 x64 and download [`MathBank-Windows-x64.zip`](https://github.com/JudgePeach/math-question-bank/releases/download/V3.1.1/MathBank-Windows-x64.zip) (includes complete Python 3.10 and app-local VC++ runtimes; no separate installation required), extract it, and double-click **`启动题库系统.bat`**.
+* **macOS Users**: Download [`MathBank-macOS.zip`](https://github.com/JudgePeach/math-question-bank/releases/download/V3.1.1/MathBank-macOS.zip). **The macOS package does not include Python, so confirm that Python 3.10 or newer is installed on your Mac before launching MathBank.** Keep network access enabled when the launcher first creates or repairs the isolated `venv`, then double-click **`启动题库系统.command`**.
 
 Both launchers check Python and required packages, and open an already-running MathBank service directly without restarting it. Port conflicts and startup failures display the specific error and service log.
 
