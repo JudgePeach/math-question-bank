@@ -105,82 +105,45 @@
                 });
             }
 
-            // Global smart clipboard paste routing for images/screenshots (Euclidean distance matching to closest visible DropZone)
-            window.addEventListener('paste', (e) => {
-                const items = (e.clipboardData || e.originalEvent.clipboardData).items;
-                let hasImage = false;
-                let imageFile = null;
-                
-                for (let index in items) {
-                    const item = items[index];
-                    if (item.kind === 'file' && item.type.startsWith('image/')) {
-                        hasImage = true;
-                        imageFile = item.getAsFile();
-                        break;
+            // Direct paste handlers take precedence. Elsewhere in the editor,
+            // route images only to a visible drop zone.
+            const editor = document.getElementById('editorSection');
+            editor.addEventListener('paste', (e) => {
+                if (e.defaultPrevented || editor.classList.contains('hidden') ||
+                    e.target.isContentEditable || e.target.closest?.(
+                        'textarea, select, input:not([type="checkbox"]):not([type="radio"]), [role="textbox"]'
+                    )) return;
+
+                const item = Array.from(e.clipboardData?.items || []).find(
+                    entry => entry.kind === 'file' && entry.type.startsWith('image/')
+                );
+                const imageFile = item?.getAsFile();
+                if (!imageFile) return;
+
+                const targets = [
+                    { element: illDropZone, handler: uploadIllustration },
+                    { element: contentOcrDropZone, handler: runContentOcr },
+                    { element: ocrDropZone, handler: runOcr },
+                    { element: imageAnswerDropZone, handler: uploadAnswerImage }
+                ];
+                let bestTarget = null;
+                let minDistance = Infinity;
+                for (const target of targets) {
+                    if (!target.element || target.element.offsetParent === null) continue;
+
+                    const rect = target.element.getBoundingClientRect();
+                    const dx = rect.left + rect.width / 2 - window.innerWidth / 2;
+                    const dy = rect.top + rect.height / 2 - window.innerHeight / 2;
+                    const distance = dx * dx + dy * dy;
+                    if (distance < minDistance) {
+                        minDistance = distance;
+                        bestTarget = target;
                     }
                 }
-                
-                if (hasImage && imageFile) {
-                    // Define all potential target zones with their corresponding elements and handlers
-                    const targets = [
-                        {
-                            element: document.getElementById('illustrationDropZone'),
-                            handler: (file) => uploadIllustration(file)
-                        },
-                        {
-                            element: document.getElementById('contentOcrDropZone'),
-                            handler: (file) => runContentOcr(file)
-                        },
-                        {
-                            element: document.getElementById('ocrDropZone'),
-                            handler: (file) => runOcr(file)
-                        },
-                        {
-                            element: document.getElementById('imageAnswerDropZone'),
-                            handler: (file) => uploadAnswerImage(file)
-                        }
-                    ];
-                    
-                    // Filter to only get elements that are actually visible on screen
-                    const visibleTargets = targets.filter(t => {
-                        return t.element && t.element.offsetParent !== null;
-                    });
-                    
-                    if (visibleTargets.length > 0) {
-                        // Calculate coordinates of the center of the viewport
-                        const viewCenterX = window.innerWidth / 2;
-                        const viewCenterY = window.innerHeight / 2;
-                        
-                        let bestTarget = null;
-                        let minDistance = Infinity;
-                        
-                        visibleTargets.forEach(t => {
-                            const rect = t.element.getBoundingClientRect();
-                            const centerX = rect.left + rect.width / 2;
-                            const centerY = rect.top + rect.height / 2;
-                            
-                            // Euclidean distance to viewport center
-                            const dx = centerX - viewCenterX;
-                            const dy = centerY - viewCenterY;
-                            const dist = Math.sqrt(dx * dx + dy * dy);
-                            
-                            if (dist < minDistance) {
-                                minDistance = dist;
-                                bestTarget = t;
-                            }
-                        });
-                        
-                        if (bestTarget) {
-                            bestTarget.handler(imageFile);
-                            e.preventDefault();
-                            return;
-                        }
-                    }
-                    
-                    // Fallback to upload as illustration if no targets are visible
-                    uploadIllustration(imageFile);
-                    e.preventDefault();
-                }
+                if (!bestTarget) return;
+
+                e.preventDefault();
+                bestTarget.handler(imageFile);
             });
         }
         document.addEventListener('DOMContentLoaded', setupUploadHandlers, { once: true });
